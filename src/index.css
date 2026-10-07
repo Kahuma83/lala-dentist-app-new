@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+/* Premium Textured Gold & Elegant White Theme Styles */
+:root {
+  --color-gold-light: #fbf9f4;
+  --color-gold-med: #ebd4a8;
+  --color-gold-dark: #c5a059;
+  --color-gold-deep: #aa853a;
+  --color-gold-accent: #d9bf8f;
+}
+
+/* Base App Body Style: Custom Textured Background */
+#app-container, .bg-slate-50\/50, .bg-slate-50, .min-h-screen {
+  background-color: #fdfcf9 !important;
+  background-image: radial-gradient(#f0e5cf 0.8px, transparent 0.8px) !important;
+  background-size: 18px 18px !important;
+}
+
+/* Premium Textured Gold Gradients */
+.bg-gold-metallic {
+  background: linear-gradient(135deg, #fbf9f4 0%, #ebd4a8 50%, #faf6ec 100%) !important;
+}
+
+.bg-gold-btn {
+  background: linear-gradient(135deg, #c5a059 0%, #aa853a 50%, #d9bf8f 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 2px 8px -1px rgba(170, 133, 58, 0.35);
+}
+
+.bg-gold-btn:hover {
+  background: linear-gradient(135deg, #d9bf8f 0%, #c5a059 50%, #aa853a 100%) !important;
+  box-shadow: 0 4px 12px 0 rgba(170, 133, 58, 0.45);
+}
+
+/* Gold Text Gradient */
+.text-gold-gradient {
+  background: linear-gradient(135deg, #8a6f27 0%, #c5a059 50%, #aa853a 100%);
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+/* Soft Warm Accent Border */
+.border-gold-accent {
+  border-color: #ebd4a8 !important;
+}
+
+/* Soft Gold Shadow for High-Class Float Effect */
+.shadow-gold-soft {
+  box-shadow: 0 4px 20px -2px rgba(197, 160, 89, 0.1) !important;
+}
+
+/* White Textured Panels */
+.bg-white-textured {
+  background-color: #ffffff !important;
+  background-image: radial-gradient(rgba(217, 191, 143, 0.08) 1px, transparent 1px) !important;
+  background-size: 14px 14px !important;
+}
+
+/* Overriding sidebar active hover styles from emerald to custom premium gold */
+.sidebar-active {
+  background-color: #faf6ec !important;
+  color: #8a6f27 !important;
+  border-left: 3.5px solid #c5a059 !important;
+  font-weight: 600 !important;
+}
+
+/* =========================================================
+   PHASE 9D - PRINT STYLES (Smart 1-Page Document Isolation)
+   ========================================================= */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    background-image: none !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    font-size: 11px !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide entire application shell and background pages */
+  #app-container,
+  header,
+  nav,
+  aside,
+  main > div:not(.print-document-modal-wrapper),
+  .role-switcher,
+  .print\:hidden,
+  button,
+  .btn,
+  .fixed.inset-0.bg-slate-950\/70,
+  .fixed.inset-0.bg-slate-900\/60 {
+    background: transparent !important;
+  }
+
+  /* Hide everything in the body by default */
+  body > * {
+    visibility: hidden !important;
+  }
+
+  /* Make only the printable document container and its elements visible */
+  #root,
+  #root * {
+    visibility: hidden;
+  }
+
+  #invoice-printable-document,
+  #invoice-printable-document *,
+  #receipt-printable-document,
+  #receipt-printable-document *,
+  #payslip-printable-document,
+  #payslip-printable-document * {
+    visibility: visible !important;
+  }
+
+  #invoice-printable-document,
+  #receipt-printable-document,
+  #payslip-printable-document {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    background-image: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: block !important;
+    z-index: 999999 !important;
+  }
+
+  /* Hide modal topbar, close button, and actions during print */
+  .modal-topbar,
+  .document-actions-bar {
+    display: none !important;
+  }
+}
+

@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="100%" height="100%">
+  <defs>
+    <!-- Rich Golden Metallic Gradients -->
+    <linearGradient id="lalaGoldPrimary" x1="20%" y1="10%" x2="80%" y2="90%">
+      <stop offset="0%" stop-color="#C5A454" />
+      <stop offset="25%" stop-color="#AE8736" />
+      <stop offset="50%" stop-color="#DFC478" />
+      <stop offset="75%" stop-color="#9C7523" />
+      <stop offset="100%" stop-color="#846115" />
+    </linearGradient>
+    <linearGradient id="lalaGoldShine" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#DFC478" />
+      <stop offset="40%" stop-color="#B8913C" />
+      <stop offset="80%" stop-color="#8E691A" />
+      <stop offset="100%" stop-color="#D4B464" />
+    </linearGradient>
+  </defs>
+
+  <!-- Group containing the exact Lala Dentist Tooth & Smile Emblem -->
+  <g id="lala-emblem" fill="url(#lalaGoldPrimary)" stroke="none">
+    
+    <!-- Left Tooth Contour & Swoop -->
+    <path d="M 460,225 
+             C 410,185 330,165 290,210
+             C 245,260 270,380 310,480
+             C 340,555 385,615 395,625
+             C 400,630 408,620 415,605
+             C 445,540 515,445 655,405
+             C 660,404 656,396 650,398
+             C 515,435 440,535 400,600
+             C 375,540 330,460 300,380
+             C 275,310 275,250 310,215
+             C 345,180 410,195 460,225 Z" />
+
+    <!-- Right Tooth Crest with Signature Top Inner Curl -->
+    <path d="M 458,225
+             C 435,245 405,260 398,245
+             C 392,230 415,215 450,225
+             C 490,235 550,170 655,170
+             C 715,170 735,230 720,310
+             C 705,395 650,515 590,605
+             C 587,610 592,612 595,608
+             C 660,515 720,390 735,300
+             C 750,210 720,150 645,150
+             C 555,150 495,195 458,225 Z" />
+
+    <!-- 5 Golden Stars clustered in the top right hollow of tooth -->
+    <!-- Star 1 (Top Left near curl) -->
+    <path d="M 558,212 L 562,224 L 575,224 L 564,232 L 568,244 L 558,236 L 548,244 L 552,232 L 541,224 L 554,224 Z" />
+    
+    <!-- Star 2 (Top Right) -->
+    <path d="M 618,226 L 622,238 L 635,238 L 624,246 L 628,258 L 618,250 L 608,258 L 612,246 L 601,238 L 614,238 Z" />
+    
+    <!-- Star 3 (Center Left) -->
+    <path d="M 548,266 L 553,280 L 568,280 L 556,289 L 560,303 L 548,294 L 536,303 L 540,289 L 528,280 L 543,280 Z" />
+    
+    <!-- Star 4 (Center Right) -->
+    <path d="M 654,272 L 657,282 L 668,282 L 659,288 L 662,298 L 654,292 L 646,298 L 649,288 L 640,282 L 651,282 Z" />
+    
+    <!-- Star 5 (Bottom Prominent Star) -->
+    <path d="M 602,290 L 608,308 L 627,308 L 612,319 L 617,337 L 602,326 L 587,337 L 592,319 L 577,308 L 596,308 Z" />
+
+    <!-- Smile Curve Underneath with End Dimple Curves -->
+    <!-- Left Dimple -->
+    <path d="M 208,565 C 200,545 212,525 235,528 C 228,540 223,554 220,568 Z" />
+    
+    <!-- Right Dimple -->
+    <path d="M 792,565 C 800,545 788,525 765,528 C 772,540 777,554 780,568 Z" />
+    
+    <!-- Smile Arc -->
+    <path d="M 215,558 
+             C 290,680 710,680 785,558 
+             C 710,662 290,662 215,558 Z" />
+  </g>
+
+  <!-- Typography: LALA DENTIST -->
+  <g id="lala-text" fill="url(#lalaGoldShine)">
+    <text x="500" y="750" 
+          text-anchor="middle" 
+          font-family="'Playfair Display', 'Cinzel', 'Times New Roman', Georgia, serif" 
+          font-size="80" 
+          font-weight="800" 
+          letter-spacing="18">LALA</text>
+    
+    <text x="500" y="825" 
+          text-anchor="middle" 
+          font-family="'Playfair Display', 'Cinzel', 'Times New Roman', Georgia, serif" 
+          font-size="42" 
+          font-weight="700" 
+          letter-spacing="24">DENTIST</text>
+  </g>
+</svg>
