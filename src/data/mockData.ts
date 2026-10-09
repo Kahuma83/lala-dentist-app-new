@@ -2834,6 +2834,72 @@ export const MOCK_DOCTOR_SCHEDULES: DoctorSchedule[] = [
   }
 ];
 
+export function generateCurrentWeekDoctorSchedules(): DoctorSchedule[] {
+  const d = new Date();
+  const day = d.getDay(); // 0 is Sunday
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.setDate(diff));
+  monday.setHours(0, 0, 0, 0);
+
+  const getDateStr = (dayOffset: number) => {
+    const target = new Date(monday);
+    target.setDate(target.getDate() + dayOffset);
+    return target.toISOString().split("T")[0];
+  };
+
+  const schedules: DoctorSchedule[] = [];
+  const patterns = [
+    // Senin
+    { doc: "doc-syafira", br: "branch-gebang", day: 0, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    { doc: "doc-lala", br: "branch-gebang", day: 0, s: "14:00", e: "18:00", notes: "Praktek Siang" },
+    { doc: "doc-ulfa", br: "branch-ambulu", day: 0, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    { doc: "doc-yuni", br: "branch-lengkong-mumbul", day: 0, s: "08:00", e: "13:00", notes: "Praktek Pagi" },
+    // Selasa
+    { doc: "doc-vio", br: "branch-gebang", day: 1, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    { doc: "doc-lala", br: "branch-gebang", day: 1, s: "14:00", e: "18:00", notes: "Praktek Siang" },
+    { doc: "doc-ulfa", br: "branch-ambulu", day: 1, s: "14:00", e: "20:00", notes: "Praktek Sore" },
+    { doc: "doc-regina", br: "branch-lengkong-mumbul", day: 1, s: "13:00", e: "18:00", notes: "Praktek Siang" },
+    // Rabu
+    { doc: "doc-syafira", br: "branch-gebang", day: 2, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    { doc: "doc-yuni", br: "branch-gebang", day: 2, s: "17:00", e: "21:00", notes: "Praktek Malam" },
+    { doc: "doc-ulfa", br: "branch-ambulu", day: 2, s: "08:00", e: "13:00", notes: "Praktek Pagi" },
+    { doc: "doc-aab", br: "branch-ambulu", day: 2, s: "14:00", e: "20:00", notes: "Praktek Sore" },
+    // Kamis
+    { doc: "doc-vio", br: "branch-gebang", day: 3, s: "14:00", e: "19:00", notes: "Praktek Sore" },
+    { doc: "doc-lala", br: "branch-gebang", day: 3, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    { doc: "doc-syafira", br: "branch-ambulu", day: 3, s: "17:00", e: "21:00", notes: "Praktek Malam" },
+    { doc: "doc-regina", br: "branch-lengkong-mumbul", day: 3, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    // Jumat
+    { doc: "doc-syafira", br: "branch-gebang", day: 4, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    { doc: "doc-yuni", br: "branch-gebang", day: 4, s: "14:00", e: "20:00", notes: "Praktek Sore" },
+    { doc: "doc-ulfa", br: "branch-ambulu", day: 4, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    { doc: "doc-aab", br: "branch-ambulu", day: 4, s: "14:00", e: "20:00", notes: "Praktek Sore" },
+    // Sabtu
+    { doc: "doc-vio", br: "branch-gebang", day: 5, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
+    { doc: "doc-lala", br: "branch-gebang", day: 5, s: "14:00", e: "18:00", notes: "Praktek Siang" },
+    { doc: "doc-ulfa", br: "branch-ambulu", day: 5, s: "08:00", e: "13:00", notes: "Praktek Pagi" },
+    { doc: "doc-yuni", br: "branch-lengkong-mumbul", day: 5, s: "09:00", e: "15:00", notes: "Praktek Siang" }
+  ];
+
+  const nowIso = new Date().toISOString();
+  patterns.forEach((p, idx) => {
+    schedules.push({
+      id: `sched-curr-${p.day}-${idx}`,
+      doctorId: p.doc,
+      branchId: p.br,
+      date: getDateStr(p.day),
+      startTime: p.s,
+      endTime: p.e,
+      status: ScheduleStatus.ACTIVE,
+      notes: p.notes,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    });
+  });
+
+  return schedules;
+}
+
 export const MOCK_STAFF_SHIFT_ASSIGNMENTS: StaffShiftAssignment[] = [
   // Gebang
   {
@@ -3421,7 +3487,7 @@ export class MockDatabase {
   journals = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_JOURNAL_ENTRIES)) : [];
   staff = JSON.parse(JSON.stringify(MOCK_STAFF));
   doctorBranchAssignments = JSON.parse(JSON.stringify(MOCK_DOCTOR_BRANCH_ASSIGNMENTS));
-  doctorSchedules = JSON.parse(JSON.stringify(MOCK_DOCTOR_SCHEDULES));
+  doctorSchedules = [...JSON.parse(JSON.stringify(MOCK_DOCTOR_SCHEDULES)), ...generateCurrentWeekDoctorSchedules()];
   workShifts = JSON.parse(JSON.stringify(MOCK_WORK_SHIFTS));
   staffShiftAssignments = JSON.parse(JSON.stringify(MOCK_STAFF_SHIFT_ASSIGNMENTS));
   attendances: Attendance[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_ATTENDANCES)) : [];
@@ -3510,7 +3576,17 @@ export class MockDatabase {
         } else {
           this.doctorBranchAssignments = JSON.parse(JSON.stringify(MOCK_DOCTOR_BRANCH_ASSIGNMENTS));
         }
-        if (Array.isArray(stored.doctorSchedules)) this.doctorSchedules = stored.doctorSchedules;
+        if (Array.isArray(stored.doctorSchedules)) {
+          const todayStr = new Date().toISOString().split("T")[0];
+          const hasCurrentMonthSchedules = stored.doctorSchedules.some((s: any) => s.date && s.date.slice(0, 7) === todayStr.slice(0, 7));
+          if (!hasCurrentMonthSchedules && stored.doctorSchedules.length > 0) {
+            this.doctorSchedules = [...stored.doctorSchedules, ...generateCurrentWeekDoctorSchedules()];
+          } else {
+            this.doctorSchedules = stored.doctorSchedules;
+          }
+        } else {
+          this.doctorSchedules = [...JSON.parse(JSON.stringify(MOCK_DOCTOR_SCHEDULES)), ...generateCurrentWeekDoctorSchedules()];
+        }
         if (Array.isArray(stored.workShifts)) this.workShifts = stored.workShifts;
         if (Array.isArray(stored.staffShiftAssignments)) this.staffShiftAssignments = stored.staffShiftAssignments;
         if (Array.isArray(stored.attendances)) this.attendances = stored.attendances;

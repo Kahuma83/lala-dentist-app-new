@@ -54,7 +54,8 @@ export const Invoices: React.FC = () => {
     treatmentRepo,
     configRepo,
     accountingRepo,
-    accountingPostingService
+    accountingPostingService,
+    refreshData
   } = useApp();
   const { navigate } = useRouter();
 
@@ -261,6 +262,7 @@ export const Invoices: React.FC = () => {
         currentUser?.name || "Kasir"
       );
       setInvoiceJournal(journal);
+      await refreshData();
     } catch (err: any) {
       console.error(err.message || "Gagal memposting invoice ke akuntansi");
     } finally {
@@ -339,6 +341,7 @@ export const Invoices: React.FC = () => {
 
       setShowCreateModal(false);
       await loadData();
+      await refreshData();
     } catch (err: any) {
       setFormError(err.message || "Gagal membuat invoice");
     } finally {
@@ -373,7 +376,22 @@ export const Invoices: React.FC = () => {
         currentUser?.branchId
       );
 
-      // Automatic Journal Posting for Payment Settlement
+      // 1. Ensure Invoice Revenue Journal exists so AR balance matches
+      try {
+        const existingInvJournal = await accountingRepo.findBySource(JournalSourceType.INVOICE, selectedInvoice.id);
+        if (!existingInvJournal) {
+          await accountingPostingService.postInvoice(
+            selectedInvoice.id,
+            currentUser?.role,
+            currentUser?.branchId,
+            currentUser?.name || "Kasir"
+          );
+        }
+      } catch (invPostErr) {
+        console.warn("Auto-posting invoice journal before payment settlement:", invPostErr);
+      }
+
+      // 2. Automatic Journal Posting for Payment Settlement (Dr Cash/Bank, Cr AR)
       try {
         await accountingPostingService.postPayment(
           newPayment.id,
@@ -387,6 +405,7 @@ export const Invoices: React.FC = () => {
 
       setShowPaymentModal(false);
       await loadData();
+      await refreshData();
     } catch (err: any) {
       setPayError(err.message || "Gagal memproses pembayaran");
     } finally {

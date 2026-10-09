@@ -61,18 +61,49 @@ export const Accounting: React.FC = () => {
   const isSuper = currentUser?.role === UserRole.SUPER_ADMIN;
   const userBranchId = currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId : selectedBranchId;
 
+  // Local state for dynamically synced journals
+  const [localJournals, setLocalJournals] = useState<JournalEntry[]>(journals || []);
+  const [isRefreshingJournals, setIsRefreshingJournals] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
+
   const [activeTab, setActiveTab] = useState<"journals" | "coa" | "ledger" | "profit_loss">("journals");
   const [loading, setLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Filter States for Journals
+  // Filter States for Journals - Super Admin defaults to "ALL" so all branches appear
   const [journalSearch, setJournalSearch] = useState("");
   const [journalStatusFilter, setJournalStatusFilter] = useState<string>("ALL");
   const [journalSourceFilter, setJournalSourceFilter] = useState<string>("ALL");
-  const [journalBranchFilter, setJournalBranchFilter] = useState<string>(userBranchId || "ALL");
+  const [journalBranchFilter, setJournalBranchFilter] = useState<string>(isSuper ? "ALL" : (userBranchId || "ALL"));
   const [journalDateFrom, setJournalDateFrom] = useState<string>("");
   const [journalDateTo, setJournalDateTo] = useState<string>("");
+
+  // Sync with global journals if updated in context
+  useEffect(() => {
+    if (journals && journals.length > 0) {
+      setLocalJournals(journals);
+    }
+  }, [journals]);
+
+  // Load fresh journals directly from repository
+  const loadJournalsData = async () => {
+    setIsRefreshingJournals(true);
+    try {
+      const fresh = await accountingRepo.getJournals();
+      setLocalJournals(fresh);
+      setLastRefreshedAt(new Date());
+    } catch (err: any) {
+      console.warn("Failed to refresh accounting journals:", err);
+    } finally {
+      setIsRefreshingJournals(false);
+    }
+  };
+
+  // Auto-refresh journals on mount and when entering journals tab
+  useEffect(() => {
+    loadJournalsData();
+  }, [activeTab]);
 
   // COA Filter States
   const [coaSearch, setCoaSearch] = useState("");
@@ -259,7 +290,7 @@ export const Accounting: React.FC = () => {
 
   // Filtered Journals List
   const filteredJournals = useMemo(() => {
-    return journals.filter((j) => {
+    return localJournals.filter((j) => {
       // Branch isolation
       if (currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.assignedBranchId) {
         if (j.branchId !== currentUser.assignedBranchId) return false;
@@ -294,7 +325,7 @@ export const Accounting: React.FC = () => {
       return true;
     });
   }, [
-    journals,
+    localJournals,
     currentUser,
     journalBranchFilter,
     journalStatusFilter,
@@ -708,6 +739,14 @@ export const Accounting: React.FC = () => {
       .reduce((s, j) => s + j.totalDebit, 0);
   }, [filteredJournals]);
 
+  const totalPaymentJournals = useMemo(() => {
+    return localJournals.filter((j) => j.sourceType === JournalSourceType.PAYMENT).length;
+  }, [localJournals]);
+
+  const totalInvoiceJournals = useMemo(() => {
+    return localJournals.filter((j) => j.sourceType === JournalSourceType.INVOICE).length;
+  }, [localJournals]);
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6" id="accounting-page">
       {/* Header */}
@@ -758,11 +797,15 @@ export const Accounting: React.FC = () => {
           )}
 
           <button
-            onClick={() => refreshData()}
-            title="Refresh Data"
-            className="p-2.5 text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+            onClick={async () => {
+              await loadJournalsData();
+              await refreshData();
+            }}
+            title="Refresh Data & Sinkronkan Jurnal"
+            className="p-2.5 text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5 text-xs font-semibold"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-4 h-4 ${isRefreshingJournals || loading ? "animate-spin text-emerald-600" : ""}`} />
+            <span className="hidden sm:inline">Sinkronkan</span>
           </button>
         </div>
       </div>
@@ -878,6 +921,33 @@ export const Accounting: React.FC = () => {
               <span className="text-xs font-semibold text-slate-500 uppercase">Total Nilai Debit/Kredit</span>
               <p className="text-2xl font-bold text-slate-900 mt-1">{formatRupiah(totalVolumeRupiah)}</p>
               <span className="text-xs text-slate-400">Total mutasi jurnal posted</span>
+            </div>
+          </div>
+
+          {/* Real-time Sync & Integration Status Banner */}
+          <div className="bg-gradient-to-r from-emerald-50 via-teal-50/60 to-blue-50 border border-emerald-200/80 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-700 shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <div>
+                <span className="font-bold text-emerald-950">Auto-Posting Kasir & Faktur Aktif:</span>{" "}
+                <span className="text-slate-600">
+                  Pelunasan invoice kasir otomatis terjurnal ({totalPaymentJournals} penerimaan pembayaran, {totalInvoiceJournals} pengakuan faktur).
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-slate-500 self-end sm:self-auto shrink-0">
+              <span className="text-[11px]">Update: {lastRefreshedAt.toLocaleTimeString("id-ID")}</span>
+              <button
+                onClick={() => loadJournalsData()}
+                disabled={isRefreshingJournals}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 font-semibold rounded-md border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingJournals ? "animate-spin text-emerald-600" : ""}`} />
+                <span>{isRefreshingJournals ? "Menyinkronkan..." : "Sinkronkan Sekarang"}</span>
+              </button>
             </div>
           </div>
 

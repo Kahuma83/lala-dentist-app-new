@@ -41,7 +41,8 @@ export const Payments: React.FC = () => {
     treatmentRepo,
     configRepo,
     accountingRepo,
-    accountingPostingService
+    accountingPostingService,
+    refreshData
   } = useApp();
   const { navigate } = useRouter();
 
@@ -130,6 +131,7 @@ export const Payments: React.FC = () => {
         currentUser?.name || "Kasir"
       );
       await loadData();
+      await refreshData();
     } catch (err: any) {
       console.error(err.message || "Gagal memposting pembayaran ke akuntansi");
     } finally {
@@ -144,6 +146,7 @@ export const Payments: React.FC = () => {
     try {
       await paymentRepo.deletePayment(paymentToDelete.id, currentUser?.role, currentUser?.branchId);
       await loadData();
+      await refreshData();
       setPaymentToDelete(null);
     } catch (err: any) {
       setDeleteError(err.message || "Gagal menghapus transaksi pembayaran");

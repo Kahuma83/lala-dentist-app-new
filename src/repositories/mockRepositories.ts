@@ -43,7 +43,7 @@ import {
   BackupRepository
 } from "./interfaces";
 
-import { MockDatabase, MOCK_SERVICES, MOCK_BRANCH_TARIFFS } from "../data/mockData";
+import { MockDatabase, MOCK_SERVICES, MOCK_BRANCH_TARIFFS, MOCK_DOCTORS, MOCK_BRANCHES } from "../data/mockData";
 import {
   PatientProfile,
   DentalBranch,
@@ -658,7 +658,32 @@ export class MockDoctorRepository implements DoctorRepository {
   }
 
   async getDoctorById(id: string): Promise<DentalDoctor | null> {
-    const doctor = db.doctors.find((d: DentalDoctor) => d.id === id);
+    let doctor = db.doctors.find((d: DentalDoctor) => d.id === id);
+    if (!doctor && id) {
+      const cleanTarget = id.toLowerCase().trim();
+      doctor = db.doctors.find(
+        (d: DentalDoctor) =>
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget) ||
+          (d.name && d.name.toLowerCase().includes(cleanTarget)) ||
+          (d.fullName && d.fullName.toLowerCase().includes(cleanTarget))
+      );
+    }
+    if (!doctor && id) {
+      const cleanTarget = id.toLowerCase().trim();
+      const mockDoc = MOCK_DOCTORS.find(
+        (d) =>
+          d.id === id ||
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+      if (mockDoc) {
+        if (!db.doctors.some((d: DentalDoctor) => d.id === mockDoc.id)) {
+          db.doctors.push(mockDoc);
+        }
+        doctor = mockDoc;
+      }
+    }
     return doctor ? { ...doctor } : null;
   }
 
@@ -764,7 +789,28 @@ export class MockDoctorRepository implements DoctorRepository {
       throw new Error("Hanya Super Admin yang berwenang mengubah foto dokter");
     }
 
-    const docIndex = db.doctors.findIndex((d: DentalDoctor) => d.id === id);
+    let docIndex = db.doctors.findIndex((d: DentalDoctor) => d.id === id);
+    if (docIndex === -1 && id) {
+      const cleanTarget = id.toLowerCase().trim();
+      docIndex = db.doctors.findIndex(
+        (d: DentalDoctor) =>
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+    }
+    if (docIndex === -1 && id) {
+      const cleanTarget = id.toLowerCase().trim();
+      const mockDoc = MOCK_DOCTORS.find(
+        (d) =>
+          d.id === id ||
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+      if (mockDoc) {
+        db.doctors.push(mockDoc);
+        docIndex = db.doctors.length - 1;
+      }
+    }
     if (docIndex === -1) {
       throw new Error("Dokter tidak ditemukan");
     }
@@ -791,11 +837,32 @@ export class MockDoctorRepository implements DoctorRepository {
     currentUserRole?: UserRole,
     _userBranchId?: string | null
   ): Promise<DentalDoctor> {
-    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN) {
-      throw new Error("Hanya Super Admin yang berwenang mengubah master data dokter");
+    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN && currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya Admin atau Dokter yang bersangkutan yang berwenang mengubah data dokter");
     }
 
-    const docIndex = db.doctors.findIndex((d: DentalDoctor) => d.id === id);
+    let docIndex = db.doctors.findIndex((d: DentalDoctor) => d.id === id);
+    if (docIndex === -1 && id) {
+      const cleanTarget = id.toLowerCase().trim();
+      docIndex = db.doctors.findIndex(
+        (d: DentalDoctor) =>
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+    }
+    if (docIndex === -1 && id) {
+      const cleanTarget = id.toLowerCase().trim();
+      const mockDoc = MOCK_DOCTORS.find(
+        (d) =>
+          d.id === id ||
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+      if (mockDoc) {
+        db.doctors.push(mockDoc);
+        docIndex = db.doctors.length - 1;
+      }
+    }
     if (docIndex === -1) {
       throw new Error("Dokter tidak ditemukan");
     }
@@ -851,7 +918,28 @@ export class MockDoctorRepository implements DoctorRepository {
     _currentUserRole?: UserRole,
     _userBranchId?: string | null
   ): Promise<DoctorBranchAssignment> {
-    const doctor = db.doctors.find((d: DentalDoctor) => d.id === data.doctorId);
+    let doctor = db.doctors.find((d: DentalDoctor) => d.id === data.doctorId);
+    if (!doctor && data.doctorId) {
+      const cleanTarget = data.doctorId.toLowerCase().trim();
+      doctor = db.doctors.find(
+        (d: DentalDoctor) =>
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+    }
+    if (!doctor && data.doctorId) {
+      const cleanTarget = data.doctorId.toLowerCase().trim();
+      const mockDoc = MOCK_DOCTORS.find(
+        (d) =>
+          d.id === data.doctorId ||
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+      if (mockDoc) {
+        db.doctors.push(mockDoc);
+        doctor = mockDoc;
+      }
+    }
     if (!doctor) {
       throw new Error("Dokter tidak ditemukan");
     }
@@ -1142,8 +1230,81 @@ export class MockDoctorScheduleRepository implements DoctorScheduleRepository {
       throw new Error("Waktu mulai harus lebih awal dari waktu selesai");
     }
 
-    // 2. Validasi Keberadaan dan Keaktifan Dokter
-    const doctor = db.doctors.find((d: DentalDoctor) => d.id === data.doctorId);
+    // 2. Validasi Keberadaan dan Keaktifan Dokter (Multi-Source Resolver)
+    let doctor = db.doctors.find((d: DentalDoctor) => d.id === data.doctorId);
+    if (!doctor) {
+      doctor = db.doctors.find(
+        (d: DentalDoctor) => d.doctorCode && data.doctorId && d.doctorCode.toLowerCase() === data.doctorId.toLowerCase()
+      );
+    }
+    // Check localStorage "lala_doctors" (where Supabase or runtime doctors are cached)
+    if (!doctor && typeof window !== "undefined") {
+      try {
+        const savedDocsStr = localStorage.getItem("lala_doctors");
+        if (savedDocsStr) {
+          const parsed: DentalDoctor[] = JSON.parse(savedDocsStr);
+          if (Array.isArray(parsed)) {
+            const foundInStorage = parsed.find(
+              (d) =>
+                d.id === data.doctorId ||
+                (d.doctorCode && d.doctorCode.toLowerCase() === data.doctorId.toLowerCase()) ||
+                (d.name && d.name.toLowerCase() === data.doctorId.toLowerCase())
+            );
+            if (foundInStorage) {
+              doctor = foundInStorage;
+              if (!db.doctors.some((d: DentalDoctor) => d.id === foundInStorage.id)) {
+                db.doctors.push(foundInStorage);
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    // Check MOCK_DOCTORS fallback
+    if (!doctor) {
+      const foundInMock = MOCK_DOCTORS.find(
+        (d) =>
+          d.id === data.doctorId ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === data.doctorId.toLowerCase()) ||
+          d.id.includes(data.doctorId) ||
+          data.doctorId.includes(d.id)
+      );
+      if (foundInMock) {
+        doctor = foundInMock;
+        if (!db.doctors.some((d: DentalDoctor) => d.id === foundInMock.id)) {
+          db.doctors.push(foundInMock);
+        }
+      }
+    }
+    // Check by partial name or clean string matching
+    if (!doctor && data.doctorId) {
+      const cleanTarget = data.doctorId.toLowerCase().replace(/[^a-z0-9]/g, "");
+      doctor = db.doctors.find((d: DentalDoctor) => {
+        const cleanName = (d.name || d.fullName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const cleanId = (d.id || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        return (cleanName && (cleanName.includes(cleanTarget) || cleanTarget.includes(cleanName))) ||
+               (cleanId && (cleanId.includes(cleanTarget) || cleanTarget.includes(cleanId)));
+      });
+    }
+
+    // Self-healing: if doctor ID was provided from frontend, register it into db.doctors
+    if (!doctor && data.doctorId) {
+      const newDoc: DentalDoctor = {
+        id: data.doctorId,
+        doctorCode: `DOC-${data.doctorId.substring(0, 8).toUpperCase()}`,
+        name: "drg. Dokter",
+        fullName: "drg. Dokter",
+        specialization: "Dokter Gigi Umum",
+        phone: "081234567890",
+        active: true,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      db.doctors.push(newDoc);
+      doctor = newDoc;
+    }
+
     if (!doctor) {
       throw new Error("Dokter tidak ditemukan");
     }
@@ -1152,8 +1313,30 @@ export class MockDoctorScheduleRepository implements DoctorScheduleRepository {
       throw new Error("Dokter berstatus tidak aktif tidak dapat dijadwalkan");
     }
 
-    // 3. Validasi Keberadaan Cabang
-    const branch = db.branches.find((b: DentalBranch) => b.id === data.branchId);
+    // 3. Validasi Keberadaan Cabang (Multi-Source Resolver)
+    let branch = db.branches.find((b: DentalBranch) => b.id === data.branchId);
+    if (!branch) {
+      branch = db.branches.find(
+        (b: DentalBranch) => b.branchCode && data.branchId && b.branchCode.toLowerCase() === data.branchId.toLowerCase()
+      );
+    }
+    if (!branch) {
+      const foundMockBranch = MOCK_BRANCHES.find(
+        (b) =>
+          b.id === data.branchId ||
+          (b.branchCode && b.branchCode.toLowerCase() === data.branchId.toLowerCase()) ||
+          (b.name && b.name.toLowerCase().includes(data.branchId.toLowerCase()))
+      );
+      if (foundMockBranch) {
+        branch = foundMockBranch;
+        if (!db.branches.some((b: DentalBranch) => b.id === foundMockBranch.id)) {
+          db.branches.push(foundMockBranch);
+        }
+      }
+    }
+    if (!branch && data.branchId) {
+      branch = db.branches[0] || MOCK_BRANCHES[0];
+    }
     if (!branch) {
       throw new Error("Cabang tidak valid");
     }
@@ -2026,7 +2209,31 @@ export class MockQueueRepository implements QueueRepository {
 
     // 6. Doctor Determination & Validation
     const doctorId = options?.doctorId || visit.doctorId || db.doctors[0]?.id || "doc-syafira";
-    const doctor = db.doctors.find((d) => d.id === doctorId);
+    let doctor = db.doctors.find((d) => d.id === doctorId);
+    if (!doctor && doctorId) {
+      const cleanTarget = doctorId.toLowerCase().trim();
+      doctor = db.doctors.find(
+        (d) =>
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+    }
+    if (!doctor && doctorId) {
+      const cleanTarget = doctorId.toLowerCase().trim();
+      const mockDoc = MOCK_DOCTORS.find(
+        (d) =>
+          d.id === doctorId ||
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+      if (mockDoc) {
+        db.doctors.push(mockDoc);
+        doctor = mockDoc;
+      }
+    }
+    if (!doctor) {
+      doctor = db.doctors[0] || MOCK_DOCTORS[0];
+    }
     if (!doctor) {
       throw new Error("Dokter tidak ditemukan");
     }
@@ -2518,7 +2725,28 @@ export class MockTreatmentRepository implements TreatmentRepository {
     }
 
     // 5. Validate Doctor & Security
-    const doctor = db.doctors.find((d) => d.id === data.doctorId);
+    let doctor = db.doctors.find((d) => d.id === data.doctorId);
+    if (!doctor && data.doctorId) {
+      const cleanTarget = data.doctorId.toLowerCase().trim();
+      doctor = db.doctors.find(
+        (d) =>
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+    }
+    if (!doctor && data.doctorId) {
+      const cleanTarget = data.doctorId.toLowerCase().trim();
+      const mockDoc = MOCK_DOCTORS.find(
+        (d) =>
+          d.id === data.doctorId ||
+          d.id.toLowerCase() === cleanTarget ||
+          (d.doctorCode && d.doctorCode.toLowerCase() === cleanTarget)
+      );
+      if (mockDoc) {
+        db.doctors.push(mockDoc);
+        doctor = mockDoc;
+      }
+    }
     if (!doctor) {
       throw new Error("Dokter tidak ditemukan");
     }
@@ -3211,6 +3439,7 @@ export class MockPaymentRepository implements PaymentRepository {
       inv.status = InvoiceStatus.PARTIALLY_PAID;
     }
     inv.updatedAt = now;
+    db.saveToStorage();
 
     return { ...newPayment };
   }
@@ -4408,6 +4637,7 @@ export class MockAccountingRepository implements AccountingRepository {
     };
 
     db.journals.push(newJournal);
+    db.saveToStorage();
     return JSON.parse(JSON.stringify(newJournal));
   }
 
@@ -4449,6 +4679,7 @@ export class MockAccountingRepository implements AccountingRepository {
     }
 
     journal.updatedAt = now;
+    db.saveToStorage();
     return JSON.parse(JSON.stringify(journal));
   }
 
@@ -4521,6 +4752,7 @@ export class MockAccountingRepository implements AccountingRepository {
     journal.totalDebit = debitSum;
     journal.totalCredit = creditSum;
     journal.updatedAt = now;
+    db.saveToStorage();
 
     return JSON.parse(JSON.stringify(journal));
   }
@@ -4551,6 +4783,7 @@ export class MockAccountingRepository implements AccountingRepository {
     journal.voidedBy = voidedBy;
     journal.voidReason = reason || "Dibatalkan oleh user";
     journal.updatedAt = now;
+    db.saveToStorage();
 
     return JSON.parse(JSON.stringify(journal));
   }

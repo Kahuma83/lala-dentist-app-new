@@ -119,11 +119,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       title: "OPERASIONAL",
       items: [
         { name: "Pasien", path: "/super-admin/patients", icon: Users },
-        { name: "Jadwal Dokter", path: "/super-admin/hr?tab=schedules", icon: CalendarRange },
         { name: "Booking", path: "/super-admin/bookings", icon: CalendarRange },
         { name: "Konfirmasi H-1", path: "/super-admin/h1-confirmation", icon: Clock },
         { name: "Antrean", path: "/super-admin/queue", icon: ListOrdered },
         { name: "Treatment", path: "/super-admin/treatments", icon: Activity }
+      ]
+    },
+    {
+      title: "JADWAL PRAKTIK",
+      items: [
+        { name: "Jadwal Dokter", path: "/super-admin/schedules", icon: CalendarRange }
       ]
     },
     {
@@ -160,11 +165,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       title: "OPERASIONAL",
       items: [
         { name: "Pasien", path: "/branch-admin/patients", icon: Users },
-        { name: "Jadwal Dokter", path: "/branch-admin/hr?tab=schedules", icon: CalendarRange },
         { name: "Booking", path: "/branch-admin/bookings", icon: CalendarRange },
         { name: "Konfirmasi H-1", path: "/branch-admin/h1-confirmation", icon: Clock },
         { name: "Antrean", path: "/branch-admin/queue", icon: ListOrdered },
         { name: "Treatment", path: "/branch-admin/treatments", icon: Activity }
+      ]
+    },
+    {
+      title: "JADWAL PRAKTIK",
+      items: [
+        { name: "Jadwal Dokter", path: "/branch-admin/schedules", icon: CalendarRange }
       ]
     },
     {
@@ -195,6 +205,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       title: "PRAKTEK DOKTER",
       items: [
         { name: "Live Antrean Dokter", path: "/doctor/queue", icon: ListOrdered },
+        { name: "Jadwal Praktik", path: "/doctor/schedules", icon: CalendarRange },
         { name: "Pasien", path: "/doctor/patients", icon: Users },
         { name: "Treatment", path: "/doctor/treatments", icon: Activity }
       ]

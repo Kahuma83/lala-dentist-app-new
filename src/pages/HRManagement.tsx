@@ -5,6 +5,7 @@ import { AttendanceManager } from "../components/AttendanceManager";
 import { OvertimeManager } from "../components/OvertimeManager";
 import { DoctorSchedulePosterModal } from "../components/poster/DoctorSchedulePosterModal";
 import { DoctorTimetableBoard } from "../components/DoctorTimetableBoard";
+import { DoctorExcelScheduleGrid } from "../components/DoctorExcelScheduleGrid";
 import { MockDatabase } from "../data/mockData";
 import {
   UserRole,
@@ -47,7 +48,8 @@ import {
   KeyRound,
   Lock,
   LayoutGrid,
-  List
+  List,
+  Table
 } from "lucide-react";
 
 export const HRManagement: React.FC = () => {
@@ -710,7 +712,7 @@ export const HRManagement: React.FC = () => {
   // =========================================================================
   // TAB 3: JADWAL DOKTER (Doctor Schedules & Drag-and-Drop Timetable)
   // =========================================================================
-  const [scheduleViewMode, setScheduleViewMode] = useState<"timetable" | "list">("timetable");
+  const [scheduleViewMode, setScheduleViewMode] = useState<"excel" | "list" | "timetable">("excel");
   const [scheduleDateFilter, setScheduleDateFilter] = useState<string>(new Date().toISOString().split("T")[0]);
   const [scheduleBranchFilter, setScheduleBranchFilter] = useState<string>(userBranchId || "ALL");
   const [scheduleDoctorFilter, setScheduleDoctorFilter] = useState<string>("ALL");
@@ -1501,12 +1503,18 @@ export const HRManagement: React.FC = () => {
               </div>
               <div>
                 <h2 className="text-sm font-bold text-slate-900">
-                  {scheduleViewMode === "timetable" ? "Papan Jadwal Dokter (Drag & Drop)" : "Daftar Jadwal Dokter"}
+                  {scheduleViewMode === "excel"
+                    ? "Jadwal Dokter (Format Kolom Excel)"
+                    : scheduleViewMode === "timetable"
+                    ? "Papan Jadwal Dokter (Drag & Drop)"
+                    : "Daftar Riwayat Jadwal Dokter"}
                 </h2>
                 <p className="text-[11px] text-slate-500">
-                  {scheduleViewMode === "timetable"
-                    ? "Tampilan kolom mingguan seperti jadwal pelajaran dengan sistem drag & drop instan"
-                    : "Tampilan tabel daftar riwayat dan filter tanggal jadwal praktek dokter"}
+                  {scheduleViewMode === "excel"
+                    ? "Tampilan tabel mingguan sederhana seperti Excel: baris dokter dan kolom hari (Senin - Minggu). Klik sel untuk isi atau ubah."
+                    : scheduleViewMode === "timetable"
+                    ? "Tampilan kolom mingguan seperti jadwal pelajaran dengan sistem drag & drop instan."
+                    : "Tampilan tabel daftar riwayat dan filter tanggal jadwal praktek dokter."}
                 </p>
               </div>
             </div>
@@ -1515,15 +1523,15 @@ export const HRManagement: React.FC = () => {
             <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
               <button
                 type="button"
-                onClick={() => setScheduleViewMode("timetable")}
+                onClick={() => setScheduleViewMode("excel")}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  scheduleViewMode === "timetable"
+                  scheduleViewMode === "excel"
                     ? "bg-white text-emerald-700 shadow-xs"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>Jadwal Kolom (Drag &amp; Drop)</span>
+                <Table className="w-3.5 h-3.5" />
+                <span>Format Excel (Roster)</span>
               </button>
               <button
                 type="button"
@@ -1537,10 +1545,37 @@ export const HRManagement: React.FC = () => {
                 <List className="w-3.5 h-3.5" />
                 <span>Tabel Daftar</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setScheduleViewMode("timetable")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  scheduleViewMode === "timetable"
+                    ? "bg-white text-emerald-700 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Papan Drag &amp; Drop</span>
+              </button>
             </div>
           </div>
 
-          {/* 1. TIMETABLE BOARD VIEW */}
+          {/* 1. EXCEL-STYLE SPREADSHEET MATRIX VIEW (DEFAULT & SIMPLE) */}
+          {scheduleViewMode === "excel" && (
+            <DoctorExcelScheduleGrid
+              doctors={doctors}
+              branches={branches}
+              schedules={doctorSchedules}
+              currentUser={currentUser}
+              selectedBranchId={userBranchId || (scheduleBranchFilter !== "ALL" ? scheduleBranchFilter : null)}
+              onScheduleCreate={handleTimetableScheduleCreate}
+              onScheduleUpdate={handleTimetableScheduleUpdate}
+              onScheduleCancel={handleCancelSchedule}
+              onOpenPosterModal={isSuper ? () => setIsPosterModalOpen(true) : undefined}
+            />
+          )}
+
+          {/* 2. TIMETABLE BOARD VIEW */}
           {scheduleViewMode === "timetable" && (
             <DoctorTimetableBoard
               doctors={doctors}

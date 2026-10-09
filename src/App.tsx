@@ -16,6 +16,7 @@ import { Expenses } from "./pages/Expenses";
 import { Configuration } from "./pages/Configuration";
 import { Accounting } from "./pages/Accounting";
 import { HRManagement } from "./pages/HRManagement";
+import { DoctorSchedules } from "./pages/DoctorSchedules";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { AdminLayout } from "./layouts/AdminLayout";
 import { UserRole } from "./types/domain";
@@ -118,6 +119,8 @@ const AppContent: React.FC = () => {
       view = <Payroll />;
     } else if (path === "/super-admin/accounting") {
       view = <Accounting />;
+    } else if (path.startsWith("/super-admin/schedules")) {
+      view = <DoctorSchedules />;
     } else if (path.startsWith("/super-admin/hr")) {
       view = <HRManagement />;
     } else if (path.startsWith("/super-admin/configuration")) {
@@ -155,6 +158,8 @@ const AppContent: React.FC = () => {
       view = <Expenses />;
     } else if (path === "/branch-admin/accounting") {
       view = <Accounting />;
+    } else if (path.startsWith("/branch-admin/schedules")) {
+      view = <DoctorSchedules />;
     } else if (path.startsWith("/branch-admin/hr")) {
       view = <HRManagement />;
     } else if (path.startsWith("/branch-admin/configuration")) {
@@ -172,7 +177,9 @@ const AppContent: React.FC = () => {
       return <UnauthorizedPage />;
     }
     let view = <LiveQueueManagement />;
-    if (path.includes("/treatments")) {
+    if (path.includes("/schedules")) {
+      view = <DoctorSchedules />;
+    } else if (path.includes("/treatments")) {
       view = <TreatmentManagement />;
     } else if (path.includes("/patients")) {
       view = <PatientManagement />;

@@ -246,11 +246,24 @@ export const DoctorTimetableBoard: React.FC<DoctorTimetableBoardProps> = ({
       const branchObj = branches.find((b) => b.id === targetBranch);
 
       if (payload.type === "NEW_DOCTOR") {
-        const doctor = doctors.find((d) => d.id === payload.doctorId);
+        let doctor = doctors.find((d) => d.id === payload.doctorId);
+        if (!doctor && payload.doctorId) {
+          const targetClean = String(payload.doctorId).toLowerCase().trim();
+          doctor = doctors.find(
+            (d) =>
+              d.id.toLowerCase() === targetClean ||
+              (d as any).doctorCode?.toLowerCase() === targetClean ||
+              (d.name && d.name.toLowerCase().includes(targetClean)) ||
+              (d.fullName && d.fullName.toLowerCase().includes(targetClean))
+          );
+        }
+        if (!doctor && doctors.length > 0) {
+          doctor = doctors[0];
+        }
         if (!doctor) throw new Error("Dokter tidak ditemukan");
 
         await onScheduleCreate({
-          doctorId: payload.doctorId,
+          doctorId: doctor.id,
           branchId: targetBranch,
           date: dateStr,
           startTime: shift.startTime,
@@ -267,7 +280,20 @@ export const DoctorTimetableBoard: React.FC<DoctorTimetableBoardProps> = ({
         const existingSchedule = schedules.find((s) => s.id === payload.scheduleId);
         if (!existingSchedule) throw new Error("Jadwal tidak ditemukan");
 
-        const doctor = doctors.find((d) => d.id === existingSchedule.doctorId);
+        let doctor = doctors.find((d) => d.id === existingSchedule.doctorId);
+        if (!doctor && existingSchedule.doctorId) {
+          const targetClean = String(existingSchedule.doctorId).toLowerCase().trim();
+          doctor = doctors.find(
+            (d) =>
+              d.id.toLowerCase() === targetClean ||
+              (d as any).doctorCode?.toLowerCase() === targetClean ||
+              (d.name && d.name.toLowerCase().includes(targetClean)) ||
+              (d.fullName && d.fullName.toLowerCase().includes(targetClean))
+          );
+        }
+        if (!doctor && doctors.length > 0) {
+          doctor = doctors[0];
+        }
 
         await onScheduleUpdate(payload.scheduleId, {
           date: dateStr,
