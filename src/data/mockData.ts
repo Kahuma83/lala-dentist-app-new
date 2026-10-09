@@ -3454,13 +3454,10 @@ export class MockDatabase {
           const missingStaff = MOCK_STAFF.filter((s) => !existingIds.has(s.id));
           this.staff = [...stored.staff, ...missingStaff];
         }
-        if (Array.isArray(stored.doctors)) {
-          const storedDoctorIds = new Set(stored.doctors.map((d: any) => d.id));
-          if (!storedDoctorIds.has("doc-aab") || stored.doctors.length !== MOCK_DOCTORS.length) {
-            this.doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
-          } else {
-            this.doctors = stored.doctors;
-          }
+        if (Array.isArray(stored.doctors) && stored.doctors.length > 0) {
+          const storedDoctorMap = new Map(stored.doctors.map((d: any) => [d.id, d]));
+          const missingBase = MOCK_DOCTORS.filter((baseDoc) => !storedDoctorMap.has(baseDoc.id));
+          this.doctors = [...stored.doctors, ...missingBase];
         } else {
           this.doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
         }
@@ -3468,7 +3465,7 @@ export class MockDatabase {
           const storedMap = new Map(stored.userAccounts.map((a: any) => [a.id, a]));
           // Merge mock accounts and keep password and username synchronized
           const mergedAccounts = MOCK_USER_ACCOUNTS.map((mockAcc) => {
-            const storedAcc = storedMap.get(mockAcc.id);
+            const storedAcc = storedMap.get(mockAcc.id) as any;
             if (storedAcc) {
               return { ...storedAcc, ...mockAcc, password: mockAcc.password || storedAcc.password };
             }
@@ -3508,12 +3505,8 @@ export class MockDatabase {
         if (Array.isArray(stored.payrollItems)) this.payrollItems = stored.payrollItems;
         if (Array.isArray(stored.accounts)) this.accounts = stored.accounts;
         if (Array.isArray(stored.journals)) this.journals = stored.journals;
-        if (Array.isArray(stored.doctorBranchAssignments)) {
-          if (stored.doctorBranchAssignments.some((a: any) => a.branchId === "branch-muktisari") || !stored.doctorBranchAssignments.some((a: any) => a.doctorId === "doc-aab")) {
-            this.doctorBranchAssignments = JSON.parse(JSON.stringify(MOCK_DOCTOR_BRANCH_ASSIGNMENTS));
-          } else {
-            this.doctorBranchAssignments = stored.doctorBranchAssignments;
-          }
+        if (Array.isArray(stored.doctorBranchAssignments) && stored.doctorBranchAssignments.length > 0) {
+          this.doctorBranchAssignments = stored.doctorBranchAssignments;
         } else {
           this.doctorBranchAssignments = JSON.parse(JSON.stringify(MOCK_DOCTOR_BRANCH_ASSIGNMENTS));
         }

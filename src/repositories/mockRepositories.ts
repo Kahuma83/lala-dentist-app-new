@@ -874,6 +874,7 @@ export class MockDoctorRepository implements DoctorRepository {
         active: true,
         updatedAt: now
       };
+      this.saveToStorage();
       return { ...db.doctorBranchAssignments[existingIndex] };
     }
 
@@ -890,6 +891,7 @@ export class MockDoctorRepository implements DoctorRepository {
     };
 
     db.doctorBranchAssignments.push(newAssignment);
+    this.saveToStorage();
     return { ...newAssignment };
   }
 
@@ -898,6 +900,7 @@ export class MockDoctorRepository implements DoctorRepository {
     if (index !== -1) {
       db.doctorBranchAssignments[index].active = false;
       db.doctorBranchAssignments[index].updatedAt = new Date().toISOString();
+      this.saveToStorage();
     }
   }
 
@@ -1187,6 +1190,7 @@ export class MockDoctorScheduleRepository implements DoctorScheduleRepository {
     };
 
     db.doctorSchedules.push(newSchedule);
+    db.saveToStorage();
     return { ...newSchedule };
   }
 
@@ -1247,6 +1251,7 @@ export class MockDoctorScheduleRepository implements DoctorScheduleRepository {
     };
 
     db.doctorSchedules[index] = updated;
+    db.saveToStorage();
     return { ...updated };
   }
 
@@ -1272,6 +1277,7 @@ export class MockDoctorScheduleRepository implements DoctorScheduleRepository {
     };
 
     db.doctorSchedules[index] = updated;
+    db.saveToStorage();
     return { ...updated };
   }
 }
