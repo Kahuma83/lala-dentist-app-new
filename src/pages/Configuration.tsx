@@ -1606,25 +1606,30 @@ export const Configuration: React.FC = () => {
                   <div className="flex items-start gap-4">
                     {/* Doctor Avatar / Portrait */}
                     <div className="relative shrink-0">
-                      <div className="w-16 h-16 rounded-full ring-2 ring-[#c5a059]/40 bg-gradient-to-br from-amber-50 to-white flex items-center justify-center overflow-hidden shadow-xs">
+                      <div className="w-16 h-16 rounded-full ring-2 ring-[#c5a059]/40 bg-gradient-to-br from-amber-50 to-white flex items-center justify-center overflow-hidden shadow-xs relative">
                         {photo ? (
                           <img
                             src={photo}
                             alt={docName}
                             className="w-full h-full object-cover object-center"
                             onError={(e) => {
-                              (e.target as HTMLElement).style.display = "none";
+                              const target = e.target as HTMLElement;
+                              target.style.display = "none";
+                              const fallback = target.nextElementSibling as HTMLElement;
+                              if (fallback) fallback.style.display = "flex";
                             }}
                           />
-                        ) : (
-                          <div className="w-full h-full bg-[#17233C] text-[#e1b951] font-bold text-lg flex items-center justify-center">
-                            {docName
-                              .replace("drg.", "")
-                              .trim()
-                              .substring(0, 2)
-                              .toUpperCase()}
-                          </div>
-                        )}
+                        ) : null}
+                        <div
+                          style={{ display: photo ? "none" : "flex" }}
+                          className="w-full h-full bg-[#17233C] text-[#e1b951] font-bold text-lg items-center justify-center"
+                        >
+                          {docName
+                            .replace(/^(drg\.|dr\.)\s*/i, "")
+                            .trim()
+                            .substring(0, 2)
+                            .toUpperCase() || "DR"}
+                        </div>
                       </div>
                       <div className="absolute -bottom-1 -right-1 bg-white p-0.5 rounded-full shadow-xs">
                         <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 block border-2 border-white"></span>

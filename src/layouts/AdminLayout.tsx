@@ -79,6 +79,24 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   const isSuper = currentUser.role === UserRole.SUPER_ADMIN;
   const currentBranch = branches.find((b) => b.id === (selectedBranchId || currentUser.assignedBranchId));
+
+  const getHomePath = () => {
+    if (currentUser.role === UserRole.SUPER_ADMIN) return "/super-admin/dashboard";
+    if (currentUser.role === UserRole.BRANCH_ADMIN) return "/branch-admin/dashboard";
+    if (currentUser.role === UserRole.DOCTOR) return "/doctor/queue";
+    if (currentUser.role === UserRole.DOCTOR_ASSISTANT) return "/assistant/queue";
+    if (currentUser.role === UserRole.PATIENT) return "/patient/queue";
+    return "/login";
+  };
+
+  const handleLogout = async () => {
+    setShowProfileMenu(false);
+    localStorage.removeItem("mock_user_id");
+    localStorage.setItem("mock_user_logged_out", "true");
+    await AuthService.signOut();
+    setCurrentUser(null);
+    navigate("/login");
+  };
   
   // Prioritize active branch custom logo or clinic branding logo
   const activeLogo =
@@ -101,6 +119,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       title: "OPERASIONAL",
       items: [
         { name: "Pasien", path: "/super-admin/patients", icon: Users },
+        { name: "Jadwal Dokter", path: "/super-admin/hr?tab=schedules", icon: CalendarRange },
         { name: "Booking", path: "/super-admin/bookings", icon: CalendarRange },
         { name: "Konfirmasi H-1", path: "/super-admin/h1-confirmation", icon: Clock },
         { name: "Antrean", path: "/super-admin/queue", icon: ListOrdered },
@@ -141,6 +160,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       title: "OPERASIONAL",
       items: [
         { name: "Pasien", path: "/branch-admin/patients", icon: Users },
+        { name: "Jadwal Dokter", path: "/branch-admin/hr?tab=schedules", icon: CalendarRange },
         { name: "Booking", path: "/branch-admin/bookings", icon: CalendarRange },
         { name: "Konfirmasi H-1", path: "/branch-admin/h1-confirmation", icon: Clock },
         { name: "Antrean", path: "/branch-admin/queue", icon: ListOrdered },
@@ -263,7 +283,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           </button>
 
           {/* Logo Brand exactly as requested */}
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate(isSuper ? "/super-admin/dashboard" : "/branch-admin/dashboard")}>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate(getHomePath())}>
             <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm shrink-0 p-1">
               <LalaLogo src={activeLogo} className="w-7 h-7" />
             </div>
@@ -344,7 +364,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             </span>
           )}
 
-          {/* Drg. Syarif Admin Profile Block */}
+          {/* User Profile Block */}
           <div className="relative border-l border-white/10 pl-5">
             <button
               onClick={() => setShowProfileMenu(!showProfileMenu)}
@@ -352,7 +372,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               aria-label="Menu Profil"
             >
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#ebd4a8] via-[#ebd4a8] to-[#c5a059] flex items-center justify-center text-[#17233C] font-black text-sm border border-white/30 shadow-sm overflow-hidden">
-                S
+                {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : "U"}
               </div>
               <div className="hidden md:block text-left">
                 <p className="text-xs font-bold text-white leading-none">{currentUser.name.replace(" (Super Admin)", "")}</p>
@@ -383,13 +403,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                     <User className="w-3.5 h-3.5 text-[#c5a059]" /> Profil Saya
                   </button>
                   <button
-                    onClick={async () => {
-                      setShowProfileMenu(false);
-                      localStorage.removeItem("mock_user_id");
-                      await AuthService.signOut();
-                      setCurrentUser(null);
-                      navigate("/login");
-                    }}
+                    onClick={handleLogout}
                     className="w-full text-left px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 flex items-center gap-2 border-t border-slate-100 font-semibold"
                   >
                     <LogOut className="w-3.5 h-3.5 text-rose-500" /> Keluar Sesi
@@ -429,7 +443,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                     const isSrvTab = item.path.includes("?tab=");
                     let isActive = false;
                     if (isSrvTab) {
-                      isActive = path.startsWith("/super-admin/configuration") && window.location.search.includes(item.path.split("?")[1]);
+                      const [basePath, queryStr] = item.path.split("?");
+                      isActive = path === basePath && window.location.search.includes(queryStr);
                     } else {
                       isActive = path === item.path;
                     }
@@ -461,12 +476,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           {/* Logout Action at the Bottom of Sidebar */}
           <div className="p-4 border-t border-slate-100">
             <button
-              onClick={async () => {
-                localStorage.removeItem("mock_user_id");
-                await AuthService.signOut();
-                setCurrentUser(null);
-                navigate("/login");
-              }}
+              onClick={handleLogout}
               className="w-full flex items-center gap-3.5 px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors"
               title="Keluar"
             >
@@ -489,25 +499,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           {children}
         </main>
 
-      </div>
-
-      {/* 4. SIMULATION FLOATING TOOLBAR */}
-      <div className="fixed bottom-4 right-4 z-50 bg-[#17233C] text-white py-2 px-3.5 rounded-full shadow-2xl text-[10px] flex items-center gap-3 border border-[#ebd4a8]/30 backdrop-blur-md">
-        <span className="font-bold text-[#ebd4a8] flex items-center gap-1">
-          <RefreshCw className="w-3 h-3 animate-spin" /> ROLE:
-        </span>
-        <select
-          value={currentUser.id}
-          onChange={(e) => handleUserSwitch(e.target.value)}
-          className="bg-[#21304C] text-white rounded-full border border-white/10 px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#ebd4a8]/50 cursor-pointer font-medium"
-          aria-label="Switch User Role simulation"
-        >
-          {SIMULATED_USERS.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name} ({u.role})
-            </option>
-          ))}
-        </select>
       </div>
 
     </div>

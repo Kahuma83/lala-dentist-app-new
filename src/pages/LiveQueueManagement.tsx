@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useApp } from "../context/AppContext";
-import { UserRole, QueueStatus, QueueItem, LiveQueueSnapshot, PatientVisit, ScheduleStatus } from "../types/domain";
+import { UserRole, QueueStatus, QueueItem, LiveQueueSnapshot, PatientVisit, ScheduleStatus, PatientProfile, Booking, BookingStatus, VisitType, VisitStatus } from "../types/domain";
 import { AppClock } from "../utils/clock";
 import { formatIndonesianDate } from "../utils/dateUtils";
 import {
@@ -42,13 +42,19 @@ export const LiveQueueManagement: React.FC = () => {
   const [snapshot, setSnapshot] = useState<LiveQueueSnapshot | null>(null);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [visits, setVisits] = useState<PatientVisit[]>([]);
+  const [patientsList, setPatientsList] = useState<PatientProfile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   // Modals state
   const [showCheckInModal, setShowCheckInModal] = useState<boolean>(false);
+  const [checkInMode, setCheckInMode] = useState<"booking" | "walkin">("booking");
   const [selectedVisitIdForCheckIn, setSelectedVisitIdForCheckIn] = useState<string>("");
+  const [walkInPatientId, setWalkInPatientId] = useState<string>("");
+  const [walkInComplaint, setWalkInComplaint] = useState<string>("Pemeriksaan Gigi");
+  const [walkInDoctorId, setWalkInDoctorId] = useState<string>("");
+  const [allBookingsList, setAllBookingsList] = useState<Booking[]>([]);
   const [customDuration, setCustomDuration] = useState<number>(30);
 
   const [editDurationQueueId, setEditDurationQueueId] = useState<string | null>(null);
@@ -213,12 +219,89 @@ export const LiveQueueManagement: React.FC = () => {
       setQueueItems(filteredItems);
 
       // Load visits for Check-In dropdown
-      const allVisits = await repos.visit.getVisitsByBranch(
-        branchId,
-        currentUser?.role,
-        currentUser?.assignedBranchId
-      );
-      setVisits(allVisits.filter((v) => v.visitDateTime.split("T")[0] === selectedDate));
+      let allVisits: PatientVisit[] = [];
+      try {
+        allVisits = await repos.visit.getVisits();
+      } catch (vErr) {
+        console.warn("getVisits fallback:", vErr);
+        allVisits = await repos.visit.getVisitsByBranch(
+          branchId,
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      }
+
+      // Filter eligible visits for current branch
+      const eligibleVisits = allVisits.filter((v) => {
+        if (branchId && v.branchId && v.branchId !== branchId) return false;
+        if (v.visitStatus === VisitStatus.COMPLETED || v.visitStatus === VisitStatus.CANCELLED) return false;
+        if (filteredItems.some((q) => q.visitId === v.id)) return false;
+        return true;
+      });
+
+      // Load bookings for check-in options
+      let allBookings: Booking[] = [];
+      try {
+        allBookings = await repos.booking.getBookings(
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      } catch (bErr) {
+        console.warn("getBookings fallback:", bErr);
+        allBookings = await repos.booking.getBookingsByBranch(
+          branchId,
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      }
+      setAllBookingsList(allBookings);
+
+      // Bookings eligible for check-in: matching branch, not cancelled, not already completed or queued
+      const eligibleBookings = allBookings.filter((b) => {
+        if (branchId && b.branchId && b.branchId !== branchId) return false;
+        if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.COMPLETED) return false;
+        if (filteredItems.some((q) => q.bookingId === b.id)) return false;
+        return true;
+      });
+
+      const visitedBookingIds = new Set(eligibleVisits.map((v) => v.bookingId).filter(Boolean));
+
+      const bookingVisits: PatientVisit[] = eligibleBookings
+        .filter((b) => !visitedBookingIds.has(b.id))
+        .map((b) => ({
+          id: `virtual-visit-${b.id}`,
+          patientId: b.patientId,
+          branchId: b.branchId,
+          visitDateTime: b.bookingDateTime,
+          visitType: VisitType.BOOKING,
+          visitStatus: VisitStatus.WAITING,
+          bookingId: b.id,
+          complaint: b.notes || b.complaint || "Konsultasi Booking",
+          doctorId: b.doctorId,
+          createdAt: b.createdAt,
+          updatedAt: b.updatedAt
+        }));
+
+      // Sort visits: today's bookings/visits first, then others
+      const combined = [...eligibleVisits, ...bookingVisits].sort((a, b) => {
+        const aDate = (a.visitDateTime || "").split("T")[0];
+        const bDate = (b.visitDateTime || "").split("T")[0];
+        if (aDate === selectedDate && bDate !== selectedDate) return -1;
+        if (aDate !== selectedDate && bDate === selectedDate) return 1;
+        return (a.visitDateTime || "").localeCompare(b.visitDateTime || "");
+      });
+
+      setVisits(combined);
+
+      try {
+        const pts = await repos.patient.getPatients(currentUser?.role, currentUser?.assignedBranchId);
+        setPatientsList(pts);
+        if (pts.length > 0 && !walkInPatientId) {
+          setWalkInPatientId(pts[0].id);
+        }
+      } catch {
+        // fallback
+      }
     } catch (err: any) {
       setActionError(err.message || "Gagal memuat data antrean");
     } finally {
@@ -266,12 +349,32 @@ export const LiveQueueManagement: React.FC = () => {
     try {
       setActionError(null);
       setActionSuccess(null);
-      await repos.queue.finishService(
+      const finishedItem = await repos.queue.finishService(
         queueId,
         currentUser?.role,
         currentUser?.assignedBranchId,
         currentUser?.id
       );
+
+      // If this queue item is linked to a booking, mark the booking as COMPLETED
+      try {
+        let targetBookingId = finishedItem?.bookingId;
+        if (!targetBookingId && finishedItem?.visitId) {
+          const v = visits.find((item) => item.id === finishedItem.visitId);
+          targetBookingId = v?.bookingId;
+        }
+        if (targetBookingId) {
+          await repos.booking.updateBooking(
+            targetBookingId,
+            { status: BookingStatus.COMPLETED },
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+        }
+      } catch (bErr) {
+        console.warn("Update booking status on finish error note:", bErr);
+      }
+
       setActionSuccess("Konsultasi selesai");
       await loadQueueData();
       await refreshData();
@@ -322,23 +425,106 @@ export const LiveQueueManagement: React.FC = () => {
 
   const handleCheckInVisit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedVisitIdForCheckIn) {
-      setActionError("Pilih kedatangan (visit) terlebih dahulu");
-      return;
-    }
     try {
       setActionError(null);
       setActionSuccess(null);
+
+      const branchId = (isBranchAdmin || isAssistant) ? currentUser?.assignedBranchId || selectedBranchId : selectedBranchId;
+
+      if (checkInMode === "walkin") {
+        if (!walkInPatientId) {
+          setActionError("Pilih pasien walk-in terlebih dahulu");
+          return;
+        }
+
+        const newVisit = await repos.visit.createVisit(
+          {
+            patientId: walkInPatientId,
+            branchId: branchId,
+            visitType: VisitType.WALK_IN,
+            visitDateTime: AppClock.nowISO(),
+            bookingId: null,
+            doctorId: walkInDoctorId || (selectedDoctorId !== "ALL" ? selectedDoctorId : undefined),
+            complaint: walkInComplaint || "Pemeriksaan / Konsultasi Walk-In"
+          },
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+
+        await repos.queue.checkInVisitToQueue(
+          newVisit.id,
+          currentUser?.role,
+          currentUser?.assignedBranchId,
+          {
+            estimatedDurationMinutes: customDuration,
+            doctorId: walkInDoctorId || (selectedDoctorId !== "ALL" ? selectedDoctorId : undefined)
+          }
+        );
+
+        setActionSuccess("Pasien walk-in berhasil didaftarkan dan langsung masuk antrean live!");
+        setShowCheckInModal(false);
+        setWalkInComplaint("Pemeriksaan Gigi");
+        await loadQueueData();
+        await refreshData();
+        return;
+      }
+
+      if (!selectedVisitIdForCheckIn) {
+        setActionError("Pilih booking atau kunjungan pasien terlebih dahulu");
+        return;
+      }
+
+      let visitIdToUse = selectedVisitIdForCheckIn;
+      let targetDoctorId = selectedDoctorId !== "ALL" ? selectedDoctorId : undefined;
+
+      if (selectedVisitIdForCheckIn.startsWith("virtual-visit-")) {
+        const bookingId = selectedVisitIdForCheckIn.replace("virtual-visit-", "");
+        const b = allBookingsList.find((item) => item.id === bookingId) ||
+          (await repos.booking.getBookingById(bookingId, currentUser?.role, currentUser?.assignedBranchId));
+        if (b) {
+          if (!targetDoctorId && b.doctorId) {
+            targetDoctorId = b.doctorId;
+          }
+          const newVisit = await repos.visit.createVisit(
+            {
+              patientId: b.patientId,
+              branchId: b.branchId,
+              visitType: VisitType.BOOKING,
+              visitDateTime: b.bookingDateTime || AppClock.nowISO(),
+              bookingId: b.id,
+              doctorId: b.doctorId,
+              complaint: b.notes || b.complaint || "Konsultasi Booking"
+            },
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+          visitIdToUse = newVisit.id;
+
+          // Update booking status to CONFIRMED
+          await repos.booking.updateBooking(
+            b.id,
+            { status: BookingStatus.CONFIRMED },
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+        }
+      } else {
+        const existingVisit = visits.find((v) => v.id === selectedVisitIdForCheckIn);
+        if (existingVisit?.doctorId && !targetDoctorId) {
+          targetDoctorId = existingVisit.doctorId;
+        }
+      }
+
       await repos.queue.checkInVisitToQueue(
-        selectedVisitIdForCheckIn,
+        visitIdToUse,
         currentUser?.role,
         currentUser?.assignedBranchId,
         {
           estimatedDurationMinutes: customDuration,
-          doctorId: selectedDoctorId !== "ALL" ? selectedDoctorId : undefined
+          doctorId: targetDoctorId
         }
       );
-      setActionSuccess("Visit berhasil dimasukkan ke antrean live");
+      setActionSuccess("Pasien berhasil di-checkin dan masuk antrean live!");
       setShowCheckInModal(false);
       setSelectedVisitIdForCheckIn("");
       await loadQueueData();
@@ -771,29 +957,147 @@ export const LiveQueueManagement: React.FC = () => {
       {showCheckInModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-100 space-y-4">
-            <h3 className="text-base font-bold text-slate-800 border-b border-slate-100 pb-3">
-              Check-In Visit Pasien ke Antrean Live
-            </h3>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-800">
+                Check-In Pasien ke Antrean Live
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCheckInModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* TAB SELECTOR */}
+            <div className="flex bg-slate-100 p-1 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setCheckInMode("booking")}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${
+                  checkInMode === "booking"
+                    ? "bg-white text-emerald-700 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Dari Booking / Visit ({visits.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCheckInMode("walkin")}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${
+                  checkInMode === "walkin"
+                    ? "bg-white text-emerald-700 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                + Walk-In Langsung
+              </button>
+            </div>
 
             <form onSubmit={handleCheckInVisit} className="space-y-4 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Pilih Kunjungan / Visit Hari Ini
-                </label>
-                <select
-                  value={selectedVisitIdForCheckIn}
-                  onChange={(e) => setSelectedVisitIdForCheckIn(e.target.value)}
-                  required
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-                >
-                  <option value="">-- Pilih Visit Pasien --</option>
-                  {visits.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.visitType === "BOOKING" ? "[Booking]" : "[Walk-In]"} Pasien ID: {v.patientId} - {v.complaint || "Konsultasi"}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {checkInMode === "booking" ? (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Pilih Kunjungan / Booking Pasien
+                  </label>
+                  {visits.length === 0 ? (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 space-y-2">
+                      <p className="leading-relaxed">
+                        Belum ada reservasi booking tertunda untuk cabang ini.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setCheckInMode("walkin")}
+                        className="font-bold text-emerald-700 hover:text-emerald-800 underline block"
+                      >
+                        Beralih ke Check-In Walk-In Langsung &rarr;
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedVisitIdForCheckIn}
+                      onChange={(e) => setSelectedVisitIdForCheckIn(e.target.value)}
+                      required
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    >
+                      <option value="">-- Pilih Pasien / Kunjungan ({visits.length} tersedia) --</option>
+                      {visits.map((v) => {
+                        const pat = patientsList.find((p) => p.id === v.patientId);
+                        const patName = pat ? pat.fullName : `Pasien ID: ${v.patientId.slice(0, 8)}...`;
+                        const isVirtual = v.id.startsWith("virtual-visit-");
+                        const bk = isVirtual ? allBookingsList.find((b) => b.id === v.bookingId) : null;
+                        const doc = doctors.find((d) => d.id === v.doctorId);
+                        const docName = doc?.name || bk?.doctorNameSnapshot || "Dokter";
+                        const dateStr = (v.visitDateTime || "").split("T")[0];
+                        const dateTag = dateStr === selectedDate ? "Hari Ini" : dateStr;
+                        const timeStr = bk?.timeSlot || v.visitDateTime?.split("T")[1]?.substring(0, 5) || "";
+
+                        return (
+                          <option key={v.id} value={v.id}>
+                            {isVirtual ? `[Booking ${dateTag}]` : `[Visit]`} {patName} - {docName} {timeStr ? `(${timeStr} WIB)` : ""} - {v.complaint || "Konsultasi"}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  )}
+                </div>
+              ) : (
+                /* WALK-IN MODE */
+                <div className="space-y-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Pilih Pasien Walk-In
+                    </label>
+                    <select
+                      value={walkInPatientId}
+                      onChange={(e) => setWalkInPatientId(e.target.value)}
+                      required
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    >
+                      <option value="">-- Pilih Profil Pasien --</option>
+                      {patientsList.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.fullName} ({p.medicalRecordNumber || p.id.slice(0, 8)}) - {p.phone || "No HP -"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Keluhan / Tindakan Pasien
+                    </label>
+                    <input
+                      type="text"
+                      value={walkInComplaint}
+                      onChange={(e) => setWalkInComplaint(e.target.value)}
+                      placeholder="Contoh: Sakit gigi, scaling karang gigi, tambal gigi..."
+                      required
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Dokter Pemeriksa (Opsional)
+                    </label>
+                    <select
+                      value={walkInDoctorId}
+                      onChange={(e) => setWalkInDoctorId(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    >
+                      <option value="">Sesuai Dokter yang Aktif / Bertugas</option>
+                      {doctors.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
@@ -819,7 +1123,8 @@ export const LiveQueueManagement: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold transition-colors"
+                  disabled={checkInMode === "booking" && visits.length === 0}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-semibold transition-colors shadow-xs"
                 >
                   Check-In Sekarang
                 </button>

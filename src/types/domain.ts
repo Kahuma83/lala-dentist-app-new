@@ -31,6 +31,7 @@ export enum VisitStatus {
 export enum BookingStatus {
   PENDING = "PENDING",
   CONFIRMED = "CONFIRMED",
+  COMPLETED = "COMPLETED",
   CANCELLED = "CANCELLED",
   RESCHEDULED = "RESCHEDULED",
   NO_SHOW = "NO_SHOW"
@@ -858,6 +859,8 @@ export interface CurrentUser {
   branchId?: string | null; // alias for assignedBranchId
   staffId?: string | null;
   doctorId?: string | null;
+  isMockFallback?: boolean;
+  email?: string | null;
 }
 
 // ==========================================

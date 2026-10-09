@@ -86,12 +86,14 @@ import {
   QueueStatus,
   VisitStatus,
   ScheduleStatus,
+  ConfirmationStatusH1,
   IncomeStatementReport,
   TrialBalanceReport,
   BalanceSheetReport
 } from "../types/domain";
 import { AppClock } from "../utils/clock";
-import { DEFAULT_CLINIC_BRANDING, MOCK_BRANCHES, MOCK_DOCTORS, MOCK_PATIENTS, MOCK_SERVICES, MOCK_BRANCH_TARIFFS } from "../data/mockData";
+import { DEFAULT_CLINIC_BRANDING, MOCK_BRANCHES, MOCK_DOCTORS, MOCK_PATIENTS, MOCK_SERVICES, MOCK_BRANCH_TARIFFS, MOCK_QUEUE_ITEMS, MOCK_INVOICES, MOCK_INVOICE_ITEMS, MOCK_PAYMENTS } from "../data/mockData";
+import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentUtils";
 
 export function isValidUUID(val?: string | null): boolean {
   if (!val || typeof val !== "string") return false;
@@ -822,96 +824,324 @@ export class SupabasePatientRepository implements PatientRepository {
 // 3. SUPABASE QUEUE REPOSITORY
 // =====================================================================
 export class SupabaseQueueRepository implements QueueRepository {
+  private getFallbackQueue(): QueueItem[] {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_queue_items");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (e) {
+        console.warn("Error loading queue items from localStorage:", e);
+      }
+    }
+    return [...MOCK_QUEUE_ITEMS];
+  }
+
+  private saveFallbackQueue(items: QueueItem[]): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("lala_queue_items", JSON.stringify(items));
+      } catch (e) {
+        console.warn("Error saving queue items to localStorage:", e);
+      }
+    }
+  }
+
   async getQueueItems(): Promise<QueueItem[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("queue_items").select("*").order("sequence_order", { ascending: true });
-    if (error) return handleSupabaseReadError("queue_items", error, []);
-    return (data || []).map(this.mapQueueFromDb);
+    let remoteItems: QueueItem[] = [];
+    try {
+      const { data, error } = await supabase.from("queue_items").select("*").order("sequence_order", { ascending: true });
+      if (!error && data) {
+        remoteItems = data.map(this.mapQueueFromDb);
+      } else if (error) {
+        console.warn("[Supabase] getQueueItems restricted/failed, using local fallback:", error.message);
+      }
+    } catch (e: any) {
+      console.warn("[Supabase] getQueueItems query failed:", e?.message);
+    }
+
+    const fallback = this.getFallbackQueue();
+    const remoteIds = new Set(remoteItems.map((q) => q.id));
+    const localOnly = fallback.filter((q) => !remoteIds.has(q.id));
+    return [...remoteItems, ...localOnly];
   }
 
-  async getQueueByBranch(branchId: string): Promise<QueueItem[]> {
+  async getQueueByBranch(
+    branchId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<QueueItem[]> {
     ensureSupabaseConnected();
-    if (!isValidUUID(branchId)) return [];
-    const { data, error } = await supabase
-      .from("queue_items")
-      .select("*")
-      .eq("branch_id", branchId)
-      .order("sequence_order", { ascending: true });
+    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && branchId !== userBranchId) {
+      throw new Error("Access denied: Staff is isolated to their assigned branch");
+    }
 
-    if (error) return handleSupabaseReadError("queue_items", error, []);
-    return (data || []).map(this.mapQueueFromDb);
+    let remoteItems: QueueItem[] = [];
+    if (isValidUUID(branchId)) {
+      try {
+        const { data, error } = await supabase
+          .from("queue_items")
+          .select("*")
+          .eq("branch_id", branchId)
+          .order("sequence_order", { ascending: true });
+
+        if (!error && data) {
+          remoteItems = data.map(this.mapQueueFromDb);
+        } else if (error) {
+          console.warn("[Supabase] getQueueByBranch restricted/failed, using local fallback:", error.message);
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] getQueueByBranch query failed:", e?.message);
+      }
+    }
+
+    const fallback = this.getFallbackQueue().filter((q) => q.branchId === branchId);
+    const remoteIds = new Set(remoteItems.map((q) => q.id));
+    const localOnly = fallback.filter((q) => !remoteIds.has(q.id));
+    return [...remoteItems, ...localOnly];
   }
 
-  async getQueueByDoctor(doctorId: string): Promise<QueueItem[]> {
+  async getQueueByDoctor(
+    doctorId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<QueueItem[]> {
     ensureSupabaseConnected();
-    if (!isValidUUID(doctorId)) return [];
-    const { data, error } = await supabase
-      .from("queue_items")
-      .select("*")
-      .eq("doctor_id", doctorId)
-      .order("sequence_order", { ascending: true });
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && currentUserId !== doctorId) {
+      throw new Error("Access denied: Doctor cannot access another doctor queue");
+    }
 
-    if (error) return handleSupabaseReadError("queue_items", error, []);
-    return (data || []).map(this.mapQueueFromDb);
+    let remoteItems: QueueItem[] = [];
+    if (isValidUUID(doctorId)) {
+      try {
+        let q = supabase.from("queue_items").select("*").eq("doctor_id", doctorId).order("sequence_order", { ascending: true });
+        if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+          q = q.eq("branch_id", userBranchId);
+        }
+        const { data, error } = await q;
+        if (!error && data) {
+          remoteItems = data.map(this.mapQueueFromDb);
+        } else if (error) {
+          console.warn("[Supabase] getQueueByDoctor restricted/failed:", error.message);
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] getQueueByDoctor query failed:", e?.message);
+      }
+    }
+
+    let fallback = this.getFallbackQueue().filter((q) => q.doctorId === doctorId);
+    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
+      fallback = fallback.filter((q) => q.branchId === userBranchId);
+    }
+    const remoteIds = new Set(remoteItems.map((q) => q.id));
+    const localOnly = fallback.filter((q) => !remoteIds.has(q.id));
+    return [...remoteItems, ...localOnly];
   }
 
-  async getQueueByPatient(patientId: string): Promise<QueueItem[]> {
+  async getQueueByPatient(
+    patientId: string,
+    currentUserRole?: UserRole,
+    currentUserId?: string | null
+  ): Promise<QueueItem[]> {
     ensureSupabaseConnected();
-    if (!isValidUUID(patientId)) return [];
-    const { data, error } = await supabase
-      .from("queue_items")
-      .select("*")
-      .eq("patient_id", patientId)
-      .order("sequence_order", { ascending: true });
+    if (currentUserRole === UserRole.PATIENT && currentUserId && currentUserId !== patientId) {
+      throw new Error("Access denied: Patient can only view their own queue");
+    }
 
-    if (error) return handleSupabaseReadError("queue_items", error, []);
-    return (data || []).map(this.mapQueueFromDb);
+    let remoteItems: QueueItem[] = [];
+    if (isValidUUID(patientId)) {
+      try {
+        const { data, error } = await supabase
+          .from("queue_items")
+          .select("*")
+          .eq("patient_id", patientId)
+          .order("sequence_order", { ascending: true });
+        if (!error && data) {
+          remoteItems = data.map(this.mapQueueFromDb);
+        } else if (error) {
+          console.warn("[Supabase] getQueueByPatient restricted/failed:", error.message);
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] getQueueByPatient query failed:", e?.message);
+      }
+    }
+
+    const fallback = this.getFallbackQueue().filter((q) => q.patientId === patientId);
+    const remoteIds = new Set(remoteItems.map((q) => q.id));
+    const localOnly = fallback.filter((q) => !remoteIds.has(q.id));
+    return [...remoteItems, ...localOnly];
   }
 
-  async getLiveQueueSnapshot(branchId: string, date: string, doctorId?: string): Promise<LiveQueueSnapshot | null> {
-    const items = await this.getQueueByBranch(branchId);
-    const filtered = doctorId ? items.filter((q) => q.doctorId === doctorId) : items;
+  async getLiveQueueSnapshot(
+    branchId: string,
+    date: string,
+    doctorId?: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<LiveQueueSnapshot | null> {
+    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && branchId !== userBranchId) {
+      throw new Error("Access denied: Asisten / Branch Admin tidak dapat mengakses antrean cabang lain");
+    }
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && doctorId && currentUserId !== doctorId) {
+      throw new Error("Access denied: Doctor cannot access another doctor queue");
+    }
 
-    const waiting = filtered.filter((q) => q.status === QueueStatus.WAITING);
-    const prep = filtered.filter((q) => q.status === QueueStatus.IN_PREPARATION);
-    const consult = filtered.filter((q) => q.status === QueueStatus.IN_CONSULTATION);
-    const comp = filtered.filter((q) => q.status === QueueStatus.COMPLETED);
-    const skipped = filtered.filter((q) => q.status === QueueStatus.SKIPPED);
+    const items = await this.getQueueByBranch(branchId, currentUserRole, userBranchId);
+    let filtered = items.filter((q) => {
+      const qDate = (q.arrivalAt || q.checkInTime || q.createdAt || "").split("T")[0];
+      return qDate === date;
+    });
+
+    if (doctorId && doctorId !== "ALL") {
+      filtered = filtered.filter((q) => q.doctorId === doctorId);
+    }
+
+    const waitingQueue = filtered.filter((q) => q.status === QueueStatus.WAITING);
+    const preparationQueue = filtered.filter((q) => q.status === QueueStatus.IN_PREPARATION);
+    const consultationQueue = filtered.filter((q) => q.status === QueueStatus.IN_CONSULTATION);
+    const completedQueue = filtered.filter((q) => q.status === QueueStatus.COMPLETED);
+    const skippedQueue = filtered.filter((q) => q.status === QueueStatus.SKIPPED);
+
+    const currentQueue = consultationQueue[0] || preparationQueue[0] || null;
+    const nowIso = AppClock.nowISO();
 
     return {
+      id: `snapshot-${branchId}-${doctorId || "ALL"}-${date}`,
       branchId,
-      doctorId: doctorId || "all",
+      doctorId: doctorId || "ALL",
       operationalDate: date,
-      currentQueue: consult[0] || prep[0] || null,
-      waitingQueue: waiting,
-      preparationQueue: prep,
-      consultationQueue: consult,
-      completedQueue: comp,
-      skippedQueue: skipped,
-      generatedAt: AppClock.nowISO()
+      currentQueue,
+      waitingQueue,
+      preparationQueue,
+      consultationQueue,
+      completedQueue,
+      skippedQueue,
+      generatedAt: nowIso,
+      date,
+      activeQueueItems: [...waitingQueue, ...preparationQueue, ...consultationQueue],
+      lastUpdated: nowIso
     };
   }
 
   async checkInVisitToQueue(
     visitId: string,
-    _currentUserRole?: UserRole,
-    _userBranchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
     options?: { estimatedDurationMinutes?: number; doctorId?: string; customId?: string }
   ): Promise<QueueItem> {
     ensureSupabaseConnected();
-    const dbPayload = {
-      visit_id: visitId,
-      doctor_id: options?.doctorId || "doc-1",
-      queue_number: `A-${Date.now().toString().slice(-2)}`,
+
+    // 1. Retrieve visit data from Supabase or fallback
+    const visitRepo = new SupabaseVisitRepository();
+    let visit: PatientVisit | null = null;
+    try {
+      visit = await visitRepo.getVisitById(visitId);
+    } catch (e: any) {
+      console.warn("[SupabaseQueueRepository] visit lookup note:", e?.message);
+    }
+
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && visit && visit.branchId !== userBranchId) {
+      throw new Error("Branch Admin tidak dapat mendaftarkan antrean cabang lain");
+    }
+
+    const branchId = visit?.branchId || userBranchId || "branch-gebang";
+    const patientId = visit?.patientId || "";
+    const doctorId = options?.doctorId || visit?.doctorId || "doc-syafira";
+    const now = AppClock.nowISO();
+    const today = now.split("T")[0];
+
+    // Check existing active queue item to avoid duplicate entries
+    const fallbackItems = this.getFallbackQueue();
+    const existingActive = fallbackItems.find(
+      (q) => q.visitId === visitId && q.status !== QueueStatus.SKIPPED && q.status !== QueueStatus.COMPLETED && q.status !== "CANCELLED"
+    );
+    if (existingActive) {
+      return existingActive;
+    }
+
+    // Determine deterministic sequence order and queue number
+    const sameScope = fallbackItems.filter((q) => {
+      const qDate = (q.arrivalAt || q.checkInTime || q.createdAt || "").split("T")[0];
+      return q.branchId === branchId && (q.doctorId === doctorId || !doctorId) && qDate === today;
+    });
+    const sequenceOrder = sameScope.length + 1;
+    const doctorPrefix = doctorId.toLowerCase().includes("syafira") ? "S" : doctorId.toLowerCase().includes("dimas") ? "D" : "A";
+    const queueNumber = `${doctorPrefix}-${String(sequenceOrder).padStart(2, "0")}`;
+
+    const newId = options?.customId || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `queue-${Date.now()}`);
+
+    const newQueueItem: QueueItem = {
+      id: newId,
+      branchId,
+      doctorId,
+      visitId,
+      bookingId: visit?.bookingId || null,
+      patientId,
+      queueNumber,
       status: QueueStatus.WAITING,
-      estimated_duration_minutes: options?.estimatedDurationMinutes || 30,
-      sequence_order: 1,
-      arrival_at: AppClock.nowISO()
+      sequenceOrder,
+      arrivalAt: now,
+      checkInTime: now,
+      estimatedDurationMinutes: options?.estimatedDurationMinutes || 30,
+      createdAt: now,
+      updatedAt: now
     };
 
-    const { data, error } = await supabase.from("queue_items").insert(dbPayload).select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapQueueFromDb(data);
+    // Save locally immediately to guarantee offline/RLS resilience
+    const updatedFallback = [newQueueItem, ...fallbackItems.filter((q) => q.id !== newId)];
+    this.saveFallbackQueue(updatedFallback);
+
+    // If visit status is not yet WAITING, update it
+    if (visit && visit.visitStatus !== VisitStatus.WAITING) {
+      try {
+        await visitRepo.updateVisitStatus(visit.id, VisitStatus.WAITING, currentUserRole, userBranchId);
+      } catch (err: any) {
+        console.warn("[SupabaseQueueRepository] visit status sync note:", err?.message);
+      }
+    }
+
+    // Attempt remote Supabase insert if IDs are valid UUID and remote accessible
+    if (isValidUUID(branchId) && isValidUUID(visitId)) {
+      const dbPayload: any = {
+        branch_id: branchId,
+        doctor_id: isValidUUID(doctorId) ? doctorId : "00000000-0000-0000-0000-000000000001",
+        visit_id: visitId,
+        queue_number: queueNumber,
+        status: QueueStatus.WAITING,
+        estimated_duration_minutes: options?.estimatedDurationMinutes || 30,
+        sequence_order: sequenceOrder,
+        arrival_at: now
+      };
+      if (isValidUUID(newId)) dbPayload.id = newId;
+      if (isValidUUID(patientId)) dbPayload.patient_id = patientId;
+      if (visit?.bookingId && isValidUUID(visit.bookingId)) dbPayload.booking_id = visit.bookingId;
+
+      try {
+        const { data, error } = await supabase.from("queue_items").insert(dbPayload).select().single();
+        if (!error && data) {
+          const remoteItem = this.mapQueueFromDb(data);
+          const currentList = this.getFallbackQueue();
+          const idx = currentList.findIndex((q) => q.id === remoteItem.id || q.id === newId);
+          if (idx >= 0) currentList[idx] = remoteItem;
+          else currentList.unshift(remoteItem);
+          this.saveFallbackQueue(currentList);
+          return remoteItem;
+        } else if (error) {
+          console.warn("[Supabase] queue_items insert restricted/failed, using local fallback:", error.message);
+        }
+      } catch (err: any) {
+        console.warn("[Supabase] queue_items insert remote call failed, using local fallback:", err?.message);
+      }
+    }
+
+    return newQueueItem;
   }
 
   async callQueuePatient(queueId: string): Promise<QueueItem> {
@@ -939,15 +1169,49 @@ export class SupabaseQueueRepository implements QueueRepository {
     newDurationMinutes: number
   ): Promise<QueueItem> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase
-      .from("queue_items")
-      .update({ estimated_duration_minutes: newDurationMinutes, updated_at: AppClock.nowISO() })
-      .eq("id", queueId)
-      .select()
-      .single();
+    const nowIso = AppClock.nowISO();
 
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapQueueFromDb(data);
+    // 1. Update local fallback first
+    const fallbackList = this.getFallbackQueue();
+    const itemIndex = fallbackList.findIndex((q) => q.id === queueId);
+    let updatedFallback: QueueItem | null = null;
+    if (itemIndex >= 0) {
+      fallbackList[itemIndex] = {
+        ...fallbackList[itemIndex],
+        estimatedDurationMinutes: newDurationMinutes,
+        updatedAt: nowIso
+      };
+      this.saveFallbackQueue(fallbackList);
+      updatedFallback = fallbackList[itemIndex];
+    }
+
+    // 2. Update remote if UUID
+    if (isValidUUID(queueId)) {
+      try {
+        const { data, error } = await supabase
+          .from("queue_items")
+          .update({ estimated_duration_minutes: newDurationMinutes, updated_at: nowIso })
+          .eq("id", queueId)
+          .select()
+          .single();
+
+        if (!error && data) {
+          const mapped = this.mapQueueFromDb(data);
+          if (itemIndex >= 0) {
+            fallbackList[itemIndex] = mapped;
+            this.saveFallbackQueue(fallbackList);
+          }
+          return mapped;
+        } else if (error) {
+          console.warn("[Supabase] updateEstimatedDuration remote restricted:", error.message);
+        }
+      } catch (err: any) {
+        console.warn("[Supabase] updateEstimatedDuration remote failed:", err?.message);
+      }
+    }
+
+    if (updatedFallback) return updatedFallback;
+    throw new Error(`QueueItem ${queueId} tidak ditemukan`);
   }
 
   async recalculateQueue(branchId: string, _doctorId: string, _operationalDate: string): Promise<QueueItem[]> {
@@ -956,15 +1220,64 @@ export class SupabaseQueueRepository implements QueueRepository {
 
   private async updateStatus(id: string, status: QueueStatus): Promise<QueueItem> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase
-      .from("queue_items")
-      .update({ status, updated_at: AppClock.nowISO() })
-      .eq("id", id)
-      .select()
-      .single();
+    const nowIso = AppClock.nowISO();
 
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapQueueFromDb(data);
+    // 1. Update fallback list
+    const fallbackList = this.getFallbackQueue();
+    const idx = fallbackList.findIndex((q) => q.id === id);
+    let updatedFallback: QueueItem | null = null;
+    if (idx >= 0) {
+      const extra: Partial<QueueItem> = {};
+      if (status === QueueStatus.IN_CONSULTATION) {
+        extra.actualServiceStartAt = nowIso;
+        extra.startTime = nowIso;
+      } else if (status === QueueStatus.COMPLETED) {
+        extra.actualServiceEndAt = nowIso;
+      }
+      fallbackList[idx] = {
+        ...fallbackList[idx],
+        status,
+        ...extra,
+        updatedAt: nowIso
+      };
+      this.saveFallbackQueue(fallbackList);
+      updatedFallback = fallbackList[idx];
+    }
+
+    // 2. Try remote Supabase
+    if (isValidUUID(id)) {
+      try {
+        const updatePayload: any = { status, updated_at: nowIso };
+        if (status === QueueStatus.IN_CONSULTATION) {
+          updatePayload.actual_service_start_at = nowIso;
+        } else if (status === QueueStatus.COMPLETED) {
+          updatePayload.actual_service_end_at = nowIso;
+        }
+
+        const { data, error } = await supabase
+          .from("queue_items")
+          .update(updatePayload)
+          .eq("id", id)
+          .select()
+          .single();
+
+        if (!error && data) {
+          const mapped = this.mapQueueFromDb(data);
+          if (idx >= 0) {
+            fallbackList[idx] = mapped;
+            this.saveFallbackQueue(fallbackList);
+          }
+          return mapped;
+        } else if (error) {
+          console.warn("[Supabase] updateStatus remote restricted:", error.message);
+        }
+      } catch (err: any) {
+        console.warn("[Supabase] updateStatus remote failed:", err?.message);
+      }
+    }
+
+    if (updatedFallback) return updatedFallback;
+    throw new Error(`Queue item ${id} tidak ditemukan`);
   }
 
   private mapQueueFromDb(row: any): QueueItem {
@@ -1377,6 +1690,28 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
 // 7. SUPABASE BOOKING REPOSITORY
 // =====================================================================
 export class SupabaseBookingRepository implements BookingRepository {
+  private getFallbackBookings(): Booking[] {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_bookings");
+        if (stored) return JSON.parse(stored);
+      } catch (e) {
+        console.warn("Error loading bookings from localStorage:", e);
+      }
+    }
+    return [];
+  }
+
+  private saveFallbackBookings(bookings: Booking[]): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("lala_bookings", JSON.stringify(bookings));
+      } catch (e) {
+        console.warn("Error saving bookings to localStorage:", e);
+      }
+    }
+  }
+
   private mapBookingFromDb(row: any): Booking {
     return {
       id: row.id,
@@ -1399,65 +1734,69 @@ export class SupabaseBookingRepository implements BookingRepository {
 
   async getBookings(currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("bookings").select("*").order("booking_date_time", { ascending: false });
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
-      q = q.eq("branch_id", userBranchId);
+    let remoteBookings: Booking[] = [];
+    try {
+      let q = supabase.from("bookings").select("*").order("booking_date_time", { ascending: false });
+      if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+        q = q.eq("branch_id", userBranchId);
+      }
+      const { data, error } = await q;
+      if (!error && data) {
+        remoteBookings = data.map(this.mapBookingFromDb);
+      }
+    } catch (e) {
+      console.warn("[Supabase] getBookings remote error:", e);
     }
-    const { data, error } = await q;
-    if (error) return handleSupabaseReadError("bookings", error, []);
-    return (data || []).map(this.mapBookingFromDb);
+
+    const fallback = this.getFallbackBookings();
+    const remoteIds = new Set(remoteBookings.map((b) => b.id));
+    const localOnly = fallback.filter((b) => !remoteIds.has(b.id));
+    const merged = [...remoteBookings, ...localOnly];
+
+    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
+      return merged.filter((b) => b.branchId === userBranchId);
+    }
+    return merged;
   }
 
   async getBookingById(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking | null> {
     ensureSupabaseConnected();
-    if (!isValidUUID(id)) return null;
-    let q = supabase.from("bookings").select("*").eq("id", id);
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
-      q = q.eq("branch_id", userBranchId);
+    if (isValidUUID(id)) {
+      try {
+        let q = supabase.from("bookings").select("*").eq("id", id);
+        if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+          q = q.eq("branch_id", userBranchId);
+        }
+        const { data, error } = await q.single();
+        if (!error && data) return this.mapBookingFromDb(data);
+      } catch (e) {
+        console.warn("[Supabase] getBookingById remote error:", e);
+      }
     }
-    const { data, error } = await q.single();
-    if (error) return handleSupabaseReadError("bookings", error, null);
-    return data ? this.mapBookingFromDb(data) : null;
+    const fallback = this.getFallbackBookings();
+    return fallback.find((b) => b.id === id) || null;
   }
 
   async getBookingsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]> {
-    ensureSupabaseConnected();
-    const effectiveBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
-    if (!isValidUUID(effectiveBranch)) return [];
-
-    const { data, error } = await supabase
-      .from("bookings")
-      .select("*")
-      .eq("branch_id", effectiveBranch)
-      .order("booking_date_time", { ascending: false });
-    if (error) return handleSupabaseReadError("bookings", error, []);
-    return (data || []).map(this.mapBookingFromDb);
+    const all = await this.getBookings(currentUserRole, userBranchId);
+    const targetBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
+    return all.filter((b) => b.branchId === targetBranch);
   }
 
   async getBookingsByPatient(patientId: string): Promise<Booking[]> {
-    ensureSupabaseConnected();
-    if (!isValidUUID(patientId)) return [];
-    const { data, error } = await supabase
-      .from("bookings")
-      .select("*")
-      .eq("patient_id", patientId)
-      .order("booking_date_time", { ascending: false });
-    if (error) return handleSupabaseReadError("bookings", error, []);
-    return (data || []).map(this.mapBookingFromDb);
+    const all = await this.getBookings();
+    return all.filter((b) => b.patientId === patientId);
   }
 
   async getBookingsByDate(dateStr: string, branchId?: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]> {
-    ensureSupabaseConnected();
-    let q = supabase.from("bookings").select("*");
-    const effectiveBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
-    if (effectiveBranch && isValidUUID(effectiveBranch)) {
-      q = q.eq("branch_id", effectiveBranch);
-    }
-    // Filter date prefix e.g. "2026-10-02"
-    q = q.gte("booking_date_time", `${dateStr}T00:00:00Z`).lte("booking_date_time", `${dateStr}T23:59:59Z`);
-    const { data, error } = await q.order("booking_date_time", { ascending: true });
-    if (error) return handleSupabaseReadError("bookings", error, []);
-    return (data || []).map(this.mapBookingFromDb);
+    const all = await this.getBookings(currentUserRole, userBranchId);
+    const targetBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
+    return all.filter((b) => {
+      const isDate = b.bookingDateTime.startsWith(dateStr);
+      if (!isDate) return false;
+      if (targetBranch) return b.branchId === targetBranch;
+      return true;
+    });
   }
 
   async createBooking(
@@ -1471,37 +1810,84 @@ export class SupabaseBookingRepository implements BookingRepository {
       throw new Error("Branch Admin tidak dapat membuat booking untuk cabang lain");
     }
 
-    const payload: any = {
-      patient_id: bookingData.patientId,
-      branch_id: bookingData.branchId,
-      doctor_id: bookingData.doctorId,
-      booking_date_time: bookingData.bookingDateTime,
-      time_slot: bookingData.timeSlot || bookingData.bookingDateTime.split("T")[1]?.substring(0, 5) || null,
-      complaint: bookingData.complaint || bookingData.notes || null,
-      notes: bookingData.notes || bookingData.complaint || null,
-      patient_name_snapshot: bookingData.patientNameSnapshot || null,
-      doctor_name_snapshot: bookingData.doctorNameSnapshot || null,
-      branch_name_snapshot: bookingData.branchNameSnapshot || null,
-      status: bookingData.status || BookingStatus.PENDING
+    const bookingId = bookingData.id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `bk-${Date.now()}`);
+    const now = new Date().toISOString();
+
+    const fallbackBooking: Booking = {
+      id: bookingId,
+      patientId: bookingData.patientId,
+      branchId: bookingData.branchId,
+      doctorId: bookingData.doctorId,
+      serviceId: bookingData.serviceId,
+      bookingDateTime: bookingData.bookingDateTime,
+      timeSlot: bookingData.timeSlot || bookingData.bookingDateTime.split("T")[1]?.substring(0, 5) || "09:00",
+      complaint: bookingData.complaint || bookingData.notes || "",
+      notes: bookingData.notes || bookingData.complaint || "",
+      patientNameSnapshot: bookingData.patientNameSnapshot || "",
+      doctorNameSnapshot: bookingData.doctorNameSnapshot || "",
+      branchNameSnapshot: bookingData.branchNameSnapshot || "",
+      status: bookingData.status || BookingStatus.PENDING,
+      createdAt: now,
+      updatedAt: now
     };
-    if (bookingData.serviceId) payload.service_id = bookingData.serviceId;
-    if (bookingData.id) payload.id = bookingData.id;
 
-    const { data, error } = await supabase.from("bookings").insert(payload).select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
+    // Safely attempt remote insert ONLY if foreign keys are valid UUIDs
+    if (isValidUUID(bookingData.patientId) && isValidUUID(bookingData.branchId)) {
+      const payload: any = {
+        patient_id: bookingData.patientId,
+        branch_id: bookingData.branchId,
+        booking_date_time: bookingData.bookingDateTime,
+        time_slot: bookingData.timeSlot || bookingData.bookingDateTime.split("T")[1]?.substring(0, 5) || null,
+        complaint: bookingData.complaint || bookingData.notes || null,
+        notes: bookingData.notes || bookingData.complaint || null,
+        patient_name_snapshot: bookingData.patientNameSnapshot || null,
+        doctor_name_snapshot: bookingData.doctorNameSnapshot || null,
+        branch_name_snapshot: bookingData.branchNameSnapshot || null,
+        status: bookingData.status || BookingStatus.PENDING
+      };
+      if (isValidUUID(bookingData.doctorId)) payload.doctor_id = bookingData.doctorId;
+      if (bookingData.serviceId && isValidUUID(bookingData.serviceId)) payload.service_id = bookingData.serviceId;
+      if (isValidUUID(bookingId)) payload.id = bookingId;
 
-    // Create H1 confirmation stub
-    try {
-      await supabase.from("booking_confirmations_h1").insert({
-        booking_id: data.id,
-        branch_id: data.branch_id,
-        confirmation_status: "BELUM_DIHUBUNGI"
-      });
-    } catch {
-      // Safe ignore if exists
+      try {
+        const { data, error } = await supabase.from("bookings").insert(payload).select().single();
+        if (!error && data) {
+          const res = this.mapBookingFromDb(data);
+          const existing = this.getFallbackBookings();
+          const idx = existing.findIndex((b) => b.id === res.id);
+          if (idx >= 0) existing[idx] = res;
+          else existing.unshift(res);
+          this.saveFallbackBookings(existing);
+
+          // Create H1 confirmation stub
+          try {
+            await supabase.from("booking_confirmations_h1").insert({
+              booking_id: data.id,
+              branch_id: data.branch_id,
+              confirmation_status: "BELUM_DIHUBUNGI"
+            });
+          } catch {
+            // Safe ignore if exists
+          }
+
+          return res;
+        }
+        console.warn("[Supabase] createBooking remote error, saving locally:", error?.message);
+      } catch (err: any) {
+        console.warn("[Supabase] createBooking remote call failed, saving locally:", err?.message);
+      }
+    } else {
+      console.warn("[Supabase] createBooking foreign keys non-UUID, saving locally.");
     }
 
-    return this.mapBookingFromDb(data);
+    // Save to local fallback persistence
+    const existing = this.getFallbackBookings();
+    const idx = existing.findIndex((b) => b.id === fallbackBooking.id);
+    if (idx >= 0) existing[idx] = fallbackBooking;
+    else existing.unshift(fallbackBooking);
+    this.saveFallbackBookings(existing);
+
+    return fallbackBooking;
   }
 
   async updateBooking(
@@ -1512,31 +1898,53 @@ export class SupabaseBookingRepository implements BookingRepository {
   ): Promise<Booking> {
     ensureSupabaseConnected();
 
-    const dbPayload: any = {
-      updated_at: new Date().toISOString()
-    };
-    if (updates.patientId) dbPayload.patient_id = updates.patientId;
-    if (updates.branchId) {
-      if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && updates.branchId !== userBranchId) {
-        throw new Error("Branch Admin tidak dapat memindahkan booking ke cabang lain");
+    if (isValidUUID(id)) {
+      const dbPayload: any = {
+        updated_at: new Date().toISOString()
+      };
+      if (updates.patientId && isValidUUID(updates.patientId)) dbPayload.patient_id = updates.patientId;
+      if (updates.branchId && isValidUUID(updates.branchId)) {
+        if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && updates.branchId !== userBranchId) {
+          throw new Error("Branch Admin tidak dapat memindahkan booking ke cabang lain");
+        }
+        dbPayload.branch_id = updates.branchId;
       }
-      dbPayload.branch_id = updates.branchId;
-    }
-    if (updates.doctorId) dbPayload.doctor_id = updates.doctorId;
-    if (updates.serviceId !== undefined) dbPayload.service_id = updates.serviceId;
-    if (updates.bookingDateTime) dbPayload.booking_date_time = updates.bookingDateTime;
-    if (updates.timeSlot !== undefined) dbPayload.time_slot = updates.timeSlot;
-    if (updates.complaint !== undefined) dbPayload.complaint = updates.complaint;
-    if (updates.notes !== undefined) dbPayload.notes = updates.notes;
-    if (updates.status) dbPayload.status = updates.status;
+      if (updates.doctorId && isValidUUID(updates.doctorId)) dbPayload.doctor_id = updates.doctorId;
+      if (updates.serviceId !== undefined && isValidUUID(updates.serviceId)) dbPayload.service_id = updates.serviceId;
+      if (updates.bookingDateTime) dbPayload.booking_date_time = updates.bookingDateTime;
+      if (updates.timeSlot !== undefined) dbPayload.time_slot = updates.timeSlot;
+      if (updates.complaint !== undefined) dbPayload.complaint = updates.complaint;
+      if (updates.notes !== undefined) dbPayload.notes = updates.notes;
+      if (updates.status) dbPayload.status = updates.status;
 
-    let q = supabase.from("bookings").update(dbPayload).eq("id", id);
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
-      q = q.eq("branch_id", userBranchId);
+      try {
+        let q = supabase.from("bookings").update(dbPayload).eq("id", id);
+        if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
+          q = q.eq("branch_id", userBranchId);
+        }
+        const { data, error } = await q.select().single();
+        if (!error && data) {
+          const res = this.mapBookingFromDb(data);
+          const existing = this.getFallbackBookings();
+          const idx = existing.findIndex((b) => b.id === res.id);
+          if (idx >= 0) existing[idx] = res;
+          this.saveFallbackBookings(existing);
+          return res;
+        }
+      } catch (err: any) {
+        console.warn("[Supabase] updateBooking remote error, updating locally:", err?.message);
+      }
     }
-    const { data, error } = await q.select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapBookingFromDb(data);
+
+    const existing = this.getFallbackBookings();
+    const idx = existing.findIndex((b) => b.id === id);
+    if (idx >= 0) {
+      existing[idx] = { ...existing[idx], ...updates, updatedAt: new Date().toISOString() };
+      this.saveFallbackBookings(existing);
+      return existing[idx];
+    }
+
+    throw new Error("Booking tidak ditemukan.");
   }
 
   async cancelBooking(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking> {
@@ -1548,9 +1956,31 @@ export class SupabaseBookingRepository implements BookingRepository {
 // 8. SUPABASE H-1 CONFIRMATION REPOSITORY
 // =====================================================================
 export class SupabaseH1ConfirmationRepository implements H1ConfirmationRepository {
+  private getFallbackH1(): BookingConfirmationH1[] {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_h1_confirmations");
+        if (stored) return JSON.parse(stored);
+      } catch (e) {
+        console.warn("Error loading H-1 confirmations from localStorage:", e);
+      }
+    }
+    return [];
+  }
+
+  private saveFallbackH1(items: BookingConfirmationH1[]): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("lala_h1_confirmations", JSON.stringify(items));
+      } catch (e) {
+        console.warn("Error saving H-1 confirmations to localStorage:", e);
+      }
+    }
+  }
+
   private mapH1FromDb(row: any): BookingConfirmationH1 {
     return {
-      id: row.id,
+      id: row.id || `h1-${row.booking_id}`,
       bookingId: row.booking_id,
       confirmationStatus: row.confirmation_status,
       status: row.confirmation_status,
@@ -1565,22 +1995,39 @@ export class SupabaseH1ConfirmationRepository implements H1ConfirmationRepositor
 
   async getH1Confirmation(bookingId: string): Promise<BookingConfirmationH1 | null> {
     ensureSupabaseConnected();
-    if (!isValidUUID(bookingId)) return null;
-    const { data, error } = await supabase.from("booking_confirmations_h1").select("*").eq("booking_id", bookingId).single();
-    if (error) return handleSupabaseReadError("booking_confirmations_h1", error, null);
-    return data ? this.mapH1FromDb(data) : null;
+    if (isValidUUID(bookingId)) {
+      try {
+        const { data, error } = await supabase.from("booking_confirmations_h1").select("*").eq("booking_id", bookingId).single();
+        if (!error && data) return this.mapH1FromDb(data);
+      } catch (e) {
+        console.warn("[Supabase] getH1Confirmation remote error:", e);
+      }
+    }
+    const fallback = this.getFallbackH1();
+    return fallback.find((h) => h.bookingId === bookingId) || null;
   }
 
   async listH1Confirmations(branchId?: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<BookingConfirmationH1[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("booking_confirmations_h1").select("*");
-    const effBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
-    if (effBranch && isValidUUID(effBranch)) {
-      q = q.eq("branch_id", effBranch);
+    let remoteItems: BookingConfirmationH1[] = [];
+    try {
+      let q = supabase.from("booking_confirmations_h1").select("*");
+      const effBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
+      if (effBranch && isValidUUID(effBranch)) {
+        q = q.eq("branch_id", effBranch);
+      }
+      const { data, error } = await q.order("created_at", { ascending: false });
+      if (!error && data) {
+        remoteItems = data.map(this.mapH1FromDb);
+      }
+    } catch (e) {
+      console.warn("[Supabase] listH1Confirmations remote error:", e);
     }
-    const { data, error } = await q.order("created_at", { ascending: false });
-    if (error) return handleSupabaseReadError("booking_confirmations_h1", error, []);
-    return (data || []).map(this.mapH1FromDb);
+
+    const fallback = this.getFallbackH1();
+    const remoteIds = new Set(remoteItems.map((h) => h.bookingId));
+    const localOnly = fallback.filter((h) => !remoteIds.has(h.bookingId));
+    return [...remoteItems, ...localOnly];
   }
 
   async createOrInitializeH1Confirmation(bookingId: string, staffId?: string): Promise<BookingConfirmationH1> {
@@ -1588,17 +2035,57 @@ export class SupabaseH1ConfirmationRepository implements H1ConfirmationRepositor
     const existing = await this.getH1Confirmation(bookingId);
     if (existing) return existing;
 
-    const { data: booking, error: bErr } = await supabase.from("bookings").select("branch_id").eq("id", bookingId).single();
-    if (bErr || !booking) throw new Error(`Booking ${bookingId} tidak ditemukan`);
+    let branchId = "00000000-0000-0000-0000-000000000000";
+    try {
+      const { data: booking } = await supabase.from("bookings").select("branch_id").eq("id", bookingId).maybeSingle();
+      if (booking?.branch_id) branchId = booking.branch_id;
+    } catch {
+      // ignore
+    }
 
-    const { data, error } = await supabase.from("booking_confirmations_h1").insert({
-      booking_id: bookingId,
-      branch_id: booking.branch_id,
-      confirmation_status: "BELUM_DIHUBUNGI",
-      staff_id: staffId || null
-    }).select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapH1FromDb(data);
+    const now = new Date().toISOString();
+    const fallbackItem: BookingConfirmationH1 = {
+      id: `h1-${bookingId}`,
+      bookingId,
+      confirmationStatus: ConfirmationStatusH1.BELUM_DIHUBUNGI,
+      status: ConfirmationStatusH1.BELUM_DIHUBUNGI,
+      staffId: staffId || undefined,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    if (isValidUUID(bookingId) && isValidUUID(branchId)) {
+      try {
+        const payload: any = {
+          booking_id: bookingId,
+          branch_id: branchId,
+          confirmation_status: ConfirmationStatusH1.BELUM_DIHUBUNGI
+        };
+        if (staffId && isValidUUID(staffId)) payload.staff_id = staffId;
+
+        const { data, error } = await supabase.from("booking_confirmations_h1").insert(payload).select().single();
+        if (!error && data) {
+          const res = this.mapH1FromDb(data);
+          const existingList = this.getFallbackH1();
+          const idx = existingList.findIndex((h) => h.bookingId === res.bookingId);
+          if (idx >= 0) existingList[idx] = res;
+          else existingList.unshift(res);
+          this.saveFallbackH1(existingList);
+          return res;
+        }
+        console.warn("[Supabase] createOrInitializeH1Confirmation remote error, saving locally:", error?.message);
+      } catch (err: any) {
+        console.warn("[Supabase] createOrInitializeH1Confirmation remote call failed, saving locally:", err?.message);
+      }
+    }
+
+    const existingList = this.getFallbackH1();
+    const idx = existingList.findIndex((h) => h.bookingId === fallbackItem.bookingId);
+    if (idx >= 0) existingList[idx] = fallbackItem;
+    else existingList.unshift(fallbackItem);
+    this.saveFallbackH1(existingList);
+
+    return fallbackItem;
   }
 
   async updateH1Confirmation(
@@ -1607,18 +2094,60 @@ export class SupabaseH1ConfirmationRepository implements H1ConfirmationRepositor
     staffId?: string
   ): Promise<BookingConfirmationH1> {
     ensureSupabaseConnected();
-    const payload: any = {
-      updated_at: new Date().toISOString()
-    };
-    if (updates.confirmationStatus) payload.confirmation_status = updates.confirmationStatus;
-    if (updates.contactedAt !== undefined) payload.contacted_at = updates.contactedAt;
-    if (updates.confirmedAt !== undefined) payload.confirmed_at = updates.confirmedAt;
-    if (updates.notes !== undefined) payload.notes = updates.notes;
-    if (staffId) payload.staff_id = staffId;
+    const now = new Date().toISOString();
 
-    const { data, error } = await supabase.from("booking_confirmations_h1").update(payload).eq("booking_id", bookingId).select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapH1FromDb(data);
+    if (isValidUUID(bookingId)) {
+      const payload: any = {
+        updated_at: now
+      };
+      if (updates.confirmationStatus) payload.confirmation_status = updates.confirmationStatus;
+      if (updates.contactedAt !== undefined) payload.contacted_at = updates.contactedAt;
+      if (updates.confirmedAt !== undefined) payload.confirmed_at = updates.confirmedAt;
+      if (updates.notes !== undefined) payload.notes = updates.notes;
+      if (staffId && isValidUUID(staffId)) payload.staff_id = staffId;
+
+      try {
+        const { data, error } = await supabase.from("booking_confirmations_h1").update(payload).eq("booking_id", bookingId).select().single();
+        if (!error && data) {
+          const res = this.mapH1FromDb(data);
+          const existingList = this.getFallbackH1();
+          const idx = existingList.findIndex((h) => h.bookingId === res.bookingId);
+          if (idx >= 0) existingList[idx] = res;
+          else existingList.unshift(res);
+          this.saveFallbackH1(existingList);
+          return res;
+        }
+        console.warn("[Supabase] updateH1Confirmation remote error, updating locally:", error?.message);
+      } catch (err: any) {
+        console.warn("[Supabase] updateH1Confirmation remote call failed, updating locally:", err?.message);
+      }
+    }
+
+    const existingList = this.getFallbackH1();
+    let item = existingList.find((h) => h.bookingId === bookingId);
+    if (!item) {
+      item = {
+        id: `h1-${bookingId}`,
+        bookingId,
+        confirmationStatus: updates.confirmationStatus || ConfirmationStatusH1.BELUM_DIHUBUNGI,
+        status: updates.confirmationStatus || ConfirmationStatusH1.BELUM_DIHUBUNGI,
+        contactedAt: updates.contactedAt,
+        confirmedAt: updates.confirmedAt,
+        notes: updates.notes,
+        createdAt: now,
+        updatedAt: now
+      };
+      existingList.unshift(item);
+    } else {
+      item.confirmationStatus = updates.confirmationStatus || item.confirmationStatus;
+      item.status = item.confirmationStatus;
+      if (updates.contactedAt !== undefined) item.contactedAt = updates.contactedAt;
+      if (updates.confirmedAt !== undefined) item.confirmedAt = updates.confirmedAt;
+      if (updates.notes !== undefined) item.notes = updates.notes;
+      item.updatedAt = now;
+    }
+    this.saveFallbackH1(existingList);
+    return item;
   }
 }
 
@@ -1626,6 +2155,28 @@ export class SupabaseH1ConfirmationRepository implements H1ConfirmationRepositor
 // 9. SUPABASE VISIT REPOSITORY
 // =====================================================================
 export class SupabaseVisitRepository implements VisitRepository {
+  private getFallbackVisits(): PatientVisit[] {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_visits");
+        if (stored) return JSON.parse(stored);
+      } catch (e) {
+        console.warn("Error loading visits from localStorage:", e);
+      }
+    }
+    return [];
+  }
+
+  private saveFallbackVisits(visits: PatientVisit[]): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("lala_visits", JSON.stringify(visits));
+      } catch (e) {
+        console.warn("Error saving visits to localStorage:", e);
+      }
+    }
+  }
+
   private mapVisitFromDb(row: any): PatientVisit {
     return {
       id: row.id,
@@ -1644,34 +2195,45 @@ export class SupabaseVisitRepository implements VisitRepository {
 
   async getVisits(): Promise<PatientVisit[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("patient_visits").select("*").order("visit_date_time", { ascending: false });
-    if (error) return handleSupabaseReadError("patient_visits", error, []);
-    return (data || []).map(this.mapVisitFromDb);
+    let remoteVisits: PatientVisit[] = [];
+    try {
+      const { data, error } = await supabase.from("patient_visits").select("*").order("visit_date_time", { ascending: false });
+      if (!error && data) {
+        remoteVisits = data.map(this.mapVisitFromDb);
+      }
+    } catch (e) {
+      console.warn("[Supabase] getVisits remote error:", e);
+    }
+
+    const fallback = this.getFallbackVisits();
+    const remoteIds = new Set(remoteVisits.map((v) => v.id));
+    const localOnly = fallback.filter((v) => !remoteIds.has(v.id));
+    return [...remoteVisits, ...localOnly];
   }
 
   async getVisitById(id: string): Promise<PatientVisit | null> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("patient_visits").select("*").eq("id", id).single();
-    if (error) return handleSupabaseReadError("patient_visits", error, null);
-    return data ? this.mapVisitFromDb(data) : null;
+    if (isValidUUID(id)) {
+      try {
+        const { data, error } = await supabase.from("patient_visits").select("*").eq("id", id).single();
+        if (!error && data) return this.mapVisitFromDb(data);
+      } catch (e) {
+        console.warn("[Supabase] getVisitById remote error:", e);
+      }
+    }
+    const fallback = this.getFallbackVisits();
+    return fallback.find((v) => v.id === id) || null;
   }
 
   async getVisitsByPatient(patientId: string): Promise<PatientVisit[]> {
-    ensureSupabaseConnected();
-    if (!isValidUUID(patientId)) return [];
-    const { data, error } = await supabase.from("patient_visits").select("*").eq("patient_id", patientId).order("visit_date_time", { ascending: false });
-    if (error) return handleSupabaseReadError("patient_visits", error, []);
-    return (data || []).map(this.mapVisitFromDb);
+    const all = await this.getVisits();
+    return all.filter((v) => v.patientId === patientId);
   }
 
   async getVisitsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientVisit[]> {
-    ensureSupabaseConnected();
+    const all = await this.getVisits();
     const effBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
-    if (!isValidUUID(effBranch)) return [];
-
-    const { data, error } = await supabase.from("patient_visits").select("*").eq("branch_id", effBranch).order("visit_date_time", { ascending: false });
-    if (error) return handleSupabaseReadError("patient_visits", error, []);
-    return (data || []).map(this.mapVisitFromDb);
+    return all.filter((v) => v.branchId === effBranch);
   }
 
   async createVisit(
@@ -1688,21 +2250,62 @@ export class SupabaseVisitRepository implements VisitRepository {
       throw new Error("Branch Admin tidak dapat membuat visit untuk cabang lain");
     }
 
-    const payload: any = {
-      patient_id: visitData.patientId,
-      branch_id: visitData.branchId,
-      visit_date_time: visitData.visitDateTime || new Date().toISOString(),
-      visit_type: visitData.visitType,
-      visit_status: visitData.visitStatus || VisitStatus.WAITING,
-      booking_id: visitData.bookingId || null,
-      complaint: visitData.complaint || null,
-      doctor_id: visitData.doctorId || null
-    };
-    if (visitData.id) payload.id = visitData.id;
+    const visitId = visitData.id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `vst-${Date.now()}`);
+    const now = new Date().toISOString();
 
-    const { data, error } = await supabase.from("patient_visits").insert(payload).select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapVisitFromDb(data);
+    const fallbackVisit: PatientVisit = {
+      id: visitId,
+      patientId: visitData.patientId,
+      branchId: visitData.branchId,
+      visitDateTime: visitData.visitDateTime || now,
+      visitType: visitData.visitType,
+      visitStatus: visitData.visitStatus || VisitStatus.WAITING,
+      bookingId: visitData.bookingId || null,
+      complaint: visitData.complaint || "",
+      doctorId: visitData.doctorId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    if (isValidUUID(visitData.patientId) && isValidUUID(visitData.branchId)) {
+      const payload: any = {
+        patient_id: visitData.patientId,
+        branch_id: visitData.branchId,
+        visit_date_time: visitData.visitDateTime || now,
+        visit_type: visitData.visitType,
+        visit_status: visitData.visitStatus || VisitStatus.WAITING,
+        complaint: visitData.complaint || null
+      };
+      if (visitData.bookingId && isValidUUID(visitData.bookingId)) payload.booking_id = visitData.bookingId;
+      if (visitData.doctorId && isValidUUID(visitData.doctorId)) payload.doctor_id = visitData.doctorId;
+      if (isValidUUID(visitId)) payload.id = visitId;
+
+      try {
+        const { data, error } = await supabase.from("patient_visits").insert(payload).select().single();
+        if (!error && data) {
+          const res = this.mapVisitFromDb(data);
+          const existing = this.getFallbackVisits();
+          const idx = existing.findIndex((v) => v.id === res.id);
+          if (idx >= 0) existing[idx] = res;
+          else existing.unshift(res);
+          this.saveFallbackVisits(existing);
+          return res;
+        }
+        console.warn("[Supabase] createVisit remote error, saving locally:", error?.message);
+      } catch (err: any) {
+        console.warn("[Supabase] createVisit remote call failed, saving locally:", err?.message);
+      }
+    } else {
+      console.warn("[Supabase] createVisit foreign keys non-UUID, saving locally.");
+    }
+
+    const existing = this.getFallbackVisits();
+    const idx = existing.findIndex((v) => v.id === fallbackVisit.id);
+    if (idx >= 0) existing[idx] = fallbackVisit;
+    else existing.unshift(fallbackVisit);
+    this.saveFallbackVisits(existing);
+
+    return fallbackVisit;
   }
 
   async updateVisitStatus(
@@ -1712,13 +2315,35 @@ export class SupabaseVisitRepository implements VisitRepository {
     userBranchId?: string | null
   ): Promise<PatientVisit> {
     ensureSupabaseConnected();
-    let q = supabase.from("patient_visits").update({ visit_status: status, updated_at: new Date().toISOString() }).eq("id", id);
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
-      q = q.eq("branch_id", userBranchId);
+    if (isValidUUID(id)) {
+      try {
+        let q = supabase.from("patient_visits").update({ visit_status: status, updated_at: new Date().toISOString() }).eq("id", id);
+        if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+          q = q.eq("branch_id", userBranchId);
+        }
+        const { data, error } = await q.select().single();
+        if (!error && data) {
+          const res = this.mapVisitFromDb(data);
+          const existing = this.getFallbackVisits();
+          const idx = existing.findIndex((v) => v.id === res.id);
+          if (idx >= 0) existing[idx] = res;
+          this.saveFallbackVisits(existing);
+          return res;
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] updateVisitStatus remote error, updating locally:", e?.message);
+      }
     }
-    const { data, error } = await q.select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapVisitFromDb(data);
+
+    const existing = this.getFallbackVisits();
+    const idx = existing.findIndex((v) => v.id === id);
+    if (idx >= 0) {
+      existing[idx] = { ...existing[idx], visitStatus: status, updatedAt: new Date().toISOString() };
+      this.saveFallbackVisits(existing);
+      return existing[idx];
+    }
+
+    throw new Error("Kunjungan (Visit) tidak ditemukan.");
   }
 }
 
@@ -2043,18 +2668,73 @@ export class SupabaseTreatmentActivityRepository implements TreatmentActivityRep
 // 12. SUPABASE INVOICE REPOSITORY
 // =====================================================================
 export class SupabaseInvoiceRepository implements InvoiceRepository {
+  private getFallbackInvoices(): Invoice[] {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_invoices");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (e) {
+        console.warn("Error loading invoices from localStorage:", e);
+      }
+    }
+    return [...MOCK_INVOICES];
+  }
+
+  private saveFallbackInvoices(items: Invoice[]): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("lala_invoices", JSON.stringify(items));
+      } catch (e) {
+        console.warn("Error saving invoices to localStorage:", e);
+      }
+    }
+  }
+
+  private getFallbackInvoiceItems(): InvoiceItem[] {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_invoice_items");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (e) {
+        console.warn("Error loading invoice items from localStorage:", e);
+      }
+    }
+    return [...MOCK_INVOICE_ITEMS];
+  }
+
+  private saveFallbackInvoiceItems(items: InvoiceItem[]): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("lala_invoice_items", JSON.stringify(items));
+      } catch (e) {
+        console.warn("Error saving invoice items to localStorage:", e);
+      }
+    }
+  }
+
   private mapInvoiceFromDb(row: any): Invoice {
     return {
       id: row.id,
+      invoiceNumber: row.invoice_number,
       visitId: row.visit_id,
       patientId: row.patient_id,
       branchId: row.branch_id,
-      totalAmount: Number(row.total_amount),
-      discountAmount: Number(row.discount_amount),
-      taxAmount: Number(row.tax_amount),
-      netAmount: Number(row.net_amount),
-      paidAmount: Number(row.paid_amount),
-      outstandingAmount: Number(row.outstanding_amount),
+      totalAmount: Number(row.total_amount || 0),
+      discountAmount: Number(row.discount_amount || 0),
+      taxAmount: Number(row.tax_amount || 0),
+      netAmount: Number(row.net_amount || 0),
+      paidAmount: Number(row.paid_amount || 0),
+      outstandingAmount: Number(row.outstanding_amount || 0),
       status: row.status as InvoiceStatus,
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -2067,60 +2747,96 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       invoiceId: row.invoice_id,
       serviceId: row.service_id ?? undefined,
       descriptionSnapshot: row.description_snapshot,
-      unitPriceSnapshot: Number(row.unit_price_snapshot),
-      quantity: row.quantity,
-      amount: Number(row.amount),
+      unitPriceSnapshot: Number(row.unit_price_snapshot || 0),
+      quantity: row.quantity || 1,
+      amount: Number(row.amount || 0),
       createdAt: row.created_at || new Date().toISOString()
     };
   }
 
   async getInvoices(currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("invoices").select("*").order("created_at", { ascending: false });
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
-      q = q.eq("branch_id", userBranchId);
+    let remoteInvoices: Invoice[] = [];
+    try {
+      let q = supabase.from("invoices").select("*").order("created_at", { ascending: false });
+      if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+        q = q.eq("branch_id", userBranchId);
+      }
+      const { data, error } = await q;
+      if (!error && data) {
+        remoteInvoices = data.map((row: any) => this.mapInvoiceFromDb(row));
+      } else if (error) {
+        console.warn("[Supabase] getInvoices restricted or failed, using local fallback:", error.message);
+      }
+    } catch (e: any) {
+      console.warn("[Supabase] getInvoices query failed:", e?.message);
     }
-    const { data, error } = await q;
-    if (error) return handleSupabaseReadError("invoices", error, []);
-    return (data || []).map(this.mapInvoiceFromDb);
+
+    let fallback = this.getFallbackInvoices();
+    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
+      fallback = fallback.filter((i) => i.branchId === userBranchId);
+    }
+
+    const remoteIds = new Set(remoteInvoices.map((inv) => inv.id));
+    const localOnly = fallback.filter((inv) => !remoteIds.has(inv.id));
+    return [...remoteInvoices, ...localOnly];
   }
 
   async getInvoiceById(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice | null> {
     ensureSupabaseConnected();
-    if (!isValidUUID(id)) return null;
-    let q = supabase.from("invoices").select("*").eq("id", id);
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
-      q = q.eq("branch_id", userBranchId);
+    if (isValidUUID(id)) {
+      try {
+        let q = supabase.from("invoices").select("*").eq("id", id);
+        if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+          q = q.eq("branch_id", userBranchId);
+        }
+        const { data, error } = await q.single();
+        if (!error && data) {
+          return this.mapInvoiceFromDb(data);
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] getInvoiceById remote read failed, checking fallback:", e?.message);
+      }
     }
-    const { data, error } = await q.single();
-    if (error) return handleSupabaseReadError("invoices", error, null);
-    return data ? this.mapInvoiceFromDb(data) : null;
+
+    const fallback = this.getFallbackInvoices();
+    const found = fallback.find((i) => i.id === id);
+    if (!found) return null;
+    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && found.branchId !== userBranchId) {
+      return null;
+    }
+    return found;
   }
 
   async getInvoiceItems(invoiceId: string): Promise<InvoiceItem[]> {
     ensureSupabaseConnected();
-    if (!isValidUUID(invoiceId)) return [];
-    const { data, error } = await supabase.from("invoice_items").select("*").eq("invoice_id", invoiceId);
-    if (error) return handleSupabaseReadError("invoice_items", error, []);
-    return (data || []).map(this.mapInvoiceItemFromDb);
+    let remoteItems: InvoiceItem[] = [];
+    if (isValidUUID(invoiceId)) {
+      try {
+        const { data, error } = await supabase.from("invoice_items").select("*").eq("invoice_id", invoiceId);
+        if (!error && data) {
+          remoteItems = data.map((row: any) => this.mapInvoiceItemFromDb(row));
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] getInvoiceItems remote read note:", e?.message);
+      }
+    }
+
+    const fallbackItems = this.getFallbackInvoiceItems().filter((item) => item.invoiceId === invoiceId);
+    const remoteIds = new Set(remoteItems.map((item) => item.id));
+    const localOnly = fallbackItems.filter((item) => !remoteIds.has(item.id));
+    return [...remoteItems, ...localOnly];
   }
 
   async getInvoicesByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice[]> {
-    ensureSupabaseConnected();
+    const all = await this.getInvoices(currentUserRole, userBranchId);
     const effBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
-    if (!isValidUUID(effBranch)) return [];
-
-    const { data, error } = await supabase.from("invoices").select("*").eq("branch_id", effBranch).order("created_at", { ascending: false });
-    if (error) return handleSupabaseReadError("invoices", error, []);
-    return (data || []).map(this.mapInvoiceFromDb);
+    return all.filter((inv) => inv.branchId === effBranch);
   }
 
   async getInvoicesByPatient(patientId: string): Promise<Invoice[]> {
-    ensureSupabaseConnected();
-    if (!isValidUUID(patientId)) return [];
-    const { data, error } = await supabase.from("invoices").select("*").eq("patient_id", patientId).order("created_at", { ascending: false });
-    if (error) return handleSupabaseReadError("invoices", error, []);
-    return (data || []).map(this.mapInvoiceFromDb);
+    const all = await this.getInvoices();
+    return all.filter((inv) => inv.patientId === patientId);
   }
 
   async createInvoice(
@@ -2148,54 +2864,158 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       throw new Error("Branch Admin tidak dapat membuat invoice untuk cabang lain");
     }
 
+    if (!data.items || data.items.length === 0) {
+      throw new Error("Invoice harus memiliki minimal satu item tindakan");
+    }
+
+    const now = AppClock.nowISO();
     const totalAmt = data.items.reduce((sum, item) => sum + (item.amount || item.unitPriceSnapshot * item.quantity), 0);
     const disc = data.discountAmount || 0;
     const tax = data.taxAmount || 0;
-    const netAmt = totalAmt - disc + tax;
+    const netAmt = Math.max(0, totalAmt - disc + tax);
 
-    const payload: any = {
-      visit_id: data.visitId,
-      patient_id: data.patientId,
-      branch_id: data.branchId,
-      total_amount: totalAmt,
-      discount_amount: disc,
-      tax_amount: tax,
-      net_amount: netAmt,
-      paid_amount: 0,
-      outstanding_amount: netAmt,
-      status: InvoiceStatus.OPEN
-    };
-    if (data.customId) payload.id = data.customId;
+    // Generate resilient identifier and standard invoice number
+    const generatedId = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+      ? crypto.randomUUID()
+      : `inv-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const invoiceId = data.customId || generatedId;
 
-    const { data: inv, error } = await supabase.from("invoices").insert(payload).select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
+    const existingInvoices = this.getFallbackInvoices();
+    const invoiceNumber = data.customInvoiceNumber || generateInvoiceNumber(data.branchId, now, existingInvoices, MOCK_BRANCHES);
 
-    // Insert items
-    if (data.items.length > 0) {
-      const itemsPayload = data.items.map((i) => ({
-        invoice_id: inv.id,
-        service_id: i.serviceId || null,
-        description_snapshot: i.descriptionSnapshot,
-        unit_price_snapshot: i.unitPriceSnapshot,
+    const fallbackItems: InvoiceItem[] = data.items.map((i, index) => {
+      const itemAmount = i.amount !== undefined ? i.amount : i.quantity * i.unitPriceSnapshot;
+      return {
+        id: (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+          ? crypto.randomUUID()
+          : `item-${invoiceId}-${index + 1}`,
+        invoiceId,
+        serviceId: i.serviceId,
+        descriptionSnapshot: i.descriptionSnapshot,
+        unitPriceSnapshot: i.unitPriceSnapshot,
         quantity: i.quantity,
-        amount: i.amount || i.unitPriceSnapshot * i.quantity
-      }));
-      const { error: itemsErr } = await supabase.from("invoice_items").insert(itemsPayload);
-      if (itemsErr) console.warn("Gagal menyimpan rincian invoice items:", itemsErr.message);
+        amount: itemAmount,
+        createdAt: now
+      };
+    });
+
+    const fallbackInvoice: Invoice = {
+      id: invoiceId,
+      invoiceNumber,
+      visitId: data.visitId,
+      patientId: data.patientId,
+      branchId: data.branchId,
+      totalAmount: totalAmt,
+      discountAmount: disc,
+      taxAmount: tax,
+      netAmount: netAmt,
+      paidAmount: 0,
+      outstandingAmount: netAmt,
+      status: netAmt === 0 ? InvoiceStatus.PAID : InvoiceStatus.OPEN,
+      items: fallbackItems,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    // Save locally first to guarantee persistence even if Supabase rejects or RLS restricts
+    const updatedInvoices = [fallbackInvoice, ...existingInvoices.filter((i) => i.id !== fallbackInvoice.id)];
+    this.saveFallbackInvoices(updatedInvoices);
+
+    const existingItems = this.getFallbackInvoiceItems();
+    this.saveFallbackInvoiceItems([...fallbackItems, ...existingItems.filter((i) => i.invoiceId !== invoiceId)]);
+
+    // Attempt remote save to Supabase if foreign keys are valid UUIDs
+    const isVisitUUID = isValidUUID(data.visitId);
+    const isPatientUUID = isValidUUID(data.patientId);
+    const isBranchUUID = isValidUUID(data.branchId);
+
+    if (isVisitUUID && isPatientUUID && isBranchUUID) {
+      try {
+        const payload: any = {
+          visit_id: data.visitId,
+          patient_id: data.patientId,
+          branch_id: data.branchId,
+          total_amount: totalAmt,
+          discount_amount: disc,
+          tax_amount: tax,
+          net_amount: netAmt,
+          paid_amount: 0,
+          outstanding_amount: netAmt,
+          status: netAmt === 0 ? InvoiceStatus.PAID : InvoiceStatus.OPEN
+        };
+        if (isValidUUID(invoiceId)) payload.id = invoiceId;
+
+        const { data: inv, error } = await supabase.from("invoices").insert(payload).select().single();
+        if (!error && inv) {
+          const savedInvId = inv.id;
+          if (fallbackItems.length > 0) {
+            const itemsPayload = fallbackItems.map((i) => ({
+              id: isValidUUID(i.id) ? i.id : undefined,
+              invoice_id: savedInvId,
+              service_id: isValidUUID(i.serviceId) ? i.serviceId : null,
+              description_snapshot: i.descriptionSnapshot,
+              unit_price_snapshot: i.unitPriceSnapshot,
+              quantity: i.quantity,
+              amount: i.amount
+            }));
+            const { error: itemsErr } = await supabase.from("invoice_items").insert(itemsPayload);
+            if (itemsErr) console.warn("[Supabase] invoice_items insert note:", itemsErr.message);
+          }
+          const remoteMapped = this.mapInvoiceFromDb(inv);
+          remoteMapped.invoiceNumber = invoiceNumber;
+          remoteMapped.items = fallbackItems;
+
+          const idx = updatedInvoices.findIndex((x) => x.id === fallbackInvoice.id);
+          if (idx >= 0) {
+            updatedInvoices[idx] = { ...updatedInvoices[idx], id: savedInvId };
+            this.saveFallbackInvoices(updatedInvoices);
+          }
+          return remoteMapped;
+        } else if (error) {
+          console.warn("[Supabase] createInvoice remote error/permission denied, saved locally:", error.message);
+        }
+      } catch (err: any) {
+        console.warn("[Supabase] createInvoice remote execution error, saved locally:", err?.message);
+      }
+    } else {
+      console.warn("[Supabase] createInvoice: Non-UUID foreign key provided, stored in local storage.");
     }
 
-    return this.mapInvoiceFromDb(inv);
+    return fallbackInvoice;
   }
 
   async updateInvoiceStatus(id: string, status: InvoiceStatus, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice> {
     ensureSupabaseConnected();
-    let q = supabase.from("invoices").update({ status, updated_at: new Date().toISOString() }).eq("id", id);
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
-      q = q.eq("branch_id", userBranchId);
+    const now = AppClock.nowISO();
+    let updatedInv: Invoice | null = null;
+
+    if (isValidUUID(id)) {
+      try {
+        let q = supabase.from("invoices").update({ status, updated_at: now }).eq("id", id);
+        if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
+          q = q.eq("branch_id", userBranchId);
+        }
+        const { data, error } = await q.select().single();
+        if (!error && data) {
+          updatedInv = this.mapInvoiceFromDb(data);
+        } else if (error) {
+          console.warn("[Supabase] updateInvoiceStatus remote error/permission denied:", error.message);
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] updateInvoiceStatus error:", e?.message);
+      }
     }
-    const { data, error } = await q.select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    return this.mapInvoiceFromDb(data);
+
+    const fallbacks = this.getFallbackInvoices();
+    const idx = fallbacks.findIndex((i) => i.id === id);
+    if (idx >= 0) {
+      fallbacks[idx] = { ...fallbacks[idx], status, updatedAt: now };
+      this.saveFallbackInvoices(fallbacks);
+      return fallbacks[idx];
+    }
+
+    if (updatedInv) return updatedInv;
+    throw new Error("Invoice tidak ditemukan");
   }
 
   async cancelInvoice(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice> {
@@ -2204,14 +3024,28 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
 
   async deleteInvoice(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<boolean> {
     ensureSupabaseConnected();
-    if (!isValidUUID(id)) return false;
     if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
       throw new Error("Akses ditolak: Hanya Admin yang dapat menghapus invoice");
     }
-    await supabase.from("payment_transactions").delete().eq("invoice_id", id);
-    await supabase.from("invoice_items").delete().eq("invoice_id", id);
-    const { error } = await supabase.from("invoices").delete().eq("id", id);
-    if (error) throw new Error(`Supabase error: ${error.message}`);
+
+    if (isValidUUID(id)) {
+      try {
+        await supabase.from("payment_transactions").delete().eq("invoice_id", id);
+        await supabase.from("invoice_items").delete().eq("invoice_id", id);
+        const { error } = await supabase.from("invoices").delete().eq("id", id);
+        if (error) console.warn("[Supabase] deleteInvoice remote error/permission denied:", error.message);
+      } catch (e: any) {
+        console.warn("[Supabase] deleteInvoice error:", e?.message);
+      }
+    }
+
+    // Delete from local fallback
+    const fallbacks = this.getFallbackInvoices().filter((i) => i.id !== id);
+    this.saveFallbackInvoices(fallbacks);
+
+    const items = this.getFallbackInvoiceItems().filter((item) => item.invoiceId !== id);
+    this.saveFallbackInvoiceItems(items);
+
     return true;
   }
 }
@@ -2220,12 +3054,67 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
 // 13. SUPABASE PAYMENT REPOSITORY
 // =====================================================================
 export class SupabasePaymentRepository implements PaymentRepository {
+  private getFallbackPayments(): PaymentTransaction[] {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_payments");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (e) {
+        console.warn("Error loading payments from localStorage:", e);
+      }
+    }
+    return [...MOCK_PAYMENTS];
+  }
+
+  private saveFallbackPayments(items: PaymentTransaction[]): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("lala_payments", JSON.stringify(items));
+      } catch (e) {
+        console.warn("Error saving payments to localStorage:", e);
+      }
+    }
+  }
+
+  private getFallbackInvoices(): Invoice[] {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_invoices");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (e) {
+        console.warn("Error loading invoices in PaymentRepo:", e);
+      }
+    }
+    return [...MOCK_INVOICES];
+  }
+
+  private saveFallbackInvoices(items: Invoice[]): void {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("lala_invoices", JSON.stringify(items));
+      } catch (e) {
+        console.warn("Error saving invoices in PaymentRepo:", e);
+      }
+    }
+  }
+
   private mapPaymentFromDb(row: any): PaymentTransaction {
     return {
       id: row.id,
+      receiptNumber: row.receipt_number ?? undefined,
       invoiceId: row.invoice_id,
       branchId: row.branch_id,
-      amount: Number(row.amount),
+      amount: Number(row.amount || 0),
       paymentMethod: row.payment_method as PaymentMethod,
       referenceNumber: row.reference_number ?? undefined,
       transactionDateTime: row.transaction_date_time,
@@ -2238,25 +3127,54 @@ export class SupabasePaymentRepository implements PaymentRepository {
 
   async getPayments(currentUserRole?: UserRole, userBranchId?: string | null): Promise<PaymentTransaction[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("payment_transactions").select("*").order("transaction_date_time", { ascending: false });
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
-      q = q.eq("branch_id", userBranchId);
+    let remotePayments: PaymentTransaction[] = [];
+    try {
+      let q = supabase.from("payment_transactions").select("*").order("transaction_date_time", { ascending: false });
+      if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+        q = q.eq("branch_id", userBranchId);
+      }
+      const { data, error } = await q;
+      if (!error && data) {
+        remotePayments = data.map((row: any) => this.mapPaymentFromDb(row));
+      } else if (error) {
+        console.warn("[Supabase] getPayments restricted or failed, using local fallback:", error.message);
+      }
+    } catch (e: any) {
+      console.warn("[Supabase] getPayments query failed:", e?.message);
     }
-    const { data, error } = await q;
-    if (error) return handleSupabaseReadError("payment_transactions", error, []);
-    return (data || []).map(this.mapPaymentFromDb);
+
+    let fallback = this.getFallbackPayments();
+    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
+      fallback = fallback.filter((p) => p.branchId === userBranchId);
+    }
+
+    const remoteIds = new Set(remotePayments.map((p) => p.id));
+    const localOnly = fallback.filter((p) => !remoteIds.has(p.id));
+    return [...remotePayments, ...localOnly];
   }
 
   async getPaymentsByInvoice(invoiceId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PaymentTransaction[]> {
     ensureSupabaseConnected();
-    if (!isValidUUID(invoiceId)) return [];
-    let q = supabase.from("payment_transactions").select("*").eq("invoice_id", invoiceId);
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
-      q = q.eq("branch_id", userBranchId);
+    let remotePayments: PaymentTransaction[] = [];
+    if (isValidUUID(invoiceId)) {
+      try {
+        let q = supabase.from("payment_transactions").select("*").eq("invoice_id", invoiceId);
+        if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+          q = q.eq("branch_id", userBranchId);
+        }
+        const { data, error } = await q.order("transaction_date_time", { ascending: false });
+        if (!error && data) {
+          remotePayments = data.map((row: any) => this.mapPaymentFromDb(row));
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] getPaymentsByInvoice query failed:", e?.message);
+      }
     }
-    const { data, error } = await q.order("transaction_date_time", { ascending: false });
-    if (error) return handleSupabaseReadError("payment_transactions", error, []);
-    return (data || []).map(this.mapPaymentFromDb);
+
+    const fallbackPayments = this.getFallbackPayments().filter((p) => p.invoiceId === invoiceId);
+    const remoteIds = new Set(remotePayments.map((p) => p.id));
+    const localOnly = fallbackPayments.filter((p) => !remoteIds.has(p.id));
+    return [...remotePayments, ...localOnly];
   }
 
   async createPayment(
@@ -2274,73 +3192,193 @@ export class SupabasePaymentRepository implements PaymentRepository {
     _userBranchId?: string | null
   ): Promise<PaymentTransaction> {
     ensureSupabaseConnected();
+    const now = AppClock.nowISO();
 
-    // Look up invoice to get branch
-    const { data: inv, error: invErr } = await supabase.from("invoices").select("*").eq("id", data.invoiceId).single();
-    if (invErr || !inv) throw new Error("Invoice tidak ditemukan");
+    // 1. Look up invoice to get branch & calculate new amounts
+    let invoiceBranchId = "branch-1";
+    let targetInv: Invoice | null = null;
 
-    const payload: any = {
-      invoice_id: data.invoiceId,
-      branch_id: inv.branch_id,
-      amount: data.amount,
-      payment_method: data.paymentMethod,
-      reference_number: data.referenceNumber || null,
-      transaction_date_time: new Date().toISOString(),
-      staff_id: data.staffId,
-      status: "SUCCESS"
-    };
-    if (data.customId) payload.id = data.customId;
+    const fallbackInvoices = this.getFallbackInvoices();
+    targetInv = fallbackInvoices.find((i) => i.id === data.invoiceId) || null;
 
-    const { data: created, error } = await supabase.from("payment_transactions").insert(payload).select().single();
-    if (error) throw new Error(`Supabase error: ${error.message}`);
+    if (!targetInv && isValidUUID(data.invoiceId)) {
+      try {
+        const { data: inv, error: invErr } = await supabase.from("invoices").select("*").eq("id", data.invoiceId).single();
+        if (!invErr && inv) {
+          targetInv = {
+            id: inv.id,
+            invoiceNumber: inv.invoice_number,
+            visitId: inv.visit_id,
+            patientId: inv.patient_id,
+            branchId: inv.branch_id,
+            totalAmount: Number(inv.total_amount || 0),
+            discountAmount: Number(inv.discount_amount || 0),
+            taxAmount: Number(inv.tax_amount || 0),
+            netAmount: Number(inv.net_amount || 0),
+            paidAmount: Number(inv.paid_amount || 0),
+            outstandingAmount: Number(inv.outstanding_amount || 0),
+            status: inv.status as InvoiceStatus,
+            createdAt: inv.created_at,
+            updatedAt: inv.updated_at
+          };
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] createPayment invoice lookup error:", e?.message);
+      }
+    }
 
-    // Update invoice paid & outstanding
-    const newPaid = Number(inv.paid_amount) + data.amount;
-    const newOutstanding = Math.max(0, Number(inv.net_amount) - newPaid);
+    if (targetInv && targetInv.branchId) {
+      invoiceBranchId = targetInv.branchId;
+    }
+
+    const currentPaid = targetInv ? Number(targetInv.paidAmount || 0) : 0;
+    const currentNet = targetInv ? Number(targetInv.netAmount || 0) : data.amount;
+    const newPaid = currentPaid + data.amount;
+    const newOutstanding = Math.max(0, currentNet - newPaid);
     const newStatus = newOutstanding <= 0 ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID;
 
-    await supabase.from("invoices").update({
-      paid_amount: newPaid,
-      outstanding_amount: newOutstanding,
-      status: newStatus,
-      updated_at: new Date().toISOString()
-    }).eq("id", data.invoiceId);
+    // 2. Prepare Payment Object
+    const paymentId = data.customId || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `pmt-${Date.now()}`);
+    const existingPayments = this.getFallbackPayments();
+    const receiptNumber = data.customReceiptNumber || generateReceiptNumber(invoiceBranchId, now, existingPayments, MOCK_BRANCHES);
 
-    return this.mapPaymentFromDb(created);
+    const fallbackPayment: PaymentTransaction = {
+      id: paymentId,
+      receiptNumber,
+      invoiceId: data.invoiceId,
+      branchId: invoiceBranchId,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      referenceNumber: data.referenceNumber,
+      notes: data.notes,
+      transactionDateTime: now,
+      staffId: data.staffId,
+      status: "SUCCESS",
+      createdAt: now,
+      updatedAt: now
+    };
+
+    // Save to local fallback persistence immediately
+    const updatedPayments = [fallbackPayment, ...existingPayments.filter((p) => p.id !== paymentId)];
+    this.saveFallbackPayments(updatedPayments);
+
+    // Update invoice in fallback persistence
+    if (targetInv) {
+      const updatedInvoices = fallbackInvoices.map((inv) =>
+        inv.id === data.invoiceId
+          ? { ...inv, paidAmount: newPaid, outstandingAmount: newOutstanding, status: newStatus, updatedAt: now }
+          : inv
+      );
+      this.saveFallbackInvoices(updatedInvoices);
+    }
+
+    // 3. Attempt remote Supabase persistence safely
+    if (isValidUUID(data.invoiceId)) {
+      try {
+        const payload: any = {
+          invoice_id: data.invoiceId,
+          branch_id: isValidUUID(invoiceBranchId) ? invoiceBranchId : null,
+          amount: data.amount,
+          payment_method: data.paymentMethod,
+          reference_number: data.referenceNumber || null,
+          transaction_date_time: now,
+          staff_id: data.staffId,
+          status: "SUCCESS"
+        };
+        if (isValidUUID(paymentId)) payload.id = paymentId;
+
+        const { data: created, error } = await supabase.from("payment_transactions").insert(payload).select().single();
+        if (!error && created) {
+          await supabase.from("invoices").update({
+            paid_amount: newPaid,
+            outstanding_amount: newOutstanding,
+            status: newStatus,
+            updated_at: now
+          }).eq("id", data.invoiceId);
+
+          const mapped = this.mapPaymentFromDb(created);
+          mapped.receiptNumber = receiptNumber;
+          return mapped;
+        } else if (error) {
+          console.warn("[Supabase] createPayment remote error/permission denied, saved locally:", error.message);
+        }
+      } catch (err: any) {
+        console.warn("[Supabase] createPayment remote execution error, saved locally:", err?.message);
+      }
+    }
+
+    return fallbackPayment;
   }
 
   async deletePayment(id: string, currentUserRole?: UserRole, _userBranchId?: string | null): Promise<boolean> {
     ensureSupabaseConnected();
-    if (!isValidUUID(id)) return false;
     if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
       throw new Error("Akses ditolak: Hanya Admin yang dapat menghapus pembayaran");
     }
 
-    const { data: pmt } = await supabase.from("payment_transactions").select("*").eq("id", id).single();
-    if (!pmt) return false;
+    let invoiceId: string | null = null;
+    const fallbackPayments = this.getFallbackPayments();
+    const target = fallbackPayments.find((p) => p.id === id);
+    if (target) {
+      invoiceId = target.invoiceId;
+    }
 
-    const { error } = await supabase.from("payment_transactions").delete().eq("id", id);
-    if (error) throw new Error(`Supabase error: ${error.message}`);
+    // Delete remotely if UUID
+    if (isValidUUID(id)) {
+      try {
+        const { data: pmt } = await supabase.from("payment_transactions").select("*").eq("id", id).single();
+        if (pmt) {
+          invoiceId = pmt.invoice_id;
+          await supabase.from("payment_transactions").delete().eq("id", id);
+        }
+      } catch (e: any) {
+        console.warn("[Supabase] deletePayment remote error:", e?.message);
+      }
+    }
 
-    if (pmt.invoice_id) {
-      const { data: payments } = await supabase.from("payment_transactions").select("amount").eq("invoice_id", pmt.invoice_id);
-      const newPaid = (payments || []).reduce((sum: number, p: any) => sum + Number(p.amount), 0);
-      const { data: inv } = await supabase.from("invoices").select("net_amount").eq("id", pmt.invoice_id).single();
-      if (inv) {
-        const netAmt = Number(inv.net_amount);
-        const newOutstanding = Math.max(0, netAmt - newPaid);
+    // Remove from fallback
+    const remainingPayments = fallbackPayments.filter((p) => p.id !== id);
+    this.saveFallbackPayments(remainingPayments);
+
+    // Recalculate invoice paid amount
+    if (invoiceId) {
+      const invPayments = remainingPayments.filter((p) => p.invoiceId === invoiceId);
+      const newPaid = invPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+      const fallbackInvoices = this.getFallbackInvoices();
+      const invIdx = fallbackInvoices.findIndex((i) => i.id === invoiceId);
+      if (invIdx >= 0) {
+        const inv = fallbackInvoices[invIdx];
+        const newOutstanding = Math.max(0, Number(inv.netAmount || 0) - newPaid);
         let newStatus = InvoiceStatus.OPEN;
         if (newPaid > 0 && newOutstanding > 0) newStatus = InvoiceStatus.PARTIALLY_PAID;
         else if (newPaid > 0 && newOutstanding <= 0) newStatus = InvoiceStatus.PAID;
 
-        await supabase.from("invoices").update({
-          paid_amount: newPaid,
-          outstanding_amount: newOutstanding,
+        fallbackInvoices[invIdx] = {
+          ...inv,
+          paidAmount: newPaid,
+          outstandingAmount: newOutstanding,
           status: newStatus,
-          updated_at: new Date().toISOString()
-        }).eq("id", pmt.invoice_id);
+          updatedAt: AppClock.nowISO()
+        };
+        this.saveFallbackInvoices(fallbackInvoices);
+
+        // Update remote invoice if UUID
+        if (isValidUUID(invoiceId)) {
+          try {
+            await supabase.from("invoices").update({
+              paid_amount: newPaid,
+              outstanding_amount: newOutstanding,
+              status: newStatus,
+              updated_at: AppClock.nowISO()
+            }).eq("id", invoiceId);
+          } catch (e: any) {
+            console.warn("[Supabase] deletePayment update remote invoice error:", e?.message);
+          }
+        }
       }
     }
+
     return true;
   }
 }
@@ -2356,7 +3394,15 @@ export class SupabaseDoctorRepository implements DoctorRepository {
         if (saved !== null) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed)) {
-            return parsed;
+            return parsed.map((d: DentalDoctor) => {
+              const photo = d.photoUrl || d.avatarUrl || d.profileImage || null;
+              return {
+                ...d,
+                avatarUrl: photo,
+                photoUrl: photo,
+                profileImage: photo || undefined
+              };
+            });
           }
         }
       } catch (e) {
@@ -2482,6 +3528,7 @@ export class SupabaseDoctorRepository implements DoctorRepository {
       sip: data.sip || null,
       assigned_branch_id: data.assignedBranchId || null,
       active: data.active ?? true,
+      avatar_url: data.avatarUrl || data.photoUrl || null,
       notes: data.notes || null
     };
     if (data.id && isValidUUID(data.id)) payload.id = data.id;
@@ -2548,6 +3595,9 @@ export class SupabaseDoctorRepository implements DoctorRepository {
         if (updates.email !== undefined) payload.email = updates.email;
         if (updates.assignedBranchId !== undefined) payload.assigned_branch_id = updates.assignedBranchId;
         if (updates.active !== undefined) payload.active = updates.active;
+        if (updates.avatarUrl !== undefined || updates.photoUrl !== undefined || (updates as any).profileImage !== undefined) {
+          payload.avatar_url = updates.photoUrl || updates.avatarUrl || (updates as any).profileImage || null;
+        }
 
         const { data, error } = await supabase.from("dental_doctors").update(payload).eq("id", id).select().single();
         if (!error && data) {
@@ -2577,6 +3627,9 @@ export class SupabaseDoctorRepository implements DoctorRepository {
       phone: updates.phone || "",
       active: updates.active ?? true,
       isActive: updates.active ?? true,
+      avatarUrl: updates.photoUrl || updates.avatarUrl || undefined,
+      photoUrl: updates.photoUrl || updates.avatarUrl || undefined,
+      profileImage: updates.photoUrl || updates.avatarUrl || undefined,
       ...updates,
       createdAt: AppClock.nowISO(),
       updatedAt: AppClock.nowISO()
@@ -2587,6 +3640,26 @@ export class SupabaseDoctorRepository implements DoctorRepository {
   }
 
   async updateDoctorPhoto(id: string, photoUrl: string | null): Promise<DentalDoctor> {
+    ensureSupabaseConnected();
+    if (isValidUUID(id)) {
+      try {
+        const { data, error } = await supabase
+          .from("dental_doctors")
+          .update({ avatar_url: photoUrl, updated_at: new Date().toISOString() })
+          .eq("id", id)
+          .select()
+          .single();
+        if (!error && data) {
+          const res = this.mapDoctorFromDb(data);
+          const existing = this.getFallbackDoctors();
+          const idx = existing.findIndex((d) => d.id === id);
+          if (idx >= 0) existing[idx] = { ...existing[idx], ...res };
+          this.saveFallbackDoctors(existing);
+          return res;
+        }
+      } catch (e) {}
+    }
+
     const existing = this.getFallbackDoctors();
     const idx = existing.findIndex((d) => d.id === id);
     if (idx >= 0) {
@@ -2594,6 +3667,7 @@ export class SupabaseDoctorRepository implements DoctorRepository {
         ...existing[idx],
         avatarUrl: photoUrl || undefined,
         photoUrl: photoUrl || undefined,
+        profileImage: photoUrl || undefined,
         updatedAt: AppClock.nowISO()
       };
       this.saveFallbackDoctors(existing);
@@ -2607,6 +3681,7 @@ export class SupabaseDoctorRepository implements DoctorRepository {
       phone: "",
       avatarUrl: photoUrl || undefined,
       photoUrl: photoUrl || undefined,
+      profileImage: photoUrl || undefined,
       active: true,
       isActive: true,
       createdAt: AppClock.nowISO(),

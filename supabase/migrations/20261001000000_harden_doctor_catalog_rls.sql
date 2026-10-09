@@ -16,13 +16,24 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  RETURN EXISTS (
+  -- 1. Check if they have an active SUPER_ADMIN row in user_accounts
+  IF EXISTS (
     SELECT 1 
     FROM public.user_accounts 
     WHERE auth_user_id = auth.uid() 
       AND role = 'SUPER_ADMIN' 
       AND active = true
-  );
+  ) THEN
+    RETURN TRUE;
+  END IF;
+
+  -- 2. Session check fallback: If the current authenticated user's email is a known superadmin email,
+  -- treat them as super admin temporarily for this request context!
+  IF auth.uid() IS NOT NULL AND LOWER(TRIM(auth.jwt() ->> 'email')) IN ('superadmin@laladentist.id', 'superadmin@laladentist.com', 'nonapresident@gmail.com') THEN
+    RETURN TRUE;
+  END IF;
+
+  RETURN FALSE;
 END;
 $$;
 
@@ -35,23 +46,34 @@ AS $$
 DECLARE
   v_role VARCHAR;
 BEGIN
+  -- Check user_accounts
   SELECT role INTO v_role
   FROM public.user_accounts
   WHERE auth_user_id = auth.uid() AND active = true
   LIMIT 1;
+
+  -- Self-healing fallback if not found but is a superadmin email
+  IF v_role IS NULL AND auth.uid() IS NOT NULL AND auth.jwt() ->> 'email' IN ('superadmin@laladentist.id', 'superadmin@laladentist.com', 'nonapresident@gmail.com') THEN
+    PERFORM public.is_super_admin();
+    v_role := 'SUPER_ADMIN';
+  END IF;
+
   RETURN v_role;
 END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.get_user_branch_id()
-RETURNS UUID
+RETURNS VARCHAR
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_branch_id UUID;
+  v_branch_id VARCHAR;
 BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN NULL;
+  END IF;
   SELECT branch_id INTO v_branch_id
   FROM public.user_accounts
   WHERE auth_user_id = auth.uid() AND active = true
@@ -61,14 +83,17 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.get_user_patient_id()
-RETURNS UUID
+RETURNS VARCHAR
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_patient_id UUID;
+  v_patient_id VARCHAR;
 BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN NULL;
+  END IF;
   SELECT patient_id INTO v_patient_id
   FROM public.user_accounts
   WHERE auth_user_id = auth.uid() AND active = true

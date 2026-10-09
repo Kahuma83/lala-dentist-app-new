@@ -71,9 +71,13 @@ export const Login: React.FC = () => {
         assignedBranchId: context.assignedBranchId ?? null,
         branchId: context.assignedBranchId ?? null,
         staffId: context.staffId ?? null,
-        doctorId: context.role === UserRole.DOCTOR ? context.userAccountId : null
+        doctorId: context.role === UserRole.DOCTOR ? context.userAccountId : null,
+        isMockFallback: context.isMockFallback,
+        email: user.email || null
       };
 
+      localStorage.setItem("mock_user_id", resolvedUser.id);
+      localStorage.removeItem("mock_user_logged_out");
       setCurrentUser(resolvedUser);
       navigateToRoleDashboard(context.role);
     } catch (err: any) {
@@ -85,7 +89,7 @@ export const Login: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 md:p-8" id="login-screen">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-gold-soft border border-gold-accent/30 p-8 bg-white-textured">
+      <div className="max-w-md w-full bg-white rounded-2xl border border-slate-200/80 shadow-lg p-8">
         
         {/* Header Branding */}
         <div className="text-center mb-6">
@@ -105,43 +109,44 @@ export const Login: React.FC = () => {
 
         {/* EMAIL & PASSWORD AUTH FORM */}
         <form onSubmit={handleLogin} className="space-y-4" id="real-login-form">
-          <div className="bg-emerald-50 border border-emerald-100 p-3.5 rounded-xl text-xs text-emerald-800 shadow-sm">
-            <p className="font-bold mb-0.5 flex items-center gap-1">
-              <Lock className="w-3.5 h-3.5 text-emerald-700" />
+          <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-xs text-slate-700">
+            <p className="font-bold mb-0.5 flex items-center gap-1.5 text-[#17233C]">
+              <Lock className="w-3.5 h-3.5 text-[#c5a059]" />
               <span>Autentikasi Terenkripsi Klinik</span>
             </p>
-            <p className="leading-relaxed text-slate-600 text-[11px]">
-              Masukkan alamat email dan kata sandi terdaftar Anda untuk masuk ke sistem.
+            <p className="leading-relaxed text-slate-500 text-[11px]">
+              Silakan masuk dengan akun terdaftar (Username, No. HP, atau Email) beserta Kata Sandi Anda.
             </p>
           </div>
 
           {loginError && (
-            <div className="bg-rose-50 border border-rose-100 p-3 rounded-xl text-xs text-rose-700 flex items-start gap-2">
+            <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-xs text-rose-700 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <p className="font-medium">{loginError}</p>
             </div>
           )}
 
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-              Alamat Email
+            <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">
+              Username / No. HP / Email
             </label>
             <div className="relative">
               <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
-                type="email"
+                type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="superadmin@laladentist.id"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm text-slate-800 focus:outline-none focus:border-gold-accent focus:bg-white transition-all shadow-inner"
+                placeholder="Masukkan username, no. hp, atau email"
+                autoComplete="username"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm text-slate-800 focus:outline-none focus:border-[#c5a059] focus:bg-white transition-all shadow-inner"
                 required
               />
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-              Kata Sandi
+            <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">
+              Kata Sandi / PIN
             </label>
             <div className="relative">
               <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -150,7 +155,8 @@ export const Login: React.FC = () => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm text-slate-800 focus:outline-none focus:border-gold-accent focus:bg-white transition-all shadow-inner"
+                autoComplete="current-password"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm text-slate-800 focus:outline-none focus:border-[#c5a059] focus:bg-white transition-all shadow-inner"
                 required
               />
             </div>
@@ -159,7 +165,7 @@ export const Login: React.FC = () => {
           <button
             type="submit"
             disabled={loginLoading}
-            className="w-full bg-[#17233C] hover:bg-slate-800 text-white font-semibold py-3 px-4 rounded-xl text-sm transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
+            className="w-full bg-[#17233C] hover:bg-slate-800 text-white font-semibold py-3 px-4 rounded-xl text-sm transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 mt-2 cursor-pointer"
           >
             {loginLoading ? (
               <>

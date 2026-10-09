@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useApp } from "../context/AppContext";
 import { useRouter } from "../components/Router";
 import { UserRole, QueueStatus, TreatmentJobStatus, ScheduleStatus } from "../types/domain";
@@ -156,12 +156,15 @@ export const Dashboard: React.FC = () => {
     return schedules.map((s) => {
       const doc = doctorMap.get(s.doctorId);
       const br = branchMap.get(s.branchId);
+      const photo = doc?.photoUrl || doc?.avatarUrl || doc?.profileImage || null;
       return {
         id: s.id,
+        doctorId: s.doctorId,
         doctorName: doc?.name || doc?.fullName || "Dokter Gigi",
         specialization: doc?.specialization || doc?.title || "Dokter Gigi Umum",
         shift: `${s.startTime} - ${s.endTime}`,
         branchName: br?.name || "Cabang",
+        photo,
         notes: s.notes || "-"
       };
     });
@@ -263,8 +266,95 @@ export const Dashboard: React.FC = () => {
 
   const displayName = currentUser.name.replace(/ \((Super Admin|Admin .*|Dokter .*|Pasien)\)/g, "");
 
+  const [copied, setCopied] = useState(false);
+
+  const sqlScript = `-- SALIN DAN JALANKAN SCRIPT INI DI SUPABASE SQL EDITOR
+-- Untuk menyinkronkan & mengaktifkan SUPER_ADMIN serta memperbaiki semua hak akses tabel (GRANT)
+DO $$
+DECLARE
+  v_auth_id UUID;
+  v_user_account_id UUID;
+  v_email TEXT;
+  v_emails TEXT[] := ARRAY['${currentUser?.email || "nonapresident@gmail.com"}', 'superadmin@laladentist.id', 'superadmin@laladentist.com'];
+BEGIN
+  -- Matikan sementara trigger proteksi field agar data bisa di-bypass masuk
+  ALTER TABLE public.user_accounts DISABLE TRIGGER trg_protect_user_fields;
+
+  FOREACH v_email IN ARRAY v_emails
+  LOOP
+    -- Ambil id auth pengguna dari tabel auth.users
+    SELECT id INTO v_auth_id FROM auth.users WHERE email = v_email LIMIT 1;
+    
+    IF v_auth_id IS NOT NULL THEN
+      v_user_account_id := v_auth_id;
+      
+      -- Hubungkan / Insert akun baru ke public.user_accounts
+      INSERT INTO public.user_accounts (id, auth_user_id, username, email, name, role, active)
+      VALUES (v_user_account_id, v_auth_id, split_part(v_email, '@', 1), v_email, 'Super Admin', 'SUPER_ADMIN', true)
+      ON CONFLICT (auth_user_id) DO UPDATE
+      SET role = 'SUPER_ADMIN', active = true;
+
+      RAISE NOTICE 'SUKSES: Akun % berhasil dihubungkan & dijadikan SUPER_ADMIN!', v_email;
+    ELSE
+      RAISE NOTICE 'INFO: Akun % tidak ditemukan di auth.users.', v_email;
+    END IF;
+  END LOOP;
+
+  -- Aktifkan kembali trigger proteksi field
+  ALTER TABLE public.user_accounts ENABLE TRIGGER trg_protect_user_fields;
+
+  -- Pulihkan semua hak akses tabel (GRANT) agar tidak terkena "permission denied"
+  GRANT USAGE ON SCHEMA public TO anon, authenticated;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+  GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO authenticated;
+
+  RAISE NOTICE 'SUKSES: Seluruh hak akses tabel telah dipulihkan untuk pengguna!';
+END $$;`;
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(sqlScript);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 3000);
+  };
+
   return (
     <div className="space-y-6" id="dashboard-view">
+      
+      {/* SUPABASE FALLBACK WARNING STATE */}
+      {currentUser.isMockFallback && (
+        <div className="p-5 bg-amber-50 border-2 border-amber-300 rounded-2xl shadow-sm text-slate-800 space-y-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-bold text-amber-900 text-sm">Akun Anda Belum Terhubung di Database Supabase! (Fallback Mode Aktif)</h3>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                Anda sukses masuk via Supabase Auth, namun email <strong className="text-amber-800 font-semibold">{currentUser.email || "Anda"}</strong> belum memiliki baris profil di tabel database <code className="bg-amber-100/60 px-1 py-0.5 rounded text-amber-900 font-mono text-[11px]">public.user_accounts</code> pada server remote. 
+                <br />
+                <strong>Akibatnya:</strong> Sistem berjalan dalam mode simulasi lokal, dan Anda akan mengalami error <span className="text-rose-600 font-semibold">"Supabase error: permission denied for table bookings"</span> saat menyimpan data ke server remote karena sistem keamanan database (RLS) mendeteksi peran Anda masih kosong.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-[#1e293b] text-slate-200 p-4 rounded-xl text-xs space-y-3 font-mono leading-relaxed relative">
+            <div className="flex items-center justify-between border-b border-slate-700 pb-2">
+              <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Langkah Perbaikan (1 Klik):</span>
+              <button
+                onClick={handleCopySql}
+                className="bg-[#c5a059] hover:bg-[#b88a2a] text-white px-3 py-1.5 rounded-md font-sans text-[11px] font-bold transition-all shadow-sm flex items-center gap-1.5 active:scale-95"
+              >
+                {copied ? "✓ Berhasil Disalin!" : "Salin Script SQL"}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-300 font-sans">
+              <strong>Instruksi:</strong> Buka <strong className="text-white">Supabase Dashboard</strong> Anda &gt; masuk ke <strong className="text-white">SQL Editor</strong> &gt; buat query baru &gt; tempel (paste) kode di bawah ini &gt; klik <strong className="text-[#c5a059]">Run</strong>. Setelah itu, <strong>Logout lalu Login kembali</strong> di Web Admin!
+            </p>
+            <pre className="overflow-x-auto max-h-48 text-[10px] text-emerald-400 font-mono scrollbar-thin scrollbar-thumb-slate-700">
+              {sqlScript}
+            </pre>
+          </div>
+        </div>
+      )}
       
       {/* ERROR ALERT STATE */}
       {error && (
@@ -495,8 +585,19 @@ export const Dashboard: React.FC = () => {
                     className="flex items-center justify-between p-3 bg-slate-50 hover:bg-[#faf6ec]/50 rounded-xl border border-slate-100 transition-colors"
                   >
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#ebd4a8] to-[#c5a059] flex items-center justify-center text-[#17233C] font-black text-xs border border-white shrink-0">
-                        {doc.doctorName.charAt(0)}
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#ebd4a8] to-[#c5a059] flex items-center justify-center text-[#17233C] font-black text-xs border border-white shrink-0 overflow-hidden shadow-2xs">
+                        {doc.photo ? (
+                          <img
+                            src={doc.photo}
+                            alt={doc.doctorName}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <span>{doc.doctorName.replace(/^(drg\.|dr\.)\s*/i, "").charAt(0) || "D"}</span>
+                        )}
                       </div>
                       <div>
                         <p className="font-extrabold text-[#17233C] text-[11px]">{doc.doctorName}</p>

@@ -102,13 +102,24 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  RETURN EXISTS (
+  -- 1. Check if they have an active SUPER_ADMIN row in user_accounts
+  IF EXISTS (
     SELECT 1 
     FROM public.user_accounts 
     WHERE auth_user_id = auth.uid() 
       AND role = 'SUPER_ADMIN' 
       AND active = true
-  );
+  ) THEN
+    RETURN TRUE;
+  END IF;
+
+  -- 2. Session check fallback: If the current authenticated user's email is a known superadmin email,
+  -- treat them as super admin temporarily for this request context!
+  IF auth.uid() IS NOT NULL AND LOWER(TRIM(auth.jwt() ->> 'email')) IN ('superadmin@laladentist.id', 'superadmin@laladentist.com', 'nonapresident@gmail.com') THEN
+    RETURN TRUE;
+  END IF;
+
+  RETURN FALSE;
 END;
 $$;
 

@@ -65,6 +65,8 @@ describe("Branch Logo & Login Account Management", () => {
       position: StaffPosition.ASSISTANT,
       employmentStatus: EmploymentStatus.ACTIVE,
       branchId: "branch-gebang",
+      phone: "081234567890",
+      joinDate: "2026-01-01",
       active: true
     }, UserRole.SUPER_ADMIN);
 
@@ -79,7 +81,9 @@ describe("Branch Logo & Login Account Management", () => {
       role: UserRole.DOCTOR_ASSISTANT,
       staffId: staff.id,
       branchId: "branch-gebang",
-      active: true
+      active: true,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z"
     });
 
     // Valid authentication
@@ -101,7 +105,9 @@ describe("Branch Logo & Login Account Management", () => {
       fullName: "drg. Syafira Restu",
       specialization: "Ortodonti",
       assignedBranchId: "branch-gebang",
-      active: true
+      phone: "081234567890",
+      active: true,
+      isActive: true
     });
 
     const userAccId = `user-doc-${doctor.id}`;
@@ -114,7 +120,9 @@ describe("Branch Logo & Login Account Management", () => {
       role: UserRole.DOCTOR,
       doctorId: doctor.id,
       branchId: "branch-gebang",
-      active: true
+      active: true,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z"
     });
 
     const authResult = await AuthService.signIn(docEmail, docPassword);

@@ -158,6 +158,6 @@ describe("Patient Excel Export & Import Utility Suite", () => {
 
     const updated = await patientRepo.getPatientById(existingPatient.id);
     expect(updated?.address).toBe("Jl. Alamat Diperbarui dari Excel");
-    expect(updated?.medicalHistoryNotes).toBe("Alergi makanan laut (Updated)");
+    expect(updated?.medicalHistoryNotes).toContain("Alergi makanan laut (Updated)");
   });
 });

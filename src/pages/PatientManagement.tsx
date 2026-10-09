@@ -8,6 +8,7 @@ import {
   UserRole,
   DentalBranch,
   Booking,
+  BookingStatus,
   MedicalRecord,
   MedicalRecordStatus,
   TreatmentJob
@@ -412,9 +413,11 @@ export const PatientManagement: React.FC = () => {
   // Open Booking Visit Modal
   const handleOpenBookingVisit = () => {
     setFormError(null);
-    const availableBookings = bookings.filter((b) =>
-      currentUser?.role === UserRole.BRANCH_ADMIN ? b.branchId === currentUser.assignedBranchId : true
-    );
+    const availableBookings = bookings.filter((b) => {
+      if (currentUser?.role === UserRole.BRANCH_ADMIN && b.branchId !== currentUser.assignedBranchId) return false;
+      if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.COMPLETED) return false;
+      return true;
+    });
 
     setBookingVisitForm({
       bookingId: availableBookings[0]?.id || "",
@@ -464,6 +467,18 @@ export const PatientManagement: React.FC = () => {
           doctorId: targetBooking.doctorId
         }
       );
+
+      // Mark booking as COMPLETED/FULFILLED
+      try {
+        await repos.booking.updateBooking(
+          targetBooking.id,
+          { status: BookingStatus.COMPLETED },
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      } catch (bErr) {
+        console.warn("Update booking status on check-in note:", bErr);
+      }
 
       await refreshData();
       setIsBookingVisitOpen(false);

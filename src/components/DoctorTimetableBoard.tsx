@@ -501,8 +501,15 @@ export const DoctorTimetableBoard: React.FC<DoctorTimetableBoardProps> = ({
               >
                 <GripVertical className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-300 transition-colors" />
                 <div className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-[10px] border border-white/20 shrink-0 overflow-hidden">
-                  {doc.photoUrl || doc.profileImage ? (
-                    <img src={doc.photoUrl || doc.profileImage || ""} alt={doc.name} className="w-full h-full object-cover" />
+                  {doc.photoUrl || doc.avatarUrl || doc.profileImage ? (
+                    <img
+                      src={doc.photoUrl || doc.avatarUrl || doc.profileImage || ""}
+                      alt={doc.name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = "none";
+                      }}
+                    />
                   ) : (
                     <span>{doc.name.replace(/^(drg\.|dr\.)\s*/i, "").charAt(0)}</span>
                   )}
@@ -621,8 +628,15 @@ export const DoctorTimetableBoard: React.FC<DoctorTimetableBoardProps> = ({
                                   {/* Doctor Info */}
                                   <div className="flex items-start gap-1.5">
                                     <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[9px] flex items-center justify-center shrink-0 border border-emerald-200 overflow-hidden mt-0.5">
-                                      {doc?.photoUrl || doc?.profileImage ? (
-                                        <img src={doc.photoUrl || doc.profileImage || ""} alt="" className="w-full h-full object-cover" />
+                                      {doc?.photoUrl || doc?.avatarUrl || doc?.profileImage ? (
+                                        <img
+                                          src={doc.photoUrl || doc.avatarUrl || doc.profileImage || ""}
+                                          alt=""
+                                          className="w-full h-full object-cover"
+                                          onError={(e) => {
+                                            (e.target as HTMLElement).style.display = "none";
+                                          }}
+                                        />
                                       ) : (
                                         <span>{doc?.name ? doc.name.replace(/^(drg\.|dr\.)\s*/i, "").charAt(0) : "D"}</span>
                                       )}

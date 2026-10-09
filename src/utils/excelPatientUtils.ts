@@ -267,6 +267,10 @@ export async function parsePatientExcelFile(
     const genderKey = findKey(row, ["gender", "kelamin", "jk", "sex", "jeniskelamin"]);
     const addressKey = findKey(row, ["alamat", "address", "domisili", "kota"]);
     const notesKey = findKey(row, ["riwayat", "alergi", "catatan", "penyakit", "history", "notes"]);
+    const diagnosaKey = findKey(row, ["diagnosa", "diagnosis"]);
+    const terapiKey = findKey(row, ["terapi", "tindakan", "treatment"]);
+    const tanggalKunjunganKey = findKey(row, ["tanggal", "tgl", "visitdate", "kunjungan"]);
+    const blKey = findKey(row, ["b/l", "baru/lama", "bl", "statuspasien"]);
     const branchKey = findKey(row, ["cabang", "branch", "lokasi"]);
 
     const rawName = nameKey ? String(row[nameKey]).trim() : "";
@@ -276,8 +280,38 @@ export async function parsePatientExcelFile(
     const rawDob = dobKey ? normalizeDate(row[dobKey]) : "1995-01-01";
     const rawGender = genderKey ? normalizeGender(row[genderKey]) : "L";
     const rawAddress = addressKey ? String(row[addressKey]).trim() : "";
-    const rawNotes = notesKey ? String(row[notesKey]).trim() : "";
+    let rawNotes = notesKey ? String(row[notesKey]).trim() : "";
     const rawBranch = branchKey ? String(row[branchKey]).trim() : "";
+
+    // Parse and integrate clinical visit details from the user's Excel format
+    const rawDiagnosa = diagnosaKey ? String(row[diagnosaKey]).trim() : "";
+    const rawTerapi = terapiKey ? String(row[terapiKey]).trim() : "";
+    const rawTanggal = tanggalKunjunganKey ? String(row[tanggalKunjunganKey]).trim() : "";
+    const rawBL = blKey ? String(row[blKey]).trim() : "";
+
+    const extraNotesParts: string[] = [];
+    if (rawDiagnosa) extraNotesParts.push(`Diagnosa: ${rawDiagnosa}`);
+    if (rawTerapi) extraNotesParts.push(`Terapi/Tindakan: ${rawTerapi}`);
+    if (rawTanggal) {
+      let formattedTanggal = rawTanggal;
+      if (!isNaN(Number(rawTanggal)) && Number(rawTanggal) > 30000) {
+        formattedTanggal = normalizeDate(Number(rawTanggal));
+      }
+      extraNotesParts.push(`Tgl Kunjungan: ${formattedTanggal}`);
+    }
+    if (rawBL) {
+      const blText = rawBL.toUpperCase() === "B" ? "Baru" : rawBL.toUpperCase() === "L" ? "Lama" : rawBL;
+      extraNotesParts.push(`Status Kunjungan: ${blText}`);
+    }
+
+    if (extraNotesParts.length > 0) {
+      const joinedExtra = extraNotesParts.join(" | ");
+      if (rawNotes) {
+        rawNotes = `${rawNotes}\n[Riwayat Kunjungan] ${joinedExtra}`;
+      } else {
+        rawNotes = `[Riwayat Kunjungan] ${joinedExtra}`;
+      }
+    }
 
     // Determine Branch
     let branchId = defaultBranchId || branches[0]?.id || "branch-gebang";
@@ -420,22 +454,61 @@ export async function executePatientImport(
     }
 
     try {
-      if (row.existingPatientMatch) {
+      // Dynamic duplicate lookup to handle records that are created/updated during this loop
+      let activeMatch = row.existingPatientMatch;
+      
+      if (options.duplicateStrategy !== "create_new_rm") {
+        const currentDbPatients = await patientRepo.getPatients(options.currentUserRole, options.userBranchId);
+        
+        if (row.medicalRecordNumber) {
+          const matchedByRM = currentDbPatients.find(
+            (p) => (p.medicalRecordNumber || "").trim().toLowerCase() === row.medicalRecordNumber!.trim().toLowerCase()
+          );
+          if (matchedByRM) {
+            activeMatch = matchedByRM;
+          }
+        }
+        
+        if (!activeMatch && row.phone) {
+          const normPhone = row.phone.replace(/\D/g, "");
+          const matchedByPhone = currentDbPatients.find(
+            (p) => (p.phone || "").replace(/\D/g, "") === normPhone
+          );
+          if (matchedByPhone) {
+            activeMatch = matchedByPhone;
+          }
+        }
+      }
+
+      if (activeMatch) {
         if (options.duplicateStrategy === "skip") {
           result.skipped++;
           continue;
         } else if (options.duplicateStrategy === "update") {
+          // Fetch the freshest notes from database/repository to append rather than overwrite
+          const freshPatient = await patientRepo.getPatientById(activeMatch.id);
+          const currentNotes = freshPatient?.medicalHistoryNotes || activeMatch.medicalHistoryNotes || "";
+          
+          let mergedNotes = currentNotes;
+          if (row.medicalHistoryNotes) {
+            if (!currentNotes.includes(row.medicalHistoryNotes)) {
+              mergedNotes = currentNotes
+                ? `${currentNotes}\n${row.medicalHistoryNotes}`
+                : row.medicalHistoryNotes;
+            }
+          }
+
           await patientRepo.updatePatient(
-            row.existingPatientMatch.id,
+            activeMatch.id,
             {
               name: row.name,
               fullName: row.name,
-              phone: row.phone || row.existingPatientMatch.phone,
-              email: row.email || row.existingPatientMatch.email,
-              dateOfBirth: row.dateOfBirth || row.existingPatientMatch.dateOfBirth,
-              gender: row.gender || row.existingPatientMatch.gender,
-              address: row.address !== "-" ? row.address : row.existingPatientMatch.address,
-              medicalHistoryNotes: row.medicalHistoryNotes || row.existingPatientMatch.medicalHistoryNotes
+              phone: row.phone || activeMatch.phone,
+              email: row.email || activeMatch.email,
+              dateOfBirth: row.dateOfBirth || activeMatch.dateOfBirth,
+              gender: row.gender || activeMatch.gender,
+              address: row.address !== "-" ? row.address : activeMatch.address,
+              medicalHistoryNotes: mergedNotes
             },
             options.currentUserRole,
             options.userBranchId
@@ -447,7 +520,7 @@ export async function executePatientImport(
       }
 
       const rmToUse =
-        options.duplicateStrategy === "create_new_rm" && row.existingPatientMatch
+        options.duplicateStrategy === "create_new_rm" && activeMatch
           ? undefined
           : row.medicalRecordNumber;
 

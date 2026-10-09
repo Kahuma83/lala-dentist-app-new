@@ -60,7 +60,7 @@ import {
 import { AccountingPostingService } from "../services/accountingPostingService";
 import { isSupabaseConfigured } from "../lib/supabase";
 import { AuthService } from "../services/authService";
-import { MOCK_BRANCHES, MOCK_DOCTORS, MOCK_SERVICES } from "../data/mockData";
+import { MOCK_BRANCHES, MOCK_DOCTORS, MOCK_SERVICES, MOCK_USER_ACCOUNTS } from "../data/mockData";
 
 // Initialize repositories using Repository Factory
 const suite = createRepositorySuite();
@@ -174,7 +174,7 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Some elegant initial pre-configured users for easy role testing
+// Pre-configured users matching company credentials
 export const SIMULATED_USERS: CurrentUser[] = [
   {
     id: "user-super",
@@ -182,6 +182,113 @@ export const SIMULATED_USERS: CurrentUser[] = [
     role: UserRole.SUPER_ADMIN,
     assignedBranchId: null
   },
+  // 15 Users as strictly defined
+  {
+    id: "user-dinda-ambulu",
+    name: "DINDA",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-ambulu",
+    staffId: "staff-dinda-ambulu"
+  },
+  {
+    id: "user-anisa-ambulu",
+    name: "ANISA",
+    role: UserRole.DOCTOR_ASSISTANT,
+    assignedBranchId: "branch-ambulu",
+    staffId: "staff-anisa-ambulu"
+  },
+  {
+    id: "user-marsa-ambulu",
+    name: "MARSA",
+    role: UserRole.DOCTOR_ASSISTANT,
+    assignedBranchId: "branch-ambulu",
+    staffId: "staff-marsa-ambulu"
+  },
+  {
+    id: "user-anggel-gebang",
+    name: "ANGGEL",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-gebang",
+    staffId: "staff-anggel-gebang"
+  },
+  {
+    id: "user-lilis-gebang",
+    name: "LILIS",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-gebang",
+    staffId: "staff-lilis-gebang"
+  },
+  {
+    id: "user-cece-gebang",
+    name: "CECE",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-gebang",
+    staffId: "staff-cece-gebang"
+  },
+  {
+    id: "user-linda-gebang",
+    name: "LINDA",
+    role: UserRole.DOCTOR_ASSISTANT,
+    assignedBranchId: "branch-gebang",
+    staffId: "staff-linda-gebang"
+  },
+  {
+    id: "user-novi-gebang",
+    name: "NOVI",
+    role: UserRole.DOCTOR_ASSISTANT,
+    assignedBranchId: "branch-gebang",
+    staffId: "staff-novi-gebang"
+  },
+  {
+    id: "user-ayik-kampus",
+    name: "AYIK",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-kampus",
+    staffId: "staff-ayik-kampus"
+  },
+  {
+    id: "user-usnake-kencong",
+    name: "USNAKE",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-kencong",
+    staffId: "staff-usnake-kencong"
+  },
+  {
+    id: "user-cyntia-kencong",
+    name: "CYNTIA",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-kencong",
+    staffId: "staff-cyntia-kencong"
+  },
+  {
+    id: "user-khalisa-kencong",
+    name: "KHALISA",
+    role: UserRole.DOCTOR_ASSISTANT,
+    assignedBranchId: "branch-kencong",
+    staffId: "staff-khalisa-kencong"
+  },
+  {
+    id: "user-anita-kencong",
+    name: "ANITA",
+    role: UserRole.DOCTOR_ASSISTANT,
+    assignedBranchId: "branch-kencong",
+    staffId: "staff-anita-kencong"
+  },
+  {
+    id: "user-rani-lengkong",
+    name: "RANI",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-lengkong-mumbul",
+    staffId: "staff-rani-lengkong"
+  },
+  {
+    id: "user-ima-lengkong",
+    name: "IMA",
+    role: UserRole.BRANCH_ADMIN,
+    assignedBranchId: "branch-lengkong-mumbul",
+    staffId: "staff-ima-lengkong"
+  },
+  // Additional system / test accounts
   {
     id: "user-branch-gebang",
     name: "Siska Wardani (Admin Gebang)",
@@ -226,14 +333,31 @@ export const SIMULATED_USERS: CurrentUser[] = [
 ];
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // We initialize with Super Admin logged-in by default to let the user immediately preview the dashboard
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(
-    isSupabaseConfigured ? null : SIMULATED_USERS[0]
-  );
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => {
+    if (typeof window === "undefined" || isSupabaseConfigured) return null;
+    if (localStorage.getItem("mock_user_logged_out") === "true") return null;
+    const saved = localStorage.getItem("mock_user_id");
+    if (saved) {
+      const foundSim = SIMULATED_USERS.find((u) => u.id === saved);
+      if (foundSim) return foundSim;
+      const foundMock = MOCK_USER_ACCOUNTS.find((a) => a.id === saved);
+      if (foundMock) {
+        return {
+          id: foundMock.id,
+          name: foundMock.name,
+          role: foundMock.role,
+          assignedBranchId: foundMock.branchId || null,
+          staffId: foundMock.staffId || null,
+          doctorId: foundMock.doctorId || null
+        };
+      }
+    }
+    return null;
+  });
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
 
   const [authStatus, setAuthStatus] = useState<"loading" | "authenticated" | "unauthenticated" | "error">(
-    isSupabaseConfigured ? "loading" : "authenticated"
+    isSupabaseConfigured ? "loading" : (currentUser ? "authenticated" : "unauthenticated")
   );
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(isSupabaseConfigured);
@@ -376,21 +500,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const bootstrapAuth = async () => {
       if (!isSupabaseConfigured) {
-        // Mock mode defaults: start with no active user or use SIMULATED_USERS[0]
+        const isLoggedOut = localStorage.getItem("mock_user_logged_out") === "true";
         const savedMockUserId = localStorage.getItem("mock_user_id");
-        if (savedMockUserId) {
+        if (isLoggedOut) {
+          setCurrentUser(null);
+          setAuthStatus("unauthenticated");
+        } else if (savedMockUserId) {
           const savedUser = SIMULATED_USERS.find(u => u.id === savedMockUserId);
           if (savedUser) {
             setCurrentUser(savedUser);
             setAuthStatus("authenticated");
           } else {
-            setCurrentUser(null);
-            setAuthStatus("unauthenticated");
+            const foundMock = MOCK_USER_ACCOUNTS.find((a) => a.id === savedMockUserId);
+            if (foundMock) {
+              setCurrentUser({
+                id: foundMock.id,
+                name: foundMock.name,
+                role: foundMock.role,
+                assignedBranchId: foundMock.branchId || null,
+                staffId: foundMock.staffId || null,
+                doctorId: foundMock.doctorId || null
+              });
+              setAuthStatus("authenticated");
+            } else {
+              setCurrentUser(null);
+              setAuthStatus("unauthenticated");
+            }
           }
         } else {
-          // Default mock mode starts authenticated with Super Admin for easy developer previews
-          setCurrentUser(SIMULATED_USERS[0]);
-          setAuthStatus("authenticated");
+          setCurrentUser(null);
+          setAuthStatus("unauthenticated");
         }
         setAuthLoading(false);
         return;
@@ -410,7 +549,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             assignedBranchId: context.assignedBranchId ?? null,
             branchId: context.assignedBranchId ?? null,
             staffId: context.staffId ?? null,
-            doctorId: context.role === UserRole.DOCTOR ? context.userAccountId : null
+            doctorId: context.role === UserRole.DOCTOR ? context.userAccountId : null,
+            isMockFallback: context.isMockFallback,
+            email: session.user.email || null
           };
           setCurrentUser(resolvedUser);
           setAuthStatus("authenticated");
@@ -450,7 +591,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               assignedBranchId: context.assignedBranchId ?? null,
               branchId: context.assignedBranchId ?? null,
               staffId: context.staffId ?? null,
-              doctorId: context.role === UserRole.DOCTOR ? context.userAccountId : null
+              doctorId: context.role === UserRole.DOCTOR ? context.userAccountId : null,
+              isMockFallback: context.isMockFallback,
+              email: session.user.email || null
             });
             setAuthStatus("authenticated");
           } catch (err: any) {

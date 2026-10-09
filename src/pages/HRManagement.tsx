@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { useRouter } from "../components/Router";
 import { useApp, SIMULATED_USERS } from "../context/AppContext";
 import { AttendanceManager } from "../components/AttendanceManager";
 import { OvertimeManager } from "../components/OvertimeManager";
@@ -71,8 +72,40 @@ export const HRManagement: React.FC = () => {
   const isSuper = currentUser?.role === UserRole.SUPER_ADMIN;
   const userBranchId = currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId : selectedBranchId;
 
+  // URL Query Sync for Active Tab via App's lightweight Router
+  const { path: currentPath, navigate: routerNavigate } = useRouter();
+  
+  const getTabFromUrl = (): "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime" => {
+    try {
+      const search = currentPath.includes("?")
+        ? currentPath.split("?")[1]
+        : (typeof window !== "undefined" ? window.location.search.replace(/^\?/, "") : "");
+      const params = new URLSearchParams(search);
+      const tab = params.get("tab");
+      if (tab && ["doctors", "staff", "schedules", "shifts", "attendance", "overtime"].includes(tab)) {
+        return tab as "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime";
+      }
+    } catch {
+      // fallback
+    }
+    return "doctors";
+  };
+
   // Active Tab
-  const [activeTab, setActiveTab] = useState<"doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime">("doctors");
+  const [activeTab, setActiveTab] = useState<"doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime">(getTabFromUrl);
+
+  useEffect(() => {
+    const tab = getTabFromUrl();
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab);
+    }
+  }, [currentPath]);
+
+  const handleTabChange = (tab: "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime") => {
+    setActiveTab(tab);
+    const basePath = currentPath.split("?")[0] || (isSuper ? "/super-admin/hr" : "/branch-admin/hr");
+    routerNavigate(`${basePath}?tab=${tab}`);
+  };
 
   // Global feedback notifications
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -930,7 +963,7 @@ export const HRManagement: React.FC = () => {
       {/* Main Tabs Navigation */}
       <div className="flex border-b border-slate-200 gap-2 overflow-x-auto">
         <button
-          onClick={() => setActiveTab("doctors")}
+          onClick={() => handleTabChange("doctors")}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "doctors"
               ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
@@ -943,7 +976,7 @@ export const HRManagement: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab("staff")}
+          onClick={() => handleTabChange("staff")}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "staff"
               ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
@@ -956,7 +989,7 @@ export const HRManagement: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab("schedules")}
+          onClick={() => handleTabChange("schedules")}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "schedules"
               ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
@@ -969,7 +1002,7 @@ export const HRManagement: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab("shifts")}
+          onClick={() => handleTabChange("shifts")}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "shifts"
               ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
@@ -982,7 +1015,7 @@ export const HRManagement: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab("attendance")}
+          onClick={() => handleTabChange("attendance")}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "attendance"
               ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
@@ -995,7 +1028,7 @@ export const HRManagement: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab("overtime")}
+          onClick={() => handleTabChange("overtime")}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "overtime"
               ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
@@ -1013,6 +1046,32 @@ export const HRManagement: React.FC = () => {
       ========================================================================= */}
       {activeTab === "doctors" && (
         <div className="space-y-4" id="doctors-tab-content">
+          {/* Quick Guide Banner for multi-branch assignment and schedules */}
+          <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border border-emerald-200/80 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-xs mt-0.5 shrink-0">
+                <MapPin className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-slate-900">
+                  Panduan Pengaturan Dokter Multi-Cabang &amp; Jadwal Praktik
+                </h3>
+                <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
+                  1. <strong>Tugaskan Dokter ke 2 Cabang atau Lebih:</strong> Pada tabel di bawah, klik tombol biru <strong>[📍 Atur Cabang]</strong> di kolom Aksi setiap dokter.<br />
+                  2. <strong>Atur Hari &amp; Jam Praktik:</strong> Klik Tab <strong>[📅 Jadwal Dokter]</strong> di atas atau menu sidebar <strong>Jadwal Dokter</strong> untuk melihat papan drag &amp; drop atau cetak poster jadwal.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleTabChange("schedules")}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all shrink-0 cursor-pointer"
+            >
+              <CalendarRange className="w-4 h-4" />
+              <span>Buka Jadwal Dokter &rarr;</span>
+            </button>
+          </div>
+
           {/* Controls Bar */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
@@ -1091,8 +1150,31 @@ export const HRManagement: React.FC = () => {
                             {doc.doctorCode || doc.id}
                           </td>
                           <td className="px-4 py-3">
-                            <div className="font-semibold text-slate-900">{doc.name || doc.fullName}</div>
-                            {doc.notes && <div className="text-[11px] text-slate-400 italic">{doc.notes}</div>}
+                            <div className="flex items-center gap-2.5">
+                              {(() => {
+                                const photo = doc.photoUrl || doc.avatarUrl || doc.profileImage;
+                                return (
+                                  <div className="w-8 h-8 rounded-full bg-slate-100 text-[#17233C] font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200 overflow-hidden shadow-2xs">
+                                    {photo ? (
+                                      <img
+                                        src={photo}
+                                        alt={doc.name}
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => {
+                                          (e.target as HTMLElement).style.display = "none";
+                                        }}
+                                      />
+                                    ) : (
+                                      <span>{(doc.name || "D").replace(/^(drg\.|dr\.)\s*/i, "").charAt(0) || "D"}</span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                              <div>
+                                <div className="font-semibold text-slate-900">{doc.name || doc.fullName}</div>
+                                {doc.notes && <div className="text-[11px] text-slate-400 italic">{doc.notes}</div>}
+                              </div>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-slate-600">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-700">
@@ -1110,16 +1192,16 @@ export const HRManagement: React.FC = () => {
                             )}
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               {assignments.length === 0 ? (
-                                <span className="text-[11px] text-slate-400">Belum ditugaskan</span>
+                                <span className="text-[11px] text-slate-400 italic">Belum ditugaskan</span>
                               ) : (
                                 assignments.map((a) => {
                                   const br = branches.find((b) => b.id === a.branchId);
                                   return (
                                     <span
                                       key={a.id}
-                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
                                     >
                                       <Building2 className="w-2.5 h-2.5" />
                                       {br?.name || a.branchId}
@@ -1127,6 +1209,24 @@ export const HRManagement: React.FC = () => {
                                   );
                                 })
                               )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDoctorForAssign(doc);
+                                  setAssignBranchForm({
+                                    branchId: branches[0]?.id || "branch-gebang",
+                                    startDate: new Date().toISOString().split("T")[0],
+                                    endDate: "",
+                                    notes: ""
+                                  });
+                                  setIsAssignBranchModalOpen(true);
+                                }}
+                                title="Tambah / Ubah Penugasan Cabang"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors cursor-pointer"
+                              >
+                                <Plus className="w-2.5 h-2.5" />
+                                <span>Cabang</span>
+                              </button>
                             </div>
                           </td>
                           <td className="px-4 py-3 text-center">
@@ -1154,10 +1254,11 @@ export const HRManagement: React.FC = () => {
                                   });
                                   setIsAssignBranchModalOpen(true);
                                 }}
-                                title="Atur Penugasan Cabang"
-                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                title="Atur Penugasan Cabang Dokter"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-colors shadow-2xs cursor-pointer"
                               >
-                                <MapPin className="w-3.5 h-3.5" />
+                                <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                                <span>Atur Cabang</span>
                               </button>
                               <button
                                 onClick={() => handleOpenDoctorModal(doc)}

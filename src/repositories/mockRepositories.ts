@@ -495,8 +495,18 @@ export class MockBranchRepository implements BranchRepository {
     currentUserRole?: UserRole,
     _userBranchId?: string | null
   ): Promise<DentalBranch> {
-    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && !(currentUserRole === UserRole.BRANCH_ADMIN && _userBranchId === id)) {
-      throw new Error("Akses ditolak: Hanya Super Admin dan Admin Cabang terkait yang berwenang mengubah profil dan logo cabang");
+    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN) {
+      // Branch Admin is only allowed to update contact/branding fields, not core master details
+      const restrictedFields = ["name", "branchName", "branchCode", "isActive", "active", "clinicName"];
+      const isTryingToModifyRestricted = Object.keys(updates).some((k) => restrictedFields.includes(k));
+
+      if (isTryingToModifyRestricted) {
+        throw new Error("Akses ditolak: Hanya Super Admin yang berwenang mengubah identitas cabang");
+      }
+
+      if (!(currentUserRole === UserRole.BRANCH_ADMIN && _userBranchId === id)) {
+        throw new Error("Akses ditolak: Hanya Super Admin dan Admin Cabang terkait yang berwenang mengubah profil dan logo cabang");
+      }
     }
 
     this.syncFromStorage();
@@ -599,7 +609,15 @@ export class MockDoctorRepository implements DoctorRepository {
         if (saved !== null) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed)) {
-            db.doctors = parsed;
+            db.doctors = parsed.map((d: DentalDoctor) => {
+              const photo = d.photoUrl || d.avatarUrl || d.profileImage || null;
+              return {
+                ...d,
+                avatarUrl: photo,
+                photoUrl: photo,
+                profileImage: photo || undefined
+              };
+            });
           }
         }
       } catch (e) {

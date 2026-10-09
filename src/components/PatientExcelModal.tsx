@@ -394,14 +394,14 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
                           🔄 Lewati (Skip) - Jangan masukkan data yang sudah ada
                         </option>
                         <option value="update">
-                          ✏️ Perbarui (Update) - Timpa biodata lama dengan data Excel baru
+                          ✏️ Perbarui (Update) - Gabungkan & tambahkan riwayat kunjungan baru ke rekam medis pasien
                         </option>
                         <option value="create_new_rm">
                           ➕ Tetap Impor Semua & Buat No. RM Baru Otomatis
                         </option>
                       </select>
-                      <p className="text-[10px] text-slate-500 mt-1">
-                        Sistem mendeteksi kecocokan berdasarkan Nomor Rekam Medis (RM) atau No. WhatsApp.
+                      <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                        Sistem mendeteksi kecocokan berdasarkan Nomor Rekam Medis (RM) atau No. WhatsApp. <strong>Sangat Direkomendasikan:</strong> Jika satu pasien melakukan kunjungan lebih dari sekali (beberapa baris di Excel), pilih opsi <strong>Perbarui (Update)</strong> agar seluruh riwayat kunjungan & diagnosis digabungkan secara urut ke rekam medis pasien tersebut tanpa menghapus data sebelumnya!
                       </p>
                     </div>
 
