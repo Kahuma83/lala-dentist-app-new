@@ -237,93 +237,6 @@ export const MOCK_PATIENTS: PatientProfile[] = [
 
 export const MOCK_DOCTORS: DentalDoctor[] = [
   {
-    id: "doc-syafira",
-    doctorCode: "DOC-SYAFIRA",
-    name: "drg. Syafira",
-    fullName: "drg. Syafira",
-    specialization: "Dokter Gigi Umum",
-    phone: "081234567811",
-    email: "syafira@laladentist.com",
-    assignedBranchId: "branch-gebang",
-    str: "STR-SYAF-2024",
-    sip: "SIP-SYAF-2024",
-    avatarUrl: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
-    photoUrl: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
-    profileImage: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
-    active: true,
-    isActive: true,
-    staffId: "staff-doc-syafira",
-    bankName: "Bank Mandiri",
-    bankAccountNumber: "143-00-9876543-2",
-    bankAccountHolder: "drg. Syafira Al-Zahra",
-    notes: "Dokter Gigi Umum praktek Gebang & Ambulu",
-    createdAt: "2026-01-10T08:00:00Z",
-    updatedAt: "2026-01-10T08:00:00Z"
-  },
-  {
-    id: "doc-lala",
-    doctorCode: "DOC-LALA",
-    name: "drg. Lala",
-    fullName: "drg. Lala",
-    specialization: "Orthodontics",
-    phone: "081234567812",
-    email: "lala@laladentist.com",
-    assignedBranchId: "branch-gebang",
-    str: "STR-LALA-2023",
-    sip: "SIP-LALA-2023",
-    avatarUrl: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&q=80&w=300",
-    photoUrl: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&q=80&w=300",
-    profileImage: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&q=80&w=300",
-    active: true,
-    isActive: true,
-    staffId: "staff-doc-lala",
-    notes: "Spesialis Orthodonti praktek Gebang & Muktisari",
-    createdAt: "2026-01-10T08:00:00Z",
-    updatedAt: "2026-01-10T08:00:00Z"
-  },
-  {
-    id: "doc-vio",
-    doctorCode: "DOC-VIO",
-    name: "drg. Vio",
-    fullName: "drg. Vio",
-    specialization: "Dokter Gigi Umum",
-    phone: "081234567813",
-    email: "vio@laladentist.com",
-    assignedBranchId: "branch-gebang",
-    str: "STR-VIO-2024",
-    sip: "SIP-VIO-2024",
-    avatarUrl: "https://images.unsplash.com/photo-1614608682850-e0d6ed316d47?auto=format&fit=crop&q=80&w=300",
-    photoUrl: "https://images.unsplash.com/photo-1614608682850-e0d6ed316d47?auto=format&fit=crop&q=80&w=300",
-    profileImage: "https://images.unsplash.com/photo-1614608682850-e0d6ed316d47?auto=format&fit=crop&q=80&w=300",
-    active: true,
-    isActive: true,
-    staffId: "staff-doc-vio",
-    notes: "Dokter Gigi Umum praktek Gebang & Kencong",
-    createdAt: "2026-01-10T08:00:00Z",
-    updatedAt: "2026-01-10T08:00:00Z"
-  },
-  {
-    id: "doc-yuni",
-    doctorCode: "DOC-YUNI",
-    name: "drg. Yuni",
-    fullName: "drg. Yuni",
-    specialization: "Pediatric Dentistry",
-    phone: "081234567814",
-    email: "yuni@laladentist.com",
-    assignedBranchId: "branch-ambulu",
-    str: "STR-YUNI-2023",
-    sip: "SIP-YUNI-2023",
-    avatarUrl: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=300",
-    photoUrl: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=300",
-    profileImage: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=300",
-    active: true,
-    isActive: true,
-    staffId: "staff-doc-yuni",
-    notes: "Dokter Gigi multi-cabang (Ambulu, Lengkong Mumbul, Kampus, Gebang)",
-    createdAt: "2026-01-10T08:00:00Z",
-    updatedAt: "2026-01-10T08:00:00Z"
-  },
-  {
     id: "doc-ulfa",
     doctorCode: "DOC-ULFA",
     name: "drg. Ulfa",
@@ -331,7 +244,7 @@ export const MOCK_DOCTORS: DentalDoctor[] = [
     specialization: "Dokter Gigi Umum",
     phone: "081234567815",
     email: "ulfa@laladentist.com",
-    assignedBranchId: "branch-ambulu",
+    assignedBranchId: "branch-gebang",
     str: "STR-ULFA-2025",
     sip: "SIP-ULFA-2025",
     avatarUrl: "https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&q=80&w=300",
@@ -340,28 +253,28 @@ export const MOCK_DOCTORS: DentalDoctor[] = [
     active: true,
     isActive: true,
     staffId: "staff-doc-ulfa",
-    notes: "Dokter Gigi Umum praktek Ambulu",
+    notes: "Dokter Gigi Umum praktek Gebang",
     createdAt: "2026-01-10T08:00:00Z",
     updatedAt: "2026-01-10T08:00:00Z"
   },
   {
-    id: "doc-regina",
-    doctorCode: "DOC-REGINA",
-    name: "drg. Regina",
-    fullName: "drg. Regina",
-    specialization: "Periodontics",
-    phone: "081234567816",
-    email: "regina@laladentist.com",
-    assignedBranchId: "branch-lengkong-mumbul",
-    str: "STR-REGI-2024",
-    sip: "SIP-REGI-2024",
-    avatarUrl: "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=300",
-    photoUrl: "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=300",
-    profileImage: "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=300",
+    id: "doc-amel",
+    doctorCode: "DOC-AMEL",
+    name: "drg. Amel",
+    fullName: "drg. Amel",
+    specialization: "Dokter Gigi Umum",
+    phone: "081234567818",
+    email: "amel@laladentist.com",
+    assignedBranchId: "branch-kencong",
+    str: "STR-AMEL-2024",
+    sip: "SIP-AMEL-2024",
+    avatarUrl: null,
+    photoUrl: null,
+    profileImage: undefined,
     active: true,
     isActive: true,
-    staffId: "staff-doc-regina",
-    notes: "Dokter Gigi praktek Lengkong Mumbul & Kampus",
+    staffId: "staff-doc-amel",
+    notes: "Dokter Gigi Umum praktek Kencong",
     createdAt: "2026-01-10T08:00:00Z",
     updatedAt: "2026-01-10T08:00:00Z"
   },
@@ -387,23 +300,128 @@ export const MOCK_DOCTORS: DentalDoctor[] = [
     updatedAt: "2026-01-10T08:00:00Z"
   },
   {
-    id: "doc-amel",
-    doctorCode: "DOC-AMEL",
-    name: "drg. Amel",
-    fullName: "drg. Amel",
-    specialization: "Prosthodontics",
-    phone: "081234567818",
-    email: "amel@laladentist.com",
-    assignedBranchId: "branch-kencong",
-    str: "STR-AMEL-2024",
-    sip: "SIP-AMEL-2024",
-    avatarUrl: null,
-    photoUrl: null,
-    profileImage: undefined,
+    id: "doc-regina",
+    doctorCode: "DOC-REGINA",
+    name: "drg. Regina",
+    fullName: "drg. Regina",
+    specialization: "Dokter Gigi Umum",
+    phone: "081234567816",
+    email: "regina@laladentist.com",
+    assignedBranchId: "branch-lengkong-mumbul",
+    str: "STR-REGI-2024",
+    sip: "SIP-REGI-2024",
+    avatarUrl: "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=300",
+    photoUrl: "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=300",
+    profileImage: "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=300",
     active: true,
     isActive: true,
-    staffId: "staff-doc-amel",
-    notes: "Dokter Gigi praktek Kencong",
+    staffId: "staff-doc-regina",
+    notes: "Dokter Gigi Umum praktek Lengkong Mumbul",
+    createdAt: "2026-01-10T08:00:00Z",
+    updatedAt: "2026-01-10T08:00:00Z"
+  },
+  {
+    id: "doc-vio",
+    doctorCode: "DOC-VIO",
+    name: "drg. Vio",
+    fullName: "drg. Vio",
+    specialization: "Dokter Gigi Umum",
+    phone: "081234567813",
+    email: "vio@laladentist.com",
+    assignedBranchId: "branch-kencong",
+    str: "STR-VIO-2024",
+    sip: "SIP-VIO-2024",
+    avatarUrl: "https://images.unsplash.com/photo-1614608682850-e0d6ed316d47?auto=format&fit=crop&q=80&w=300",
+    photoUrl: "https://images.unsplash.com/photo-1614608682850-e0d6ed316d47?auto=format&fit=crop&q=80&w=300",
+    profileImage: "https://images.unsplash.com/photo-1614608682850-e0d6ed316d47?auto=format&fit=crop&q=80&w=300",
+    active: true,
+    isActive: true,
+    staffId: "staff-doc-vio",
+    notes: "Dokter Gigi Umum praktek Kencong",
+    createdAt: "2026-01-10T08:00:00Z",
+    updatedAt: "2026-01-10T08:00:00Z"
+  },
+  {
+    id: "doc-yuni",
+    doctorCode: "DOC-YUNI",
+    name: "drg. Yuni",
+    fullName: "drg. Yuni",
+    specialization: "Dokter Gigi Umum",
+    phone: "081234567814",
+    email: "yuni@laladentist.com",
+    assignedBranchId: "branch-gebang",
+    str: "STR-YUNI-2023",
+    sip: "SIP-YUNI-2023",
+    avatarUrl: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
+    photoUrl: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
+    profileImage: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
+    active: true,
+    isActive: true,
+    staffId: "staff-doc-yuni",
+    notes: "Dokter Gigi Umum praktek Gebang",
+    createdAt: "2026-01-10T08:00:00Z",
+    updatedAt: "2026-01-10T08:00:00Z"
+  },
+  {
+    id: "doc-aab",
+    doctorCode: "DOC-DRGAAB",
+    name: "drg. Aab",
+    fullName: "drg. Aab",
+    specialization: "Dokter Gigi Umum",
+    phone: "081234567819",
+    email: "aab@laladentist.com",
+    assignedBranchId: "branch-lengkong-mumbul",
+    str: "STR-AAB-2024",
+    sip: "SIP-AAB-2024",
+    avatarUrl: "https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=300",
+    photoUrl: "https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=300",
+    profileImage: "https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=300",
+    active: true,
+    isActive: true,
+    staffId: "staff-doc-aab",
+    notes: "Dokter Gigi Umum praktek Lengkong",
+    createdAt: "2026-01-10T08:00:00Z",
+    updatedAt: "2026-01-10T08:00:00Z"
+  },
+  {
+    id: "doc-lala",
+    doctorCode: "DOC-LALA",
+    name: "drg. Lala",
+    fullName: "drg. Lala",
+    specialization: "Dokter Gigi Umum",
+    phone: "081234567812",
+    email: "lala@laladentist.com",
+    assignedBranchId: "",
+    str: "STR-LALA-2023",
+    sip: "SIP-LALA-2023",
+    avatarUrl: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&q=80&w=300",
+    photoUrl: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&q=80&w=300",
+    profileImage: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?auto=format&fit=crop&q=80&w=300",
+    active: true,
+    isActive: true,
+    staffId: "staff-doc-lala",
+    notes: "Owner & Dokter Gigi Umum",
+    createdAt: "2026-01-10T08:00:00Z",
+    updatedAt: "2026-01-10T08:00:00Z"
+  },
+  {
+    id: "doc-syafira",
+    doctorCode: "DOC-SYAFIRA",
+    name: "drg. Syafira",
+    fullName: "drg. Syafira",
+    specialization: "Dokter Gigi Umum",
+    phone: "081234567811",
+    email: "syafira@laladentist.com",
+    assignedBranchId: "branch-gebang",
+    str: "STR-SYAF-2024",
+    sip: "SIP-SYAF-2024",
+    avatarUrl: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
+    photoUrl: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
+    profileImage: "https://images.unsplash.com/photo-1594824813566-88855ce78c80?auto=format&fit=crop&q=80&w=300",
+    active: true,
+    isActive: true,
+    staffId: "staff-doc-syafira",
+    notes: "Dokter Gigi Umum praktek Gebang",
     createdAt: "2026-01-10T08:00:00Z",
     updatedAt: "2026-01-10T08:00:00Z"
   }
@@ -2397,148 +2415,28 @@ export const MOCK_STAFF: Staff[] = [
 ];
 
 export const MOCK_DOCTOR_BRANCH_ASSIGNMENTS: DoctorBranchAssignment[] = [
-  // drg. Syafira -> Gebang, Ambulu
+  // drg. Ulfa -> Gebang
   {
-    id: "dba-syaf-geb",
-    doctorId: "doc-syafira",
-    branchId: "branch-gebang",
-    startDate: "2024-01-10",
-    active: true,
-    notes: "Penempatan utama Cabang Gebang",
-    createdAt: "2024-01-10T08:00:00Z",
-    updatedAt: "2024-01-10T08:00:00Z"
-  },
-  {
-    id: "dba-syaf-amb",
-    doctorId: "doc-syafira",
-    branchId: "branch-ambulu",
-    startDate: "2024-01-15",
-    active: true,
-    notes: "Penempatan Cabang Ambulu",
-    createdAt: "2024-01-15T08:00:00Z",
-    updatedAt: "2024-01-15T08:00:00Z"
-  },
-
-  // drg. Lala -> Gebang, Muktisari
-  {
-    id: "dba-lala-geb",
-    doctorId: "doc-lala",
-    branchId: "branch-gebang",
-    startDate: "2023-05-15",
-    active: true,
-    notes: "Penempatan Cabang Gebang",
-    createdAt: "2023-05-15T08:00:00Z",
-    updatedAt: "2023-05-15T08:00:00Z"
-  },
-  {
-    id: "dba-lala-muk",
-    doctorId: "doc-lala",
-    branchId: "branch-muktisari",
-    startDate: "2023-06-01",
-    active: true,
-    notes: "Penempatan Cabang Muktisari",
-    createdAt: "2023-06-01T08:00:00Z",
-    updatedAt: "2023-06-01T08:00:00Z"
-  },
-
-  // drg. Vio -> Gebang, Kencong
-  {
-    id: "dba-vio-geb",
-    doctorId: "doc-vio",
-    branchId: "branch-gebang",
-    startDate: "2024-02-01",
-    active: true,
-    notes: "Penempatan Cabang Gebang",
-    createdAt: "2024-02-01T08:00:00Z",
-    updatedAt: "2024-02-01T08:00:00Z"
-  },
-  {
-    id: "dba-vio-ken",
-    doctorId: "doc-vio",
-    branchId: "branch-kencong",
-    startDate: "2024-02-10",
-    active: true,
-    notes: "Penempatan Cabang Kencong",
-    createdAt: "2024-02-10T08:00:00Z",
-    updatedAt: "2024-02-10T08:00:00Z"
-  },
-
-  // drg. Yuni -> Ambulu, Lengkong Mumbul, Kampus, Gebang
-  {
-    id: "dba-yuni-amb",
-    doctorId: "doc-yuni",
-    branchId: "branch-ambulu",
-    startDate: "2023-08-10",
-    active: true,
-    notes: "Penempatan Cabang Ambulu",
-    createdAt: "2023-08-10T08:00:00Z",
-    updatedAt: "2023-08-10T08:00:00Z"
-  },
-  {
-    id: "dba-yuni-len",
-    doctorId: "doc-yuni",
-    branchId: "branch-lengkong-mumbul",
-    startDate: "2023-08-15",
-    active: true,
-    notes: "Penempatan Cabang Lengkong Mumbul",
-    createdAt: "2023-08-15T08:00:00Z",
-    updatedAt: "2023-08-15T08:00:00Z"
-  },
-  {
-    id: "dba-yuni-kam",
-    doctorId: "doc-yuni",
-    branchId: "branch-kampus",
-    startDate: "2023-09-01",
-    active: true,
-    notes: "Penempatan Cabang Kampus",
-    createdAt: "2023-09-01T08:00:00Z",
-    updatedAt: "2023-09-01T08:00:00Z"
-  },
-  {
-    id: "dba-yuni-geb",
-    doctorId: "doc-yuni",
-    branchId: "branch-gebang",
-    startDate: "2023-09-10",
-    active: true,
-    notes: "Penempatan Cabang Gebang",
-    createdAt: "2023-09-10T08:00:00Z",
-    updatedAt: "2023-09-10T08:00:00Z"
-  },
-
-  // drg. Ulfa -> Ambulu
-  {
-    id: "dba-ulfa-amb",
+    id: "dba-ulfa-geb",
     doctorId: "doc-ulfa",
-    branchId: "branch-ambulu",
+    branchId: "branch-gebang",
     startDate: "2025-01-05",
     active: true,
-    notes: "Penempatan Cabang Ambulu",
+    notes: "Penempatan Cabang Gebang",
     createdAt: "2025-01-05T08:00:00Z",
     updatedAt: "2025-01-05T08:00:00Z"
   },
-
-  // drg. Regina -> Lengkong Mumbul, Kampus
+  // drg. Amel -> Kencong
   {
-    id: "dba-regi-len",
-    doctorId: "doc-regina",
-    branchId: "branch-lengkong-mumbul",
-    startDate: "2024-03-20",
+    id: "dba-amel-ken",
+    doctorId: "doc-amel",
+    branchId: "branch-kencong",
+    startDate: "2024-06-01",
     active: true,
-    notes: "Penempatan Cabang Lengkong Mumbul",
-    createdAt: "2024-03-20T08:00:00Z",
-    updatedAt: "2024-03-20T08:00:00Z"
+    notes: "Penempatan Cabang Kencong",
+    createdAt: "2024-06-01T08:00:00Z",
+    updatedAt: "2024-06-01T08:00:00Z"
   },
-  {
-    id: "dba-regi-kam",
-    doctorId: "doc-regina",
-    branchId: "branch-kampus",
-    startDate: "2024-04-01",
-    active: true,
-    notes: "Penempatan Cabang Kampus",
-    createdAt: "2024-04-01T08:00:00Z",
-    updatedAt: "2024-04-01T08:00:00Z"
-  },
-
   // drg. Iza -> Kencong
   {
     id: "dba-iza-ken",
@@ -2550,17 +2448,60 @@ export const MOCK_DOCTOR_BRANCH_ASSIGNMENTS: DoctorBranchAssignment[] = [
     createdAt: "2025-02-01T08:00:00Z",
     updatedAt: "2025-02-01T08:00:00Z"
   },
-
-  // drg. Amel -> Kencong
+  // drg. Regina -> Lengkong Mumbul
   {
-    id: "dba-amel-ken",
-    doctorId: "doc-amel",
+    id: "dba-regi-len",
+    doctorId: "doc-regina",
+    branchId: "branch-lengkong-mumbul",
+    startDate: "2024-03-20",
+    active: true,
+    notes: "Penempatan Cabang Lengkong Mumbul",
+    createdAt: "2024-03-20T08:00:00Z",
+    updatedAt: "2024-03-20T08:00:00Z"
+  },
+  // drg. Vio -> Kencong
+  {
+    id: "dba-vio-ken",
+    doctorId: "doc-vio",
     branchId: "branch-kencong",
-    startDate: "2024-06-01",
+    startDate: "2024-02-10",
     active: true,
     notes: "Penempatan Cabang Kencong",
-    createdAt: "2024-06-01T08:00:00Z",
-    updatedAt: "2024-06-01T08:00:00Z"
+    createdAt: "2024-02-10T08:00:00Z",
+    updatedAt: "2024-02-10T08:00:00Z"
+  },
+  // drg. Yuni -> Gebang
+  {
+    id: "dba-yuni-geb",
+    doctorId: "doc-yuni",
+    branchId: "branch-gebang",
+    startDate: "2023-09-10",
+    active: true,
+    notes: "Penempatan Cabang Gebang",
+    createdAt: "2023-09-10T08:00:00Z",
+    updatedAt: "2023-09-10T08:00:00Z"
+  },
+  // drg. Aab -> Lengkong Mumbul
+  {
+    id: "dba-aab-len",
+    doctorId: "doc-aab",
+    branchId: "branch-lengkong-mumbul",
+    startDate: "2024-05-01",
+    active: true,
+    notes: "Penempatan Cabang Lengkong Mumbul",
+    createdAt: "2024-05-01T08:00:00Z",
+    updatedAt: "2024-05-01T08:00:00Z"
+  },
+  // drg. Syafira -> Gebang
+  {
+    id: "dba-syaf-geb",
+    doctorId: "doc-syafira",
+    branchId: "branch-gebang",
+    startDate: "2024-01-10",
+    active: true,
+    notes: "Penempatan utama Cabang Gebang",
+    createdAt: "2024-01-10T08:00:00Z",
+    updatedAt: "2024-01-10T08:00:00Z"
   }
 ];
 
@@ -3513,7 +3454,16 @@ export class MockDatabase {
           const missingStaff = MOCK_STAFF.filter((s) => !existingIds.has(s.id));
           this.staff = [...stored.staff, ...missingStaff];
         }
-        if (Array.isArray(stored.doctors)) this.doctors = stored.doctors;
+        if (Array.isArray(stored.doctors)) {
+          const storedDoctorIds = new Set(stored.doctors.map((d: any) => d.id));
+          if (!storedDoctorIds.has("doc-aab") || stored.doctors.length !== MOCK_DOCTORS.length) {
+            this.doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
+          } else {
+            this.doctors = stored.doctors;
+          }
+        } else {
+          this.doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
+        }
         if (Array.isArray(stored.userAccounts)) {
           const storedMap = new Map(stored.userAccounts.map((a: any) => [a.id, a]));
           // Merge mock accounts and keep password and username synchronized
@@ -3529,7 +3479,15 @@ export class MockDatabase {
           this.userAccounts = [...mergedAccounts, ...extraAccounts];
         }
         if (Array.isArray(stored.patients)) this.patients = stored.patients;
-        if (Array.isArray(stored.branches)) this.branches = stored.branches;
+        if (Array.isArray(stored.branches)) {
+          if (stored.branches.some((b: any) => b.id === "branch-muktisari") || stored.branches.length !== MOCK_BRANCHES.length) {
+            this.branches = JSON.parse(JSON.stringify(MOCK_BRANCHES));
+          } else {
+            this.branches = stored.branches;
+          }
+        } else {
+          this.branches = JSON.parse(JSON.stringify(MOCK_BRANCHES));
+        }
         if (Array.isArray(stored.services) && stored.services.length > 0) {
           this.services = stored.services;
         } else {
@@ -3550,7 +3508,15 @@ export class MockDatabase {
         if (Array.isArray(stored.payrollItems)) this.payrollItems = stored.payrollItems;
         if (Array.isArray(stored.accounts)) this.accounts = stored.accounts;
         if (Array.isArray(stored.journals)) this.journals = stored.journals;
-        if (Array.isArray(stored.doctorBranchAssignments)) this.doctorBranchAssignments = stored.doctorBranchAssignments;
+        if (Array.isArray(stored.doctorBranchAssignments)) {
+          if (stored.doctorBranchAssignments.some((a: any) => a.branchId === "branch-muktisari") || !stored.doctorBranchAssignments.some((a: any) => a.doctorId === "doc-aab")) {
+            this.doctorBranchAssignments = JSON.parse(JSON.stringify(MOCK_DOCTOR_BRANCH_ASSIGNMENTS));
+          } else {
+            this.doctorBranchAssignments = stored.doctorBranchAssignments;
+          }
+        } else {
+          this.doctorBranchAssignments = JSON.parse(JSON.stringify(MOCK_DOCTOR_BRANCH_ASSIGNMENTS));
+        }
         if (Array.isArray(stored.doctorSchedules)) this.doctorSchedules = stored.doctorSchedules;
         if (Array.isArray(stored.workShifts)) this.workShifts = stored.workShifts;
         if (Array.isArray(stored.staffShiftAssignments)) this.staffShiftAssignments = stored.staffShiftAssignments;

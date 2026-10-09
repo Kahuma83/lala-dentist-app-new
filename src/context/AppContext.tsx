@@ -454,8 +454,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (bRes.status === "fulfilled") setBranches(bRes.value.length > 0 ? bRes.value : MOCK_BRANCHES);
       if (pRes.status === "fulfilled") setPatients(pRes.value);
       if (docRes.status === "fulfilled") {
-        const hasCustomDoctorStore = typeof window !== "undefined" && localStorage.getItem("lala_doctors") !== null;
-        setDoctors(docRes.value.length > 0 ? docRes.value : (hasCustomDoctorStore ? docRes.value : MOCK_DOCTORS));
+        setDoctors(docRes.value.length > 0 ? docRes.value : MOCK_DOCTORS);
       }
       if (stfRes.status === "fulfilled") setStaff(stfRes.value);
       if (schedRes.status === "fulfilled") setDoctorSchedules(schedRes.value);

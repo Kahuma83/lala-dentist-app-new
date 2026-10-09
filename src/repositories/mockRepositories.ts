@@ -608,7 +608,7 @@ export class MockDoctorRepository implements DoctorRepository {
         const saved = localStorage.getItem("lala_doctors");
         if (saved !== null) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) {
+          if (Array.isArray(parsed) && parsed.some((d: DentalDoctor) => d.id === "doc-aab")) {
             db.doctors = parsed.map((d: DentalDoctor) => {
               const photo = d.photoUrl || d.avatarUrl || d.profileImage || null;
               return {
@@ -618,6 +618,9 @@ export class MockDoctorRepository implements DoctorRepository {
                 profileImage: photo || undefined
               };
             });
+          } else {
+            // Update outdated storage with official doctors
+            localStorage.setItem("lala_doctors", JSON.stringify(db.doctors));
           }
         }
       } catch (e) {

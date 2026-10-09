@@ -219,8 +219,7 @@ export const Configuration: React.FC = () => {
       const rawBList = bRes.status === "fulfilled" ? bRes.value : [];
       const bList = rawBList.length > 0 ? rawBList : MOCK_BRANCHES;
       const rawDList = dRes.status === "fulfilled" ? dRes.value : [];
-      const hasCustomDoctorStore = typeof window !== "undefined" && localStorage.getItem("lala_doctors") !== null;
-      const dList = rawDList.length > 0 ? rawDList : (hasCustomDoctorStore ? rawDList : MOCK_DOCTORS);
+      const dList = rawDList.length > 0 ? rawDList : MOCK_DOCTORS;
       const dbaList = dbaRes.status === "fulfilled" ? dbaRes.value : [];
       const brand = brandRes.status === "fulfilled" ? brandRes.value : null;
       const pList = pRes.status === "fulfilled" ? pRes.value : [];
