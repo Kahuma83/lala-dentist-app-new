@@ -33,6 +33,7 @@ import {
   HelpCircle,
   ArrowRight
 } from "lucide-react";
+import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 export const H1ConfirmationPage: React.FC = () => {
   const { repos, currentUser, selectedBranchId, branches, patients } = useApp();
@@ -310,6 +311,8 @@ export const H1ConfirmationPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12" id="h1-confirmation-page">
+      <OperationalHubTabs hub="patient_schedule" />
+
       {/* Header Banner */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>

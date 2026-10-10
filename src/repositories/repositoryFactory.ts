@@ -74,12 +74,14 @@ import {
   SupabaseVisitRepository,
   SupabaseQueueRepository,
   SupabaseTreatmentRepository,
+  SupabaseTreatmentActivityRepository,
   SupabaseInvoiceRepository,
   SupabasePaymentRepository,
   SupabaseConfigurationRepository,
   SupabaseStorageRepository,
   SupabaseMedicalRecordRepository,
-  SupabasePromotionRepository
+  SupabasePromotionRepository,
+  SupabaseDoctorScheduleRepository
 } from "./supabaseRepositories";
 
 export interface RepositoryContainer {
@@ -138,7 +140,8 @@ export function getRuntimeDataSourceInfo(): RuntimeDataSourceInfo {
  * Creates the complete repository suite based on active environment.
  */
 export function createRepositorySuite(forceMock = false): RepositoryContainer {
-  const useMock = forceMock || isTestEnv() || !isSupabaseConfigured;
+  const isTest = isTestEnv();
+  const useMock = forceMock || isTest;
 
   if (useMock) {
     return {
@@ -170,6 +173,14 @@ export function createRepositorySuite(forceMock = false): RepositoryContainer {
     };
   }
 
+  // In production, Supabase MUST be configured. No silent fallback to mock data!
+  if (!isSupabaseConfigured) {
+    throw new Error(
+      "Konfigurasi Supabase tidak ditemukan (VITE_SUPABASE_URL & VITE_SUPABASE_ANON_KEY belum diisi). " +
+      "Aplikasi production membutuhkan koneksi Supabase resmi dan tidak dapat berjalan dalam mode simulasi tersembunyi."
+    );
+  }
+
   // Supabase production repository suite (Connected to PostgreSQL Production)
   return {
     patient: new SupabasePatientRepository(),
@@ -180,7 +191,7 @@ export function createRepositorySuite(forceMock = false): RepositoryContainer {
     visit: new SupabaseVisitRepository(),
     queue: new SupabaseQueueRepository(),
     treatment: new SupabaseTreatmentRepository(),
-    treatmentActivity: new MockTreatmentActivityRepository(),
+    treatmentActivity: new SupabaseTreatmentActivityRepository(),
     invoice: new SupabaseInvoiceRepository(),
     payment: new SupabasePaymentRepository(),
     compensation: new MockCompensationRepository(),
@@ -188,7 +199,7 @@ export function createRepositorySuite(forceMock = false): RepositoryContainer {
     config: new SupabaseConfigurationRepository(),
     accounting: new MockAccountingRepository(),
     staff: new MockStaffRepository(),
-    doctorSchedule: new MockDoctorScheduleRepository(),
+    doctorSchedule: new SupabaseDoctorScheduleRepository(),
     workShift: new MockWorkShiftRepository(),
     staffShift: new MockStaffShiftAssignmentRepository(),
     attendance: new MockAttendanceRepository(),

@@ -35,6 +35,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
+import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 export const Expenses: React.FC = () => {
   const {
@@ -332,6 +333,8 @@ export const Expenses: React.FC = () => {
 
   return (
     <div className="space-y-6" id="expenses-page">
+      <OperationalHubTabs hub="cashier" />
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>

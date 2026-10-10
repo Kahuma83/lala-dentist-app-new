@@ -109,7 +109,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const displayClinicName = branding?.name || "Lala Dentist";
   const displayTagline = branding?.tagline || "Senyum Indah dimulai di Laladentist";
 
-  // Custom defined menu categories representing the EXACT options visible in the image
+  // Super Admin Menu categorized into: Dashboard, Operasional, Master Data, Keuangan, SDM, Laporan, Pengaturan Sistem
   const superAdminMenu = [
     {
       title: "DASHBOARD",
@@ -121,14 +121,19 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Pasien", path: "/super-admin/patients", icon: Users },
         { name: "Booking", path: "/super-admin/bookings", icon: CalendarRange },
         { name: "Konfirmasi H-1", path: "/super-admin/h1-confirmation", icon: Clock },
-        { name: "Antrean", path: "/super-admin/queue", icon: ListOrdered },
-        { name: "Treatment", path: "/super-admin/treatments", icon: Activity }
+        { name: "Antrean Klinik", path: "/super-admin/queue", icon: ListOrdered },
+        { name: "Daftar Treatment", path: "/super-admin/treatments", icon: Activity },
+        { name: "Jadwal Dokter", path: "/super-admin/schedules", icon: CalendarRange }
       ]
     },
     {
-      title: "JADWAL PRAKTIK",
+      title: "MASTER DATA",
       items: [
-        { name: "Jadwal Dokter", path: "/super-admin/schedules", icon: CalendarRange }
+        { name: "Cabang Klinik", path: "/super-admin/configuration?tab=branches", icon: Building2 },
+        { name: "Dokter", path: "/super-admin/configuration?tab=doctors", icon: UserCheck },
+        { name: "Layanan & Tindakan", path: "/super-admin/configuration?tab=services", icon: Briefcase },
+        { name: "Tarif Cabang", path: "/super-admin/configuration?tab=tariffs", icon: Tag },
+        { name: "Media Promosi", path: "/super-admin/configuration?tab=promotions", icon: Sparkles }
       ]
     },
     {
@@ -137,63 +142,68 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Invoice", path: "/super-admin/invoices", icon: Receipt },
         { name: "Pembayaran", path: "/super-admin/payments", icon: CreditCard },
         { name: "Pengeluaran", path: "/super-admin/expenses", icon: ArrowDownRight },
-        { name: "Compensation", path: "/super-admin/compensation", icon: Percent },
-        { name: "Payroll", path: "/super-admin/payroll", icon: DollarSign },
-        { name: "Accounting", path: "/super-admin/accounting", icon: BookOpen }
+        { name: "Kompensasi Dokter", path: "/super-admin/compensation", icon: Percent }
       ]
     },
     {
-      title: "PENGATURAN & MASTER",
+      title: "SDM",
       items: [
-        { name: "Cabang Klinik", path: "/super-admin/configuration?tab=branches", icon: Building2 },
-        { name: "Dokter", path: "/super-admin/configuration?tab=doctors", icon: UserCheck },
-        { name: "Media Promosi", path: "/super-admin/configuration?tab=promotions", icon: Sparkles },
-        { name: "Layanan", path: "/super-admin/configuration?tab=services", icon: Briefcase },
-        { name: "Tarif Cabang", path: "/super-admin/configuration?tab=tariffs", icon: Tag },
-        { name: "Identitas Dokumen", path: "/super-admin/configuration?tab=branding", icon: FileText },
-        { name: "Manajemen SDM", path: "/super-admin/hr", icon: Users }
+        { name: "Manajemen SDM", path: "/super-admin/hr", icon: Users },
+        { name: "Payroll", path: "/super-admin/payroll", icon: DollarSign }
+      ]
+    },
+    {
+      title: "LAPORAN",
+      items: [
+        { name: "Laporan Keuangan", path: "/super-admin/accounting", icon: BookOpen }
+      ]
+    },
+    {
+      title: "PENGATURAN SISTEM",
+      items: [
+        { name: "Identitas Dokumen", path: "/super-admin/configuration?tab=branding", icon: FileText }
       ]
     }
   ];
 
+  // Branch Admin Menu: Beranda, Pasien & Jadwal, Antrean & Treatment, Kasir, Laporan, Pengaturan Cabang
   const branchAdminMenu = [
     {
-      title: "DASHBOARD",
+      title: "BERANDA",
       items: [{ name: "Dashboard", path: "/branch-admin/dashboard", icon: LayoutDashboard }]
     },
     {
-      title: "OPERASIONAL",
+      title: "PASIEN & JADWAL",
       items: [
         { name: "Pasien", path: "/branch-admin/patients", icon: Users },
         { name: "Booking", path: "/branch-admin/bookings", icon: CalendarRange },
         { name: "Konfirmasi H-1", path: "/branch-admin/h1-confirmation", icon: Clock },
-        { name: "Antrean", path: "/branch-admin/queue", icon: ListOrdered },
-        { name: "Treatment", path: "/branch-admin/treatments", icon: Activity }
-      ]
-    },
-    {
-      title: "JADWAL PRAKTIK",
-      items: [
         { name: "Jadwal Dokter", path: "/branch-admin/schedules", icon: CalendarRange }
       ]
     },
     {
-      title: "KEUANGAN",
+      title: "ANTREAN & TREATMENT",
+      items: [
+        { name: "Antrean Klinik", path: "/branch-admin/queue", icon: ListOrdered },
+        { name: "Daftar Treatment", path: "/branch-admin/treatments", icon: Activity }
+      ]
+    },
+    {
+      title: "KASIR",
       items: [
         { name: "Invoice", path: "/branch-admin/invoices", icon: Receipt },
-        { name: "Pembayaran", path: "/branch-admin/payments", icon: CreditCard },
-        { name: "Pengeluaran", path: "/branch-admin/expenses", icon: ArrowDownRight },
+        { name: "Pembayaran & Kwitansi", path: "/branch-admin/payments", icon: CreditCard },
+        { name: "Pengeluaran", path: "/branch-admin/expenses", icon: ArrowDownRight }
+      ]
+    },
+    {
+      title: "LAPORAN",
+      items: [
         { name: "Laporan Keuangan", path: "/branch-admin/accounting", icon: BookOpen }
       ]
     },
     {
-      title: "MANAJEMEN SDM",
-      items: [
-        { name: "Manajemen SDM", path: "/branch-admin/hr", icon: UserCheck }
-      ]
-    },
-    {
-      title: "PENGATURAN",
+      title: "PENGATURAN CABANG",
       items: [
         { name: "Profil Cabang", path: "/branch-admin/configuration?tab=branches", icon: Building2 }
       ]
@@ -202,12 +212,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   const doctorMenu = [
     {
-      title: "PRAKTEK DOKTER",
+      title: "PRAKTIK DOKTER",
       items: [
-        { name: "Live Antrean Dokter", path: "/doctor/queue", icon: ListOrdered },
-        { name: "Jadwal Praktik", path: "/doctor/schedules", icon: CalendarRange },
+        { name: "Antrean Dokter", path: "/doctor/queue", icon: ListOrdered },
         { name: "Pasien", path: "/doctor/patients", icon: Users },
-        { name: "Treatment", path: "/doctor/treatments", icon: Activity }
+        { name: "Treatment & Rekam Medis", path: "/doctor/treatments", icon: Activity },
+        { name: "Jadwal Praktik", path: "/doctor/schedules", icon: CalendarRange }
       ]
     }
   ];
@@ -216,7 +226,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "ASISTEN DOKTER",
       items: [
-        { name: "Live Antrean Klinik", path: "/assistant/queue", icon: ListOrdered },
+        { name: "Antrean Klinik", path: "/assistant/queue", icon: ListOrdered },
         { name: "Pasien", path: "/assistant/patients", icon: Users },
         { name: "Treatment", path: "/assistant/treatments", icon: Activity },
         { name: "Insentif Saya", path: "/assistant/incentives", icon: Percent }

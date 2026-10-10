@@ -43,6 +43,7 @@ import {
 import { formatRupiah, formatDate, formatDateTime } from "../utils/formatter";
 import { PatientExcelModal } from "../components/PatientExcelModal";
 import { ImportPatientExecutionResult } from "../utils/excelPatientUtils";
+import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 export const PatientManagement: React.FC = () => {
   const { currentUser, repos, branches, patients, visits, bookings, refreshData } = useApp();
@@ -603,6 +604,8 @@ export const PatientManagement: React.FC = () => {
 
   return (
     <div className="space-y-6" id="patient-management-root">
+      <OperationalHubTabs hub="patient_schedule" />
+
       {/* Toast Feedback */}
       {formSuccess && (
         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl flex items-center justify-between shadow-sm animate-fade-in">

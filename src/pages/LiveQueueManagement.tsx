@@ -20,6 +20,7 @@ import {
   Edit2,
   X
 } from "lucide-react";
+import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 export const LiveQueueManagement: React.FC = () => {
   const { currentUser, repos, branches, doctors, doctorSchedules, refreshData } = useApp();
@@ -595,6 +596,8 @@ export const LiveQueueManagement: React.FC = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6" id="live-queue-page">
+      <OperationalHubTabs hub="queue_treatment" />
+
       {/* Header Title */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
         <div>

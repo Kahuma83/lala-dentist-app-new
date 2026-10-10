@@ -29,6 +29,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import { TreatmentPicker } from "../components/TreatmentPicker";
+import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 export const TreatmentManagement: React.FC = () => {
   const { currentUser, repos, branches, services } = useApp();
@@ -319,6 +320,8 @@ export const TreatmentManagement: React.FC = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
+      <OperationalHubTabs hub="queue_treatment" />
+
       {/* Page Title & Controls Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div>

@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { ReceiptDocumentModal } from "../components/documents/ReceiptDocumentModal";
 import { DEFAULT_CLINIC_BRANDING } from "../data/mockData";
+import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 export const Payments: React.FC = () => {
   const {
@@ -239,6 +240,8 @@ export const Payments: React.FC = () => {
 
   return (
     <div className="space-y-6" id="payments-page">
+      <OperationalHubTabs hub="cashier" />
+
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">

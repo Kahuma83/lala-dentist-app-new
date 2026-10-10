@@ -451,10 +451,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bkRes, vRes, qRes, tRes, invRes, payRes, prRes, srvRes, accRes, jrnRes, prmRes, brandRes
       ] = results;
 
-      if (bRes.status === "fulfilled") setBranches(bRes.value.length > 0 ? bRes.value : MOCK_BRANCHES);
+      if (bRes.status === "fulfilled") {
+        setBranches(isSupabaseConfigured ? bRes.value : (bRes.value.length > 0 ? bRes.value : MOCK_BRANCHES));
+      }
       if (pRes.status === "fulfilled") setPatients(pRes.value);
       if (docRes.status === "fulfilled") {
-        setDoctors(docRes.value.length > 0 ? docRes.value : MOCK_DOCTORS);
+        setDoctors(isSupabaseConfigured ? docRes.value : (docRes.value.length > 0 ? docRes.value : MOCK_DOCTORS));
       }
       if (stfRes.status === "fulfilled") setStaff(stfRes.value);
       if (schedRes.status === "fulfilled") setDoctorSchedules(schedRes.value);
@@ -470,7 +472,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (invRes.status === "fulfilled") setInvoices(invRes.value);
       if (payRes.status === "fulfilled") setPayments(payRes.value);
       if (prRes.status === "fulfilled") setPayrolls(prRes.value);
-      if (srvRes.status === "fulfilled") setServices(srvRes.value && srvRes.value.length > 0 ? srvRes.value : MOCK_SERVICES);
+      if (srvRes.status === "fulfilled") {
+        setServices(isSupabaseConfigured ? srvRes.value : (srvRes.value && srvRes.value.length > 0 ? srvRes.value : MOCK_SERVICES));
+      }
       if (accRes.status === "fulfilled") setAccounts(accRes.value);
       if (jrnRes.status === "fulfilled") setJournals(jrnRes.value);
       if (prmRes.status === "fulfilled") setPromotions(prmRes.value);

@@ -35,6 +35,7 @@ import {
   FileText,
   ChevronRight
 } from "lucide-react";
+import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 export const BookingManagement: React.FC = () => {
   const { repos, currentUser, selectedBranchId, branches, patients } = useApp();
@@ -387,6 +388,8 @@ END $$;`;
 
   return (
     <div className="space-y-6 pb-12" id="booking-management-page">
+      <OperationalHubTabs hub="patient_schedule" />
+
       {/* SUPABASE FALLBACK WARNING STATE */}
       {currentUser?.isMockFallback && (
         <div className="p-5 bg-amber-50 border-2 border-amber-300 rounded-2xl shadow-sm text-slate-800 space-y-4">
