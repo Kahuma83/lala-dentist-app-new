@@ -64,6 +64,6 @@ npm run build
 
 ## Website informasi utama
 
-Website publik yang terpisah dari aplikasi staf berada di folder `website/`. Untuk membuat Cloudflare Pages project tersendiri dari repository ini, gunakan branch `main`, set **Root directory** ke `website`, dan **Build output directory** ke `.`. Website ini statis sehingga tidak memerlukan build command atau environment variables. Kaitkan domain utama `laladentist.id` ke project tersebut; biarkan project aplikasi yang sudah ada tetap melayani `klinik.laladentist.id` dan `pasien.laladentist.id`.
+Website publik yang terpisah dari aplikasi staf berada di folder `website/`. Desainnya berfokus pada pasien muda dan perawatan behel, dengan informasi layanan, cabang, serta tautan ke Portal Pasien. Portal pasien merupakan PWA yang dapat ditambahkan ke layar utama dari browser yang mendukung, bukan aplikasi Android native atau unduhan APK. Untuk membuat Cloudflare Pages project tersendiri dari repository ini, gunakan branch `main`, set **Root directory** ke `website`, dan **Build output directory** ke `.`. Website ini statis sehingga tidak memerlukan build command atau environment variables. Kaitkan domain utama `laladentist.id` ke project tersebut; biarkan project aplikasi yang sudah ada tetap melayani `klinik.laladentist.id` dan `pasien.laladentist.id`.
 
 Tombol pemasangan di website utama membuka Portal Pasien dengan penanda `?install=1`. Prompt pemasangan akan muncul di Portal Pasien bila didukung browser; Safari iPhone menampilkan petunjuk **Bagikan → Tambahkan ke Layar Utama**.
