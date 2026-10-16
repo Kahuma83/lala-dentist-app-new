@@ -1379,6 +1379,12 @@ export const Configuration: React.FC = () => {
           <span className="font-semibold">{successMsg}</span>
         </div>
       )}
+      {errorMsg && !showDoctorModal && (
+        <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2.5 shadow-xs">
+          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+          <span className="font-semibold">{errorMsg}</span>
+        </div>
+      )}
 
       {/* Tabs Navigation */}
       <div className="flex border-b border-slate-200 gap-2 overflow-x-auto">

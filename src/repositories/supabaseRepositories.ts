@@ -4206,6 +4206,9 @@ export class SupabaseDoctorRepository implements DoctorRepository {
 
   async updateDoctorPhoto(id: string, photoUrl: string | null): Promise<DentalDoctor> {
     ensureSupabaseConnected();
+    if (!isValidUUID(id) && !useRepositoryTestFallbacks()) {
+      throw new Error(`ID dokter "${id}" bukan UUID valid; foto tidak diperbarui.`);
+    }
     if (isValidUUID(id)) {
       try {
         const { data, error } = await supabase
@@ -4214,14 +4217,16 @@ export class SupabaseDoctorRepository implements DoctorRepository {
           .eq("id", id)
           .select()
           .single();
-        if (!error && data) {
-          const res = this.mapDoctorFromDb(data);
-          const existing = this.getFallbackDoctors();
-          const idx = existing.findIndex((d) => d.id === id);
-          if (idx >= 0) existing[idx] = { ...existing[idx], ...res };
-          this.saveFallbackDoctors(existing);
-          return res;
+        if (error) {
+          throw new Error(`Supabase menolak pembaruan foto dokter (${error.code || "tanpa kode"}): ${error.message}`);
         }
+        if (!data) throw new Error("Supabase tidak mengembalikan data dokter setelah foto diperbarui.");
+        const res = this.mapDoctorFromDb(data);
+        const existing = this.getFallbackDoctors();
+        const idx = existing.findIndex((d) => d.id === id);
+        if (idx >= 0) existing[idx] = { ...existing[idx], ...res };
+        this.saveFallbackDoctors(existing);
+        return res;
       } catch (e) {
         if (!useRepositoryTestFallbacks()) throw e;
       }
