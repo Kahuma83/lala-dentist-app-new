@@ -6274,14 +6274,14 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
 export class SupabaseAttendanceRepository implements AttendanceRepository {
   async getById(id: string): Promise<Attendance | null> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendance_records").select("*").eq("id", id).maybeSingle();
-    if (error) return handleSupabaseReadError("attendance_records", error, null);
+    const { data, error } = await supabase.from("attendances").select("*").eq("id", id).maybeSingle();
+    if (error) return handleSupabaseReadError("attendances", error, null);
     if (!data) return null;
     return {
       id: data.id,
       staffId: data.staff_id,
       branchId: data.branch_id,
-      date: data.attendance_date,
+      date: data.date,
       attendanceStatus: data.attendance_status || AttendanceStatus.PRESENT,
       scheduledStartAt: data.scheduled_start_at || "08:00",
       scheduledEndAt: data.scheduled_end_at || "17:00",
@@ -6296,13 +6296,13 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
   }
   async getByStaff(staffId: string): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendance_records").select("*").eq("staff_id", staffId);
-    if (error) return handleSupabaseReadError("attendance_records", error, []);
+    const { data, error } = await supabase.from("attendances").select("*").eq("staff_id", staffId);
+    if (error) return handleSupabaseReadError("attendances", error, []);
     return (data || []).map((row: any) => ({
       id: row.id,
       staffId: row.staff_id,
       branchId: row.branch_id,
-      date: row.attendance_date,
+      date: row.date,
       attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
       scheduledStartAt: row.scheduled_start_at || "08:00",
       scheduledEndAt: row.scheduled_end_at || "17:00",
@@ -6317,15 +6317,15 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
   }
   async getByDate(date: string, branchId?: string): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("attendance_records").select("*").eq("attendance_date", date);
+    let q = supabase.from("attendances").select("*").eq("date", date);
     if (branchId) q = q.eq("branch_id", branchId);
     const { data, error } = await q;
-    if (error) return handleSupabaseReadError("attendance_records", error, []);
+    if (error) return handleSupabaseReadError("attendances", error, []);
     return (data || []).map((row: any) => ({
       id: row.id,
       staffId: row.staff_id,
       branchId: row.branch_id,
-      date: row.attendance_date,
+      date: row.date,
       attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
       scheduledStartAt: row.scheduled_start_at || "08:00",
       scheduledEndAt: row.scheduled_end_at || "17:00",
@@ -6340,13 +6340,13 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
   }
   async getByBranch(branchId: string): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendance_records").select("*").eq("branch_id", branchId);
-    if (error) return handleSupabaseReadError("attendance_records", error, []);
+    const { data, error } = await supabase.from("attendances").select("*").eq("branch_id", branchId);
+    if (error) return handleSupabaseReadError("attendances", error, []);
     return (data || []).map((row: any) => ({
       id: row.id,
       staffId: row.staff_id,
       branchId: row.branch_id,
-      date: row.attendance_date,
+      date: row.date,
       attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
       scheduledStartAt: row.scheduled_start_at || "08:00",
       scheduledEndAt: row.scheduled_end_at || "17:00",
@@ -6361,13 +6361,13 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
   }
   async list(): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendance_records").select("*");
-    if (error) return handleSupabaseReadError("attendance_records", error, []);
+    const { data, error } = await supabase.from("attendances").select("*");
+    if (error) return handleSupabaseReadError("attendances", error, []);
     return (data || []).map((row: any) => ({
       id: row.id,
       staffId: row.staff_id,
       branchId: row.branch_id,
-      date: row.attendance_date,
+      date: row.date,
       attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
       scheduledStartAt: row.scheduled_start_at || "08:00",
       scheduledEndAt: row.scheduled_end_at || "17:00",

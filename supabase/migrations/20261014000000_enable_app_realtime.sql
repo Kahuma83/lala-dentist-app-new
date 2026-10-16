@@ -2,7 +2,7 @@ DO $$
 DECLARE
   table_name text;
   realtime_tables text[] := ARRAY[
-    'attendance_records',
+    'attendances',
     'backup_jobs',
     'booking_confirmations_h1',
     'bookings',
