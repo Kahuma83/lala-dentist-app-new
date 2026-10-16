@@ -1,0 +1,6 @@
+{
+  "name": "Lala Dentist Web Admin",
+  "description": "Web Admin untuk operasional klinik gigi multi-cabang Lala Dentist, memfasilitasi peran Super Admin dan Branch Admin.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,399 @@
+@import "tailwindcss";
+
+/* Premium Textured Gold & Elegant White Theme Styles */
+:root {
+  --color-gold-light: #fbf9f4;
+  --color-gold-med: #ebd4a8;
+  --color-gold-dark: #c5a059;
+  --color-gold-deep: #aa853a;
+  --color-gold-accent: #d9bf8f;
+}
+
+/* Base App Body Style: Custom Textured Background */
+#app-container, .bg-slate-50\/50, .bg-slate-50, .min-h-screen {
+  background-color: #fdfcf9 !important;
+  background-image: radial-gradient(#f0e5cf 0.8px, transparent 0.8px) !important;
+  background-size: 18px 18px !important;
+}
+
+/* Premium Textured Gold Gradients */
+.bg-gold-metallic {
+  background: linear-gradient(135deg, #fbf9f4 0%, #ebd4a8 50%, #faf6ec 100%) !important;
+}
+
+.bg-gold-btn {
+  background: linear-gradient(135deg, #c5a059 0%, #aa853a 50%, #d9bf8f 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 2px 8px -1px rgba(170, 133, 58, 0.35);
+}
+
+.bg-gold-btn:hover {
+  background: linear-gradient(135deg, #d9bf8f 0%, #c5a059 50%, #aa853a 100%) !important;
+  box-shadow: 0 4px 12px 0 rgba(170, 133, 58, 0.45);
+}
+
+/* Gold Text Gradient */
+.text-gold-gradient {
+  background: linear-gradient(135deg, #8a6f27 0%, #c5a059 50%, #aa853a 100%);
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+/* Soft Warm Accent Border */
+.border-gold-accent {
+  border-color: #ebd4a8 !important;
+}
+
+/* Soft Gold Shadow for High-Class Float Effect */
+.shadow-gold-soft {
+  box-shadow: 0 4px 20px -2px rgba(197, 160, 89, 0.1) !important;
+}
+
+/* Safe modal stacking to keep click targets above competing overlays */
+.modal-safe-layer {
+  isolation: isolate;
+  pointer-events: auto;
+  z-index: 200 !important;
+}
+
+.modal-safe-panel {
+  position: relative;
+  pointer-events: auto;
+  z-index: 201 !important;
+}
+
+/* White Textured Panels */
+.bg-white-textured {
+  background-color: #ffffff !important;
+  background-image: radial-gradient(rgba(217, 191, 143, 0.08) 1px, transparent 1px) !important;
+  background-size: 14px 14px !important;
+}
+
+.patient-auth-shell {
+  background-color: #f8f5ed !important;
+  background-image:
+    radial-gradient(ellipse at 12% 15%, rgba(195, 164, 98, 0.12), transparent 34%),
+    radial-gradient(ellipse at 88% 82%, rgba(195, 164, 98, 0.11), transparent 35%),
+    linear-gradient(135deg, #fbfaf6, #f5f0e4) !important;
+}
+
+.patient-auth-panel {
+  border: 1px solid rgba(176, 145, 75, 0.55);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 22px 60px rgba(83, 62, 25, 0.12);
+  backdrop-filter: blur(12px);
+}
+
+.patient-auth-form {
+  background-image: linear-gradient(145deg, #ffffff, #fffefa);
+}
+
+.patient-auth-input {
+  border-color: #d8ceb8 !important;
+  background-color: #faf9f5 !important;
+  color: #312719 !important;
+}
+
+.patient-auth-input:focus {
+  border-color: #b3934d !important;
+  background-color: #ffffff !important;
+  box-shadow: 0 0 0 3px rgba(195, 164, 98, 0.16);
+}
+
+.patient-auth-submit,
+.patient-portal-primary {
+  background: linear-gradient(110deg, #80602a 0%, #a9873f 48%, #c9aa66 100%);
+  box-shadow: 0 6px 16px rgba(108, 79, 30, 0.24);
+}
+
+.patient-auth-submit:hover,
+.patient-portal-primary:hover {
+  background: linear-gradient(110deg, #6f5122 0%, #987738 50%, #b99753 100%);
+  box-shadow: 0 8px 20px rgba(108, 79, 30, 0.3);
+}
+
+.patient-portal-shell {
+  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  background-color: #faf8f2 !important;
+  background-image:
+    radial-gradient(ellipse at 8% 12%, rgba(195, 164, 98, 0.1), transparent 30%),
+    radial-gradient(ellipse at 92% 42%, rgba(192, 213, 205, 0.12), transparent 28%),
+    radial-gradient(rgba(171, 145, 88, 0.12) 0.7px, transparent 0.7px),
+    linear-gradient(135deg, #fcfbf8, #f7f3ea) !important;
+  background-size: auto, auto, 24px 24px, auto !important;
+}
+
+.patient-portal-header {
+  box-shadow: 0 5px 20px rgba(73, 57, 29, 0.08);
+}
+
+.patient-portal-logo-mark {
+  border: 1px solid rgba(177, 142, 69, 0.58);
+  background: radial-gradient(circle at 35% 25%, #fffef8, #f1e2bb 78%);
+  box-shadow: 0 3px 10px rgba(103, 77, 32, 0.15), inset 0 0 0 3px rgba(255, 255, 255, 0.72);
+}
+
+.patient-portal-avatar {
+  border: 2px solid rgba(255, 255, 255, 0.88);
+  background:
+    radial-gradient(circle at 30% 23%, rgba(255, 255, 255, 0.82), transparent 32%),
+    linear-gradient(140deg, #f0dfb0 0%, #c7a658 58%, #a98237 100%);
+  box-shadow: 0 0 0 2px rgba(173, 137, 62, 0.48), 0 4px 11px rgba(92, 66, 23, 0.2);
+}
+
+.patient-portal-signout {
+  border-color: rgba(161, 122, 48, 0.55);
+  color: #76591f;
+  background: linear-gradient(145deg, #fffefa, #f4ead2);
+  box-shadow: 0 3px 8px rgba(96, 72, 29, 0.11);
+}
+
+.patient-portal-signout:hover {
+  background: linear-gradient(145deg, #f5e8c5, #e7d19b);
+}
+
+.patient-portal-welcome {
+  position: relative;
+  isolation: isolate;
+  border-color: rgba(165, 130, 60, 0.6);
+  background:
+    radial-gradient(ellipse at 88% 0%, rgba(255, 255, 255, 0.72), transparent 32%),
+    radial-gradient(circle at 100% 100%, rgba(209, 175, 98, 0.23), transparent 38%),
+    linear-gradient(115deg, #fffefa 0%, #f7edda 58%, #e8d29d 100%);
+  box-shadow: 0 10px 24px rgba(91, 68, 27, 0.16), inset 0 1px rgba(255, 255, 255, 0.9);
+}
+
+.patient-portal-welcome h1,
+.patient-portal-page-heading h1 {
+  font-family: "Aptos Display", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  letter-spacing: -0.035em;
+}
+
+.patient-portal-welcome p:last-of-type {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.patient-portal-welcome-orb {
+  position: absolute;
+  z-index: 0;
+  top: -2.75rem;
+  right: -1rem;
+  width: 7rem;
+  height: 7rem;
+  border: 1px solid rgba(161, 132, 77, 0.12);
+  border-radius: 9999px;
+  box-shadow: 0 0 0 1rem rgba(161, 132, 77, 0.035), 0 0 0 2rem rgba(161, 132, 77, 0.025);
+}
+
+.patient-portal-page-heading {
+  border-bottom: 1px solid rgba(177, 151, 98, 0.2);
+  padding-bottom: 1rem;
+}
+
+.patient-portal-hero {
+  isolation: isolate;
+  border: 1px solid rgba(165, 130, 60, 0.78);
+  background: linear-gradient(135deg, #f5e7c4, #c4a45e);
+  box-shadow: 0 14px 30px rgba(91, 68, 27, 0.2), inset 0 1px rgba(255, 255, 255, 0.72);
+}
+
+.patient-portal-hero img {
+  filter: saturate(0.78) brightness(1.13) sepia(0.12);
+  transition: transform 700ms ease;
+}
+
+.patient-portal-hero:hover img {
+  transform: scale(1.035);
+}
+
+.patient-portal-hero-copy {
+  z-index: 1;
+  text-shadow: 0 1px 8px rgba(57, 42, 15, 0.25);
+}
+
+.patient-portal-promo-overlay {
+  background: linear-gradient(180deg, rgba(255, 250, 234, 0.06) 0%, rgba(248, 235, 201, 0.08) 56%, rgba(75, 55, 22, 0.42) 100%);
+}
+
+.patient-portal-promo-title,
+.patient-portal-promo-description {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 0.7rem;
+  background: rgba(45, 35, 20, 0.42);
+  padding: 0.2rem 0.55rem;
+  color: #fffdf6;
+  backdrop-filter: blur(3px);
+}
+
+.patient-portal-booking-cta {
+  border-color: rgba(153, 116, 45, 0.68);
+  background: linear-gradient(145deg, #fffdf5 0%, #f0dfb4 100%);
+  color: #76551a;
+  box-shadow: 0 5px 15px rgba(57, 42, 15, 0.22), inset 0 1px rgba(255, 255, 255, 0.95);
+}
+
+.patient-portal-booking-cta:hover {
+  background: linear-gradient(145deg, #f9edcf 0%, #e3ca8c 100%);
+}
+
+.patient-portal-promo-controls {
+  border-color: rgba(255, 239, 196, 0.82);
+  background: linear-gradient(135deg, rgba(111, 81, 31, 0.88), rgba(148, 112, 47, 0.9));
+  box-shadow: 0 5px 16px rgba(70, 50, 17, 0.24), inset 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.patient-portal-queue-card {
+  background:
+    radial-gradient(ellipse at 88% 0%, rgba(255, 255, 255, 0.88), transparent 38%),
+    repeating-conic-gradient(from 205deg at 105% 110%, rgba(156, 118, 44, 0.08) 0deg 0.45deg, transparent 0.45deg 1.1deg),
+    radial-gradient(rgba(151, 111, 39, 0.12) 0.75px, transparent 0.75px),
+    linear-gradient(120deg, #f5e8c8 0%, #fffaf0 45%, #e4cf9c 100%);
+  background-size: auto, auto, 17px 17px, auto;
+  border-color: rgba(151, 113, 43, 0.72);
+  box-shadow: 0 12px 30px rgba(110, 83, 35, 0.16), inset 0 1px rgba(255, 255, 255, 0.9);
+}
+
+.patient-portal-desktop-nav {
+  background:
+    radial-gradient(rgba(151, 111, 39, 0.1) 0.7px, transparent 0.7px),
+    linear-gradient(135deg, #f7edda, #e9d5a8);
+  background-size: 14px 14px, auto;
+  border-color: rgba(163, 126, 55, 0.28);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.72);
+}
+
+.patient-portal-nav-item {
+  background: linear-gradient(135deg, rgba(255, 252, 244, 0.52), rgba(227, 205, 158, 0.28));
+}
+
+.patient-portal-nav-active {
+  background:
+    radial-gradient(rgba(255, 255, 255, 0.2) 0.7px, transparent 0.7px),
+    linear-gradient(135deg, #ecd79e, #c7a255);
+  background-size: 12px 12px, auto;
+  box-shadow: 0 3px 10px rgba(104, 77, 30, 0.2), inset 0 1px rgba(255, 255, 255, 0.55);
+}
+
+.patient-portal-card {
+  box-shadow: 0 10px 28px rgba(67, 53, 28, 0.07);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.patient-portal-card:hover {
+  border-color: rgba(188, 157, 91, 0.58);
+  box-shadow: 0 14px 34px rgba(67, 53, 28, 0.1);
+}
+
+.patient-portal-mobile-nav {
+  border-color: rgba(145, 107, 42, 0.35);
+  background:
+    radial-gradient(rgba(132, 96, 35, 0.14) 0.75px, transparent 0.75px),
+    radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.72), transparent 68%),
+    linear-gradient(115deg, #f1dfb4 0%, #e3cb91 48%, #f5e9cc 100%);
+  background-size: 16px 16px, auto, auto;
+  box-shadow: 0 -8px 28px rgba(67, 53, 28, 0.17), inset 0 1px rgba(255, 255, 255, 0.85);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .patient-portal-hero img,
+  .patient-portal-card {
+    transition: none;
+  }
+}
+
+/* Overriding sidebar active hover styles from emerald to custom premium gold */
+.sidebar-active {
+  background-color: #faf6ec !important;
+  color: #8a6f27 !important;
+  border-left: 3.5px solid #c5a059 !important;
+  font-weight: 600 !important;
+}
+
+/* =========================================================
+   PHASE 9D - PRINT STYLES (Smart 1-Page Document Isolation)
+   ========================================================= */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    background-image: none !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    font-size: 11px !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide entire application shell and background pages */
+  #app-container,
+  header,
+  nav,
+  aside,
+  main > div:not(.print-document-modal-wrapper),
+  .role-switcher,
+  .print\:hidden,
+  button,
+  .btn,
+  .fixed.inset-0.bg-slate-950\/70,
+  .fixed.inset-0.bg-slate-900\/60 {
+    background: transparent !important;
+  }
+
+  /* Hide everything in the body by default */
+  body > * {
+    visibility: hidden !important;
+  }
+
+  /* Make only the printable document container and its elements visible */
+  #root,
+  #root * {
+    visibility: hidden;
+  }
+
+  #invoice-printable-document,
+  #invoice-printable-document *,
+  #receipt-printable-document,
+  #receipt-printable-document *,
+  #payslip-printable-document,
+  #payslip-printable-document * {
+    visibility: visible !important;
+  }
+
+  #invoice-printable-document,
+  #receipt-printable-document,
+  #payslip-printable-document {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    background-image: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: block !important;
+    z-index: 999999 !important;
+  }
+
+  /* Hide modal topbar, close button, and actions during print */
+  .modal-topbar,
+  .document-actions-bar {
+    display: none !important;
+  }
+}

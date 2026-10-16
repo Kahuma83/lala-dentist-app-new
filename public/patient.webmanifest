@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "Lala Dentist - Portal Pasien",
+  "short_name": "Lala Pasien",
+  "description": "Portal pasien Lala Dentist untuk mengakses layanan digital klinik.",
+  "lang": "id-ID",
+  "start_url": "/patient/login",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f5ef",
+  "theme_color": "#173d35",
+  "icons": [
+    {
+      "src": "/logo-lala.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
