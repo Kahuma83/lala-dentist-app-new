@@ -18,7 +18,7 @@ Prerequisite: Node.js dan akses ke project Supabase.
    - `VITE_SUPABASE_ANON_KEY`: publishable/anon key dari Supabase.
    - `SUPABASE_SERVICE_ROLE_KEY`: diperlukan oleh `server.js` untuk pencarian username sebelum login staf dan pembuatan akun login. Jangan beri nama `VITE_*` dan jangan masukkan ke kode browser.
 
-   Untuk Cloudflare Pages, atur `SUPABASE_URL` sebagai variable dan `SUPABASE_SERVICE_ROLE_KEY` sebagai secret server-side pada **Settings → Variables and Secrets** untuk Production (dan Preview bila diperlukan). Pages Function `functions/api/auth/lookup-user.js` memakai keduanya untuk pencarian username; jangan gunakan prefix `VITE_` pada service-role key.
+   Untuk Cloudflare Pages, atur `SUPABASE_URL` sebagai variable dan `SUPABASE_SECRET_KEY` sebagai secret server-side pada **Settings → Variables and Secrets** untuk Production (dan Preview bila diperlukan). Gunakan Secret API key baru Supabase (`sb_secret_...`) untuk Pages Function `functions/api/auth/lookup-user.js`; function mengirim key tersebut hanya melalui header `apikey`. `SUPABASE_SERVICE_ROLE_KEY` masih didukung sebagai opsi kompatibilitas untuk key legacy. Jangan gunakan prefix `VITE_` pada secret apa pun.
 
    `.env.local` diabaikan oleh Git. Jangan kirim atau commit file ini.
 

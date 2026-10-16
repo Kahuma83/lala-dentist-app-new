@@ -9,7 +9,7 @@ const createRequest = (body: unknown) => new Request("https://clinic.example/api
 
 const environment = {
   SUPABASE_URL: "https://project.supabase.co",
-  SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key"
+  SUPABASE_SECRET_KEY: "sb_secret_server-only-test-key"
 };
 
 describe("Cloudflare Pages staff username lookup", () => {
@@ -17,7 +17,7 @@ describe("Cloudflare Pages staff username lookup", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns a staff account using the server-side Supabase key", async () => {
+  it("returns a staff account using a new secret API key in the apikey header only", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
       { email: "cece@example.com", active: true }
     ]), { status: 200 }));
@@ -33,7 +33,28 @@ describe("Cloudflare Pages staff username lookup", () => {
       account: { email: "cece@example.com", active: true }
     });
     expect(String(fetchMock.mock.calls[0][0])).toContain("username=eq.cece");
-    expect(fetchMock.mock.calls[0][1].headers.apikey).toBe(environment.SUPABASE_SERVICE_ROLE_KEY);
+    expect(fetchMock.mock.calls[0][1].headers.apikey).toBe(environment.SUPABASE_SECRET_KEY);
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined();
+  });
+
+  it("continues supporting legacy service-role keys for existing deployments", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { email: "cece@example.com", active: true }
+    ]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const legacyKey = "legacy-server-only-test-key";
+    const response = await onRequestPost({
+      request: createRequest({ usernameOrEmail: "cece" }),
+      env: {
+        SUPABASE_URL: environment.SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY: legacyKey
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0][1].headers.apikey).toBe(legacyKey);
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${legacyKey}`);
   });
 
   it("returns an explicit configuration error when the server secret is absent", async () => {

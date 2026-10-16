@@ -8,9 +8,11 @@ const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), 
 
 export const onRequestPost = async ({ request, env }) => {
   const supabaseUrl = env.VITE_SUPABASE_URL || env.SUPABASE_URL;
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  const secretApiKey = env.SUPABASE_SECRET_KEY;
+  const legacyServiceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  const apiKey = secretApiKey || legacyServiceRoleKey;
 
-  if (!supabaseUrl || !serviceRoleKey) {
+  if (!supabaseUrl || !apiKey) {
     console.error("[pages-function] Auth lookup is missing server-side Supabase configuration.");
     return jsonResponse({ message: "Layanan login staf belum dikonfigurasi di server." }, 500);
   }
@@ -38,14 +40,18 @@ export const onRequestPost = async ({ request, env }) => {
     limit: "2"
   });
 
+  const headers = {
+    apikey: apiKey,
+    Accept: "application/json"
+  };
+  if (!secretApiKey && legacyServiceRoleKey) {
+    headers.Authorization = `Bearer ${legacyServiceRoleKey}`;
+  }
+
   let supabaseResponse;
   try {
     supabaseResponse = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/rest/v1/user_accounts?${query}`, {
-      headers: {
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
-        Accept: "application/json"
-      }
+      headers
     });
   } catch (error) {
     console.error("[pages-function] Supabase auth lookup request failed:", error);
