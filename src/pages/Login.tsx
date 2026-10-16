@@ -17,8 +17,25 @@ import { AuthService } from "../services/authService";
 import { isSupabaseConfigured } from "../lib/supabase";
 
 export const Login: React.FC = () => {
-  const { setCurrentUser, branding } = useApp();
+  const { setCurrentUser, branding, configRepo, setBranding } = useApp();
   const { navigate } = useRouter();
+
+  useEffect(() => {
+    if (branding) return;
+
+    let active = true;
+    configRepo.getClinicBranding()
+      .then((clinicBranding) => {
+        if (active) setBranding(clinicBranding);
+      })
+      .catch((error: unknown) => {
+        console.error("Gagal memuat identitas klinik untuk halaman login:", error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [branding, configRepo, setBranding]);
 
   const activeLogo =
     (branding?.logoUrl && branding.logoUrl !== "/logo-lala.svg" ? branding.logoUrl : null) ||
