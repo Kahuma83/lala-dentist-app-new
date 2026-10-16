@@ -1799,6 +1799,7 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
     const mimeType = (file as any).type || "image/png";
     const fileSize = (file as any).size || 0;
     const base64Url = (file as any).base64OrDataUrl;
+    const bucketName = folder === "branding-logos" ? "clinic-branding" : "clinic-media";
 
     const path = `${folder}/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
 
@@ -1816,9 +1817,12 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
         if (blob) uploadPayload = blob;
       }
 
-      const { data, error } = await supabase.storage.from("clinic-media").upload(path, uploadPayload, { upsert: true });
+      const { data, error } = await supabase.storage.from(bucketName).upload(path, uploadPayload, { upsert: true });
 
       if (error) {
+        if (bucketName === "clinic-branding") {
+          throw new Error(`Supabase Storage upload error: ${error.message}`);
+        }
         // If bucket is not created on remote Supabase instance (Bucket not found), fallback safely to Data URL
         if (base64Url) {
           console.warn(`Supabase Storage bucket notice: ${error.message}. Menggunakan format data URL langsung.`);
@@ -1833,7 +1837,7 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
         throw new Error(`Supabase Storage upload error: ${error.message}`);
       }
 
-      const { data: pubUrl } = supabase.storage.from("clinic-media").getPublicUrl(data.path);
+      const { data: pubUrl } = supabase.storage.from(bucketName).getPublicUrl(data.path);
 
       return {
         url: pubUrl.publicUrl,
@@ -1843,7 +1847,7 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
         mimeType
       };
     } catch (err: any) {
-      if (base64Url) {
+      if (base64Url && bucketName !== "clinic-branding") {
         console.warn(`Storage upload fallback: ${err.message}`);
         return {
           url: base64Url,
@@ -1873,8 +1877,10 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
   async deleteImage(pathOrUrl: string): Promise<void> {
     if (!isSupabaseConfigured || !supabase) return;
     try {
-      const path = pathOrUrl.includes("/") ? pathOrUrl.split("/").pop() || pathOrUrl : pathOrUrl;
-      await supabase.storage.from("clinic-media").remove([path]);
+      const publicObjectMatch = pathOrUrl.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/);
+      const bucketName = publicObjectMatch?.[1] || "clinic-media";
+      const path = publicObjectMatch?.[2] || (pathOrUrl.includes("/") ? pathOrUrl.split("/").pop() || pathOrUrl : pathOrUrl);
+      await supabase.storage.from(bucketName).remove([path]);
     } catch (e) {
       console.warn("Delete image warning:", e);
     }
@@ -4605,7 +4611,7 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
       // Check if primary branch in Supabase has updated logo_url/phone/address
       if (isSupabaseConfigured && supabase && !useRepositoryTestFallbacks()) {
         try {
-          const { data } = await supabase.from("dental_branches").select("*").limit(1).maybeSingle();
+          const { data } = await supabase.from("dental_branches").select("*").order("id", { ascending: true }).limit(1).maybeSingle();
           if (data && data.logo_url) {
             cached = {
               ...(cached || DEFAULT_CLINIC_BRANDING),
@@ -4653,19 +4659,30 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
 
     // Also persist logoUrl, phone, address to Supabase dental_branches table
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data: branches } = await supabase.from("dental_branches").select("id").limit(1);
-        if (branches && branches.length > 0) {
-          const dbPayload: any = {};
-          if (updates.logoUrl !== undefined) dbPayload.logo_url = updates.logoUrl;
-          if (updates.phone) dbPayload.phone = updates.phone;
-          if (updates.address) dbPayload.address = updates.address;
-          if (Object.keys(dbPayload).length > 0) {
-            await supabase.from("dental_branches").update(dbPayload).eq("id", branches[0].id);
+      const { data: branches, error: branchReadError } = await supabase
+        .from("dental_branches")
+        .select("id")
+        .order("id", { ascending: true })
+        .limit(1);
+      if (branchReadError) {
+        throw new Error(`Gagal membaca cabang untuk menyimpan identitas klinik: ${branchReadError.message}`);
+      }
+      if (branches && branches.length > 0) {
+        const dbPayload: any = {};
+        if (updates.logoUrl !== undefined) dbPayload.logo_url = updates.logoUrl;
+        if (updates.phone) dbPayload.phone = updates.phone;
+        if (updates.address) dbPayload.address = updates.address;
+        if (Object.keys(dbPayload).length > 0) {
+          const { error: updateError } = await supabase
+            .from("dental_branches")
+            .update(dbPayload)
+            .eq("id", branches[0].id);
+          if (updateError) {
+            throw new Error(`Gagal menyimpan identitas klinik ke server: ${updateError.message}`);
           }
         }
-      } catch (err) {
-        console.warn("Error syncing branding to dental_branches in Supabase:", err);
+      } else if (updates.logoUrl !== undefined || updates.phone || updates.address) {
+        throw new Error("Tidak ada data cabang untuk menyimpan identitas klinik ke server.");
       }
     }
 
