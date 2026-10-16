@@ -70,7 +70,9 @@ const UnauthorizedPage: React.FC = () => {
 const AppContent: React.FC = () => {
   const { path } = useRouter();
   const { currentUser, authLoading } = useApp();
-  const patientPortalHost = String(import.meta.env.VITE_PATIENT_PORTAL_HOST || "").trim().toLowerCase();
+  const patientPortalHost = String(import.meta.env.VITE_PATIENT_PORTAL_HOST || "pasien.laladentist.id")
+    .trim()
+    .toLowerCase();
   const isPatientPortalHost = !!patientPortalHost && window.location.hostname.toLowerCase() === patientPortalHost;
   const isPatientPortalRoute = isPatientPortalHost || path.startsWith("/patient");
 

@@ -34,7 +34,7 @@ Prerequisite: Node.js dan akses ke project Supabase.
 
    Terapkan `20261109000000_prevent_multiple_active_patient_portal_bookings.sql` untuk membatasi pasien pada satu janji temu aktif sampai booking tersebut selesai, dibatalkan, atau ditandai tidak hadir. Pembatasan berlaku lintas tanggal dan cabang, serta diperiksa di portal, endpoint server, dan trigger database.
 
-   Portal pasien memiliki dashboard responsif dan aset PWA tersendiri. Untuk mengarahkan domain portal (misalnya `pasien.laladentist.id`) ke pengalaman pasien saja, atur `VITE_PATIENT_PORTAL_HOST` ke hostname persis pada konfigurasi build/deployment domain tersebut. Daftarkan domain HTTPS portal dan callback `/patient/login?type=signup-confirmed` di Supabase Auth Redirect URLs. Manifest dan service worker hanya diaktifkan pada hostname portal yang dikonfigurasi; service worker tidak menyimpan respons API, sesi, atau data pasien offline.
+   Portal pasien memiliki dashboard responsif dan aset PWA tersendiri. Hostname `pasien.laladentist.id` otomatis membuka pengalaman pasien. Untuk hostname lain, atur `VITE_PATIENT_PORTAL_HOST` pada konfigurasi build/deployment. Daftarkan domain HTTPS portal dan callback `/patient/login?type=signup-confirmed` di Supabase Auth Redirect URLs. Manifest dan service worker hanya diaktifkan pada hostname portal yang dipilih; service worker tidak menyimpan respons API, sesi, atau data pasien offline.
 
    Untuk mengurangi transfer data, portal pasien hanya memuat data cabang, dokter, janji temu, kunjungan, antrean, invoice, dan pembayaran milik pasien, serta branding yang dibutuhkan. Sinkronisasi realtime mengelompokkan perubahan selama 500 ms dan menyegarkan cache tabel yang berubah, bukan seluruh data operasional.
 
