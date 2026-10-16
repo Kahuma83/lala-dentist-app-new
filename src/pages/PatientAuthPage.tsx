@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, KeyRound, Mail, ShieldCheck, UserRoundPlus } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Download, KeyRound, Mail, ShieldCheck, Smartphone, UserRoundPlus } from "lucide-react";
 import { LalaLogo } from "../components/common/LalaLogo";
 import { useApp } from "../context/AppContext";
 import { useRouter } from "../components/Router";
@@ -8,6 +8,11 @@ import { AuthService } from "../services/authService";
 import { CurrentUser, UserRole } from "../types/domain";
 
 type PatientAuthMode = "login" | "register" | "forgot" | "recovery";
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+}
 
 export const PatientAuthPage: React.FC = () => {
   const { branding, setCurrentUser } = useApp();
@@ -27,6 +32,9 @@ export const PatientAuthPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [canResendConfirmation, setCanResendConfirmation] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installHelp, setInstallHelp] = useState<string | null>(null);
+  const [isIos, setIsIos] = useState(false);
 
   const clinicName = branding?.name || "Lala Dentist";
   const configuredLogoUrl = branding?.logoUrl;
@@ -34,6 +42,23 @@ export const PatientAuthPage: React.FC = () => {
   const logoUrl = usesOriginalLogo ? "/patient-portal-logo.jpg" : configuredLogoUrl;
 
   useEffect(() => {
+    setIsIos(/iPad|iPhone|iPod/.test(navigator.userAgent) && !("MSStream" in window));
+    if (new URLSearchParams(window.location.search).get("install") === "1") {
+      setInstallHelp("Pilih Pasang Aplikasi. Jika tidak ada dialog pemasangan, buka menu browser dan pilih Tambahkan ke Layar Utama.");
+    }
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleAppInstalled = () => {
+      setInstallPrompt(null);
+      setInstallHelp("Portal Pasien berhasil ditambahkan ke perangkat Anda.");
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
     const queryParams = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const getCallbackParam = (key: string) => queryParams.get(key) || hashParams.get(key);
@@ -58,7 +83,41 @@ export const PatientAuthPage: React.FC = () => {
       }
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     }
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
   }, []);
+
+  const handleInstallApp = async () => {
+    if (!installPrompt) {
+      setInstallHelp(
+        isIos
+          ? "Di Safari, tekan tombol Bagikan lalu pilih “Tambahkan ke Layar Utama”."
+          : "Buka menu browser, lalu pilih “Install app” atau “Tambahkan ke Layar Utama”."
+      );
+      return;
+    }
+
+    try {
+      await installPrompt.prompt();
+      const choice = await installPrompt.userChoice;
+      setInstallPrompt(null);
+      setInstallHelp(
+        choice.outcome === "accepted"
+          ? "Ikuti konfirmasi browser untuk menyelesaikan pemasangan Portal Pasien."
+          : "Pemasangan belum dilakukan. Anda dapat mencobanya lagi dari menu browser."
+      );
+    } catch (installError) {
+      setInstallPrompt(null);
+      setInstallHelp(
+        installError instanceof Error
+          ? `Browser tidak dapat memulai pemasangan: ${installError.message}`
+          : "Browser tidak dapat memulai pemasangan. Coba gunakan menu browser."
+      );
+    }
+  };
 
   const handleLogin = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -211,6 +270,35 @@ export const PatientAuthPage: React.FC = () => {
             <p className="text-xl font-extrabold tracking-tight text-[#4f3a19]">{clinicName}</p>
             <p className="mt-1 text-sm font-medium tracking-wide text-[#806b42]">Senyum indah dimulai di Laladentist</p>
           </div>
+
+          {mode === "login" && (
+            <div className="mb-6 rounded-2xl border border-[#e7dec9] bg-[#fffdf8] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#edf1e9] text-[#315744]">
+                    <Smartphone className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <p className="text-xs font-bold text-[#4f3a19]">Portal Pasien di ponsel Anda</p>
+                    <p className="mt-0.5 text-[10px] text-slate-500">Pasang untuk akses yang lebih praktis</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleInstallApp}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#254d40] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#193a31]"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Pasang
+                </button>
+              </div>
+              {installHelp && (
+                <p role="status" className="mt-3 border-t border-[#ece5d6] pt-3 text-[10px] leading-5 text-[#6b6048]">
+                  {installHelp}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="relative mb-6">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-[#cdb778] bg-white/85 px-3.5 py-2 shadow-sm">
