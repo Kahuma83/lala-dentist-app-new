@@ -141,6 +141,7 @@ export const Configuration: React.FC = () => {
   const [doctorFormActive, setDoctorFormActive] = useState(true);
   const [doctorToDelete, setDoctorToDelete] = useState<DentalDoctor | null>(null);
   const [isDeletingDoctor, setIsDeletingDoctor] = useState(false);
+  const [isMigratingImages, setIsMigratingImages] = useState(false);
 
   // File upload refs
   const branchFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -925,6 +926,128 @@ export const Configuration: React.FC = () => {
     setDoctorFormPhotoUrl(null);
   };
 
+  const handleMigrateDoctorPhotos = async () => {
+    if (currentUser?.role !== UserRole.SUPER_ADMIN) {
+      setErrorMsg("Hanya Super Admin yang dapat memindahkan foto dokter.");
+      return;
+    }
+
+    const isDataImage = (url?: string | null) => url?.toLowerCase().startsWith("data:image/") ?? false;
+    const legacyDoctorPhotos = doctors.filter((doctor) =>
+      isDataImage(doctor.photoUrl || doctor.avatarUrl || doctor.profileImage)
+    );
+    const legacyBranchMedia = branches.flatMap((branch) => [
+      ...(isDataImage(branch.logoUrl) ? [{ branch, field: "logoUrl" as const, url: branch.logoUrl! }] : []),
+      ...(isDataImage(branch.imageUrl) ? [{ branch, field: "imageUrl" as const, url: branch.imageUrl! }] : [])
+    ]);
+    const legacyPromotions = promotions.filter((promotion) => isDataImage(promotion.imageUrl));
+    if (legacyDoctorPhotos.length + legacyBranchMedia.length + legacyPromotions.length === 0) return;
+
+    setIsMigratingImages(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    let migratedCount = 0;
+    const failures: string[] = [];
+
+    try {
+      for (const doctor of legacyDoctorPhotos) {
+        const dataUrl = doctor.photoUrl || doctor.avatarUrl || doctor.profileImage || "";
+        try {
+          const response = await fetch(dataUrl);
+          if (!response.ok) throw new Error(`Tidak dapat membaca foto (${response.status}).`);
+          const imageBlob = await response.blob();
+          const mimeType = imageBlob.type || dataUrl.match(/^data:(image\/[^;,]+)/i)?.[1] || "image/png";
+          if (!mimeType.startsWith("image/")) throw new Error("Format foto tidak valid.");
+
+          const upload = await mediaStorageRepo.uploadImage(
+            {
+              name: `doctor-${doctor.id}.${mimeType.split("/")[1].replace(/[^a-z0-9]/gi, "") || "png"}`,
+              type: mimeType,
+              size: imageBlob.size,
+              base64OrDataUrl: dataUrl
+            },
+            "doctor-portraits"
+          );
+          await doctorRepo.updateDoctorPhoto(doctor.id, upload.url, currentUser.role);
+          migratedCount += 1;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          failures.push(`${doctor.name || doctor.fullName || doctor.id}: ${reason}`);
+        }
+      }
+
+      for (const { branch, field, url } of legacyBranchMedia) {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`Tidak dapat membaca gambar (${response.status}).`);
+          const imageBlob = await response.blob();
+          const mimeType = imageBlob.type || url.match(/^data:(image\/[^;,]+)/i)?.[1] || "image/png";
+          if (!mimeType.startsWith("image/")) throw new Error("Format gambar tidak valid.");
+          const upload = await mediaStorageRepo.uploadImage(
+            {
+              name: `${field === "logoUrl" ? "branch-logo" : "branch-photo"}-${branch.id}.${mimeType.split("/")[1].replace(/[^a-z0-9]/gi, "") || "png"}`,
+              type: mimeType,
+              size: imageBlob.size,
+              base64OrDataUrl: url
+            },
+            field === "logoUrl" ? "branch-logos" : "branch-photos"
+          );
+          await branchRepo.updateBranch(
+            branch.id,
+            { [field]: upload.url },
+            currentUser.role,
+            currentUser.assignedBranchId
+          );
+          migratedCount += 1;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          failures.push(`${branch.name || branch.id} (${field}): ${reason}`);
+        }
+      }
+
+      for (const promotion of legacyPromotions) {
+        const dataUrl = promotion.imageUrl;
+        try {
+          const response = await fetch(dataUrl);
+          if (!response.ok) throw new Error(`Tidak dapat membaca gambar (${response.status}).`);
+          const imageBlob = await response.blob();
+          const mimeType = imageBlob.type || dataUrl.match(/^data:(image\/[^;,]+)/i)?.[1] || "image/png";
+          if (!mimeType.startsWith("image/")) throw new Error("Format gambar tidak valid.");
+          const upload = await mediaStorageRepo.uploadImage(
+            {
+              name: `promotion-${promotion.id}.${mimeType.split("/")[1].replace(/[^a-z0-9]/gi, "") || "png"}`,
+              type: mimeType,
+              size: imageBlob.size,
+              base64OrDataUrl: dataUrl
+            },
+            "promotions"
+          );
+          await promotionRepo.updatePromotion(promotion.id, { imageUrl: upload.url }, currentUser.role);
+          migratedCount += 1;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          failures.push(`${promotion.title || promotion.id} (promosi): ${reason}`);
+        }
+      }
+
+      await loadData();
+      await refreshData();
+      if (migratedCount > 0) {
+        setSuccessMsg(`${migratedCount} gambar berhasil dipindahkan ke Supabase Storage.`);
+      }
+      if (failures.length > 0) {
+        setErrorMsg(
+          `${failures.length} gambar belum berhasil dipindahkan. Data sumber tetap dipertahankan. ${failures.join("; ")}`
+        );
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setErrorMsg(`Migrasi gambar selesai sebagian (${migratedCount} berhasil). ${reason}`);
+    } finally {
+      setIsMigratingImages(false);
+    }
+  };
+
   const handleSaveDoctor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (currentUser?.role !== UserRole.SUPER_ADMIN) {
@@ -1145,6 +1268,19 @@ export const Configuration: React.FC = () => {
       (d.phone && d.phone.toLowerCase().includes(q))
     );
   });
+  const legacyDoctorPhotoCount = doctors.filter((doctor) =>
+    (doctor.photoUrl || doctor.avatarUrl || doctor.profileImage || "").toLowerCase().startsWith("data:image/")
+  ).length;
+  const legacyImageCount =
+    legacyDoctorPhotoCount +
+    branches.reduce(
+      (count, branch) =>
+        count +
+        Number(branch.logoUrl?.toLowerCase().startsWith("data:image/") ?? false) +
+        Number(branch.imageUrl?.toLowerCase().startsWith("data:image/") ?? false),
+      0
+    ) +
+    promotions.filter((promotion) => promotion.imageUrl.toLowerCase().startsWith("data:image/")).length;
 
   const filteredPromotions = promotions.filter((p) => {
     const q = promoSearch.toLowerCase();
@@ -1574,6 +1710,19 @@ export const Configuration: React.FC = () => {
                 className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#c5a059]"
               />
             </div>
+            {currentUser?.role === UserRole.SUPER_ADMIN && legacyImageCount > 0 && (
+              <button
+                type="button"
+                disabled={isMigratingImages}
+                onClick={handleMigrateDoctorPhotos}
+                className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+              >
+                <ImageIcon className="w-4 h-4" />
+                {isMigratingImages
+                  ? "Memindahkan gambar..."
+                  : `Pindahkan ${legacyImageCount} gambar base64 ke Storage`}
+              </button>
+            )}
           </div>
 
           {/* Doctors Grid Cards */}

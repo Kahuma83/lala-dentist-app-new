@@ -20,7 +20,7 @@ Prerequisite: Node.js dan akses ke project Supabase.
 
    Untuk Cloudflare Pages, atur `SUPABASE_URL` sebagai variable dan `SUPABASE_SECRET_KEY` sebagai secret server-side pada **Settings → Variables and Secrets** untuk Production (dan Preview bila diperlukan). Gunakan Secret API key baru Supabase (`sb_secret_...`) untuk Pages Function `functions/api/auth/lookup-user.js`; function mengirim key tersebut hanya melalui header `apikey`. `SUPABASE_SERVICE_ROLE_KEY` masih didukung sebagai opsi kompatibilitas untuk key legacy. Jangan gunakan prefix `VITE_` pada secret apa pun.
 
-   Agar logo identitas klinik tersimpan sebagai file publik (bukan data URL lokal), terapkan migration `20261016000002_create_clinic_branding_storage.sql` di Supabase. Setelah deployment, unggah ulang logo melalui **Konfigurasi → Identitas Dokumen** dan simpan agar login staf menggunakan URL logo yang dapat dibaca semua perangkat.
+   Agar logo identitas klinik tersimpan sebagai file publik (bukan data URL lokal), terapkan migration `20261016000002_create_clinic_branding_storage.sql` di Supabase. Setelah deployment, unggah ulang logo melalui **Konfigurasi → Identitas Dokumen** dan simpan agar login staf menggunakan URL logo yang dapat dibaca semua perangkat. Untuk foto dokter, foto/logo cabang, dan gambar promosi, terapkan migrations `20261016000003_create_clinic_doctor_portraits_storage.sql` dan `20261016000004_create_clinic_public_media_storage.sql`. Setelah deployment, sebagai Super Admin buka **Konfigurasi → Dokter** dan pilih **Pindahkan gambar base64 ke Storage**. Foto/gambar yang berhasil dipindahkan tetap ditampilkan melalui URL publik; gambar yang gagal tidak dihapus dari sumber.
 
    `.env.local` diabaikan oleh Git. Jangan kirim atau commit file ini.
 

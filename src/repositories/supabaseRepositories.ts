@@ -1799,12 +1799,24 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
     const mimeType = (file as any).type || "image/png";
     const fileSize = (file as any).size || 0;
     const base64Url = (file as any).base64OrDataUrl;
-    const bucketName = folder === "branding-logos" ? "clinic-branding" : "clinic-media";
+    const bucketName =
+      folder === "branding-logos"
+        ? "clinic-branding"
+        : folder === "doctor-portraits"
+          ? "clinic-doctor-portraits"
+          : ["branch-logos", "branch-photos", "promotions"].includes(folder)
+            ? "clinic-public-media"
+          : "clinic-media";
+    const requiresStorageUpload = [
+      "clinic-branding",
+      "clinic-doctor-portraits",
+      "clinic-public-media"
+    ].includes(bucketName);
 
     const path = `${folder}/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
 
     if (!isSupabaseConfigured || !supabase) {
-      if (base64Url) {
+      if (base64Url && bucketName !== "clinic-doctor-portraits" && bucketName !== "clinic-public-media") {
         return { url: base64Url, path, fileName, fileSize, mimeType };
       }
       throw new Error("Koneksi ke Supabase belum terkonfigurasi.");
@@ -1820,7 +1832,7 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
       const { data, error } = await supabase.storage.from(bucketName).upload(path, uploadPayload, { upsert: true });
 
       if (error) {
-        if (bucketName === "clinic-branding") {
+        if (requiresStorageUpload) {
           throw new Error(`Supabase Storage upload error: ${error.message}`);
         }
         // If bucket is not created on remote Supabase instance (Bucket not found), fallback safely to Data URL
@@ -1847,7 +1859,7 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
         mimeType
       };
     } catch (err: any) {
-      if (base64Url && bucketName !== "clinic-branding") {
+      if (base64Url && !requiresStorageUpload) {
         console.warn(`Storage upload fallback: ${err.message}`);
         return {
           url: base64Url,
@@ -4069,6 +4081,7 @@ export class SupabaseDoctorRepository implements DoctorRepository {
       assigned_branch_id: data.assignedBranchId || null,
       active: data.active ?? true,
       avatar_url: data.avatarUrl || data.photoUrl || null,
+      photo_url: data.photoUrl || data.avatarUrl || null,
       notes: data.notes || null
     };
     if (data.id && isValidUUID(data.id)) payload.id = data.id;
@@ -4141,7 +4154,9 @@ export class SupabaseDoctorRepository implements DoctorRepository {
         if (updates.assignedBranchId !== undefined) payload.assigned_branch_id = updates.assignedBranchId;
         if (updates.active !== undefined) payload.active = updates.active;
         if (updates.avatarUrl !== undefined || updates.photoUrl !== undefined || (updates as any).profileImage !== undefined) {
-          payload.avatar_url = updates.photoUrl || updates.avatarUrl || (updates as any).profileImage || null;
+          const photoUrl = updates.photoUrl || updates.avatarUrl || (updates as any).profileImage || null;
+          payload.avatar_url = photoUrl;
+          payload.photo_url = photoUrl;
         }
 
         const { data, error } = await supabase.from("dental_doctors").update(payload).eq("id", id).select().single();
@@ -4195,7 +4210,7 @@ export class SupabaseDoctorRepository implements DoctorRepository {
       try {
         const { data, error } = await supabase
           .from("dental_doctors")
-          .update({ avatar_url: photoUrl, updated_at: new Date().toISOString() })
+          .update({ avatar_url: photoUrl, photo_url: photoUrl, updated_at: new Date().toISOString() })
           .eq("id", id)
           .select()
           .single();
