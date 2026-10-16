@@ -4081,7 +4081,6 @@ export class SupabaseDoctorRepository implements DoctorRepository {
       assigned_branch_id: data.assignedBranchId || null,
       active: data.active ?? true,
       avatar_url: data.avatarUrl || data.photoUrl || null,
-      photo_url: data.photoUrl || data.avatarUrl || null,
       notes: data.notes || null
     };
     if (data.id && isValidUUID(data.id)) payload.id = data.id;
@@ -4156,7 +4155,6 @@ export class SupabaseDoctorRepository implements DoctorRepository {
         if (updates.avatarUrl !== undefined || updates.photoUrl !== undefined || (updates as any).profileImage !== undefined) {
           const photoUrl = updates.photoUrl || updates.avatarUrl || (updates as any).profileImage || null;
           payload.avatar_url = photoUrl;
-          payload.photo_url = photoUrl;
         }
 
         const { data, error } = await supabase.from("dental_doctors").update(payload).eq("id", id).select().single();
@@ -4213,7 +4211,7 @@ export class SupabaseDoctorRepository implements DoctorRepository {
       try {
         const { data, error } = await supabase
           .from("dental_doctors")
-          .update({ avatar_url: photoUrl, photo_url: photoUrl, updated_at: new Date().toISOString() })
+          .update({ avatar_url: photoUrl, updated_at: new Date().toISOString() })
           .eq("id", id)
           .select()
           .single();
