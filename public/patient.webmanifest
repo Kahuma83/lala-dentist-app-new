@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Lala Dentist - Portal Pasien",
-  "short_name": "Lala Pasien",
+  "name": "Lala Dentis",
+  "short_name": "Lala Dentis",
   "description": "Portal pasien Lala Dentist untuk mengakses layanan digital klinik.",
   "lang": "id-ID",
   "start_url": "/patient/login",

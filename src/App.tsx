@@ -76,6 +76,7 @@ const AppContent: React.FC = () => {
     .toLowerCase();
   const isPatientPortalHost = !!patientPortalHost && window.location.hostname.toLowerCase() === patientPortalHost;
   const isPatientPortalRoute = isPatientPortalHost || path.startsWith("/patient");
+  const isPatientInstallIntent = isPatientPortalHost && new URLSearchParams(window.location.search).get("install") === "1";
 
   useEffect(() => {
     if (!isPatientPortalHost) return;
@@ -101,7 +102,7 @@ const AppContent: React.FC = () => {
   }, [isPatientPortalHost]);
 
   // If initial auth session is still checking, show clean loading spinner
-  if (authLoading && !currentUser) {
+  if (authLoading && !currentUser && !isPatientInstallIntent) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
@@ -115,6 +116,7 @@ const AppContent: React.FC = () => {
   }
 
   if (isPatientPortalRoute) {
+    if (isPatientInstallIntent) return <PatientAuthPage />;
     if (currentUser && currentUser.role !== UserRole.PATIENT) {
       return <PatientPortalSessionConflict />;
     }

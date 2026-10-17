@@ -35,6 +35,7 @@ export const PatientAuthPage: React.FC = () => {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installHelp, setInstallHelp] = useState<string | null>(null);
   const [isIos, setIsIos] = useState(false);
+  const [isInstallIntent] = useState(() => new URLSearchParams(window.location.search).get("install") === "1");
 
   const clinicName = branding?.name || "Lala Dentist";
   const configuredLogoUrl = branding?.logoUrl;
@@ -43,8 +44,8 @@ export const PatientAuthPage: React.FC = () => {
 
   useEffect(() => {
     setIsIos(/iPad|iPhone|iPod/.test(navigator.userAgent) && !("MSStream" in window));
-    if (new URLSearchParams(window.location.search).get("install") === "1") {
-      setInstallHelp("Pilih Pasang Aplikasi. Jika tidak ada dialog pemasangan, buka menu browser dan pilih Tambahkan ke Layar Utama.");
+    if (isInstallIntent) {
+      setInstallHelp("Pasang Lala Dentis agar Portal Pasien mudah dibuka dari layar utama.");
     }
 
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -53,7 +54,7 @@ export const PatientAuthPage: React.FC = () => {
     };
     const handleAppInstalled = () => {
       setInstallPrompt(null);
-      setInstallHelp("Portal Pasien berhasil ditambahkan ke perangkat Anda.");
+      setInstallHelp("Lala Dentis berhasil ditambahkan ke perangkat Anda.");
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -88,7 +89,7 @@ export const PatientAuthPage: React.FC = () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
       window.removeEventListener("appinstalled", handleAppInstalled);
     };
-  }, []);
+  }, [isInstallIntent]);
 
   const handleInstallApp = async () => {
     if (!installPrompt) {
@@ -106,7 +107,7 @@ export const PatientAuthPage: React.FC = () => {
       setInstallPrompt(null);
       setInstallHelp(
         choice.outcome === "accepted"
-          ? "Ikuti konfirmasi browser untuk menyelesaikan pemasangan Portal Pasien."
+          ? "Ikuti konfirmasi browser untuk menyelesaikan pemasangan Lala Dentis."
           : "Pemasangan belum dilakukan. Anda dapat mencobanya lagi dari menu browser."
       );
     } catch (installError) {
@@ -248,6 +249,37 @@ export const PatientAuthPage: React.FC = () => {
       : mode === "forgot"
         ? handleForgotPassword
         : handleRecovery;
+
+  if (isInstallIntent) {
+    return (
+        <main className="patient-auth-shell flex min-h-screen items-center justify-center px-4 py-8 text-slate-900">
+          <section className="patient-auth-panel w-full max-w-sm rounded-[2rem] px-7 py-9 text-center">
+            <div className="mx-auto mb-5 flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-[0_8px_24px_rgba(121,91,35,0.12)]">
+              {usesOriginalLogo ? (
+                <img src={logoUrl} alt="Logo Lala Dentist" className="h-full w-full scale-[1.12] object-cover" />
+              ) : (
+                <LalaLogo src={logoUrl} className="h-full w-full object-contain p-2" />
+              )}
+            </div>
+            <h1 className="text-2xl font-extrabold tracking-tight text-[#174d49]">Lala Dentis</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Pasang aplikasi untuk akses Portal Pasien dengan lebih praktis.</p>
+            <button
+              type="button"
+              onClick={handleInstallApp}
+              className="mt-7 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#087f78] px-5 py-3 text-sm font-bold text-white shadow-md transition hover:bg-[#066d67]"
+            >
+              <Download className="h-4 w-4" />
+              Pasang
+            </button>
+            {installHelp && (
+              <p role="status" className="mt-4 text-xs leading-5 text-slate-600">
+                {installHelp}
+              </p>
+            )}
+          </section>
+        </main>
+    );
+  }
 
   return (
     <main className="patient-auth-shell min-h-screen px-4 py-7 text-slate-900 sm:px-6 sm:py-12">
