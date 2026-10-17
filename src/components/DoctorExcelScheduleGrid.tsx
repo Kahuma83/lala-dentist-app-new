@@ -10,6 +10,18 @@ import {
 import { isBranchMatch } from "../utils/branchUtils";
 import { formatCalendarDate } from "../utils/dateUtils";
 
+export interface ScheduleCopyOperation {
+  source: DoctorSchedule;
+  targetDate: string;
+}
+
+export interface ScheduleCopySummary {
+  created: number;
+  updated: number;
+  unchanged: number;
+  errors: string[];
+}
+
 import {
   Calendar,
   ChevronLeft,
@@ -20,6 +32,7 @@ import {
   Trash2,
   Edit2,
   CheckCircle2,
+  Copy,
   X,
   Stethoscope,
   Sparkles,
@@ -43,6 +56,9 @@ interface DoctorExcelScheduleGridProps {
   }) => Promise<void>;
   onScheduleUpdate: (id: string, updates: Partial<DoctorSchedule>) => Promise<void>;
   onScheduleCancel: (schedule: DoctorSchedule) => void | Promise<void>;
+  onCopySchedules?: (copies: ScheduleCopyOperation[]) => Promise<ScheduleCopySummary>;
+  onCopyWeekToNextWeek?: (schedules: DoctorSchedule[]) => Promise<void>;
+  isCopyingSchedules?: boolean;
   onOpenPosterModal?: () => void;
 }
 
@@ -55,6 +71,9 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
   onScheduleCreate,
   onScheduleUpdate,
   onScheduleCancel,
+  onCopySchedules,
+  onCopyWeekToNextWeek,
+  isCopyingSchedules = false,
   onOpenPosterModal
 }) => {
   const isSuper = currentUser?.role === UserRole.SUPER_ADMIN;
@@ -106,6 +125,10 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
   const [formNotes, setFormNotes] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string>("");
+  const [copyModalSchedule, setCopyModalSchedule] = useState<DoctorSchedule | null>(null);
+  const [copyTargetDates, setCopyTargetDates] = useState<string[]>([]);
+  const [copyFormError, setCopyFormError] = useState("");
+  const [isCopyingSchedule, setIsCopyingSchedule] = useState(false);
 
   // Calculate 7 Days of the Week
   const weekDays = useMemo(() => {
@@ -138,6 +161,51 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
     const year = new Date(currentWeekMonday).getFullYear();
     return `${first.formattedDate} - ${last.formattedDate} ${year}`;
   }, [weekDays, currentWeekMonday]);
+
+  const activeSchedulesForCurrentWeek = useMemo(() => {
+    const visibleDates = new Set(weekDays.map((day) => day.dateStr));
+    return schedules.filter((schedule) =>
+      schedule.status === ScheduleStatus.ACTIVE
+      && visibleDates.has(schedule.date)
+      && (filterBranchId === "ALL" || isBranchMatch(schedule.branchId, filterBranchId, branches))
+    );
+  }, [schedules, weekDays, filterBranchId, branches]);
+
+  const openCopyScheduleModal = (schedule: DoctorSchedule) => {
+    setCopyModalSchedule(schedule);
+    const sourceDayIndex = weekDays.findIndex((day) => day.dateStr === schedule.date);
+    const nextDay = sourceDayIndex >= 0 ? weekDays[sourceDayIndex + 1] : undefined;
+    setCopyTargetDates(nextDay ? [nextDay.dateStr] : []);
+    setCopyFormError("");
+  };
+
+  const handleCopyScheduleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!copyModalSchedule || copyTargetDates.length === 0) {
+      setCopyFormError("Pilih setidaknya satu hari tujuan.");
+      return;
+    }
+
+    setIsCopyingSchedule(true);
+    setCopyFormError("");
+    try {
+      if (!onCopySchedules) {
+        throw new Error("Penyalinan jadwal tidak tersedia pada halaman ini.");
+      }
+      const result = await onCopySchedules(
+        copyTargetDates.map((targetDate) => ({ source: copyModalSchedule, targetDate }))
+      );
+      if (result.errors.length > 0) {
+        setCopyFormError(`Sebagian jadwal gagal disalin: ${result.errors[0]}`);
+      } else {
+        setCopyModalSchedule(null);
+      }
+    } catch (error) {
+      setCopyFormError(error instanceof Error ? error.message : "Gagal menyalin jadwal.");
+    } finally {
+      setIsCopyingSchedule(false);
+    }
+  };
 
   // Handlers for Week Navigation
   const handlePrevWeek = () => {
@@ -413,6 +481,19 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
             />
           </div>
 
+          {onCopyWeekToNextWeek && isSuper && (
+            <button
+              type="button"
+              onClick={() => onCopyWeekToNextWeek(activeSchedulesForCurrentWeek)}
+              disabled={isCopyingSchedules || activeSchedulesForCurrentWeek.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Salin jadwal aktif pada minggu yang sedang dibuka ke minggu depan"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>{isCopyingSchedules ? "Menyalin..." : "Salin Minggu Depan"}</span>
+            </button>
+          )}
+
           {/* Export / Poster button */}
           {onOpenPosterModal && isSuper && (
             <button
@@ -569,9 +650,25 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
                                         <Clock className="w-3 h-3 shrink-0" />
                                         {s.startTime} - {s.endTime}
                                       </span>
-                                      <span className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-slate-700">
-                                        <Edit2 className="w-3 h-3" />
-                                      </span>
+                                      <div className="flex items-center gap-1">
+                                        {isSuper && onCopySchedules && (
+                                          <button
+                                            type="button"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              openCopyScheduleModal(s);
+                                            }}
+                                            className="inline-flex items-center gap-0.5 rounded-md border border-emerald-200 bg-white px-1 py-0.5 text-[9px] font-bold text-emerald-700 hover:bg-emerald-50"
+                                            title="Salin jadwal ini ke hari lain"
+                                          >
+                                            <Copy className="w-2.5 h-2.5" />
+                                            <span>Salin</span>
+                                          </button>
+                                        )}
+                                        <span className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-slate-700">
+                                          <Edit2 className="w-3 h-3" />
+                                        </span>
+                                      </div>
                                     </div>
 
                                     {br && (
@@ -852,6 +949,73 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
             </form>
 
           </div>
+        </div>
+      )}
+
+      {copyModalSchedule && onCopySchedules && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <form onSubmit={handleCopyScheduleSubmit} className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Copy className="w-4 h-4 text-emerald-700" />
+                <h3 className="font-bold text-sm text-slate-900">Salin jadwal dokter</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCopyModalSchedule(null)}
+                disabled={isCopyingSchedule}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                aria-label="Tutup"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs leading-5 text-slate-600">
+                Salin jadwal <strong>{weekDays.find((day) => day.dateStr === copyModalSchedule.date)?.dayName} {weekDays.find((day) => day.dateStr === copyModalSchedule.date)?.formattedDate}, {copyModalSchedule.startTime}-{copyModalSchedule.endTime}</strong> di cabang{" "}
+                <strong>{branchMap.get(copyModalSchedule.branchId)?.name || copyModalSchedule.branchId}</strong>{" "}
+                ke hari tujuan. Jadwal yang sama akan diperbarui, bukan digandakan.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {weekDays.filter((day) => day.dateStr !== copyModalSchedule.date).map((day) => (
+                  <label key={day.dateStr} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={copyTargetDates.includes(day.dateStr)}
+                      onChange={(event) => {
+                        setCopyTargetDates((current) => event.target.checked
+                          ? [...current, day.dateStr]
+                          : current.filter((date) => date !== day.dateStr))}
+                      }
+                      disabled={isCopyingSchedule}
+                      className="accent-emerald-700"
+                    />
+                    <span>{day.dayName}, {day.formattedDate}</span>
+                  </label>
+                ))}
+              </div>
+              {copyFormError && (
+                <p role="alert" className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">{copyFormError}</p>
+              )}
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setCopyModalSchedule(null)}
+                  disabled={isCopyingSchedule}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCopyingSchedule || copyTargetDates.length === 0}
+                  className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 disabled:opacity-50"
+                >
+                  {isCopyingSchedule ? "Menyalin..." : `Salin ke ${copyTargetDates.length} hari`}
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       )}
 

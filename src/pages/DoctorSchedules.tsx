@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from "react";
 import { useApp } from "../context/AppContext";
 import { DoctorExcelScheduleGrid } from "../components/DoctorExcelScheduleGrid";
+import type { ScheduleCopyOperation, ScheduleCopySummary } from "../components/DoctorExcelScheduleGrid";
 import { DoctorSchedulePosterModal } from "../components/poster/DoctorSchedulePosterModal";
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
+import { isBranchMatch } from "../utils/branchUtils";
 import {
   CalendarRange,
   Plus,
-  Copy,
   Sparkles,
   CheckCircle2,
   AlertTriangle,
@@ -66,7 +67,6 @@ export const DoctorSchedules: React.FC = () => {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Copy Week Schedule State
   const [isCopyingWeek, setIsCopyingWeek] = useState(false);
 
   // Handlers for Schedule Actions
@@ -131,55 +131,124 @@ export const DoctorSchedules: React.FC = () => {
     }
   };
 
-  // Duplicate current active week's schedules to the next week (Super practical!)
-  const handleCopyWeekToNextWeek = async () => {
-    const activeSchedules = doctorSchedules.filter((s) => s.status === ScheduleStatus.ACTIVE);
-    if (activeSchedules.length === 0) {
-      showToast("Belum ada jadwal dokter aktif yang bisa disalin", "error");
-      return;
-    }
-
-    if (!window.confirm("Salin seluruh jadwal dokter minggu ini ke minggu berikutnya (+7 hari)? Jadwal yang bentrok akan dilewati.")) {
-      return;
+  const handleCopySchedules = async (copies: ScheduleCopyOperation[]): Promise<ScheduleCopySummary> => {
+    if (copies.length === 0) {
+      return { created: 0, updated: 0, unchanged: 0, errors: [] as string[] };
     }
 
     setIsCopyingWeek(true);
-    let successCount = 0;
-    let skippedCount = 0;
+    let created = 0;
+    let updated = 0;
+    let unchanged = 0;
+    const errors: string[] = [];
 
     try {
-      for (const s of activeSchedules) {
-        const currentDate = new Date(s.date);
-        currentDate.setDate(currentDate.getDate() + 7);
-        const nextDateStr = currentDate.toISOString().split("T")[0];
+      const refreshedSchedules = await doctorScheduleRepo.getSchedules(
+        undefined,
+        currentUser?.role,
+        userBranchId
+      );
+      const scheduleById = new Map(refreshedSchedules.map((schedule) => [schedule.id, schedule]));
+      doctorSchedules.forEach((schedule) => {
+        if (!scheduleById.has(schedule.id)) scheduleById.set(schedule.id, schedule);
+      });
+      const workingSchedules = [...scheduleById.values()];
+      const normalizeDoctorId = (doctorId: string) => doctorId.toLowerCase().replace(/^doc-/, "");
+
+      for (const { source, targetDate } of copies) {
+        const matchesCopiedSchedule = (schedule: DoctorSchedule) =>
+          normalizeDoctorId(schedule.doctorId) === normalizeDoctorId(source.doctorId)
+          && isBranchMatch(schedule.branchId, source.branchId, branches)
+          && schedule.date === targetDate
+          && schedule.startTime === source.startTime
+          && schedule.endTime === source.endTime;
+        const matchingSchedule = workingSchedules.find(
+          (schedule) => matchesCopiedSchedule(schedule) && schedule.status === ScheduleStatus.ACTIVE
+        ) || workingSchedules.find(matchesCopiedSchedule);
 
         try {
-          await doctorScheduleRepo.createSchedule(
+          if (matchingSchedule?.status === ScheduleStatus.ACTIVE
+            && matchingSchedule.notes === source.notes) {
+            unchanged++;
+            continue;
+          }
+
+          if (matchingSchedule) {
+            const updatedSchedule = await doctorScheduleRepo.updateSchedule(
+              matchingSchedule.id,
+              {
+                doctorId: source.doctorId,
+                branchId: source.branchId,
+                date: targetDate,
+                startTime: source.startTime,
+                endTime: source.endTime,
+                status: ScheduleStatus.ACTIVE,
+                notes: source.notes
+              },
+              currentUser?.role,
+              userBranchId
+            );
+            workingSchedules[workingSchedules.indexOf(matchingSchedule)] = updatedSchedule;
+            updated++;
+            continue;
+          }
+
+          const createdSchedule = await doctorScheduleRepo.createSchedule(
             {
-              doctorId: s.doctorId,
-              branchId: s.branchId,
-              date: nextDateStr,
-              startTime: s.startTime,
-              endTime: s.endTime,
+              doctorId: source.doctorId,
+              branchId: source.branchId,
+              date: targetDate,
+              startTime: source.startTime,
+              endTime: source.endTime,
               status: ScheduleStatus.ACTIVE,
-              notes: s.notes || "Salinan mingguan"
+              notes: source.notes
             },
             currentUser?.role,
             userBranchId
           );
-          successCount++;
-        } catch {
-          skippedCount++;
+          workingSchedules.push(createdSchedule);
+          created++;
+        } catch (error) {
+          errors.push(`${source.doctorId} (${targetDate}): ${error instanceof Error ? error.message : "Gagal menyalin jadwal"}`);
         }
       }
 
-      await refreshData();
-      showToast(`Berhasil menyalin ${successCount} jadwal ke minggu depan! (${skippedCount} dilewati/bentrok)`);
-    } catch (err: any) {
-      showToast("Terjadi kendala saat menyalin jadwal", "error");
+      if (created > 0 || updated > 0) {
+        try {
+          await refreshData();
+        } catch (error) {
+          errors.push(`Jadwal tersimpan, tetapi tampilan gagal diperbarui: ${error instanceof Error ? error.message : "Gagal memuat ulang data"}`);
+        }
+      }
+
+      const summary = `Jadwal disalin: ${created} dibuat, ${updated} diperbarui, ${unchanged} sudah sesuai.`;
+      showToast(errors.length > 0 ? `${summary} ${errors.length} gagal: ${errors[0]}` : summary, errors.length > 0 ? "error" : "success");
+      return { created, updated, unchanged, errors };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Gagal membaca jadwal yang sudah ada.";
+      showToast(`Jadwal tidak disalin: ${message}`, "error");
+      return { created, updated, unchanged, errors: [message] };
     } finally {
       setIsCopyingWeek(false);
     }
+  };
+
+  const handleCopyWeekToNextWeek = async (activeSchedules: DoctorSchedule[]) => {
+    if (activeSchedules.length === 0) {
+      showToast("Belum ada jadwal aktif pada minggu ini yang bisa disalin.", "error");
+      return;
+    }
+
+    if (!window.confirm(`Salin ${activeSchedules.length} jadwal aktif pada minggu yang sedang dibuka ke minggu depan? Jadwal yang sama akan diperbarui, bukan digandakan.`)) {
+      return;
+    }
+
+    const copies = activeSchedules.map((schedule) => {
+      const targetDate = new Date(`${schedule.date}T00:00:00Z`);
+      targetDate.setUTCDate(targetDate.getUTCDate() + 7);
+      return { source: schedule, targetDate: targetDate.toISOString().slice(0, 10) };
+    });
+    await handleCopySchedules(copies);
   };
 
   const handleManualAddSubmit = async (e: React.FormEvent) => {
@@ -268,17 +337,6 @@ export const DoctorSchedules: React.FC = () => {
             <span>Tambah Jadwal</span>
           </button>
 
-          {/* Copy Week Button */}
-          <button
-            onClick={handleCopyWeekToNextWeek}
-            disabled={isCopyingWeek}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all border border-slate-200 cursor-pointer disabled:opacity-50"
-            title="Duplikasi jadwal minggu ini ke minggu depan"
-          >
-            <Copy className="w-3.5 h-3.5 text-slate-500" />
-            <span>{isCopyingWeek ? "Menyalin..." : "Salin ke Minggu Depan"}</span>
-          </button>
-
           {/* Poster Button */}
           {isSuper && (
             <button
@@ -310,6 +368,9 @@ export const DoctorSchedules: React.FC = () => {
         onScheduleCreate={handleScheduleCreate}
         onScheduleUpdate={handleScheduleUpdate}
         onScheduleCancel={handleScheduleCancel}
+        onCopySchedules={handleCopySchedules}
+        onCopyWeekToNextWeek={isSuper ? handleCopyWeekToNextWeek : undefined}
+        isCopyingSchedules={isCopyingWeek}
         onOpenPosterModal={isSuper ? () => setIsPosterModalOpen(true) : undefined}
       />
 
