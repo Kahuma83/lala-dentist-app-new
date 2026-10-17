@@ -5206,73 +5206,270 @@ export class SupabaseStaffRepository implements StaffRepository {
 // 18. SUPABASE COMPENSATION REPOSITORY
 // =====================================================================
 export class SupabaseCompensationRepository implements CompensationRepository {
-  async getCompensationRules(): Promise<StaffCompensationRule[]> {
-    ensureSupabaseConnected();
-    const { data, error } = await supabase.from("staff_compensation_rules").select("*");
-    if (error) return handleSupabaseReadError("staff_compensation_rules", error, []);
-    return (data || []).map((row: any) => ({
+  private mapCompensationRuleFromDb(row: any): StaffCompensationRule {
+    return {
       id: row.id,
       staffId: row.staff_id,
-      name: row.name || "Rule",
-      ruleTypeSnapshot: row.rule_type_snapshot || "PERCENTAGE",
-      valueSnapshot: row.value_snapshot || 0,
+      name: row.name,
+      ruleTypeSnapshot: row.rule_type_snapshot,
+      valueSnapshot: Number(row.value_snapshot) || 0,
       isActive: row.is_active ?? true,
+      serviceId: row.service_id ?? null,
+      branchId: row.branch_id ?? null,
+      effectiveStartDate: row.effective_start_date ?? undefined,
+      effectiveEndDate: row.effective_end_date ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at
-    }));
+    };
+  }
+
+  private mapCompensationAccrualFromDb(row: any): CompensationAccrual {
+    return {
+      id: row.id,
+      staffId: row.staff_id,
+      ruleIdSnapshot: row.rule_id_snapshot,
+      ruleTypeSnapshot: row.rule_type_snapshot,
+      valueSnapshot: Number(row.value_snapshot) || 0,
+      baseAmountSnapshot: Number(row.base_amount_snapshot) || 0,
+      amount: Number(row.amount) || 0,
+      sourceId: row.source_id,
+      accruedAt: row.accrued_at
+    };
+  }
+
+  async getCompensationRules(): Promise<StaffCompensationRule[]> {
+    ensureSupabaseConnected();
+    const { data, error } = await supabase
+      .from("staff_compensation_rules")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) return handleSupabaseReadError("staff_compensation_rules", error, []);
+    return (data || []).map((row: any) => this.mapCompensationRuleFromDb(row));
   }
   async getCompensationRulesByStaff(staffId: string): Promise<StaffCompensationRule[]> {
     const all = await this.getCompensationRules();
     return all.filter((r) => r.staffId === staffId);
   }
   async createCompensationRule(data: Omit<StaffCompensationRule, "id" | "createdAt" | "updatedAt"> & { id?: string }): Promise<StaffCompensationRule> {
-    const item: StaffCompensationRule = {
-      id: data.id || `comp-rule-${Date.now()}`,
-      staffId: data.staffId,
-      name: data.name,
-      ruleTypeSnapshot: data.ruleTypeSnapshot,
-      valueSnapshot: data.valueSnapshot,
-      isActive: data.isActive ?? true,
-      createdAt: AppClock.nowISO(),
-      updatedAt: AppClock.nowISO()
+    ensureSupabaseConnected();
+    if (!isValidUUID(data.staffId)) {
+      throw new Error("Penerima aturan kompensasi harus terhubung ke data karyawan Supabase.");
+    }
+    if (!data.name.trim()) throw new Error("Nama aturan kompensasi wajib diisi.");
+    if (!Number.isFinite(data.valueSnapshot) || data.valueSnapshot <= 0) {
+      throw new Error("Nilai kompensasi harus lebih besar dari 0.");
+    }
+    if (data.ruleTypeSnapshot === "PERCENTAGE" && data.valueSnapshot > 100) {
+      throw new Error("Persentase kompensasi tidak boleh lebih dari 100%.");
+    }
+    if (data.serviceId && !isValidUUID(data.serviceId)) {
+      throw new Error("Layanan kompensasi tidak valid. Muat ulang daftar layanan, lalu coba lagi.");
+    }
+    if (data.branchId && !isValidUUID(data.branchId)) {
+      throw new Error("Cabang kompensasi tidak valid. Muat ulang daftar cabang, lalu coba lagi.");
+    }
+
+    const now = AppClock.nowISO();
+    const payload: Record<string, unknown> = {
+      staff_id: data.staffId,
+      name: data.name.trim(),
+      rule_type_snapshot: data.ruleTypeSnapshot,
+      value_snapshot: data.valueSnapshot,
+      is_active: data.isActive ?? true,
+      service_id: data.serviceId || null,
+      branch_id: data.branchId || null,
+      effective_start_date: data.effectiveStartDate || null,
+      effective_end_date: data.effectiveEndDate || null,
+      created_at: now,
+      updated_at: now
     };
-    return item;
+    if (data.id) {
+      if (!isValidUUID(data.id)) throw new Error("ID aturan kompensasi tidak valid.");
+      payload.id = data.id;
+    }
+
+    const { data: created, error } = await supabase
+      .from("staff_compensation_rules")
+      .insert(payload)
+      .select("*")
+      .single();
+    if (error) throw new Error(`Gagal menyimpan aturan kompensasi: ${error.message}`);
+    return this.mapCompensationRuleFromDb(created);
   }
   async updateCompensationRule(id: string, updates: Partial<Omit<StaffCompensationRule, "id" | "createdAt" | "updatedAt">>): Promise<StaffCompensationRule> {
-    const item: StaffCompensationRule = {
-      id,
-      staffId: updates.staffId || "",
-      name: updates.name || "",
-      ruleTypeSnapshot: updates.ruleTypeSnapshot || "PERCENTAGE",
-      valueSnapshot: updates.valueSnapshot || 0,
-      isActive: updates.isActive ?? true,
-      createdAt: AppClock.nowISO(),
-      updatedAt: AppClock.nowISO()
-    };
-    return item;
+    ensureSupabaseConnected();
+    if (!isValidUUID(id)) throw new Error("ID aturan kompensasi tidak valid.");
+    const payload: Record<string, unknown> = { updated_at: AppClock.nowISO() };
+    if (updates.staffId !== undefined) {
+      if (!isValidUUID(updates.staffId)) throw new Error("Penerima aturan kompensasi tidak valid.");
+      payload.staff_id = updates.staffId;
+    }
+    if (updates.name !== undefined) {
+      if (!updates.name.trim()) throw new Error("Nama aturan kompensasi wajib diisi.");
+      payload.name = updates.name.trim();
+    }
+    if (updates.ruleTypeSnapshot !== undefined) payload.rule_type_snapshot = updates.ruleTypeSnapshot;
+    if (updates.valueSnapshot !== undefined) {
+      if (!Number.isFinite(updates.valueSnapshot) || updates.valueSnapshot <= 0) {
+        throw new Error("Nilai kompensasi harus lebih besar dari 0.");
+      }
+      if (updates.ruleTypeSnapshot === "PERCENTAGE" && updates.valueSnapshot > 100) {
+        throw new Error("Persentase kompensasi tidak boleh lebih dari 100%.");
+      }
+      payload.value_snapshot = updates.valueSnapshot;
+    }
+    if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+    if (updates.serviceId !== undefined) {
+      if (updates.serviceId && !isValidUUID(updates.serviceId)) throw new Error("Layanan kompensasi tidak valid.");
+      payload.service_id = updates.serviceId || null;
+    }
+    if (updates.branchId !== undefined) {
+      if (updates.branchId && !isValidUUID(updates.branchId)) throw new Error("Cabang kompensasi tidak valid.");
+      payload.branch_id = updates.branchId || null;
+    }
+    if (updates.effectiveStartDate !== undefined) payload.effective_start_date = updates.effectiveStartDate || null;
+    if (updates.effectiveEndDate !== undefined) payload.effective_end_date = updates.effectiveEndDate || null;
+
+    const { data, error } = await supabase
+      .from("staff_compensation_rules")
+      .update(payload)
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (error) throw new Error(`Gagal memperbarui aturan kompensasi: ${error.message}`);
+    return this.mapCompensationRuleFromDb(data);
   }
   async getCompensationAccruals(staffId?: string): Promise<CompensationAccrual[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("compensation_accruals").select("*");
+    let q = supabase.from("compensation_accruals").select("*").order("accrued_at", { ascending: false });
     if (staffId) q = q.eq("staff_id", staffId);
     const { data, error } = await q;
     if (error) return handleSupabaseReadError("compensation_accruals", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      amount: row.amount,
-      sourceId: row.source_id || "src-1",
-      accruedAt: row.accrued_at || AppClock.nowISO()
-    }));
+    return (data || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
   }
   async calculateAndAccrueForTreatment(treatmentJobId: string): Promise<CompensationAccrual[]> {
-    return [];
+    ensureSupabaseConnected();
+    if (!isValidUUID(treatmentJobId)) throw new Error("ID tindakan tidak valid.");
+
+    const { data: job, error: jobError } = await supabase
+      .from("treatment_jobs")
+      .select("id, doctor_id, pic_assistant_id, service_id, branch_id, status, completed_at")
+      .eq("id", treatmentJobId)
+      .single();
+    if (jobError || !job) throw new Error(`Gagal memuat tindakan untuk menghitung kompensasi: ${jobError?.message || "data tidak ditemukan"}`);
+    if (job.status !== TreatmentJobStatus.SELESAI && job.status !== TreatmentJobStatus.DISERAHKAN) {
+      throw new Error("Akrual kompensasi hanya dapat dihitung untuk treatment yang sudah SELESAI atau DISERAHKAN");
+    }
+
+    const { data: service, error: serviceError } = await supabase
+      .from("master_services")
+      .select("base_price")
+      .eq("id", job.service_id)
+      .single();
+    if (serviceError || !service) throw new Error(`Gagal memuat tarif dasar tindakan: ${serviceError?.message || "layanan tidak ditemukan"}`);
+
+    let doctorStaffId: string | null = null;
+    if (job.doctor_id) {
+      const { data: doctor, error: doctorError } = await supabase
+        .from("dental_doctors")
+        .select("staff_id")
+        .eq("id", job.doctor_id)
+        .single();
+      if (doctorError) throw new Error(`Gagal memuat data dokter untuk kompensasi: ${doctorError.message}`);
+      doctorStaffId = doctor?.staff_id || null;
+    }
+
+    const staffIds = [...new Set([doctorStaffId, job.pic_assistant_id].filter((id): id is string => Boolean(id)))];
+    if (staffIds.length === 0) return [];
+
+    const { data: ruleRows, error: rulesError } = await supabase
+      .from("staff_compensation_rules")
+      .select("*")
+      .in("staff_id", staffIds);
+    if (rulesError) throw new Error(`Gagal memuat aturan kompensasi tindakan: ${rulesError.message}`);
+
+    const treatmentDate = (job.completed_at || AppClock.nowISO()).slice(0, 10);
+    const applicableRules = (ruleRows || [])
+      .map((row: any) => this.mapCompensationRuleFromDb(row))
+      .filter((rule) =>
+        rule.isActive
+        && rule.ruleTypeSnapshot !== "BASE_SALARY"
+        && rule.ruleTypeSnapshot !== "DOCTOR_SITTING_FEE"
+        && (!rule.serviceId || rule.serviceId === job.service_id)
+        && (!rule.branchId || rule.branchId === job.branch_id)
+        && (!rule.effectiveStartDate || rule.effectiveStartDate <= treatmentDate)
+        && (!rule.effectiveEndDate || rule.effectiveEndDate >= treatmentDate)
+      );
+    if (applicableRules.length === 0) return [];
+
+    const { data: existingRows, error: existingError } = await supabase
+      .from("compensation_accruals")
+      .select("staff_id, rule_id_snapshot")
+      .eq("source_id", treatmentJobId);
+    if (existingError) throw new Error(`Gagal memeriksa akrual kompensasi yang sudah ada: ${existingError.message}`);
+
+    const existingKeys = new Set((existingRows || []).map((row: any) => `${row.staff_id}:${row.rule_id_snapshot}`));
+    const baseAmount = Math.round(Number(service.base_price) || 0);
+    const accruedAt = AppClock.nowISO();
+    const payload = applicableRules.flatMap((rule) => {
+      const staffId = rule.staffId;
+      const key = `${staffId}:${rule.id}`;
+      if (existingKeys.has(key)) return [];
+      const value = Number(rule.valueSnapshot) || 0;
+      const amount = rule.ruleTypeSnapshot === "PERCENTAGE"
+        ? Math.round((baseAmount * value) / 100)
+        : rule.ruleTypeSnapshot === "FIXED_PER_TREATMENT"
+          ? Math.round(value)
+          : 0;
+      if (amount <= 0) return [];
+      return [{
+        staff_id: staffId,
+        branch_id: job.branch_id,
+        rule_id_snapshot: rule.id,
+        rule_type_snapshot: rule.ruleTypeSnapshot,
+        value_snapshot: value,
+        base_amount_snapshot: baseAmount,
+        amount,
+        source_id: treatmentJobId,
+        accrued_at: accruedAt
+      }];
+    });
+    if (payload.length === 0) return [];
+
+    const { data: created, error: createError } = await supabase
+      .from("compensation_accruals")
+      .insert(payload)
+      .select("*");
+    if (createError) throw new Error(`Gagal mencatat akrual kompensasi: ${createError.message}`);
+    return (created || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
   }
   async deleteAccrual(id: string, currentUserRole?: UserRole): Promise<boolean> {
-    return true;
+    ensureSupabaseConnected();
+    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Akses ditolak: Hanya Super Admin atau Branch Admin yang dapat menghapus akrual kompensasi.");
+    }
+    if (!isValidUUID(id)) throw new Error("ID akrual kompensasi tidak valid.");
+    const { data, error } = await supabase
+      .from("compensation_accruals")
+      .delete()
+      .eq("id", id)
+      .select("id");
+    if (error) throw new Error(`Gagal menghapus akrual kompensasi: ${error.message}`);
+    return (data || []).length > 0;
   }
   async deleteCompensationRule(id: string, currentUserRole?: UserRole): Promise<boolean> {
-    return true;
+    ensureSupabaseConnected();
+    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak: Hanya Super Admin yang dapat menghapus aturan kompensasi.");
+    }
+    if (!isValidUUID(id)) throw new Error("ID aturan kompensasi tidak valid.");
+    const { data, error } = await supabase
+      .from("staff_compensation_rules")
+      .delete()
+      .eq("id", id)
+      .select("id");
+    if (error) throw new Error(`Gagal menghapus aturan kompensasi: ${error.message}`);
+    return (data || []).length > 0;
   }
 }
 

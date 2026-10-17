@@ -89,6 +89,9 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     expect(docAccrual).toBeDefined();
     expect(docAccrual?.amount).toBe(120000);
     expect(docAccrual?.baseAmountSnapshot).toBe(400000);
+
+    const repeatedAccruals = await compRepo.calculateAndAccrueForTreatment("treatment-job-3");
+    expect(repeatedAccruals).toHaveLength(accruals.length);
   });
 
   it("Test 6: Calculate and accrue compensation for assistant assigned to completed treatment", async () => {

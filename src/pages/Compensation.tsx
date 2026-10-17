@@ -11,7 +11,8 @@ import {
   Staff,
   DentalDoctor,
   MasterService,
-  DentalBranch
+  DentalBranch,
+  TreatmentJobStatus
 } from "../types/domain";
 import {
   Award,
@@ -41,6 +42,7 @@ export const Compensation: React.FC = () => {
   const {
     currentUser,
     compRepo,
+    treatmentRepo,
     doctorRepo,
     staffRepo,
     configRepo,
@@ -60,6 +62,7 @@ export const Compensation: React.FC = () => {
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncingAccruals, setSyncingAccruals] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"RULES" | "ACCRUALS">("RULES");
   const [showRuleModal, setShowRuleModal] = useState(false);
@@ -87,6 +90,7 @@ export const Compensation: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       const assistantStaffId = isAssistant ? (currentUser?.staffId || currentUser?.id) : undefined;
       const [rList, aList, dList, sList, srvList, bList, jList] = await Promise.all([
@@ -119,6 +123,7 @@ export const Compensation: React.FC = () => {
       setJournals(jList);
     } catch (err) {
       console.error("Error loading compensation data:", err);
+      setErrorMessage(err instanceof Error ? err.message : "Gagal memuat data kompensasi.");
     } finally {
       setLoading(false);
     }
@@ -272,7 +277,8 @@ export const Compensation: React.FC = () => {
     setIsDeletingRule(true);
     setErrorMessage(null);
     try {
-      await compRepo.deleteCompensationRule(ruleToDelete.id, currentUser?.role);
+      const deleted = await compRepo.deleteCompensationRule(ruleToDelete.id, currentUser?.role);
+      if (!deleted) throw new Error("Aturan kompensasi tidak ditemukan atau sudah dihapus.");
       setRules((prev) => prev.filter((r) => r.id !== ruleToDelete.id));
       setFeedbackMessage(`Aturan kompensasi "${ruleToDelete.name}" berhasil dihapus dari database.`);
       setRuleToDelete(null);
@@ -290,7 +296,8 @@ export const Compensation: React.FC = () => {
     setIsDeletingAccrual(true);
     setErrorMessage(null);
     try {
-      await compRepo.deleteAccrual(accrualToDelete.id, currentUser?.role);
+      const deleted = await compRepo.deleteAccrual(accrualToDelete.id, currentUser?.role);
+      if (!deleted) throw new Error("Akrual kompensasi tidak ditemukan atau sudah dihapus.");
       setAccruals((prev) => prev.filter((a) => a.id !== accrualToDelete.id));
       setFeedbackMessage("Akrual kompensasi berhasil dihapus.");
       setAccrualToDelete(null);
@@ -299,6 +306,42 @@ export const Compensation: React.FC = () => {
       setErrorMessage(err.message || "Gagal menghapus akrual kompensasi");
     } finally {
       setIsDeletingAccrual(false);
+    }
+  };
+
+  const handleSyncCompletedTreatmentAccruals = async () => {
+    if (currentUser?.role !== UserRole.SUPER_ADMIN || syncingAccruals) return;
+    setSyncingAccruals(true);
+    setErrorMessage(null);
+    setFeedbackMessage(null);
+    try {
+      const treatments = await treatmentRepo.listTreatments(currentUser.role, currentUser.branchId, currentUser.doctorId);
+      const completedTreatments = treatments.filter((treatment) =>
+        treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN
+      );
+      let createdCount = 0;
+      const failures: string[] = [];
+      for (const treatment of completedTreatments) {
+        try {
+          createdCount += (await compRepo.calculateAndAccrueForTreatment(treatment.id)).length;
+        } catch (err) {
+          failures.push(`${treatment.id}: ${err instanceof Error ? err.message : "kesalahan tidak diketahui"}`);
+        }
+      }
+
+      await loadData();
+      setFeedbackMessage(
+        createdCount > 0
+          ? `${createdCount} akrual kompensasi berhasil disinkronkan dari tindakan selesai.`
+          : `Tidak ada akrual baru dari ${completedTreatments.length} tindakan selesai. Pastikan aturan kompensasi aktif dan tanggal berlakunya sesuai.`
+      );
+      if (failures.length > 0) {
+        setErrorMessage(`${failures.length} tindakan gagal disinkronkan. Contoh: ${failures[0]}`);
+      }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Gagal menyinkronkan akrual tindakan selesai.");
+    } finally {
+      setSyncingAccruals(false);
     }
   };
 
@@ -508,14 +551,16 @@ export const Compensation: React.FC = () => {
               <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <td colSpan={currentUser?.role === UserRole.SUPER_ADMIN ? 7 : 6} className="py-8 text-center text-slate-400">
                       Memuat data aturan kompensasi...
                     </td>
                   </tr>
                 ) : filteredRules.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
-                      Belum ada aturan kompensasi yang sesuai filter.
+                    <td colSpan={currentUser?.role === UserRole.SUPER_ADMIN ? 7 : 6} className="py-8 text-center text-slate-400">
+                      {rules.length === 0
+                        ? "Belum ada aturan kompensasi. Tambahkan skema untuk mulai menghitung fee dokter dan staf."
+                        : "Tidak ada aturan kompensasi yang sesuai filter."}
                     </td>
                   </tr>
                 ) : (
@@ -634,6 +679,23 @@ export const Compensation: React.FC = () => {
       {/* Tab: ACCRUALS */}
       {activeTab === "ACCRUALS" && (
         <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
+          {currentUser?.role === UserRole.SUPER_ADMIN && (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 border-b border-slate-100">
+              <p className="text-xs text-slate-500">
+                Sinkronkan akrual yang belum tercatat untuk semua tindakan selesai. Akrual yang sudah ada tidak diduplikasi.
+              </p>
+              <button
+                type="button"
+                onClick={handleSyncCompletedTreatmentAccruals}
+                disabled={syncingAccruals}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${syncingAccruals ? "animate-spin" : ""}`} />
+                {syncingAccruals ? "Menyinkronkan..." : "Sinkronkan Akrual Tindakan"}
+              </button>
+            </div>
+          )}
+          <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
@@ -647,10 +709,16 @@ export const Compensation: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-              {accruals.length === 0 ? (
+              {loading ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-slate-400">
-                    Belum ada akrual komisi tercatat. Akrual dihitung otomatis saat status tindakan selesai.
+                    Memuat akrual kompensasi...
+                  </td>
+                </tr>
+              ) : accruals.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-slate-400">
+                    Belum ada akrual komisi tercatat. Akrual dihitung saat tindakan selesai; Super Admin dapat menyinkronkan tindakan yang tertinggal.
                   </td>
                 </tr>
               ) : (
@@ -726,6 +794,7 @@ export const Compensation: React.FC = () => {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -775,8 +844,9 @@ export const Compensation: React.FC = () => {
 
                   <optgroup label="Dokter Gigi">
                     {availableStaff.doctors.map((d) => (
-                      <option key={d.id} value={d.id}>
+                      <option key={d.id} value={d.staffId || ""} disabled={!d.staffId}>
                         {d.name} ({d.specialization}) - {getBranchName(d.assignedBranchId)}
+                        {!d.staffId ? " - Belum terhubung ke data karyawan" : ""}
                       </option>
                     ))}
                   </optgroup>
@@ -892,7 +962,7 @@ export const Compensation: React.FC = () => {
                   min="1"
                   max={formType === "PERCENTAGE" ? 100 : undefined}
                   value={formValue}
-                  onChange={(e) => setFormValue(parseInt(e.target.value) || 0)}
+                  onChange={(e) => setFormValue(parseFloat(e.target.value) || 0)}
                   required
                   className="w-full text-sm font-bold border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
                 />
@@ -998,7 +1068,8 @@ export const Compensation: React.FC = () => {
   );
 
   function availableDoctorsFirst(): string {
-    if (availableStaff.doctors.length > 0) return availableStaff.doctors[0].id;
+    const linkedDoctor = availableStaff.doctors.find((doctor) => doctor.staffId);
+    if (linkedDoctor?.staffId) return linkedDoctor.staffId;
     if (availableStaff.branchAdmins.length > 0) return availableStaff.branchAdmins[0].id;
     if (availableStaff.assistants.length > 0) return availableStaff.assistants[0].id;
     return "";

@@ -777,6 +777,12 @@ CREATE TABLE IF NOT EXISTS public.staff_compensation_rules (
   rule_type_snapshot VARCHAR(50) NOT NULL CHECK (rule_type_snapshot IN ('PERCENTAGE', 'FIXED_PER_TREATMENT', 'BASE_SALARY')),
   value_snapshot NUMERIC(12,2) NOT NULL CHECK (value_snapshot >= 0),
   is_active BOOLEAN NOT NULL DEFAULT true,
+  service_id UUID REFERENCES public.master_services(id) ON DELETE RESTRICT,
+  branch_id UUID REFERENCES public.dental_branches(id) ON DELETE RESTRICT,
+  effective_start_date DATE,
+  effective_end_date DATE,
+  CONSTRAINT staff_compensation_rules_effective_date_check
+    CHECK (effective_end_date IS NULL OR effective_start_date IS NULL OR effective_end_date >= effective_start_date),
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );

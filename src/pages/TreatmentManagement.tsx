@@ -225,6 +225,8 @@ export const TreatmentManagement: React.FC = () => {
     if (!canManageTreatment) return;
     setError(null);
     let treatmentCompleted = false;
+    let accrualCount = 0;
+    let accrualError: string | null = null;
     try {
       const completedTreatment = await treatmentRepo.completeTreatmentJob(
         id,
@@ -239,6 +241,12 @@ export const TreatmentManagement: React.FC = () => {
         }
       );
       treatmentCompleted = true;
+      try {
+        const createdAccruals = await repos.compensation.calculateAndAccrueForTreatment(completedTreatment.id);
+        accrualCount = createdAccruals.length;
+      } catch (err: any) {
+        accrualError = err.message || "Gagal mencatat akrual kompensasi.";
+      }
       const visitTreatments = await treatmentRepo.getTreatmentsByVisit(completedTreatment.visitId);
       const unfinishedTreatments = visitTreatments.filter((treatment) =>
         treatment.status !== TreatmentJobStatus.SELESAI
@@ -265,10 +273,13 @@ export const TreatmentManagement: React.FC = () => {
       }
       setSuccessMsg(
         unfinishedTreatments.length === 0
-          ? "Treatment selesai dan antrean ditutup. Tagihan dapat diproses admin."
-          : "Treatment selesai. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup."
+          ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.`
+          : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.`
       );
       await loadData();
+      if (accrualError) {
+        setError(`Treatment selesai, tetapi akrual kompensasi gagal dicatat: ${accrualError}. Admin dapat mencoba sinkronisasi ulang di menu Kompensasi Dokter.`);
+      }
     } catch (err: any) {
       setError(treatmentCompleted
         ? `Treatment sudah tersimpan selesai, tetapi antrean belum berhasil ditutup: ${err.message || "kesalahan tidak diketahui"}. Silakan muat ulang dan periksa status kunjungan.`

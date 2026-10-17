@@ -3797,7 +3797,9 @@ export class MockCompensationRepository implements CompensationRepository {
     const baseAmount = service ? service.basePrice : 150000;
     const now = AppClock.nowISO();
     const treatmentDate = job.completedAt ? job.completedAt.split("T")[0] : now.split("T")[0];
-    const createdAccruals: CompensationAccrual[] = [];
+    const existingAccruals = db.accruals.filter((accrual: CompensationAccrual) => accrual.sourceId === job.id);
+    const existingRuleKeys = new Set(existingAccruals.map((accrual) => `${accrual.staffId}:${accrual.ruleIdSnapshot}`));
+    const createdAccruals: CompensationAccrual[] = [...existingAccruals];
 
     const isRuleEffectiveOnDate = (rule: StaffCompensationRule, dateStr: string) => {
       if (!rule.isActive) return false;
@@ -3813,6 +3815,7 @@ export class MockCompensationRepository implements CompensationRepository {
     for (const rule of doctorRules) {
       if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE") continue;
       if (rule.serviceId && rule.serviceId !== job.serviceId) continue;
+      if (existingRuleKeys.has(`${job.doctorId}:${rule.id}`)) continue;
 
       let amount = 0;
       if (rule.ruleTypeSnapshot === "PERCENTAGE") {
@@ -3835,6 +3838,7 @@ export class MockCompensationRepository implements CompensationRepository {
 
       db.accruals.push(accrual);
       createdAccruals.push(accrual);
+      existingRuleKeys.add(`${job.doctorId}:${rule.id}`);
     }
 
     // Find rules for assistant if assigned
@@ -3845,6 +3849,7 @@ export class MockCompensationRepository implements CompensationRepository {
       for (const rule of assistantRules) {
         if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE") continue;
         if (rule.serviceId && rule.serviceId !== job.serviceId) continue;
+        if (existingRuleKeys.has(`${job.picAssistantId}:${rule.id}`)) continue;
 
         let amount = 0;
         if (rule.ruleTypeSnapshot === "PERCENTAGE") {
@@ -3867,6 +3872,7 @@ export class MockCompensationRepository implements CompensationRepository {
 
         db.accruals.push(accrual);
         createdAccruals.push(accrual);
+        existingRuleKeys.add(`${job.picAssistantId}:${rule.id}`);
       }
     }
 
