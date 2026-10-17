@@ -5775,6 +5775,9 @@ export class MockAttendanceRepository implements AttendanceRepository {
       lateMinutes,
       earlyCheckoutMinutes: 0,
       checkInPhotoPath: input.checkInPhotoPath ?? input.photoPath ?? null,
+      checkInLatitude: input.latitude ?? null,
+      checkInLongitude: input.longitude ?? null,
+      checkInAccuracyMeters: input.accuracyMeters ?? null,
       checkOutPhotoPath: null,
       checkInMethod: input.checkInMethod ?? input.method ?? AttendanceMethod.WEB,
       checkOutMethod: null,
@@ -5851,6 +5854,9 @@ export class MockAttendanceRepository implements AttendanceRepository {
     if (input.checkOutPhotoPath !== undefined || input.photoPath !== undefined) {
       attendance.checkOutPhotoPath = input.checkOutPhotoPath ?? input.photoPath ?? null;
     }
+    if (input.latitude !== undefined) attendance.checkOutLatitude = input.latitude;
+    if (input.longitude !== undefined) attendance.checkOutLongitude = input.longitude;
+    if (input.accuracyMeters !== undefined) attendance.checkOutAccuracyMeters = input.accuracyMeters;
     if (input.checkOutMethod || input.method) {
       attendance.checkOutMethod = input.checkOutMethod ?? input.method;
     }

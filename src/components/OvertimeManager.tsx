@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { useApp } from "../context/AppContext";
-import { UserRole, OvertimeStatus, OvertimeRecord, Attendance } from "../types/domain";
+import { UserRole, OvertimeStatus, OvertimeRecord } from "../types/domain";
+import { AppClock } from "../utils/clock";
 import {
   Clock,
   CheckCircle2,
@@ -24,7 +25,7 @@ export const OvertimeManager: React.FC = () => {
     selectedBranchId,
     branches,
     staff,
-    attendances,
+    attendanceRepo,
     overtimes,
     overtimeRepo,
     refreshData
@@ -37,6 +38,7 @@ export const OvertimeManager: React.FC = () => {
   const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
   const [selectedBranch, setSelectedBranch] = useState<string>(userBranchId || "ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [scanMonth, setScanMonth] = useState(() => AppClock.todayDateString().slice(0, 7));
 
   // Feedback states
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -61,12 +63,21 @@ export const OvertimeManager: React.FC = () => {
     setSuccessMessage(null);
   };
 
-  // 1. Trigger automatic detection for all completed attendances
+  // 1. Detect overtime for completed attendance in the selected month
   const handleRunDetection = async () => {
     setIsSubmitting(true);
     try {
+      const [year, month] = scanMonth.split("-").map(Number);
+      const endDay = new Date(year, month, 0).getDate().toString().padStart(2, "0");
+      const attendanceForMonth = await attendanceRepo.list({
+        branchId: selectedBranch === "ALL" ? undefined : selectedBranch,
+        dateRange: {
+          startDate: `${scanMonth}-01`,
+          endDate: `${scanMonth}-${endDay}`
+        }
+      }, currentUser?.role, userBranchId);
       let detectedCount = 0;
-      for (const att of attendances) {
+      for (const att of attendanceForMonth) {
         if (att.actualCheckOutAt && att.scheduledEndAt && att.scheduledEndAt !== "-") {
           const existing = overtimes.find(o => o.attendanceId === att.id);
           if (!existing) {
@@ -76,7 +87,7 @@ export const OvertimeManager: React.FC = () => {
         }
       }
       await refreshData();
-      showSuccess(`Pemeriksaan selesai. Berhasil mendeteksi ${detectedCount} catatan lembur baru.`);
+      showSuccess(`Pemeriksaan ${scanMonth} selesai. Berhasil mendeteksi ${detectedCount} catatan lembur baru.`);
     } catch (err: any) {
       showError(err.message || "Gagal melakukan deteksi lembur.");
     } finally {
@@ -191,14 +202,25 @@ export const OvertimeManager: React.FC = () => {
             Otomatis mendeteksi lembur dari kehadiran staff (Attendance SSOT) dan mengelola persetujuan berjenjang.
           </p>
         </div>
-        <button
-          onClick={handleRunDetection}
-          disabled={isSubmitting}
-          className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-sm shadow-emerald-600/20 active:scale-95 disabled:opacity-50"
-        >
-          <Search className="w-4 h-4" />
-          {isSubmitting ? "Memindai Absensi..." : "Scan & Deteksi Lembur Otomatis"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs font-semibold text-slate-600">
+            Bulan absensi
+            <input
+              type="month"
+              value={scanMonth}
+              onChange={(event) => setScanMonth(event.target.value)}
+              className="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs"
+            />
+          </label>
+          <button
+            onClick={handleRunDetection}
+            disabled={isSubmitting || !scanMonth}
+            className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-sm shadow-emerald-600/20 active:scale-95 disabled:opacity-50"
+          >
+            <Search className="w-4 h-4" />
+            {isSubmitting ? "Memindai Absensi..." : "Scan & Deteksi Lembur Otomatis"}
+          </button>
+        </div>
       </div>
 
       {/* Notifications */}

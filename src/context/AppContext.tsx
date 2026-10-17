@@ -446,13 +446,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const userRole = currentUser?.role;
     const currentPatientId = currentUser?.patientId;
     const today = getOperationalDateString(new Date().toISOString());
+    const attendanceMonthStart = `${today.slice(0, 7)}-01`;
+    const attendanceFilter = {
+      dateRange: { startDate: attendanceMonthStart, endDate: today }
+    };
     const userBranchId = currentUser && (
       currentUser.role === UserRole.BRANCH_ADMIN ||
       currentUser.role === UserRole.DOCTOR_ASSISTANT ||
-      currentUser.role === UserRole.DOCTOR
+      currentUser.role === UserRole.DOCTOR ||
+      currentUser.role === UserRole.OB
     )
       ? (currentUser.assignedBranchId ?? currentUser.branchId ?? null)
       : null;
+
+    if (userRole === UserRole.OB) {
+      if (changedTable) {
+        try {
+          if (changedTable === "attendances" || changedTable === "attendance_records") {
+            setAttendances(await attendanceRepo.list(
+              attendanceFilter,
+              userRole,
+              userBranchId,
+              currentUser?.staffId
+            ));
+          } else if (changedTable === "dental_branches") {
+            setBranches(await branchRepo.getBranches(userRole, userBranchId));
+          }
+        } catch (refreshError: unknown) {
+          const message = refreshError instanceof Error
+            ? refreshError.message
+            : `Gagal menyegarkan data ${changedTable}.`;
+          setError(message);
+          console.error(`Gagal menyegarkan data ${changedTable}:`, refreshError);
+        }
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      try {
+        const [loadedBranches, loadedAttendances] = await Promise.all([
+          branchRepo.getBranches(userRole, userBranchId),
+          attendanceRepo.list(attendanceFilter, userRole, userBranchId, currentUser?.staffId)
+        ]);
+        setBranches(loadedBranches);
+        setAttendances(loadedAttendances);
+      } catch (loadError: unknown) {
+        const message = loadError instanceof Error
+          ? loadError.message
+          : "Gagal memuat data absensi.";
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     if (userRole === UserRole.PATIENT) {
       if (changedTable) {
@@ -605,8 +653,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setDoctorBranchAssignments(await doctorRepo.getDoctorBranchAssignments());
             return;
           case "attendance_records":
-            setAttendances(await attendanceRepo.list());
-            return;
+          case "attendances":
+          setAttendances(await attendanceRepo.list(
+            attendanceFilter,
+            userRole,
+            userBranchId,
+            currentUser?.staffId
+          ));
+          return;
           case "overtime_records":
             setOvertimes(await overtimeRepo.list());
             return;
@@ -680,7 +734,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         workShiftRepo.getShifts(),
         staffShiftRepo.getAssignments(),
         doctorRepo.getDoctorBranchAssignments(),
-        attendanceRepo.list(),
+        attendanceRepo.list(attendanceFilter, userRole, userBranchId, currentUser?.staffId),
         overtimeRepo.list(),
         bookingRepo.getBookings(userRole, userBranchId),
         visitRepo.getVisits(),
@@ -886,8 +940,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Enforce branch boundaries automatically
   useEffect(() => {
     if (currentUser) {
-      if (currentUser.role === UserRole.BRANCH_ADMIN) {
-        // Branch Admin is locked to their assigned branch ID
+      if (currentUser.role === UserRole.BRANCH_ADMIN || currentUser.role === UserRole.OB) {
         setSelectedBranchId(currentUser.assignedBranchId);
       } else {
         // Super Admin defaults to null (all branches) or keeps their selection
@@ -913,14 +966,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const realtimeBranchId = currentUser && (
     currentUser.role === UserRole.BRANCH_ADMIN ||
     currentUser.role === UserRole.DOCTOR_ASSISTANT ||
-    currentUser.role === UserRole.DOCTOR
+    currentUser.role === UserRole.DOCTOR ||
+    currentUser.role === UserRole.OB
   )
     ? (currentUser.assignedBranchId ?? currentUser.branchId ?? null)
     : selectedBranchId;
   const realtimeSyncStatus = useRealtimeSync({
     enabled: isSupabaseConfigured && authStatus === "authenticated",
     branchId: realtimeBranchId,
-    tables: currentUser?.role === UserRole.PATIENT ? PATIENT_REALTIME_TABLES : undefined,
+    tables: currentUser?.role === UserRole.PATIENT
+      ? PATIENT_REALTIME_TABLES
+      : currentUser?.role === UserRole.OB
+      ? ["attendances", "dental_branches"]
+      : undefined,
     onAnyChange: (table) => {
       void refreshDataRef.current(table);
     }

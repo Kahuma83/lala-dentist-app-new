@@ -503,7 +503,13 @@ export const HRManagement: React.FC = () => {
         createLoginAccount: false,
         accountUsername: "",
         accountPassword: "",
-        accountRole: UserRole.DOCTOR_ASSISTANT
+        accountRole: s.position === StaffPosition.BRANCH_ADMIN
+          ? UserRole.BRANCH_ADMIN
+          : s.position === StaffPosition.DOCTOR
+          ? UserRole.DOCTOR
+          : s.position === StaffPosition.OB
+          ? UserRole.OB
+          : UserRole.DOCTOR_ASSISTANT
       });
     } else {
       setEditingStaff(null);
@@ -1448,6 +1454,8 @@ export const HRManagement: React.FC = () => {
                                       ? UserRole.BRANCH_ADMIN
                                       : s.position === StaffPosition.DOCTOR
                                       ? UserRole.DOCTOR
+                                      : s.position === StaffPosition.OB
+                                      ? UserRole.OB
                                       : UserRole.DOCTOR_ASSISTANT
                                   })}
                                   title="Buat akun login Supabase secara terpisah dari data staf."
@@ -2356,7 +2364,17 @@ export const HRManagement: React.FC = () => {
                   <label className="block text-slate-600 font-semibold mb-1">Jabatan / Peran *</label>
                   <select
                     value={staffForm.position}
-                    onChange={(e) => setStaffForm({ ...staffForm, position: e.target.value as StaffPosition })}
+                    onChange={(e) => {
+                      const position = e.target.value as StaffPosition;
+                      const accountRole = position === StaffPosition.BRANCH_ADMIN
+                        ? UserRole.BRANCH_ADMIN
+                        : position === StaffPosition.DOCTOR
+                        ? UserRole.DOCTOR
+                        : position === StaffPosition.OB
+                        ? UserRole.OB
+                        : UserRole.DOCTOR_ASSISTANT;
+                      setStaffForm({ ...staffForm, position, accountRole });
+                    }}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
                   >
                     {Object.values(StaffPosition).map((pos) => (
@@ -2514,6 +2532,7 @@ export const HRManagement: React.FC = () => {
                           <option value={UserRole.BRANCH_ADMIN}>Branch Admin (Admin Cabang)</option>
                           <option value={UserRole.DOCTOR_ASSISTANT}>Doctor Assistant (Perawat / Asisten Poli)</option>
                           <option value={UserRole.DOCTOR}>Doctor (Dokter Gigi)</option>
+                          <option value={UserRole.OB}>OB (Absensi Saja)</option>
                           <option value={UserRole.SUPER_ADMIN}>Super Admin (Pemilik / Manajemen Pusat)</option>
                         </select>
                       </div>

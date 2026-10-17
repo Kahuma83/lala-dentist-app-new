@@ -299,6 +299,9 @@ export interface CheckInInput {
   checkInPhotoPath?: string | null;
   method?: AttendanceMethod;
   checkInMethod?: AttendanceMethod;
+  latitude?: number;
+  longitude?: number;
+  accuracyMeters?: number;
   notes?: string;
   scheduledStartAt?: string;
   scheduledEndAt?: string;
@@ -310,12 +313,16 @@ export interface CheckInInput {
 export interface CheckOutInput {
   attendanceId?: string;
   staffId?: string;
+  branchId?: string;
   date?: string;
   checkOutTime?: string;
   photoPath?: string | null;
   checkOutPhotoPath?: string | null;
   method?: AttendanceMethod;
   checkOutMethod?: AttendanceMethod;
+  latitude?: number;
+  longitude?: number;
+  accuracyMeters?: number;
   notes?: string;
   actorRole?: UserRole;
   actorBranchId?: string | null;

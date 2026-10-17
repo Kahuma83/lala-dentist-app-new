@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useApp } from "../context/AppContext";
 import {
   UserRole,
@@ -13,7 +13,6 @@ import {
   Calendar,
   Search,
   Filter,
-  Plus,
   AlertCircle,
   CheckCircle2,
   X,
@@ -48,6 +47,8 @@ export const AttendanceManager: React.FC = () => {
   const [selectedBranch, setSelectedBranch] = useState<string>(userBranchId || "ALL");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
+  const [attendanceRows, setAttendanceRows] = useState(attendances);
+  const [isLoadingRecords, setIsLoadingRecords] = useState(false);
 
   // Feedback notifications
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -83,7 +84,7 @@ export const AttendanceManager: React.FC = () => {
   // Absence Form
   const [absenceForm, setAbsenceForm] = useState({
     staffId: "",
-    branchId: userBranchId || "branch-gebang",
+    branchId: userBranchId || branches[0]?.id || "",
     date: AppClock.todayDateString(),
     attendanceStatus: AttendanceStatus.SICK as AttendanceStatus.SICK | AttendanceStatus.LEAVE | AttendanceStatus.OFF | AttendanceStatus.ABSENT,
     notes: ""
@@ -100,6 +101,44 @@ export const AttendanceManager: React.FC = () => {
     setSuccessMessage(null);
   };
 
+  useEffect(() => {
+    if (!selectedDate) {
+      setAttendanceRows(attendances);
+      setIsLoadingRecords(false);
+      return;
+    }
+
+    let active = true;
+    setIsLoadingRecords(true);
+    attendanceRepo.list(
+      {
+        date: selectedDate,
+        branchId: selectedBranch === "ALL" ? undefined : selectedBranch
+      },
+      currentUser?.role,
+      userBranchId,
+      currentUser?.staffId
+    ).then((rows) => {
+      if (active) setAttendanceRows(rows);
+    }).catch((loadError: unknown) => {
+      if (active) showError(loadError instanceof Error ? loadError.message : "Gagal memuat data absensi.");
+    }).finally(() => {
+      if (active) setIsLoadingRecords(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    attendanceRepo,
+    attendances,
+    currentUser?.role,
+    currentUser?.staffId,
+    selectedBranch,
+    selectedDate,
+    userBranchId
+  ]);
+
   // Find active staff accessible to current user
   const accessibleStaff = useMemo(() => {
     let list = staff.filter((s) => s.active);
@@ -111,7 +150,7 @@ export const AttendanceManager: React.FC = () => {
 
   // Filtered attendances
   const filteredAttendances = useMemo(() => {
-    let items = [...attendances];
+    let items = [...attendanceRows];
 
     // Branch isolation
     if (isBranchAdmin && userBranchId) {
@@ -151,7 +190,7 @@ export const AttendanceManager: React.FC = () => {
       if (dateCmp !== 0) return dateCmp;
       return (b.actualCheckInAt || "").localeCompare(a.actualCheckInAt || "");
     });
-  }, [attendances, isBranchAdmin, userBranchId, selectedBranch, isDoctor, currentUser, selectedDate, selectedStatus, searchQuery, staff]);
+  }, [attendanceRows, isBranchAdmin, userBranchId, selectedBranch, isDoctor, currentUser, selectedDate, selectedStatus, searchQuery, staff]);
 
   // Handlers
   const handleCheckInSubmit = async (e: React.FormEvent) => {
@@ -197,18 +236,6 @@ export const AttendanceManager: React.FC = () => {
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleOpenCheckoutModal = (att: Attendance) => {
-    setTargetAttendanceForCheckout(att);
-    setCheckOutForm({
-      attendanceId: att.id,
-      checkOutTime: "14:00",
-      method: AttendanceMethod.WEB,
-      photoPath: "",
-      notes: ""
-    });
-    setIsCheckOutModalOpen(true);
   };
 
   const handleCheckOutSubmit = async (e: React.FormEvent) => {
@@ -384,7 +411,7 @@ export const AttendanceManager: React.FC = () => {
         </div>
 
         {/* Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col items-end gap-2">
           <button
             onClick={() => setIsAbsenceModalOpen(true)}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 transition-colors"
@@ -393,15 +420,9 @@ export const AttendanceManager: React.FC = () => {
             <UserX className="w-3.5 h-3.5 text-amber-600" />
             Catat Izin / Sakit / Alpha
           </button>
-
-          <button
-            onClick={() => setIsCheckInModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-colors"
-            id="btn-open-checkin-modal"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Catat Check-In
-          </button>
+          <p className="text-[10px] text-slate-500">
+            Check-in dan check-out dilakukan mandiri melalui menu Absensi Saya.
+          </p>
         </div>
       </div>
 
@@ -422,7 +443,13 @@ export const AttendanceManager: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredAttendances.length === 0 ? (
+              {isLoadingRecords ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                    Memuat catatan absensi...
+                  </td>
+                </tr>
+              ) : filteredAttendances.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
                     Tidak ada catatan kehadiran yang sesuai dengan filter.
@@ -527,18 +554,9 @@ export const AttendanceManager: React.FC = () => {
                         {att.notes || "-"}
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
-                        {att.actualCheckInAt && !att.actualCheckOutAt ? (
-                          <button
-                            onClick={() => handleOpenCheckoutModal(att)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"
-                            id={`btn-checkout-${att.id}`}
-                          >
-                            <LogOut className="w-3.5 h-3.5" />
-                            Check-Out
-                          </button>
-                        ) : (
-                          <span className="text-[11px] text-slate-400">Selesai</span>
-                        )}
+                        {att.actualCheckInAt && !att.actualCheckOutAt
+                          ? <span className="text-[11px] text-amber-700">Menunggu check-out mandiri</span>
+                          : <span className="text-[11px] text-slate-400">Selesai</span>}
                       </td>
                     </tr>
                   );
@@ -816,6 +834,24 @@ export const AttendanceManager: React.FC = () => {
                 </select>
               </div>
 
+              {isSuper && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Cabang *</label>
+                  <select
+                    required
+                    value={absenceForm.branchId}
+                    onChange={(e) => setAbsenceForm({ ...absenceForm, branchId: e.target.value })}
+                    className="w-full text-xs border border-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-purple-500/20"
+                    id="absence-branch-select"
+                  >
+                    <option value="">-- Pilih Cabang --</option>
+                    {branches.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Tanggal *</label>
@@ -835,7 +871,11 @@ export const AttendanceManager: React.FC = () => {
                     onChange={(e) =>
                       setAbsenceForm({
                         ...absenceForm,
-                        attendanceStatus: e.target.value as any
+                        attendanceStatus: e.target.value as
+                          | AttendanceStatus.SICK
+                          | AttendanceStatus.LEAVE
+                          | AttendanceStatus.OFF
+                          | AttendanceStatus.ABSENT
                       })
                     }
                     className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-purple-500/20"

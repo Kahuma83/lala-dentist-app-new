@@ -1,6 +1,7 @@
 node_modules/
 build/
 dist/
+dist-attendance-portal/
 coverage/
 .DS_Store
 *.log

@@ -123,6 +123,47 @@ import {
 import { AppClock } from "../utils/clock";
 import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentUtils";
 import { checkRMUniqueness } from "../utils/rmUtils";
+
+const attendanceSelectColumns = [
+  "id", "staff_id", "branch_id", "date", "attendance_status",
+  "scheduled_start_at", "scheduled_end_at", "actual_check_in_at",
+  "actual_check_out_at", "late_minutes", "early_checkout_minutes",
+  "check_in_photo_path", "check_out_photo_path", "check_in_latitude",
+  "check_in_longitude", "check_in_accuracy_meters", "check_out_latitude",
+  "check_out_longitude", "check_out_accuracy_meters", "check_in_method",
+  "check_out_method", "notes", "created_by", "updated_by", "created_at", "updated_at"
+].join(", ");
+
+function mapAttendanceFromDb(row: any): Attendance {
+  return {
+    id: row.id,
+    staffId: row.staff_id,
+    branchId: row.branch_id,
+    date: row.date,
+    attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
+    scheduledStartAt: row.scheduled_start_at || "08:00",
+    scheduledEndAt: row.scheduled_end_at || "17:00",
+    actualCheckInAt: row.actual_check_in_at,
+    actualCheckOutAt: row.actual_check_out_at,
+    lateMinutes: row.late_minutes || 0,
+    earlyCheckoutMinutes: row.early_checkout_minutes || 0,
+    checkInPhotoPath: row.check_in_photo_path,
+    checkOutPhotoPath: row.check_out_photo_path,
+    checkInLatitude: row.check_in_latitude,
+    checkInLongitude: row.check_in_longitude,
+    checkInAccuracyMeters: row.check_in_accuracy_meters,
+    checkOutLatitude: row.check_out_latitude,
+    checkOutLongitude: row.check_out_longitude,
+    checkOutAccuracyMeters: row.check_out_accuracy_meters,
+    checkInMethod: row.check_in_method,
+    checkOutMethod: row.check_out_method,
+    notes: row.notes,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at || AppClock.nowISO(),
+    updatedAt: row.updated_at || AppClock.nowISO()
+  };
+}
 import { isBranchMatch } from "../utils/branchUtils";
 import { getOperationalDateString, getOperationalTimeString, toOperationalDateTime } from "../utils/dateUtils";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
@@ -197,7 +238,11 @@ export class SupabaseBranchRepository implements BranchRepository {
 
   async getBranches(currentUserRole?: UserRole, userBranchId?: string | null): Promise<DentalBranch[]> {
     ensureSupabaseConnected();
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && isValidUUID(userBranchId)) {
+    if (
+      [UserRole.BRANCH_ADMIN, UserRole.DOCTOR_ASSISTANT, UserRole.OB].includes(currentUserRole as UserRole) &&
+      userBranchId &&
+      isValidUUID(userBranchId)
+    ) {
       const { data, error } = await supabase
         .from("dental_branches")
         .select("*")
@@ -500,6 +545,9 @@ export class SupabaseBranchRepository implements BranchRepository {
       active: row.is_active ?? true,
       logoUrl: row.logo_url,
       imageUrl: row.image_url,
+      geofenceLatitude: row.geofence_latitude == null ? null : Number(row.geofence_latitude),
+      geofenceLongitude: row.geofence_longitude == null ? null : Number(row.geofence_longitude),
+      geofenceRadiusMeters: row.geofence_radius_meters == null ? null : Number(row.geofence_radius_meters),
       createdAt: row.created_at || AppClock.nowISO(),
       updatedAt: row.updated_at || AppClock.nowISO()
     };
@@ -6680,173 +6728,142 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
 // 23. SUPABASE ATTENDANCE REPOSITORY
 // =====================================================================
 export class SupabaseAttendanceRepository implements AttendanceRepository {
-  async getById(id: string): Promise<Attendance | null> {
+  async getById(id: string, _currentUserRole?: UserRole, _userBranchId?: string | null): Promise<Attendance | null> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendances").select("*").eq("id", id).maybeSingle();
+    const { data, error } = await supabase.from("attendances")
+      .select(attendanceSelectColumns)
+      .eq("id", id)
+      .maybeSingle();
     if (error) return handleSupabaseReadError("attendances", error, null);
-    if (!data) return null;
-    return {
-      id: data.id,
-      staffId: data.staff_id,
-      branchId: data.branch_id,
-      date: data.date,
-      attendanceStatus: data.attendance_status || AttendanceStatus.PRESENT,
-      scheduledStartAt: data.scheduled_start_at || "08:00",
-      scheduledEndAt: data.scheduled_end_at || "17:00",
-      actualCheckInAt: data.actual_check_in_at,
-      actualCheckOutAt: data.actual_check_out_at,
-      lateMinutes: data.late_minutes || 0,
-      earlyCheckoutMinutes: data.early_checkout_minutes || 0,
-      notes: data.notes,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at
-    };
+    return data ? mapAttendanceFromDb(data) : null;
   }
-  async getByStaff(staffId: string): Promise<Attendance[]> {
+  async getByStaff(staffId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendances").select("*").eq("staff_id", staffId);
+    let query = supabase.from("attendances").select(attendanceSelectColumns).eq("staff_id", staffId);
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+      query = query.eq("branch_id", userBranchId);
+    }
+    const { data, error } = await query.order("date", { ascending: false });
     if (error) return handleSupabaseReadError("attendances", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      branchId: row.branch_id,
-      date: row.date,
-      attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
-      scheduledStartAt: row.scheduled_start_at || "08:00",
-      scheduledEndAt: row.scheduled_end_at || "17:00",
-      actualCheckInAt: row.actual_check_in_at,
-      actualCheckOutAt: row.actual_check_out_at,
-      lateMinutes: row.late_minutes || 0,
-      earlyCheckoutMinutes: row.early_checkout_minutes || 0,
-      notes: row.notes,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    }));
+    return (data || []).map(mapAttendanceFromDb);
   }
-  async getByDate(date: string, branchId?: string): Promise<Attendance[]> {
+  async getByDate(
+    date: string,
+    branchId?: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("attendances").select("*").eq("date", date);
-    if (branchId) q = q.eq("branch_id", branchId);
+    let q = supabase.from("attendances").select(attendanceSelectColumns).eq("date", date);
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+      q = q.eq("branch_id", userBranchId);
+    } else if (branchId) {
+      q = q.eq("branch_id", branchId);
+    }
     const { data, error } = await q;
     if (error) return handleSupabaseReadError("attendances", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      branchId: row.branch_id,
-      date: row.date,
-      attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
-      scheduledStartAt: row.scheduled_start_at || "08:00",
-      scheduledEndAt: row.scheduled_end_at || "17:00",
-      actualCheckInAt: row.actual_check_in_at,
-      actualCheckOutAt: row.actual_check_out_at,
-      lateMinutes: row.late_minutes || 0,
-      earlyCheckoutMinutes: row.early_checkout_minutes || 0,
-      notes: row.notes,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    }));
+    return (data || []).map(mapAttendanceFromDb);
   }
-  async getByBranch(branchId: string): Promise<Attendance[]> {
+  async getByBranch(
+    branchId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendances").select("*").eq("branch_id", branchId);
+    let query = supabase.from("attendances").select(attendanceSelectColumns).eq("branch_id", branchId);
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+      query = query.eq("branch_id", userBranchId);
+    }
+    const { data, error } = await query.order("date", { ascending: false });
     if (error) return handleSupabaseReadError("attendances", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      branchId: row.branch_id,
-      date: row.date,
-      attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
-      scheduledStartAt: row.scheduled_start_at || "08:00",
-      scheduledEndAt: row.scheduled_end_at || "17:00",
-      actualCheckInAt: row.actual_check_in_at,
-      actualCheckOutAt: row.actual_check_out_at,
-      lateMinutes: row.late_minutes || 0,
-      earlyCheckoutMinutes: row.early_checkout_minutes || 0,
-      notes: row.notes,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    }));
+    return (data || []).map(mapAttendanceFromDb);
   }
-  async list(): Promise<Attendance[]> {
+  async list(
+    filter?: AttendanceFilter,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentStaffId?: string | null
+  ): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendances").select("*");
+    let query = supabase.from("attendances").select(attendanceSelectColumns);
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+      query = query.eq("branch_id", userBranchId);
+    } else if (filter?.branchId) {
+      query = query.eq("branch_id", filter.branchId);
+    }
+
+    if (
+      currentStaffId &&
+      [UserRole.DOCTOR, UserRole.DOCTOR_ASSISTANT, UserRole.OB].includes(currentUserRole as UserRole)
+    ) {
+      query = query.eq("staff_id", currentStaffId);
+    } else if (filter?.staffId) {
+      query = query.eq("staff_id", filter.staffId);
+    }
+    if (filter?.date) query = query.eq("date", filter.date);
+    if (filter?.dateRange?.startDate) query = query.gte("date", filter.dateRange.startDate);
+    if (filter?.dateRange?.endDate) query = query.lte("date", filter.dateRange.endDate);
+    if (filter?.attendanceStatus) query = query.eq("attendance_status", filter.attendanceStatus);
+
+    const { data, error } = await query.order("date", { ascending: false });
     if (error) return handleSupabaseReadError("attendances", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      branchId: row.branch_id,
-      date: row.date,
-      attendanceStatus: row.attendance_status || AttendanceStatus.PRESENT,
-      scheduledStartAt: row.scheduled_start_at || "08:00",
-      scheduledEndAt: row.scheduled_end_at || "17:00",
-      actualCheckInAt: row.actual_check_in_at,
-      actualCheckOutAt: row.actual_check_out_at,
-      lateMinutes: row.late_minutes || 0,
-      earlyCheckoutMinutes: row.early_checkout_minutes || 0,
-      notes: row.notes,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    }));
+    return (data || []).map(mapAttendanceFromDb);
   }
   async checkIn(input: CheckInInput): Promise<Attendance> {
     ensureSupabaseConnected();
-    const record: Attendance = {
-      id: `att-${Date.now()}`,
-      staffId: input.staffId,
-      branchId: input.branchId || "default-branch",
-      date: input.date || AppClock.todayDateString(),
-      attendanceStatus: AttendanceStatus.PRESENT,
-      scheduledStartAt: input.scheduledStartAt || "08:00",
-      scheduledEndAt: input.scheduledEndAt || "17:00",
-      actualCheckInAt: input.checkInTime || AppClock.nowISO(),
-      actualCheckOutAt: null,
-      lateMinutes: 0,
-      earlyCheckoutMinutes: 0,
-      notes: input.notes,
-      createdAt: AppClock.nowISO(),
-      updatedAt: AppClock.nowISO()
-    };
-    return record;
+    if (!input.branchId || input.latitude == null || input.longitude == null || input.accuracyMeters == null) {
+      throw new Error("Cabang dan data GPS yang valid wajib disertakan untuk check-in.");
+    }
+    const { data, error } = await supabase.rpc("record_staff_attendance_check_in", {
+      p_branch_id: input.branchId,
+      p_latitude: input.latitude,
+      p_longitude: input.longitude,
+      p_accuracy_meters: input.accuracyMeters,
+      p_photo_path: input.checkInPhotoPath ?? input.photoPath ?? null
+    });
+    if (error) throw new Error(`Gagal menyimpan check-in: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Supabase tidak mengembalikan catatan check-in yang tersimpan.");
+    return mapAttendanceFromDb(row);
   }
   async checkOut(input: CheckOutInput): Promise<Attendance> {
     ensureSupabaseConnected();
-    const record: Attendance = {
-      id: input.attendanceId || `att-${input.staffId}`,
-      staffId: input.staffId || "",
-      branchId: "default-branch",
-      date: input.date || AppClock.todayDateString(),
-      attendanceStatus: AttendanceStatus.PRESENT,
-      scheduledStartAt: "08:00",
-      scheduledEndAt: "17:00",
-      actualCheckInAt: AppClock.nowISO(),
-      actualCheckOutAt: input.checkOutTime || AppClock.nowISO(),
-      lateMinutes: 0,
-      earlyCheckoutMinutes: 0,
-      notes: input.notes,
-      createdAt: AppClock.nowISO(),
-      updatedAt: AppClock.nowISO()
-    };
-    return record;
+    if (
+      !input.attendanceId ||
+      !input.branchId ||
+      input.latitude == null ||
+      input.longitude == null ||
+      input.accuracyMeters == null
+    ) {
+      throw new Error("Catatan kehadiran dan data GPS yang valid wajib disertakan untuk check-out.");
+    }
+    const { data, error } = await supabase.rpc("record_staff_attendance_check_out", {
+      p_attendance_id: input.attendanceId,
+      p_branch_id: input.branchId,
+      p_latitude: input.latitude,
+      p_longitude: input.longitude,
+      p_accuracy_meters: input.accuracyMeters,
+      p_photo_path: input.checkOutPhotoPath ?? input.photoPath ?? null
+    });
+    if (error) throw new Error(`Gagal menyimpan check-out: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Supabase tidak mengembalikan catatan check-out yang tersimpan.");
+    return mapAttendanceFromDb(row);
   }
   async createAbsence(input: CreateAbsenceInput): Promise<Attendance> {
     ensureSupabaseConnected();
-    const record: Attendance = {
-      id: `att-abs-${Date.now()}`,
-      staffId: input.staffId,
-      branchId: input.branchId || "default-branch",
-      date: input.date,
-      attendanceStatus: input.attendanceStatus,
-      scheduledStartAt: input.scheduledStartAt || "08:00",
-      scheduledEndAt: input.scheduledEndAt || "17:00",
-      actualCheckInAt: null,
-      actualCheckOutAt: null,
-      lateMinutes: 0,
-      earlyCheckoutMinutes: 0,
-      notes: input.notes,
-      createdAt: AppClock.nowISO(),
-      updatedAt: AppClock.nowISO()
-    };
-    return record;
+    if (!input.branchId) throw new Error("Cabang wajib dipilih untuk mencatat ketidakhadiran.");
+    const { data, error } = await supabase.rpc("record_staff_absence", {
+      p_staff_id: input.staffId,
+      p_branch_id: input.branchId,
+      p_date: input.date,
+      p_attendance_status: input.attendanceStatus,
+      p_notes: input.notes || null
+    });
+    if (error) throw new Error(`Gagal menyimpan ketidakhadiran: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Supabase tidak mengembalikan catatan ketidakhadiran yang tersimpan.");
+    return mapAttendanceFromDb(row);
   }
 }
 

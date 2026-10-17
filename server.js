@@ -145,12 +145,12 @@ app.post('/api/staff', async (req, res) => {
       return res.status(400).json({ message: 'Password minimal harus 6 karakter.' });
     }
 
-    const allowedRoles = ['BRANCH_ADMIN', 'DOCTOR', 'DOCTOR_ASSISTANT'];
+    const allowedRoles = ['BRANCH_ADMIN', 'DOCTOR', 'DOCTOR_ASSISTANT', 'OB'];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: `Role ${role} tidak diizinkan untuk pembuatan akun staf.` });
     }
 
-    if ((role === 'BRANCH_ADMIN' || role === 'DOCTOR_ASSISTANT') && !branchId) {
+    if ((role === 'BRANCH_ADMIN' || role === 'DOCTOR_ASSISTANT' || role === 'OB') && !branchId) {
       return res.status(400).json({ message: `Cabang penempatan wajib dipilih untuk role ${role}.` });
     }
 

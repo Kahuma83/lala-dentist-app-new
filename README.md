@@ -16,6 +16,7 @@ Prerequisite: Node.js dan akses ke project Supabase.
 
    - `VITE_SUPABASE_URL`: Project URL dari Supabase **Project Settings → API**.
    - `VITE_SUPABASE_ANON_KEY`: publishable/anon key dari Supabase.
+   - `VITE_ATTENDANCE_PORTAL_URL`: URL portal absensi untuk mengarahkan akun OB dari login utama; gunakan `https://absensi.laladentist.id`.
    - `SUPABASE_SERVICE_ROLE_KEY`: diperlukan oleh `server.js` untuk pencarian username sebelum login staf dan pembuatan akun login. Jangan beri nama `VITE_*` dan jangan masukkan ke kode browser.
 
    Untuk Cloudflare Pages, atur `SUPABASE_URL` sebagai variable dan `SUPABASE_SECRET_KEY` sebagai secret server-side pada **Settings → Variables and Secrets** untuk Production (dan Preview bila diperlukan). Gunakan Secret API key baru Supabase (`sb_secret_...`) untuk Pages Function `functions/api/auth/lookup-user.js`; function mengirim key tersebut hanya melalui header `apikey`. `SUPABASE_SERVICE_ROLE_KEY` masih didukung sebagai opsi kompatibilitas untuk key legacy. Jangan gunakan prefix `VITE_` pada secret apa pun.
@@ -41,6 +42,12 @@ Prerequisite: Node.js dan akses ke project Supabase.
    Portal pasien memiliki dashboard responsif dan aset PWA tersendiri. Hostname `pasien.laladentist.id` otomatis membuka pengalaman pasien. Untuk hostname lain, atur `VITE_PATIENT_PORTAL_HOST` pada konfigurasi build/deployment. Daftarkan domain HTTPS portal dan callback `/patient/login?type=signup-confirmed` di Supabase Auth Redirect URLs. Manifest dan service worker hanya diaktifkan pada hostname portal yang dipilih; service worker tidak menyimpan respons API, sesi, atau data pasien offline.
 
    Untuk mengurangi transfer data, portal pasien hanya memuat data cabang, dokter, janji temu, kunjungan, antrean, invoice, dan pembayaran milik pasien, serta branding yang dibutuhkan. Sinkronisasi realtime mengelompokkan perubahan selama 500 ms dan menyegarkan cache tabel yang berubah, bukan seluruh data operasional.
+
+   Sebelum menggunakan portal absensi, terapkan migration `20261114000000_secure_self_service_attendance.sql` setelah migration lain yang tersedia. Migration ini menambahkan geofence 100 m untuk Gebang, Ambulu, Lengkong Mumbul, dan Kencong, menyimpan bukti foto pada bucket privat, serta mengaktifkan RPC absensi mandiri dan role login OB. Kampus dan Muktisari belum memiliki koordinat geofence; konfigurasi koordinatnya sebelum absensi di cabang tersebut digunakan. Pastikan jadwal dokter atau shift staf untuk tanggal kerja telah dibuat.
+
+   Untuk retensi foto terbaru, terapkan juga `20261115000000_attendance_latest_photo_retention.sql`. Portal akan mempertahankan satu foto terbaru per staf untuk unggahan setelah perubahan ini, menghapus file foto sebelumnya, dan mengosongkan referensi foto lama tanpa menghapus data absensinya. Foto yang sudah tersimpan sebelum kebijakan ini tidak dihapus massal.
+
+   Portal absensi staf memiliki frontend dan deployment terpisah agar aplikasi klinik tidak perlu memuat halaman absensi ponsel. Buat Cloudflare Pages project kedua dari repository yang sama, gunakan root directory repository, build command `npm run build:attendance`, dan output directory `dist-attendance-portal`. Atur build variables `VITE_SUPABASE_URL` dan `VITE_SUPABASE_ANON_KEY` seperti aplikasi utama, serta server-side `SUPABASE_URL` dan secret `SUPABASE_SECRET_KEY` agar Pages Function `/api/auth/lookup-user` dapat menangani login username staf. Pasang custom domain `absensi.laladentist.id` pada project tersebut. Untuk mengarahkan login OB dari project aplikasi utama, atur `VITE_ATTENDANCE_PORTAL_URL=https://absensi.laladentist.id` pada build project utama. Portal memerlukan HTTPS untuk akses kamera dan GPS; PWA tidak menyimpan absensi atau respons API secara offline. Jalankan `npm run dev:attendance` untuk pengembangan lokal di port `3002`.
 
 4. Di Supabase Dashboard, pastikan Realtime aktif dan policies RLS pada tabel memberikan akses yang sesuai. Perubahan Realtime hanya dikirim kepada user yang berhak membaca baris berdasarkan policies tersebut.
 

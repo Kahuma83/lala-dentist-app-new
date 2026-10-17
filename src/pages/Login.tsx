@@ -83,6 +83,9 @@ export const Login: React.FC = () => {
       case UserRole.DOCTOR_ASSISTANT:
         navigate("/assistant/queue");
         break;
+      case UserRole.OB:
+        window.location.assign(import.meta.env.VITE_ATTENDANCE_PORTAL_URL || "https://absensi.laladentist.id");
+        break;
       case UserRole.PATIENT:
         navigate("/patient/queue");
         break;

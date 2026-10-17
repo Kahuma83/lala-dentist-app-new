@@ -8,6 +8,8 @@
     "dev:client": "vite --port=3000 --host=0.0.0.0",
     "dev:server": "node server.js",
     "build": "vite build",
+    "build:attendance": "vite build --config vite.attendance.config.ts",
+    "dev:attendance": "concurrently -k \"npm run dev:server\" \"vite --config vite.attendance.config.ts\"",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",

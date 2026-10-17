@@ -917,14 +917,14 @@ export class AuthService {
     }
 
     // Role validation: Staff roles allowed
-    const allowedRoles = [UserRole.BRANCH_ADMIN, UserRole.DOCTOR, UserRole.DOCTOR_ASSISTANT];
+    const allowedRoles = [UserRole.BRANCH_ADMIN, UserRole.DOCTOR, UserRole.DOCTOR_ASSISTANT, UserRole.OB];
     if (!allowedRoles.includes(params.role)) {
       throw new Error(`Role ${params.role} tidak diizinkan untuk pembuatan akun staf`);
     }
 
     // Branch assignment validation
     if (
-      (params.role === UserRole.BRANCH_ADMIN || params.role === UserRole.DOCTOR_ASSISTANT) &&
+      (params.role === UserRole.BRANCH_ADMIN || params.role === UserRole.DOCTOR_ASSISTANT || params.role === UserRole.OB) &&
       !params.branchId
     ) {
       throw new Error(`Cabang penempatan wajib dipilih untuk role ${params.role}`);

@@ -12,6 +12,7 @@ export enum UserRole {
   BRANCH_ADMIN = "BRANCH_ADMIN",
   DOCTOR = "DOCTOR",
   DOCTOR_ASSISTANT = "DOCTOR_ASSISTANT",
+  OB = "OB",
   PATIENT = "PATIENT"
 }
 
@@ -261,6 +262,9 @@ export interface DentalBranch {
   operationalHours?: string; // e.g. "Senin-Sabtu: 08.00-21.00, Minggu: 08.00-17.00"
   logoUrl?: string | null;
   imageUrl?: string | null;
+  geofenceLatitude?: number | null;
+  geofenceLongitude?: number | null;
+  geofenceRadiusMeters?: number | null;
   isActive: boolean;
   active?: boolean;
   createdAt: string;
@@ -397,6 +401,12 @@ export interface Attendance {
   earlyCheckoutMinutes: number;
   checkInPhotoPath?: string | null;
   checkOutPhotoPath?: string | null;
+  checkInLatitude?: number | null;
+  checkInLongitude?: number | null;
+  checkInAccuracyMeters?: number | null;
+  checkOutLatitude?: number | null;
+  checkOutLongitude?: number | null;
+  checkOutAccuracyMeters?: number | null;
   checkInMethod?: AttendanceMethod;
   checkOutMethod?: AttendanceMethod | null;
   notes?: string;

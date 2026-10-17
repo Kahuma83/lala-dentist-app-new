@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Absensi Klinik Lala Dentist",
+  "short_name": "Absensi Klinik",
+  "description": "Absensi staf Klinik Lala Dentist",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f8f6",
+  "theme_color": "#047857",
+  "icons": [
+    {
+      "src": "/clinic-logo.jpg",
+      "sizes": "768x768",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}
