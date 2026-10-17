@@ -5438,7 +5438,10 @@ export class SupabaseCompensationRepository implements CompensationRepository {
 
     const { data: created, error: createError } = await supabase
       .from("compensation_accruals")
-      .insert(payload)
+      .upsert(payload, {
+        onConflict: "source_id,staff_id,rule_id_snapshot",
+        ignoreDuplicates: true
+      })
       .select("*");
     if (createError) throw new Error(`Gagal mencatat akrual kompensasi: ${createError.message}`);
     return (created || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
