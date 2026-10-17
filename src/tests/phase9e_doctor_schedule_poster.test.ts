@@ -60,6 +60,21 @@ describe("PHASE 9E — Multi-Branch Doctor Schedule Poster Tests", () => {
     expect(filtered.every((s) => s.date === targetDate)).toBe(true);
   });
 
+  it("3a. Date range filter should return only schedules within the requested week", async () => {
+    const allSchedules = await scheduleRepo.getSchedules({});
+    const dates = [...new Set(allSchedules.map((schedule) => schedule.date))].sort();
+    const targetDate = dates[Math.floor(dates.length / 2)];
+    const rangedSchedules = await scheduleRepo.getSchedules({
+      dateFrom: targetDate,
+      dateTo: targetDate
+    });
+    const singleDateSchedules = await scheduleRepo.getSchedules({ date: targetDate });
+
+    expect(rangedSchedules.map((schedule) => schedule.id).sort())
+      .toEqual(singleDateSchedules.map((schedule) => schedule.id).sort());
+    expect(rangedSchedules.every((schedule) => schedule.date === targetDate)).toBe(true);
+  });
+
   // 4. "All Branches" filter works
   it("4. Filter 'ALL' should retain all branches in the poster dataset", async () => {
     const branches = await branchRepo.getBranches();

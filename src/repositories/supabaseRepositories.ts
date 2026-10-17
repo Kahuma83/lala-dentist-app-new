@@ -4815,6 +4815,8 @@ export class SupabaseDoctorScheduleRepository implements DoctorScheduleRepositor
       }
       if (filter?.doctorId && isValidUUID(filter.doctorId)) q = q.eq("doctor_id", filter.doctorId);
       if (filter?.date) q = q.eq("date", filter.date);
+      if (filter?.dateFrom) q = q.gte("date", filter.dateFrom);
+      if (filter?.dateTo) q = q.lte("date", filter.dateTo);
       if (filter?.status) q = q.eq("status", filter.status);
 
       const { data, error } = await q;

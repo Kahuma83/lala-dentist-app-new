@@ -60,6 +60,7 @@ interface DoctorExcelScheduleGridProps {
   onCopyWeekToNextWeek?: (schedules: DoctorSchedule[]) => Promise<void>;
   isCopyingSchedules?: boolean;
   onOpenPosterModal?: () => void;
+  onVisibleWeekChange?: (dateFrom: string, dateTo: string) => void;
 }
 
 export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = ({
@@ -74,7 +75,8 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
   onCopySchedules,
   onCopyWeekToNextWeek,
   isCopyingSchedules = false,
-  onOpenPosterModal
+  onOpenPosterModal,
+  onVisibleWeekChange
 }) => {
   const isSuper = currentUser?.role === UserRole.SUPER_ADMIN;
 
@@ -161,6 +163,12 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
     const year = new Date(currentWeekMonday).getFullYear();
     return `${first.formattedDate} - ${last.formattedDate} ${year}`;
   }, [weekDays, currentWeekMonday]);
+
+  React.useEffect(() => {
+    if (weekDays.length === 7) {
+      onVisibleWeekChange?.(weekDays[0].dateStr, weekDays[6].dateStr);
+    }
+  }, [weekDays, onVisibleWeekChange]);
 
   const activeSchedulesForCurrentWeek = useMemo(() => {
     const visibleDates = new Set(weekDays.map((day) => day.dateStr));

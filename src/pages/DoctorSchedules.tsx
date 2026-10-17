@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useApp } from "../context/AppContext";
 import { DoctorExcelScheduleGrid } from "../components/DoctorExcelScheduleGrid";
 import type { ScheduleCopyOperation, ScheduleCopySummary } from "../components/DoctorExcelScheduleGrid";
@@ -22,6 +22,17 @@ import {
   ScheduleStatus,
   UserRole
 } from "../types/domain";
+import { formatCalendarDate } from "../utils/dateUtils";
+
+const getWeekRange = (anchor: Date) => {
+  const monday = new Date(anchor);
+  const day = monday.getDay();
+  monday.setDate(monday.getDate() - day + (day === 0 ? -6 : 1));
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(sunday.getDate() + 6);
+  return { dateFrom: formatCalendarDate(monday), dateTo: formatCalendarDate(sunday) };
+};
 
 
 export const DoctorSchedules: React.FC = () => {
@@ -30,9 +41,9 @@ export const DoctorSchedules: React.FC = () => {
     selectedBranchId,
     branches,
     doctors,
-    doctorSchedules,
     doctorScheduleRepo,
-    refreshData
+    refreshData,
+    realtimeSyncStatus
   } = useApp();
 
   const isSuper = currentUser?.role === UserRole.SUPER_ADMIN;
@@ -68,6 +79,51 @@ export const DoctorSchedules: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [isCopyingWeek, setIsCopyingWeek] = useState(false);
+  const [visibleWeekRange, setVisibleWeekRange] = useState(() => getWeekRange(new Date()));
+  const [visibleSchedules, setVisibleSchedules] = useState<DoctorSchedule[]>([]);
+
+  const loadVisibleSchedules = useCallback(async () => {
+    const schedules = await doctorScheduleRepo.getSchedules(
+      visibleWeekRange,
+      currentUser?.role,
+      userBranchId,
+      currentUser?.doctorId
+    );
+    setVisibleSchedules(schedules);
+  }, [doctorScheduleRepo, visibleWeekRange, currentUser?.role, currentUser?.doctorId, userBranchId]);
+
+  useEffect(() => {
+    let active = true;
+    doctorScheduleRepo.getSchedules(
+      visibleWeekRange,
+      currentUser?.role,
+      userBranchId,
+      currentUser?.doctorId
+    ).then((schedules) => {
+      if (active) setVisibleSchedules(schedules);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      showToast(error instanceof Error ? error.message : "Gagal memuat jadwal minggu ini.", "error");
+    });
+    return () => {
+      active = false;
+    };
+  }, [doctorScheduleRepo, visibleWeekRange, currentUser?.role, currentUser?.doctorId, userBranchId]);
+
+  useEffect(() => {
+    if (realtimeSyncStatus.lastEventTable !== "doctor_schedules") return;
+    void loadVisibleSchedules().catch((error: unknown) => {
+      showToast(error instanceof Error ? error.message : "Gagal memperbarui jadwal terbaru.", "error");
+    });
+  }, [realtimeSyncStatus.lastEventAt, realtimeSyncStatus.lastEventTable, loadVisibleSchedules]);
+
+  const handleVisibleWeekChange = useCallback((dateFrom: string, dateTo: string) => {
+    setVisibleWeekRange((current) =>
+      current.dateFrom === dateFrom && current.dateTo === dateTo
+        ? current
+        : { dateFrom, dateTo }
+    );
+  }, []);
 
   // Handlers for Schedule Actions
   const handleScheduleCreate = async (data: {
@@ -92,7 +148,8 @@ export const DoctorSchedules: React.FC = () => {
         currentUser?.role,
         userBranchId
       );
-      await refreshData();
+      await refreshData("doctor_schedules");
+      await loadVisibleSchedules();
       showToast("Jadwal dokter berhasil disimpan!");
     } catch (err: any) {
       showToast(err.message || "Gagal menyimpan jadwal", "error");
@@ -108,7 +165,8 @@ export const DoctorSchedules: React.FC = () => {
         currentUser?.role,
         userBranchId
       );
-      await refreshData();
+      await refreshData("doctor_schedules");
+      await loadVisibleSchedules();
       showToast("Jadwal dokter berhasil diperbarui!");
     } catch (err: any) {
       showToast(err.message || "Gagal memperbarui jadwal", "error");
@@ -123,7 +181,8 @@ export const DoctorSchedules: React.FC = () => {
         currentUser?.role,
         userBranchId
       );
-      await refreshData();
+      await refreshData("doctor_schedules");
+      await loadVisibleSchedules();
       showToast("Jadwal dokter berhasil dibatalkan");
     } catch (err: any) {
       showToast(err.message || "Gagal membatalkan jadwal", "error");
@@ -144,12 +203,12 @@ export const DoctorSchedules: React.FC = () => {
 
     try {
       const refreshedSchedules = await doctorScheduleRepo.getSchedules(
-        undefined,
+        visibleWeekRange,
         currentUser?.role,
         userBranchId
       );
       const scheduleById = new Map(refreshedSchedules.map((schedule) => [schedule.id, schedule]));
-      doctorSchedules.forEach((schedule) => {
+      visibleSchedules.forEach((schedule) => {
         if (!scheduleById.has(schedule.id)) scheduleById.set(schedule.id, schedule);
       });
       const workingSchedules = [...scheduleById.values()];
@@ -215,7 +274,8 @@ export const DoctorSchedules: React.FC = () => {
 
       if (created > 0 || updated > 0) {
         try {
-          await refreshData();
+          await refreshData("doctor_schedules");
+          await loadVisibleSchedules();
         } catch (error) {
           errors.push(`Jadwal tersimpan, tetapi tampilan gagal diperbarui: ${error instanceof Error ? error.message : "Gagal memuat ulang data"}`);
         }
@@ -362,7 +422,7 @@ export const DoctorSchedules: React.FC = () => {
       <DoctorExcelScheduleGrid
         doctors={effectiveDoctors}
         branches={branches}
-        schedules={doctorSchedules}
+        schedules={visibleSchedules}
         currentUser={currentUser}
         selectedBranchId={userBranchId}
         onScheduleCreate={handleScheduleCreate}
@@ -372,6 +432,7 @@ export const DoctorSchedules: React.FC = () => {
         onCopyWeekToNextWeek={isSuper ? handleCopyWeekToNextWeek : undefined}
         isCopyingSchedules={isCopyingWeek}
         onOpenPosterModal={isSuper ? () => setIsPosterModalOpen(true) : undefined}
+        onVisibleWeekChange={handleVisibleWeekChange}
       />
 
       {/* 4. Manual Quick Add Schedule Modal */}

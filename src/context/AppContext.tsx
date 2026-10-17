@@ -61,6 +61,7 @@ import { AccountingPostingService } from "../services/accountingPostingService";
 import { isSupabaseConfigured } from "../lib/supabase";
 import { AuthService } from "../services/authService";
 import { useRealtimeSync, RealtimeSyncStatus } from "../hooks/useRealtimeSync";
+import { getOperationalDateString } from "../utils/dateUtils";
 
 // Initialize repositories using Repository Factory
 const suite = createRepositorySuite();
@@ -444,6 +445,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshData = async (changedTable?: string) => {
     const userRole = currentUser?.role;
     const currentPatientId = currentUser?.patientId;
+    const today = getOperationalDateString(new Date().toISOString());
     const userBranchId = currentUser && (
       currentUser.role === UserRole.BRANCH_ADMIN ||
       currentUser.role === UserRole.DOCTOR_ASSISTANT ||
@@ -586,7 +588,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setDoctors(await doctorRepo.getDoctors(userRole, userBranchId));
             return;
           case "doctor_schedules":
-            setDoctorSchedules(await doctorScheduleRepo.getSchedules(undefined, userRole, userBranchId, currentUser?.doctorId));
+            setDoctorSchedules(await doctorScheduleRepo.getSchedules(
+              { date: today },
+              userRole,
+              userBranchId,
+              currentUser?.doctorId
+            ));
             return;
           case "work_shifts":
             setWorkShifts(await workShiftRepo.getShifts());
@@ -664,7 +671,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         patientRepo.getPatients(userRole, userBranchId),
         doctorRepo.getDoctors(),
         staffRepo.getStaff(),
-        doctorScheduleRepo.getSchedules(),
+        doctorScheduleRepo.getSchedules(
+          { date: today },
+          userRole,
+          userBranchId,
+          currentUser?.doctorId
+        ),
         workShiftRepo.getShifts(),
         staffShiftRepo.getAssignments(),
         doctorRepo.getDoctorBranchAssignments(),

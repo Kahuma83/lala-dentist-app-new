@@ -208,6 +208,8 @@ export interface DoctorRepository {
 
 export interface ScheduleFilter {
   date?: string;
+  dateFrom?: string;
+  dateTo?: string;
   branchId?: string;
   doctorId?: string;
   status?: ScheduleStatus;

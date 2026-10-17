@@ -1277,6 +1277,8 @@ export class MockDoctorScheduleRepository implements DoctorScheduleRepository {
         }
 
         if (filter?.date && s.date !== filter.date) return false;
+        if (filter?.dateFrom && s.date < filter.dateFrom) return false;
+        if (filter?.dateTo && s.date > filter.dateTo) return false;
         if (filter?.branchId && !isBranchMatch(s.branchId, filter.branchId, db.branches)) return false;
         if (filter?.doctorId && s.doctorId !== filter.doctorId) return false;
         if (filter?.status && s.status !== filter.status) return false;

@@ -4,6 +4,7 @@ import {
   Booking,
   BookingStatus,
   BookingSource,
+  ScheduleStatus,
   UserRole,
   PatientProfile,
   DentalDoctor,
@@ -49,7 +50,7 @@ import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapsho
 import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
 
 export const BookingManagement: React.FC = () => {
-  const { repos, currentUser, selectedBranchId, branches, patients, doctorSchedules } = useApp();
+  const { repos, currentUser, selectedBranchId, branches, patients } = useApp();
   const { navigate } = useRouter();
 
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -96,18 +97,16 @@ export const BookingManagement: React.FC = () => {
         ),
         repos.doctor.getDoctors(),
         repos.queue.getQueueItems(),
-        repos.visit.getVisits(),
-        repos.doctorSchedule.getSchedules()
+        repos.visit.getVisits()
       ]);
 
-      const [bkRes, docRes, qRes, visRes, schedRes] = results;
+      const [bkRes, docRes, qRes, visRes] = results;
       if (bkRes.status === "fulfilled") setBookings(bkRes.value);
       if (docRes.status === "fulfilled") {
         setDoctorsList(docRes.value);
       }
       if (qRes.status === "fulfilled") setQueueItems(qRes.value);
       if (visRes.status === "fulfilled") setVisits(visRes.value);
-      if (schedRes && schedRes.status === "fulfilled") setSchedulesList(schedRes.value);
     } catch (err: any) {
       console.error("Error loading bookings:", err);
     } finally {
@@ -119,11 +118,41 @@ export const BookingManagement: React.FC = () => {
     loadData();
   }, [effectiveBranchId]);
 
-  // Combined doctor schedules (from direct fetch or AppContext)
-  const allSchedules = useMemo(() => {
-    if (schedulesList.length > 0) return schedulesList;
-    return doctorSchedules || [];
-  }, [schedulesList, doctorSchedules]);
+  useEffect(() => {
+    let active = true;
+    if (!isModalOpen || !formBranchId || !formDate) {
+      setSchedulesList([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    setSchedulesList([]);
+    repos.doctorSchedule.getSchedules(
+      { branchId: formBranchId, date: formDate, status: ScheduleStatus.ACTIVE },
+      currentUser?.role,
+      currentUser?.assignedBranchId,
+      currentUser?.doctorId
+    ).then((schedules) => {
+      if (active) setSchedulesList(schedules);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      console.error("Gagal memuat jadwal dokter untuk booking:", error);
+      setFormError(error instanceof Error ? error.message : "Gagal memuat jadwal dokter.");
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    isModalOpen,
+    formBranchId,
+    formDate,
+    repos.doctorSchedule,
+    currentUser?.role,
+    currentUser?.assignedBranchId,
+    currentUser?.doctorId
+  ]);
 
   // Set default form branch with flexible branch matching for Branch Admin
   useEffect(() => {
@@ -138,10 +167,10 @@ export const BookingManagement: React.FC = () => {
   // Active schedules flexibly filtered by selected branch, date, and status ACTIVE
   const activeSchedulesForBranchAndDate = useMemo(() => {
     if (!formBranchId || !formDate) return [];
-    return allSchedules.filter(
+    return schedulesList.filter(
       (s) => isBranchMatch(s.branchId, formBranchId, branches) && s.date === formDate && s.status === "ACTIVE"
     );
-  }, [allSchedules, formBranchId, formDate, branches]);
+  }, [schedulesList, formBranchId, formDate, branches]);
 
   const hasScheduleForBranchAndDate = activeSchedulesForBranchAndDate.length > 0;
 

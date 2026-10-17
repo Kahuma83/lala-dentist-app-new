@@ -25,6 +25,7 @@ export interface RealtimeSyncStatus {
   isConnected: boolean;
   channelName: string | null;
   lastEventAt: string | null;
+  lastEventTable: string | null;
   error: string | null;
 }
 
@@ -33,6 +34,7 @@ export function useRealtimeSync(options: RealtimeSyncOptions = {}): RealtimeSync
     isConnected: false,
     channelName: null,
     lastEventAt: null,
+    lastEventTable: null,
     error: null
   });
 
@@ -64,7 +66,8 @@ export function useRealtimeSync(options: RealtimeSyncOptions = {}): RealtimeSync
 
       setStatus((prev) => ({
         ...prev,
-        lastEventAt: new Date().toISOString()
+        lastEventAt: new Date().toISOString(),
+        lastEventTable: table
       }));
 
       // Trigger table-specific handlers
@@ -107,6 +110,7 @@ export function useRealtimeSync(options: RealtimeSyncOptions = {}): RealtimeSync
         isConnected: false,
         channelName: null,
         lastEventAt: null,
+        lastEventTable: null,
         error: null
       });
       return;
@@ -172,6 +176,7 @@ export function useRealtimeSync(options: RealtimeSyncOptions = {}): RealtimeSync
             isConnected: true,
             channelName,
             lastEventAt: new Date().toISOString(),
+            lastEventTable: null,
             error: null
           });
         } else if (statusResult === "CHANNEL_ERROR" || statusResult === "TIMED_OUT") {
@@ -195,6 +200,7 @@ export function useRealtimeSync(options: RealtimeSyncOptions = {}): RealtimeSync
         isConnected: false,
         channelName,
         lastEventAt: null,
+        lastEventTable: null,
         error: err?.message || "Gagal menginisialisasi subscription realtime."
       });
     }
