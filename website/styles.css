@@ -210,22 +210,29 @@ h2 span { color: #bc861a; }
   .nav-portal { justify-content: center; margin-top: 12px; }
   .hero {
     min-height: 0;
-    padding: 35px 0 245px;
-    background-image: url("/assets/patient-app-hero.jpg");
-    background-position: right bottom;
-    background-size: auto 250px;
+    padding: 35px 0 0;
+    background-color: #f7fcfa;
+    background-image:
+      radial-gradient(ellipse at 92% 74%, rgba(32,183,165,.12), transparent 35%),
+      linear-gradient(180deg, #f7fcfa 0%, rgba(247,252,250,.97) 60%, rgba(247,252,250,.12) 100%);
+    background-position: center;
   }
-  .hero__inner { min-height: 0; }
-  .hero__copy { max-width: 100%; }
-  .hero h1 { max-width: 430px; margin: 17px 0 12px; font-size: clamp(41px, 11vw, 56px); }
-  .hero__text { max-width: 420px; font-size: 11px; }
-  .hero-benefits { gap: 12px; margin-top: 18px; }
-  .hero-benefits li { gap: 10px; }
-  .hero-benefits strong { font-size: 10px; }
-  .hero-benefits small { font-size: 8px; }
-  .hero__actions { gap: 8px; margin-top: 18px; }
-  .hero__install-note { font-size: 7px; }
+  .hero__inner { min-height: 0; flex-direction: column; align-items: stretch; }
+  .hero__copy { max-width: 100%; padding-bottom: 0; }
+  .hero h1 { max-width: 390px; margin: 17px 0 12px; font-size: clamp(28px, 6.7vw, 34px); line-height: 1.1; letter-spacing: -.06em; }
+  .hero h1 span { max-width: 12ch; }
+  .hero__text { max-width: 460px; font-size: 12px; line-height: 1.65; }
+  .hero-benefits { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin-top: 17px; }
+  .hero-benefits li { align-items: flex-start; gap: 8px; }
+  .hero-benefits li > span:first-child { flex-basis: 27px; width: 27px; height: 27px; }
+  .hero-benefits strong { font-size: 9px; line-height: 1.4; }
+  .hero-benefits small { font-size: 8px; line-height: 1.45; }
+  .hero__actions { display: grid; grid-template-columns: 1fr; gap: 7px; margin-top: 17px; }
+  .hero__actions .button { width: 100%; }
+  .hero__actions .button--secondary { min-height: 36px; border: 0; background: transparent; color: #526a66; }
+  .hero__install-note { max-width: 360px; margin: 4px 0 0; font-size: 8px; }
   .button { min-height: 44px; padding: 0 14px; font-size: 10px; }
+  .hero__inner::after { display: block; height: clamp(175px, 53vw, 230px); margin: 8px calc((100vw - 100%) / -2) 0; background: url("/assets/patient-app-hero.jpg") 64% 54% / cover no-repeat; content: ""; }
   .ticker { padding: 12px 0; }
   .ticker__track span { font-size: 8px; }
   .ticker i { margin: 0 15px; font-size: 11px; }
@@ -269,7 +276,16 @@ h2 span { color: #bc861a; }
   .brand--footer .brand__tagline { text-align: left; }
   .footer__links { flex-wrap: wrap; gap: 17px; padding-top: 5px; }
   .footer__bottom { gap: 12px; font-size: 7px; }
-  .whatsapp-float { right: 13px; bottom: 13px; min-height: 45px; padding-right: 14px; padding-left: 11px; font-size: 10px; }
+  .whatsapp-float { right: 13px; bottom: calc(13px + env(safe-area-inset-bottom)); min-height: 42px; padding-right: 13px; padding-left: 10px; font-size: 9px; }
+}
+
+@media (max-width: 380px) {
+  .hero-benefits { grid-template-columns: 1fr; gap: 9px; }
+  .hero-benefits li { align-items: center; }
+  .hero-benefits small { font-size: 8px; }
+  .hero__inner::after { height: 175px; }
+  .whatsapp-float { width: 42px; height: 42px; min-height: 42px; justify-content: center; padding: 0; }
+  .whatsapp-float span { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -422,11 +438,18 @@ h2 span { color: #078f87; }
 @media (max-width: 680px) {
   .nav-links { background: #fbfefd; }
   .hero {
+    background-color: #f4fbf9;
     background-image:
       radial-gradient(ellipse at 5% 100%, rgba(24,184,166,.18), transparent 36%),
-      linear-gradient(180deg, rgba(248,255,253,.98) 0%, rgba(248,255,253,.94) 58%, rgba(248,255,253,.12) 100%),
-      url("/assets/patient-app-hero.jpg");
-    background-position: center, center, right bottom;
+      linear-gradient(180deg, rgba(248,255,253,.98) 0%, rgba(248,255,253,.94) 58%, rgba(248,255,253,.12) 100%);
+    background-position: center;
+  }
+  .hero__text { text-align: justify; text-justify: inter-word; }
+  .hero__inner::after {
+    background-color: #f4fbf9;
+    background-blend-mode: multiply;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 88%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 88%, transparent 100%);
   }
   .hero::before { top: auto; bottom: 100px; left: -275px; width: 380px; height: 380px; }
 }
