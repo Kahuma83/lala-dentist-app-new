@@ -60,7 +60,7 @@ const defaultSettings: WebsiteSettings = {
   hero_description: "",
   hero_image_url: "",
   hero_button_text: "Unduh aplikasi",
-  hero_button_url: "https://pasien.laladentist.id/?install=1"
+  hero_button_url: "https://pasien.laladentist.id/patient-install.html"
 };
 
 const emptyPromotion = {
@@ -331,8 +331,8 @@ export const WebsiteContentManagement: React.FC = () => {
                   <label className={labelClass}>Teks tombol
                     <input className={inputClass} value={settings.hero_button_text} onChange={(event) => setSettings({ ...settings, hero_button_text: event.target.value })} maxLength={40} required />
                   </label>
-                  <label className={labelClass}>Tautan tombol
-                    <input className={inputClass} type="url" value={settings.hero_button_url} onChange={(event) => setSettings({ ...settings, hero_button_url: event.target.value })} required />
+                  <label className={labelClass}>Tautan tombol pemasangan
+                    <input className={inputClass} type="url" value="https://pasien.laladentist.id/patient-install.html" readOnly />
                   </label>
                 </div>
                 <button disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-60"><Save className="h-4 w-4" />Simpan hero</button>

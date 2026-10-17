@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4fbf9" />
+    <meta name="description" content="Pasang Laladentist di perangkat Anda." />
+    <link rel="icon" href="/logo-lala.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/patient.webmanifest" />
+    <title>Pasang Laladentist</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "DM Sans", "Segoe UI", Arial, sans-serif;
+        color: #173d35;
+        background: #f4fbf9;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      * { box-sizing: border-box; }
+      body { min-width: 280px; min-height: 100vh; min-height: 100svh; margin: 0; }
+      main { display: grid; min-height: 100vh; min-height: 100svh; place-items: center; padding: 24px; }
+      .install-panel { width: min(100%, 360px); text-align: center; }
+      .logo { display: block; width: 88px; height: 88px; margin: 0 auto 22px; border-radius: 24px; background: white; object-fit: contain; box-shadow: 0 12px 32px rgba(13, 91, 79, .1); }
+      h1 { margin: 0; color: #173d35; font-size: 26px; font-weight: 800; letter-spacing: -.05em; }
+      p { margin: 10px 0 24px; color: #647873; font-size: 14px; line-height: 1.65; }
+      button { display: inline-flex; width: 100%; min-height: 54px; align-items: center; justify-content: center; gap: 10px; border: 0; border-radius: 14px; background: #087f78; box-shadow: 0 10px 24px rgba(8, 127, 120, .2); color: white; cursor: pointer; font: inherit; font-size: 15px; font-weight: 800; transition: background .2s ease, transform .2s ease; }
+      button:hover { transform: translateY(-1px); background: #066d67; }
+      button:focus-visible { outline: 3px solid #e7b94e; outline-offset: 3px; }
+      button:disabled { cursor: wait; opacity: .7; transform: none; }
+      button svg { width: 19px; height: 19px; }
+      #install-help { min-height: 22px; margin: 16px 0 0; font-size: 12px; }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; } }
+    </style>
+    <script src="/patient-install.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <section class="install-panel" aria-labelledby="install-title">
+        <img class="logo" src="/patient-portal-logo.jpg" alt="" />
+        <h1 id="install-title">Laladentist</h1>
+        <p>Pasang aplikasi agar layanan pasien selalu mudah dijangkau.</p>
+        <button id="install-button" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <path d="m7 10 5 5 5-5M12 15V3" />
+          </svg>
+          <span>Pasang</span>
+        </button>
+        <p id="install-help" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+  </body>
+</html>

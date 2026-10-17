@@ -86,7 +86,7 @@ const AppContent: React.FC = () => {
     manifestLink.rel = "manifest";
     manifestLink.href = "/patient.webmanifest";
     document.head.appendChild(manifestLink);
-    document.title = "Portal Pasien | Lala Dentist";
+    document.title = "Laladentist | Pasien";
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/patient-service-worker.js", { scope: "/" })
@@ -100,6 +100,10 @@ const AppContent: React.FC = () => {
       document.title = originalTitle;
     };
   }, [isPatientPortalHost]);
+
+  if (isPatientPortalHost && path === "/patient-install.html") {
+    return <PatientAuthPage installOnly />;
+  }
 
   // If initial auth session is still checking, show clean loading spinner
   if (authLoading && !currentUser && !isPatientInstallIntent) {

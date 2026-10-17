@@ -14,7 +14,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
-export const PatientAuthPage: React.FC = () => {
+export const PatientAuthPage: React.FC<{ installOnly?: boolean }> = ({ installOnly = false }) => {
   const { branding, setCurrentUser } = useApp();
   const { navigate, path } = useRouter();
   const [mode, setMode] = useState<PatientAuthMode>(path === "/patient/register" ? "register" : "login");
@@ -35,7 +35,7 @@ export const PatientAuthPage: React.FC = () => {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installHelp, setInstallHelp] = useState<string | null>(null);
   const [isIos, setIsIos] = useState(false);
-  const [isInstallIntent] = useState(() => new URLSearchParams(window.location.search).get("install") === "1");
+  const [isInstallIntent] = useState(() => installOnly || new URLSearchParams(window.location.search).get("install") === "1");
 
   const clinicName = branding?.name || "Lala Dentist";
   const configuredLogoUrl = branding?.logoUrl;
@@ -45,7 +45,7 @@ export const PatientAuthPage: React.FC = () => {
   useEffect(() => {
     setIsIos(/iPad|iPhone|iPod/.test(navigator.userAgent) && !("MSStream" in window));
     if (isInstallIntent) {
-      setInstallHelp("Pasang Lala Dentis agar Portal Pasien mudah dibuka dari layar utama.");
+      setInstallHelp("Pasang Laladentist agar mudah dibuka dari layar utama.");
     }
 
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -54,7 +54,7 @@ export const PatientAuthPage: React.FC = () => {
     };
     const handleAppInstalled = () => {
       setInstallPrompt(null);
-      setInstallHelp("Lala Dentis berhasil ditambahkan ke perangkat Anda.");
+      setInstallHelp("Laladentist berhasil ditambahkan ke perangkat Anda.");
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -107,7 +107,7 @@ export const PatientAuthPage: React.FC = () => {
       setInstallPrompt(null);
       setInstallHelp(
         choice.outcome === "accepted"
-          ? "Ikuti konfirmasi browser untuk menyelesaikan pemasangan Lala Dentis."
+          ? "Laladentist berhasil dipasang."
           : "Pemasangan belum dilakukan. Anda dapat mencobanya lagi dari menu browser."
       );
     } catch (installError) {
@@ -261,8 +261,8 @@ export const PatientAuthPage: React.FC = () => {
                 <LalaLogo src={logoUrl} className="h-full w-full object-contain p-2" />
               )}
             </div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-[#174d49]">Lala Dentis</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-600">Pasang aplikasi untuk akses Portal Pasien dengan lebih praktis.</p>
+            <h1 className="text-2xl font-extrabold tracking-tight text-[#174d49]">Laladentist</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Pasang aplikasi agar lebih mudah membuka layanan pasien.</p>
             <button
               type="button"
               onClick={handleInstallApp}
@@ -271,6 +271,12 @@ export const PatientAuthPage: React.FC = () => {
               <Download className="h-4 w-4" />
               Pasang
             </button>
+            <a
+              href="/patient/login"
+              className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-[#d5e9e3] bg-white px-5 py-3 text-sm font-bold text-[#087f78] transition hover:bg-[#f4fbf9]"
+            >
+              Login
+            </a>
             {installHelp && (
               <p role="status" className="mt-4 text-xs leading-5 text-slate-600">
                 {installHelp}
@@ -311,7 +317,7 @@ export const PatientAuthPage: React.FC = () => {
                     <Smartphone className="h-4 w-4" />
                   </span>
                   <div>
-                    <p className="text-xs font-bold text-[#4f3a19]">Portal Pasien di ponsel Anda</p>
+                    <p className="text-xs font-bold text-[#4f3a19]">Laladentist di ponsel Anda</p>
                     <p className="mt-0.5 text-[10px] text-slate-500">Pasang untuk akses yang lebih praktis</p>
                   </div>
                 </div>
@@ -450,7 +456,7 @@ export const PatientAuthPage: React.FC = () => {
               className="patient-auth-submit flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-white shadow-md transition disabled:cursor-not-allowed disabled:opacity-50"
             >
               {mode === "register" ? <UserRoundPlus className="h-4 w-4" /> : mode === "recovery" ? <ShieldCheck className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
-              {isSubmitting ? "Mohon tunggu..." : mode === "login" ? "Masuk ke Portal Pasien" : mode === "register" ? "Daftar dan verifikasi email" : mode === "forgot" ? "Kirim tautan pemulihan" : "Simpan kata sandi baru"}
+              {isSubmitting ? "Mohon tunggu..." : mode === "login" ? "Login" : mode === "register" ? "Daftar dan verifikasi email" : mode === "forgot" ? "Kirim tautan pemulihan" : "Simpan kata sandi baru"}
             </button>
           </form>
 

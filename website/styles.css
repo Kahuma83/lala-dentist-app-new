@@ -275,3 +275,158 @@ h2 span { color: #bc861a; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Teal and aqua visual system for the clinic's public website. */
+:root {
+  --paper: #f7fcfa;
+  --gold: #087f78;
+  --gold-bright: #12a99d;
+  --orange: #e7b94e;
+  --plum: #073f43;
+  --line: #e2efeb;
+}
+
+.site-header { background: rgba(255,255,255,.94); }
+.nav { height: 96px; }
+.brand { color: #087f78; }
+.brand__tagline { color: #53817b; }
+.nav-links { color: #435b58; }
+.nav-links > a:not(.nav-portal):hover { color: var(--gold); }
+.nav-portal { border: 1px solid #e2efeb; color: #174d49; }
+.nav-portal:hover { background: var(--plum); }
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  min-height: 550px;
+  background-color: #f4fbf9;
+  background-image:
+    radial-gradient(ellipse at 4% 88%, rgba(24,184,166,.2), transparent 33%),
+    radial-gradient(ellipse at 100% 45%, rgba(54,202,183,.16), transparent 34%),
+    linear-gradient(90deg, rgba(248,255,253,.96) 0%, rgba(248,255,253,.91) 38%, rgba(248,255,253,.14) 76%),
+    url("/assets/patient-app-hero.jpg");
+}
+.hero::before {
+  position: absolute;
+  z-index: 0;
+  top: -155px;
+  left: -180px;
+  width: 440px;
+  height: 440px;
+  border: 1px solid rgba(16,161,148,.18);
+  border-radius: 46% 54% 56% 44%;
+  box-shadow: 0 0 0 26px rgba(16,161,148,.035), 0 0 0 54px rgba(16,161,148,.025);
+  content: "";
+  pointer-events: none;
+  transform: rotate(-24deg);
+}
+.hero__inner { position: relative; z-index: 1; }
+.hero h1 span { color: #078f87; }
+.hero__text { color: #526a66; }
+.hero-benefits li > span:first-child { border-color: #c7e7df; color: #078f87; }
+.hero-benefits strong { color: #294743; }
+.hero-benefits small { color: #657c78; }
+.hero__install-note { color: #718782; }
+.button--primary {
+  background: linear-gradient(135deg, #0b9b91, #08776f);
+  box-shadow: 0 9px 22px rgba(8,127,120,.22);
+  color: #fff;
+}
+.button--primary:hover { background: linear-gradient(135deg, #12aa9e, #07877e); }
+.button--secondary { border-color: #d4e8e2; color: #315651; }
+.button--secondary:hover { background: #f4fbf9; }
+
+.ticker { background: #073f43; }
+.ticker i { color: #edc760; }
+.eyebrow { color: #087f78; }
+.eyebrow__dot { background: #e4b84f; box-shadow: 0 0 0 4px rgba(228,184,79,.16); }
+h2 span { color: #078f87; }
+.braces { background: #fff; }
+.journey-card { border-color: #e1efea; border-radius: 18px; background: #f4fbf9; box-shadow: 0 12px 32px rgba(24,82,72,.045); }
+.journey-card--care { background: #f3f9fa; }
+.journey-card--follow { background: #f3faf6; }
+.journey-card__top { color: #57827a; }
+.journey-icon { border-color: #d5e9e3; color: #087f78; }
+.journey-art { border-radius: 14px; }
+.journey-art--spark { background: radial-gradient(circle at center, #c8eee5 0 26%, transparent 27%), #e8f8f4; }
+.journey-art--spark > span { color: #0b998d; }
+.journey-art--spark i, .journey-art--smile i { color: #d4a63f; }
+.journey-art--smile { background: radial-gradient(circle at center, #d9f0ed 0 28%, transparent 29%), #edf8f7; }
+.journey-art--smile > span { color: #138b82; }
+.journey-art--orbit { background: radial-gradient(circle at center, #d1eee2 0 31%, transparent 32%), #eff9f4; }
+.journey-art--orbit > span { color: #198e79; }
+.journey-art--orbit i { border-color: rgba(19,139,117,.48); }
+.journey-card h3 { color: #244541; }
+.journey-card p { color: #637873; font-size: 11px; }
+.medical-note { color: #738782; }
+.journey-cta p { color: #526b66; }
+
+.clinic-feature, .branches { background: #f1f9f7; }
+.clinic-feature__copy > p, .branches__intro > p { color: #5d746f; }
+.clinic-feature__link, .website-article-card a { color: #087f78; }
+.clinic-feature__image { border-color: #fff; box-shadow: 0 20px 48px rgba(15,93,82,.13); }
+.website-promotions { background: #f8fcfb; }
+.website-promotion-card, .website-article-card {
+  border-color: #e1eeea;
+  border-radius: 17px;
+  box-shadow: 0 10px 28px rgba(24,82,72,.045);
+}
+.website-promotion-card__image, .website-article-card__image { background: #eaf6f3; }
+.website-promotion-card__copy h3, .website-article-card h3 { color: #294743; }
+.website-promotion-card__copy p, .website-article-card p { color: #647a75; }
+.website-promotion-card__copy small { color: #6d8a83; }
+.website-article-card__category { background: #e5f5f1; color: #087f78; }
+.website-article-card--static { border-color: #d9ebe5; }
+.article-detail { background: #f7fcfa; }
+.article-detail__back { color: #087f78; }
+.article-detail h1 { color: #203c39; }
+.article-detail__excerpt { color: #5d746f; }
+.article-detail__content { color: #3f5954; }
+
+.services { background: #fff; }
+.service-card {
+  border-color: #dfede8;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #f2fbf8, #fbfefd);
+}
+.service-card--check { background: linear-gradient(145deg, #eff9f8, #fbfefd); }
+.service-card--routine { background: linear-gradient(145deg, #eef9f2, #fbfefd); }
+.service-card:hover { box-shadow: 0 16px 36px rgba(24,93,80,.12); }
+.service-card__tag, .service-card__link { color: #087f78; }
+.service-card__symbol, .service-card--check .service-card__symbol, .service-card--routine .service-card__symbol { color: rgba(8,143,131,.2); }
+.service-card h3 { color: #294743; }
+.service-card p { color: #647a75; font-size: 11px; }
+
+.branch-card { border-color: #dcebe6; border-radius: 15px; background: rgba(255,255,255,.86); }
+.branch-card--upcoming { border-color: #cddfd9; background: #ebf5f1; }
+.branch-card__heading > span:first-child { color: #72918a; }
+.branch-card h3 { color: #294743; }
+.branch-status { background: #e2f4ec; color: #267555; }
+.branch-card--upcoming .branch-status { background: #f5edd8; color: #89671f; }
+.branch-card p { color: #5d746f; font-size: 10px; }
+.branch-card small { color: #67827b; font-size: 9px; }
+
+.final-cta { background: linear-gradient(120deg, #073f43, #0a625c); }
+.final-cta h2 span { color: #f0cb69; }
+.final-cta p { color: #c2ded8; font-size: 11px; }
+.button--lime { background: #e9c35e; color: #263d38; }
+.button--lime:hover { background: #f4d575; }
+.footer { background: #062f33; }
+.brand--footer .brand__tagline { color: #b4d4cd; }
+.footer__links { color: #d2e5e0; }
+.footer__links a:hover { color: #f0cb69; }
+.footer__bottom { border-color: rgba(211,238,230,.16); color: #a9c6c0; }
+.nav-toggle { border-color: #d8e9e4; }
+.nav-toggle span { background: #315651; }
+
+@media (max-width: 680px) {
+  .nav-links { background: #fbfefd; }
+  .hero {
+    background-image:
+      radial-gradient(ellipse at 5% 100%, rgba(24,184,166,.18), transparent 36%),
+      linear-gradient(180deg, rgba(248,255,253,.98) 0%, rgba(248,255,253,.94) 58%, rgba(248,255,253,.12) 100%),
+      url("/assets/patient-app-hero.jpg");
+    background-position: center, center, right bottom;
+  }
+  .hero::before { top: auto; bottom: 100px; left: -275px; width: 380px; height: 380px; }
+}

@@ -75,7 +75,7 @@ const applyHero = (settings) => {
   if (description && typeof settings.hero_description === "string") description.textContent = settings.hero_description;
   if (button) {
     button.firstChild.textContent = settings.hero_button_text || "Unduh aplikasi ";
-    button.href = safePublicUrl(settings.hero_button_url) || "https://pasien.laladentist.id/?install=1";
+    button.href = "https://pasien.laladentist.id/patient-install.html";
   }
   const imageUrl = websiteMediaUrl(settings.hero_image_url);
   if (imageUrl) {
