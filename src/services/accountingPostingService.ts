@@ -669,7 +669,16 @@ export class AccountingPostingService {
     }> = [];
 
     const baseSalary = Math.round(Number(payroll.baseSalary) || 0);
-    const totalComp = Math.round(Number(payroll.totalCompensation) || 0);
+    const payrollItems = await this.payrollRepo.getPayrollItems(payrollId);
+    const itemCompensation = payrollItems
+      .filter((item) =>
+        item.type === "EARNING" &&
+        !/gaji pokok|base salary/i.test(item.descriptionSnapshot)
+      )
+      .reduce((sum, item) => sum + Math.round(Number(item.amountSnapshot) || 0), 0);
+    const totalComp = payrollItems.length > 0
+      ? itemCompensation
+      : Math.round(Number(payroll.totalCompensation) || 0);
 
     if (baseSalary <= 0 && totalComp <= 0) {
       throw new Error(

@@ -3700,7 +3700,9 @@ export class SupabasePaymentRepository implements PaymentRepository {
     _currentUserRole?: UserRole,
     _userBranchId?: string | null
   ): Promise<PaymentTransaction> {
-    ensureSupabaseConnected();
+    if (!useRepositoryTestFallbacks() && (!isSupabaseConfigured || !supabase)) {
+      throw new Error("Koneksi ke Supabase belum terkonfigurasi. Data belum dapat disimpan ke server remote.");
+    }
     const now = AppClock.nowISO();
 
     // 1. Look up invoice to get branch & calculate new amounts
@@ -3742,7 +3744,10 @@ export class SupabasePaymentRepository implements PaymentRepository {
     if (targetInv && targetInv.branchId) {
       invoiceBranchId = targetInv.branchId;
     }
-    if (!targetInv || !isValidUUID(targetInv.id) || !isValidUUID(invoiceBranchId)) {
+    if (!targetInv || !targetInv.id || !targetInv.branchId) {
+      throw new Error("Pembayaran tidak dapat disimpan: invoice yang dituju tidak ditemukan.");
+    }
+    if (!useRepositoryTestFallbacks() && (!isValidUUID(targetInv.id) || !isValidUUID(invoiceBranchId))) {
       throw new Error("Pembayaran tidak dapat disimpan: invoice Supabase yang valid tidak ditemukan.");
     }
 
@@ -5203,8 +5208,8 @@ export class SupabaseStaffRepository implements StaffRepository {
 export class SupabaseCompensationRepository implements CompensationRepository {
   async getCompensationRules(): Promise<StaffCompensationRule[]> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("compensation_rules").select("*");
-    if (error) return handleSupabaseReadError("compensation_rules", error, []);
+    const { data, error } = await supabase.from("staff_compensation_rules").select("*");
+    if (error) return handleSupabaseReadError("staff_compensation_rules", error, []);
     return (data || []).map((row: any) => ({
       id: row.id,
       staffId: row.staff_id,
@@ -5275,30 +5280,37 @@ export class SupabaseCompensationRepository implements CompensationRepository {
 // 19. SUPABASE PAYROLL REPOSITORY
 // =====================================================================
 export class SupabasePayrollRepository implements PayrollRepository {
-  async getPayrolls(month?: number, year?: number): Promise<MonthlyPayroll[]> {
-    ensureSupabaseConnected();
-    let q = supabase.from("monthly_payrolls").select("*");
-    if (month) q = q.eq("month", month);
-    if (year) q = q.eq("year", year);
-    const { data, error } = await q;
-    if (error) return handleSupabaseReadError("monthly_payrolls", error, []);
-    return (data || []).map((row: any) => ({
+  private mapPayrollFromDb(row: any): MonthlyPayroll {
+    return {
       id: row.id,
       staffId: row.staff_id,
       month: row.month,
       year: row.year,
-      baseSalary: row.base_salary,
-      totalCompensation: row.total_compensation || 0,
-      totalDeductions: row.total_deductions || 0,
-      netSalary: row.net_salary,
+      baseSalary: Number(row.base_salary) || 0,
+      totalCompensation: Number(row.total_compensation) || 0,
+      totalDeductions: Number(row.total_deductions) || 0,
+      netSalary: Number(row.net_salary) || 0,
       status: row.status,
+      branchId: row.branch_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at
-    }));
+    };
+  }
+
+  async getPayrolls(month?: number, year?: number): Promise<MonthlyPayroll[]> {
+    ensureSupabaseConnected();
+    let q = supabase.from("monthly_payrolls").select("*");
+    if (month !== undefined) q = q.eq("month", month);
+    if (year !== undefined) q = q.eq("year", year);
+    const { data, error } = await q;
+    if (error) return handleSupabaseReadError("monthly_payrolls", error, []);
+    return (data || []).map((row: any) => this.mapPayrollFromDb(row));
   }
   async getPayrollById(id: string): Promise<MonthlyPayroll | null> {
-    const list = await this.getPayrolls();
-    return list.find((p) => p.id === id) || null;
+    ensureSupabaseConnected();
+    const { data, error } = await supabase.from("monthly_payrolls").select("*").eq("id", id).maybeSingle();
+    if (error) return handleSupabaseReadError("monthly_payrolls", error, null);
+    return data ? this.mapPayrollFromDb(data) : null;
   }
   async getPayrollItems(payrollId: string): Promise<PayrollItem[]> {
     ensureSupabaseConnected();
@@ -5307,33 +5319,192 @@ export class SupabasePayrollRepository implements PayrollRepository {
     return (data || []).map((row: any) => ({
       id: row.id,
       payrollId: row.payroll_id,
-      descriptionSnapshot: row.description || "Item",
-      amountSnapshot: row.amount || 0,
-      type: row.type || "EARNING"
+      descriptionSnapshot: row.description_snapshot || "Item",
+      amountSnapshot: Number(row.amount_snapshot) || 0,
+      type: row.type || "EARNING",
+      sourceId: row.source_id || undefined
     }));
   }
-  async generateMonthlyPayroll(staffId: string, month: number, year: number, baseSalary = 0): Promise<MonthlyPayroll> {
-    return {
-      id: `pay-${Date.now()}`,
-      staffId,
+  async generateMonthlyPayroll(staffId: string, month: number, year: number, baseSalary?: number): Promise<MonthlyPayroll> {
+    ensureSupabaseConnected();
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      throw new Error("Periode payroll tidak valid: bulan harus antara 1 dan 12.");
+    }
+    if (!Number.isInteger(year) || year < 2020) {
+      throw new Error("Periode payroll tidak valid: tahun harus 2020 atau lebih baru.");
+    }
+
+    const { data: staff, error: staffError } = await supabase
+      .from("staff")
+      .select("id, branch_id")
+      .eq("id", staffId)
+      .maybeSingle();
+    if (staffError) throw new Error(`Gagal memuat data karyawan untuk payroll: ${staffError.message}`);
+    if (!staff) throw new Error("Karyawan tidak ditemukan. Pastikan dokter sudah ditautkan ke data karyawan.");
+
+    let branchId = staff.branch_id || null;
+    if (!branchId) {
+      const { data: doctor, error: doctorError } = await supabase
+        .from("dental_doctors")
+        .select("assigned_branch_id")
+        .eq("staff_id", staff.id)
+        .maybeSingle();
+      if (doctorError) throw new Error(`Gagal memuat cabang dokter untuk payroll: ${doctorError.message}`);
+      branchId = doctor?.assigned_branch_id || null;
+    }
+
+    const periodStart = `${year}-${String(month).padStart(2, "0")}-01`;
+    const nextMonth = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+    const periodStartTimestamp = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+    const nextMonthTimestamp = new Date(Date.UTC(year, month, 1)).toISOString();
+    const [existingResult, accrualsResult, overtimeResult, baseRuleResult] = await Promise.all([
+      supabase
+        .from("monthly_payrolls")
+        .select("*")
+        .eq("staff_id", staff.id)
+        .eq("month", month)
+        .eq("year", year)
+        .maybeSingle(),
+      supabase
+        .from("compensation_accruals")
+        .select("id, amount, source_id, accrued_at")
+        .eq("staff_id", staff.id)
+        .gte("accrued_at", periodStartTimestamp)
+        .lt("accrued_at", nextMonthTimestamp),
+      supabase
+        .from("overtime_records")
+        .select("id, date, overtime_hours, overtime_amount_snapshot")
+        .eq("staff_id", staff.id)
+        .eq("status", "APPROVED")
+        .gte("date", periodStart)
+        .lt("date", nextMonth),
+      baseSalary === undefined
+        ? supabase
+            .from("staff_compensation_rules")
+            .select("value_snapshot")
+            .eq("staff_id", staff.id)
+            .eq("rule_type_snapshot", "BASE_SALARY")
+            .eq("is_active", true)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null })
+    ]);
+
+    if (existingResult.error) throw new Error(`Gagal memeriksa payroll periode ini: ${existingResult.error.message}`);
+    if (accrualsResult.error) throw new Error(`Gagal memuat komisi tindakan periode ini: ${accrualsResult.error.message}`);
+    if (overtimeResult.error) throw new Error(`Gagal memuat lembur yang disetujui: ${overtimeResult.error.message}`);
+    if (baseRuleResult.error) throw new Error(`Gagal memuat aturan gaji pokok: ${baseRuleResult.error.message}`);
+
+    const existing = existingResult.data;
+    if (existing && existing.status !== PayrollStatus.DRAFT) {
+      throw new Error(`Payroll periode ${month}/${year} sudah berstatus ${existing.status} dan tidak dapat dihitung ulang.`);
+    }
+
+    const salary = Number(baseSalary ?? baseRuleResult.data?.value_snapshot ?? 0);
+    if (!Number.isFinite(salary) || salary < 0) {
+      throw new Error("Gaji pokok harus berupa nominal nol atau lebih.");
+    }
+    const accruals = accrualsResult.data || [];
+    const overtimes = overtimeResult.data || [];
+    const totalCompensation = accruals.reduce((sum: number, row: any) => sum + (Number(row.amount) || 0), 0);
+    const overtimeTotal = overtimes.reduce(
+      (sum: number, row: any) => sum + (Number(row.overtime_amount_snapshot) || 0),
+      0
+    );
+    const totalDeductions = 0;
+    const now = AppClock.nowISO();
+    const payrollPayload = {
+      staff_id: staff.id,
+      branch_id: branchId,
       month,
       year,
-      baseSalary,
-      totalCompensation: 0,
-      totalDeductions: 0,
-      netSalary: baseSalary,
+      base_salary: Math.round(salary),
+      total_compensation: totalCompensation,
+      total_deductions: totalDeductions,
+      net_salary: Math.round(salary) + totalCompensation + overtimeTotal - totalDeductions,
       status: PayrollStatus.DRAFT,
-      createdAt: AppClock.nowISO(),
-      updatedAt: AppClock.nowISO()
+      updated_at: now
     };
+
+    let payrollRow = existing;
+    if (existing) {
+      const { error: clearItemsError } = await supabase.from("payroll_items").delete().eq("payroll_id", existing.id);
+      if (clearItemsError) throw new Error(`Gagal memperbarui rincian payroll lama: ${clearItemsError.message}`);
+      const { data, error } = await supabase
+        .from("monthly_payrolls")
+        .update(payrollPayload)
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+      if (error) throw new Error(`Gagal memperbarui payroll: ${error.message}`);
+      payrollRow = data;
+    } else {
+      const { data, error } = await supabase
+        .from("monthly_payrolls")
+        .insert({ ...payrollPayload, created_at: now })
+        .select("*")
+        .single();
+      if (error) throw new Error(`Gagal membuat payroll: ${error.message}`);
+      payrollRow = data;
+    }
+
+    const payrollItems = [
+      {
+        payroll_id: payrollRow.id,
+        description_snapshot: `Gaji Pokok Periode ${month}/${year}`,
+        amount_snapshot: Math.round(salary),
+        type: "EARNING"
+      },
+      ...accruals.map((row: any) => ({
+        payroll_id: payrollRow.id,
+        description_snapshot: `Komisi Tindakan (#${row.source_id || row.id})`,
+        amount_snapshot: Number(row.amount) || 0,
+        type: "EARNING",
+        source_id: row.id
+      })),
+      ...overtimes
+        .filter((row: any) => Number(row.overtime_amount_snapshot) > 0)
+        .map((row: any) => ({
+          payroll_id: payrollRow.id,
+          description_snapshot: `Lembur Disetujui (${Number(row.overtime_hours) || 0} jam / ${row.date})`,
+          amount_snapshot: Number(row.overtime_amount_snapshot),
+          type: "EARNING",
+          source_id: row.id
+        }))
+    ];
+    const { error: itemsError } = await supabase.from("payroll_items").insert(payrollItems);
+    if (itemsError) {
+      if (!existing) {
+        const { error: cleanupError } = await supabase.from("monthly_payrolls").delete().eq("id", payrollRow.id);
+        if (cleanupError) {
+          throw new Error(`Payroll tersimpan tetapi rincian gagal disimpan (${itemsError.message}) dan pembersihan gagal (${cleanupError.message}).`);
+        }
+      }
+      throw new Error(`Payroll dihitung tetapi rincian slip gagal disimpan: ${itemsError.message}`);
+    }
+
+    return this.mapPayrollFromDb(payrollRow);
   }
   async updatePayrollStatus(id: string, status: PayrollStatus): Promise<MonthlyPayroll> {
-    const item = await this.getPayrollById(id);
-    if (!item) throw new Error("Payroll not found");
-    return { ...item, status, updatedAt: AppClock.nowISO() };
+    ensureSupabaseConnected();
+    const { data, error } = await supabase
+      .from("monthly_payrolls")
+      .update({ status, updated_at: AppClock.nowISO() })
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (error) throw new Error(`Gagal memperbarui status payroll: ${error.message}`);
+    return this.mapPayrollFromDb(data);
   }
   async deletePayroll(id: string, currentUserRole?: UserRole): Promise<boolean> {
-    return true;
+    ensureSupabaseConnected();
+    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Akses ditolak: Hanya Super Admin atau Branch Admin yang dapat menghapus slip gaji.");
+    }
+    const { error: itemsError } = await supabase.from("payroll_items").delete().eq("payroll_id", id);
+    if (itemsError) throw new Error(`Gagal menghapus rincian payroll: ${itemsError.message}`);
+    const { data, error } = await supabase.from("monthly_payrolls").delete().eq("id", id).select("id").maybeSingle();
+    if (error) throw new Error(`Gagal menghapus payroll: ${error.message}`);
+    return !!data;
   }
 }
 

@@ -57,6 +57,7 @@ export const Payroll: React.FC = () => {
     accountingPostingService
   } = useApp();
   const { navigate } = useRouter();
+  const currentYear = new Date().getFullYear();
 
   const [payrolls, setPayrolls] = useState<MonthlyPayroll[]>([]);
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
@@ -65,9 +66,10 @@ export const Payroll: React.FC = () => {
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [branding, setBranding] = useState<ClinicBranding>(DEFAULT_CLINIC_BRANDING);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [selectedMonth, setSelectedMonth] = useState<number>(9);
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
+  const [selectedMonth, setSelectedMonth] = useState<number>(() => new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showSlipModal, setShowSlipModal] = useState(false);
   const [selectedPayroll, setSelectedPayroll] = useState<MonthlyPayroll | null>(null);
@@ -83,9 +85,14 @@ export const Payroll: React.FC = () => {
   const [hasBaseSalaryRule, setHasBaseSalaryRule] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const availableYears = useMemo(
+    () => Array.from({ length: Math.max(1, currentYear - 2019) }, (_, index) => currentYear - index),
+    [currentYear]
+  );
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [pList, dList, sList, bList, jList, brand] = await Promise.all([
         payrollRepo.getPayrolls(selectedMonth, selectedYear),
@@ -107,6 +114,7 @@ export const Payroll: React.FC = () => {
       if (brand) setBranding(brand);
     } catch (err) {
       console.error("Error loading payroll:", err);
+      setLoadError(`Gagal memuat data payroll: ${err instanceof Error ? err.message : "Kesalahan tidak diketahui."}`);
     } finally {
       setLoading(false);
     }
@@ -355,6 +363,7 @@ export const Payroll: React.FC = () => {
       }
     } catch (err: any) {
       console.error(err.message || "Gagal mengubah status payroll");
+      setLoadError(`Gagal mengubah status payroll: ${err instanceof Error ? err.message : "Kesalahan tidak diketahui."}`);
     }
   };
 
@@ -371,6 +380,7 @@ export const Payroll: React.FC = () => {
       await loadData();
     } catch (err: any) {
       console.error(err.message || "Gagal memposting slip gaji ke akuntansi");
+      setLoadError(`Gagal memposting slip gaji ke akuntansi: ${err instanceof Error ? err.message : "Kesalahan tidak diketahui."}`);
     } finally {
       setSyncingPayrollId(null);
     }
@@ -390,6 +400,7 @@ export const Payroll: React.FC = () => {
       await loadData();
     } catch (err: any) {
       console.error("Gagal menghapus slip gaji:", err);
+      setLoadError(`Gagal menghapus slip gaji: ${err instanceof Error ? err.message : "Kesalahan tidak diketahui."}`);
     } finally {
       setIsDeletingPayroll(false);
       setLoading(false);
@@ -430,6 +441,13 @@ export const Payroll: React.FC = () => {
           </button>
         )}
       </div>
+
+      {loadError && (
+        <div role="alert" className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -499,8 +517,7 @@ export const Payroll: React.FC = () => {
             onChange={(e) => setSelectedYear(parseInt(e.target.value))}
             className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           >
-            <option value={2026}>2026</option>
-            <option value={2025}>2025</option>
+            {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
           </select>
         </div>
       </div>
@@ -719,7 +736,7 @@ export const Payroll: React.FC = () => {
 
                   <optgroup label="Dokter Gigi">
                     {availableStaff.doctors.map((d) => (
-                      <option key={d.id} value={d.id}>
+                      <option key={d.id} value={d.staffId || d.id}>
                         {d.name} ({d.specialization}) - {getBranchName(d.assignedBranchId)}
                       </option>
                     ))}
@@ -857,7 +874,7 @@ export const Payroll: React.FC = () => {
   );
 
   function availableDoctorsFirst(): string {
-    if (availableStaff.doctors.length > 0) return availableStaff.doctors[0].id;
+    if (availableStaff.doctors.length > 0) return availableStaff.doctors[0].staffId || availableStaff.doctors[0].id;
     if (availableStaff.branchAdmins.length > 0) return availableStaff.branchAdmins[0].id;
     if (availableStaff.assistants.length > 0) return availableStaff.assistants[0].id;
     return "";
