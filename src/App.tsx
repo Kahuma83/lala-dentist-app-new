@@ -21,6 +21,7 @@ import { PatientPortalHome } from "./pages/PatientPortalHome";
 import { PatientAuthPage } from "./pages/PatientAuthPage";
 import { HRManagement } from "./pages/HRManagement";
 import { DoctorSchedules } from "./pages/DoctorSchedules";
+import { WebsiteContentManagement } from "./pages/WebsiteContentManagement";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { AdminLayout } from "./layouts/AdminLayout";
 import { UserRole } from "./types/domain";
@@ -180,6 +181,8 @@ const AppContent: React.FC = () => {
       view = <HRManagement />;
     } else if (path.startsWith("/super-admin/configuration")) {
       view = <Configuration />;
+    } else if (path === "/super-admin/website") {
+      view = <WebsiteContentManagement />;
     }
 
     return <AdminLayout>{view}</AdminLayout>;

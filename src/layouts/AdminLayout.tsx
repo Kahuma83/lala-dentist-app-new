@@ -39,7 +39,8 @@ import {
   Trash2,
   AlertTriangle,
   PhoneCall,
-  BarChart3
+  BarChart3,
+  PanelsTopLeft
 } from "lucide-react";
 
 interface AdminLayoutProps {
@@ -140,6 +141,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Tarif Cabang", path: "/super-admin/configuration?tab=tariffs", icon: Tag },
         { name: "Media Promosi", path: "/super-admin/configuration?tab=promotions", icon: Sparkles }
       ]
+    },
+    {
+      title: "WEBSITE",
+      items: [{ name: "Kelola Website", path: "/super-admin/website", icon: PanelsTopLeft }]
     },
     {
       title: "KEUANGAN",
