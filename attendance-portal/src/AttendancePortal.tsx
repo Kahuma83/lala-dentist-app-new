@@ -1,17 +1,26 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BadgeCheck,
+  CalendarDays,
   AlertCircle,
   Camera,
   CheckCircle2,
   Clock3,
+  Download,
+  Home,
   LogOut,
   MapPin,
   RefreshCw,
-  ShieldCheck
+  ShieldCheck,
+  Timer,
+  UserRound,
+  Upload,
+  WalletCards
 } from "lucide-react";
 import { User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "../../src/lib/supabase";
 import { getGeofenceDistanceMeters, isWithinAttendanceGeofence } from "../../src/utils/attendanceGeofence";
+import { loadOwnStaffProfilePhoto, uploadStaffProfilePhoto } from "../../src/utils/staffProfilePhoto";
 
 type StaffRole = "BRANCH_ADMIN" | "DOCTOR" | "DOCTOR_ASSISTANT" | "OB";
 type AttendanceAction = "check-in" | "check-out";
@@ -42,9 +51,60 @@ type StaffContext = {
   staffId: string;
 };
 type LocationFix = { latitude: number; longitude: number; accuracyMeters: number };
+type PortalTab = "home" | "attendance" | "schedule" | "overtime" | "payroll" | "profile";
+type PortalSchedule = {
+  id: string;
+  date: string;
+  branchId: string;
+  branchName: string;
+  startTime: string;
+  endTime: string;
+  shiftName: string;
+  notes: string | null;
+};
+type PortalOvertime = {
+  id: string;
+  date: string;
+  minutes: number;
+  hours: number;
+  status: string;
+  amount: number | null;
+  notes: string | null;
+  rejectionReason: string | null;
+};
+type PortalPayroll = {
+  id: string;
+  month: number;
+  year: number;
+  baseSalary: number;
+  totalCompensation: number;
+  totalDeductions: number;
+  netSalary: number;
+  status: string;
+};
+type PortalPayrollItem = {
+  id: string;
+  payrollId: string;
+  description: string;
+  amount: number;
+  type: string;
+};
+type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 
 const allowedRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB"];
 const attendanceColumns = "id,branch_id,date,attendance_status,scheduled_start_at,scheduled_end_at,actual_check_in_at,actual_check_out_at,late_minutes";
+const installDismissedKey = "lala-attendance-install-screen-dismissed";
+const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
+  { id: "home", label: "Beranda", icon: Home },
+  { id: "attendance", label: "Absensi", icon: BadgeCheck },
+  { id: "schedule", label: "Jadwal Saya", icon: CalendarDays },
+  { id: "overtime", label: "Lembur Saya", icon: Timer },
+  { id: "payroll", label: "Gaji Saya", icon: WalletCards },
+  { id: "profile", label: "Profil", icon: UserRound }
+];
 
 function todayWib(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -64,6 +124,23 @@ function formatTime(value: string | null): string {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  }).format(new Date(`${value}T12:00:00+07:00`));
+}
+
+function formatRupiah(value: number): string {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0
+  }).format(value);
 }
 
 function friendlyError(error: unknown, fallback: string): string {
@@ -149,24 +226,69 @@ async function removeOlderPolicyPhotos(staffId: string, keepPath: string): Promi
 }
 
 export function AttendancePortal() {
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
+  const [installScreenDismissed, setInstallScreenDismissed] = useState(
+    () => localStorage.getItem(installDismissedKey) === "true"
+  );
+  const [isAppInstalled, setIsAppInstalled] = useState(
+    () => window.matchMedia("(display-mode: standalone)").matches ||
+      Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
+  );
+  const [installHelpMessage, setInstallHelpMessage] = useState("");
   const [sessionUser, setSessionUser] = useState<User | null>(null);
   const [staffContext, setStaffContext] = useState<StaffContext | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState("");
   const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
+  const [activeTab, setActiveTab] = useState<PortalTab>("home");
+  const [isPanelLoading, setIsPanelLoading] = useState(false);
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [scheduleRows, setScheduleRows] = useState<PortalSchedule[]>([]);
+  const [overtimeRows, setOvertimeRows] = useState<PortalOvertime[]>([]);
+  const [payrollRows, setPayrollRows] = useState<PortalPayroll[]>([]);
+  const [payrollItems, setPayrollItems] = useState<PortalPayrollItem[]>([]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
+  const [profilePhotoError, setProfilePhotoError] = useState<string | null>(null);
+  const [isProfilePhotoSubmitting, setIsProfilePhotoSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
+  const profilePhotoInput = useRef<HTMLInputElement>(null);
   const pendingAction = useRef<AttendanceAction | null>(null);
   const today = todayWib();
   const monthStart = `${today.slice(0, 7)}-01`;
 
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as InstallPromptEvent);
+    };
+    const handleAppInstalled = () => {
+      setIsAppInstalled(true);
+      setInstallScreenDismissed(true);
+      localStorage.setItem(installDismissedKey, "true");
+    };
+    const standaloneQuery = window.matchMedia("(display-mode: standalone)");
+    const handleDisplayModeChange = () => setIsAppInstalled(standaloneQuery.matches);
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+    standaloneQuery.addEventListener("change", handleDisplayModeChange);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+      standaloneQuery.removeEventListener("change", handleDisplayModeChange);
+    };
+  }, []);
+
   const currentBranch = branches.find((branch) => branch.id === selectedBranchId) || null;
-  const todayAttendance = attendanceRows.find((row) => row.date === today) || null;
+  const todayAttendances = attendanceRows.filter((row) => row.date === today);
+  const todayAttendance = todayAttendances.find((row) => row.branch_id === selectedBranchId) || null;
+  const unfinishedTodayAttendance = todayAttendances.find((row) => row.actual_check_in_at && !row.actual_check_out_at) || null;
   const currentMonthRows = useMemo(
     () => attendanceRows.filter((row) => row.date >= monthStart && row.date <= today),
     [attendanceRows, monthStart, today]
@@ -177,6 +299,12 @@ export function AttendancePortal() {
     currentBranch.geofence_longitude != null &&
     currentBranch.geofence_radius_meters != null
   );
+
+  useEffect(() => {
+    return () => {
+      if (profilePhotoUrl) URL.revokeObjectURL(profilePhotoUrl);
+    };
+  }, [profilePhotoUrl]);
 
   const loadPortalContext = useCallback(async (user: User) => {
     const { data: account, error: accountError } = await supabase
@@ -217,12 +345,14 @@ export function AttendancePortal() {
       }
 
       if (doctorId) {
+        context.doctorId = doctorId;
         const { data: schedules, error: scheduleError } = await supabase
           .from("doctor_schedules")
-          .select("branch_id")
+          .select("branch_id,start_time")
           .eq("doctor_id", doctorId)
           .eq("date", today)
-          .eq("status", "ACTIVE");
+          .eq("status", "ACTIVE")
+          .order("start_time", { ascending: true });
         if (scheduleError) throw new Error(`Gagal membaca jadwal dokter hari ini: ${scheduleError.message}`);
         branchIds = Array.from(new Set((schedules || []).map((schedule) => schedule.branch_id)));
       }
@@ -248,7 +378,9 @@ export function AttendancePortal() {
       .order("date", { ascending: false });
     if (historyError) throw new Error(`Gagal membaca riwayat absensi: ${historyError.message}`);
 
-    const historyBranchId = history?.find((row) => row.date === today)?.branch_id;
+    const todayRows = (history || []).filter((row) => row.date === today);
+    const unfinishedTodayRecord = todayRows.find((row) => !row.actual_check_out_at);
+    const historyBranchId = unfinishedTodayRecord?.branch_id;
     setStaffContext(context);
     setBranches(fetchedBranches.data || []);
     setSelectedBranchId((current) => {
@@ -256,11 +388,20 @@ export function AttendancePortal() {
       if (historyBranchId && availableBranches.some((branch) => branch.id === historyBranchId)) {
         return historyBranchId;
       }
-      return availableBranches.some((branch) => branch.id === current)
-        ? current
-        : availableBranches[0]?.id || "";
+      if (unfinishedTodayRecord && availableBranches.some((branch) => branch.id === unfinishedTodayRecord.branch_id)) {
+        return unfinishedTodayRecord.branch_id;
+      }
+      if (availableBranches.some((branch) => branch.id === current)) return current;
+      const preferredBranchId = branchIds.find((branchId) => availableBranches.some((branch) => branch.id === branchId));
+      return preferredBranchId || availableBranches[0]?.id || "";
     });
     setAttendanceRows(history || []);
+    try {
+      setProfilePhotoUrl(await loadOwnStaffProfilePhoto(context.staffId));
+      setProfilePhotoError(null);
+    } catch (photoError: unknown) {
+      setProfilePhotoError(friendlyError(photoError, "Gagal memuat foto profil."));
+    }
   }, [monthStart, today]);
 
   useEffect(() => {
@@ -293,6 +434,13 @@ export function AttendancePortal() {
         setStaffContext(null);
         setBranches([]);
         setAttendanceRows([]);
+        setActiveTab("home");
+        setScheduleRows([]);
+        setOvertimeRows([]);
+        setPayrollRows([]);
+        setPayrollItems([]);
+        setProfilePhotoUrl(null);
+        setProfilePhotoError(null);
       }
     });
     return () => {
@@ -353,10 +501,62 @@ export function AttendancePortal() {
       setStaffContext(null);
       setBranches([]);
       setAttendanceRows([]);
+      setActiveTab("home");
+      setScheduleRows([]);
+      setOvertimeRows([]);
+      setPayrollRows([]);
+      setPayrollItems([]);
+      setProfilePhotoUrl(null);
+      setProfilePhotoError(null);
     } catch (signOutError: unknown) {
       setErrorMessage(friendlyError(signOutError, "Gagal keluar dari portal."));
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleInstallClick = async () => {
+    setInstallHelpMessage("");
+    if (!installPrompt) {
+      const isAppleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      setInstallHelpMessage(isAppleMobile
+        ? "Di iPhone/iPad, ketuk tombol Bagikan di browser lalu pilih “Tambahkan ke Layar Utama”."
+        : "Browser ini belum menampilkan prompt pemasangan. Coba buka portal melalui Chrome atau Edge terbaru, lalu pilih Pasang aplikasi dari menu browser.");
+      return;
+    }
+
+    const promptEvent = installPrompt;
+    setInstallPrompt(null);
+    await promptEvent.prompt();
+    const choice = await promptEvent.userChoice;
+    if (choice.outcome === "accepted") {
+      setInstallHelpMessage("Permintaan pemasangan diterima. Ikuti konfirmasi dari browser.");
+    } else {
+      setInstallHelpMessage("Pemasangan belum dilanjutkan. Anda tetap dapat membuka portal melalui browser.");
+    }
+  };
+
+  const continueWithoutInstall = () => {
+    localStorage.setItem(installDismissedKey, "true");
+    setInstallScreenDismissed(true);
+  };
+
+  const handleProfilePhotoChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setIsProfilePhotoSubmitting(true);
+    setProfilePhotoError(null);
+    try {
+      const cleanupWarning = await uploadStaffProfilePhoto(file, staffContext!.staffId);
+      setProfilePhotoUrl(await loadOwnStaffProfilePhoto(staffContext!.staffId));
+      setSuccessMessage(cleanupWarning || "Foto profil berhasil diperbarui.");
+    } catch (photoError: unknown) {
+      setProfilePhotoError(friendlyError(photoError, "Gagal memperbarui foto profil."));
+    } finally {
+      setIsProfilePhotoSubmitting(false);
     }
   };
 
@@ -370,6 +570,143 @@ export function AttendancePortal() {
       setErrorMessage(friendlyError(refreshError, "Gagal menyegarkan data."));
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleTabChange = async (tab: PortalTab) => {
+    setActiveTab(tab);
+    setPanelError(null);
+    if (tab === "home" || tab === "attendance" || tab === "profile") return;
+
+    setIsPanelLoading(true);
+    try {
+      if (tab === "schedule") {
+        let nextSchedules: PortalSchedule[] = [];
+        if (staffContext?.role === "DOCTOR") {
+          if (!staffContext.doctorId) throw new Error("Data dokter belum tertaut ke akun ini. Hubungi Super Admin.");
+          const { data, error } = await supabase
+            .from("doctor_schedules")
+            .select("id,date,branch_id,start_time,end_time,notes")
+            .eq("doctor_id", staffContext.doctorId)
+            .eq("status", "ACTIVE")
+            .gte("date", today)
+            .order("date", { ascending: true })
+            .limit(60);
+          if (error) throw new Error(`Gagal memuat jadwal praktik: ${error.message}`);
+          nextSchedules = (data || []).map((row) => ({
+            id: row.id,
+            date: row.date,
+            branchId: row.branch_id,
+            branchName: "",
+            startTime: row.start_time,
+            endTime: row.end_time,
+            shiftName: "Jadwal praktik",
+            notes: row.notes
+          }));
+        } else {
+          const { data: assignments, error: assignmentError } = await supabase
+            .from("staff_shift_assignments")
+            .select("id,date,branch_id,shift_id,notes")
+            .eq("staff_id", staffContext!.staffId)
+            .eq("active", true)
+            .gte("date", today)
+            .order("date", { ascending: true })
+            .limit(60);
+          if (assignmentError) throw new Error(`Gagal memuat jadwal shift: ${assignmentError.message}`);
+
+          const shiftIds = Array.from(new Set((assignments || []).map((row) => row.shift_id)));
+          const shiftsResult = shiftIds.length
+            ? await supabase.from("work_shifts").select("id,name,start_time,end_time").in("id", shiftIds)
+            : { data: [], error: null };
+          if (shiftsResult.error) throw new Error(`Gagal membaca detail shift: ${shiftsResult.error.message}`);
+          const shiftsById = new Map<string, { id: string; name: string; start_time: string; end_time: string }>(
+            (shiftsResult.data || []).map((shift): [string, { id: string; name: string; start_time: string; end_time: string }] => [shift.id, shift])
+          );
+          nextSchedules = (assignments || []).flatMap((assignment) => {
+            const shift = shiftsById.get(assignment.shift_id);
+            return shift ? [{
+              id: assignment.id,
+              date: assignment.date,
+              branchId: assignment.branch_id,
+              branchName: "",
+              startTime: shift.start_time,
+              endTime: shift.end_time,
+              shiftName: shift.name,
+              notes: assignment.notes
+            }] : [];
+          });
+        }
+
+        const branchIds = Array.from(new Set(nextSchedules.map((row) => row.branchId)));
+        const branchesResult = branchIds.length
+          ? await supabase.from("dental_branches").select("id,name").in("id", branchIds)
+          : { data: [], error: null };
+        if (branchesResult.error) throw new Error(`Gagal membaca nama cabang jadwal: ${branchesResult.error.message}`);
+        const branchNames = new Map<string, string>(
+          (branchesResult.data || []).map((branch): [string, string] => [branch.id, branch.name])
+        );
+        setScheduleRows(nextSchedules.map((row) => ({ ...row, branchName: branchNames.get(row.branchId) || "Cabang" })));
+      } else if (tab === "overtime") {
+        const { data, error } = await supabase
+          .from("overtime_records")
+          .select("id,date,overtime_minutes,overtime_hours,status,overtime_amount_snapshot,notes,rejection_reason")
+          .eq("staff_id", staffContext!.staffId)
+          .order("date", { ascending: false })
+          .limit(50);
+        if (error) throw new Error(`Gagal memuat riwayat lembur: ${error.message}`);
+        setOvertimeRows((data || []).map((row) => ({
+          id: row.id,
+          date: row.date,
+          minutes: row.overtime_minutes,
+          hours: Number(row.overtime_hours) || 0,
+          status: row.status,
+          amount: row.overtime_amount_snapshot == null ? null : Number(row.overtime_amount_snapshot),
+          notes: row.notes,
+          rejectionReason: row.rejection_reason
+        })));
+      } else {
+        const { data, error } = await supabase
+          .from("monthly_payrolls")
+          .select("id,month,year,base_salary,total_compensation,total_deductions,net_salary,status")
+          .eq("staff_id", staffContext!.staffId)
+          .in("status", ["APPROVED", "PAID"])
+          .order("year", { ascending: false })
+          .order("month", { ascending: false })
+          .limit(24);
+        if (error) throw new Error(`Gagal memuat slip gaji: ${error.message}`);
+        const nextPayrolls = (data || []).map((row) => ({
+          id: row.id,
+          month: row.month,
+          year: row.year,
+          baseSalary: Number(row.base_salary) || 0,
+          totalCompensation: Number(row.total_compensation) || 0,
+          totalDeductions: Number(row.total_deductions) || 0,
+          netSalary: Number(row.net_salary) || 0,
+          status: row.status
+        }));
+        setPayrollRows(nextPayrolls);
+        const payrollIds = nextPayrolls.map((row) => row.id);
+        if (!payrollIds.length) {
+          setPayrollItems([]);
+        } else {
+          const { data: items, error: itemsError } = await supabase
+            .from("payroll_items")
+            .select("id,payroll_id,description_snapshot,amount_snapshot,type")
+            .in("payroll_id", payrollIds);
+          if (itemsError) throw new Error(`Gagal memuat rincian slip gaji: ${itemsError.message}`);
+          setPayrollItems((items || []).map((item) => ({
+            id: item.id,
+            payrollId: item.payroll_id,
+            description: item.description_snapshot,
+            amount: Number(item.amount_snapshot) || 0,
+            type: item.type
+          })));
+        }
+      }
+    } catch (loadError: unknown) {
+      setPanelError(friendlyError(loadError, "Gagal memuat data portal pegawai."));
+    } finally {
+      setIsPanelLoading(false);
     }
   };
 
@@ -475,16 +812,36 @@ export function AttendancePortal() {
     return <main className="center-state"><RefreshCw className="spin" /><span>Memeriksa sesi absensi...</span></main>;
   }
 
+  if (!isAppInstalled && !installScreenDismissed) {
+    return (
+      <main className="install-shell">
+        <section className="install-card">
+          <img className="install-logo" src="/portal-brand.png" alt="Logo Lala Dentist" />
+          <p className="install-eyebrow">AKSES LEBIH MUDAH</p>
+          <h1>MyLala</h1>
+          <p className="install-description">Portal Pegawai Lala Dentist untuk membuka absensi, jadwal, dan informasi kerja dengan cepat.</p>
+          <button className="install-button" type="button" onClick={() => void handleInstallClick()}>
+            <Download />
+            Pasang Sekarang
+          </button>
+          {installHelpMessage && <p className="install-help" role="status">{installHelpMessage}</p>}
+          <button className="install-continue" type="button" onClick={continueWithoutInstall}>Lanjutkan lewat browser</button>
+          <p className="install-note">Pemasangan gratis dan tidak mengubah akun staf Anda.</p>
+        </section>
+      </main>
+    );
+  }
+
   if (!sessionUser || !staffContext) {
     return (
       <main className="login-shell">
         <section className="login-card">
           <div className="login-brand">
-            <img src="/clinic-logo.jpg" alt="Logo Lala Dentist" />
-            <p className="tagline">Absensi Klinik Lala Dentist</p>
+            <img src="/portal-brand.png" alt="Logo Lala Dentist" />
+            <p className="tagline">MyLala · Portal Pegawai Klinik Lala Dentist</p>
           </div>
           <h1>Selamat Datang Kembali</h1>
-          <p className="eyebrow">ABSENSI KLINIK LALA DENTIST</p>
+          <p className="eyebrow">PORTAL PEGAWAI</p>
           <p className="muted">Gunakan username/email dan password yang sama dengan sistem klinik.</p>
           {errorMessage && <div className="notice error" role="alert"><AlertCircle />{errorMessage}</div>}
           <form onSubmit={(event) => void handleLogin(event)} className="login-form">
@@ -524,8 +881,8 @@ export function AttendancePortal() {
     <main className="portal-shell">
       <header className="topbar">
         <div className="brand-lockup">
-          <img src="/clinic-logo.jpg" alt="" />
-          <div><strong>Lala Dentist</strong><span>Absensi Klinik</span></div>
+          <img src="/portal-brand.png" alt="" />
+          <div><strong>Lala Dentist</strong><span>Portal Pegawai</span></div>
         </div>
         <button className="icon-button" onClick={() => void handleSignOut()} disabled={isSubmitting} aria-label="Keluar">
           <LogOut />
@@ -533,10 +890,35 @@ export function AttendancePortal() {
       </header>
 
       <section className="welcome-card">
-        <div>
-          <h1>Halo, {staffContext.name}</h1>
-          <p className="daily-reminder">Jangan lupa absen hari ini</p>
-          <p className="muted">{new Intl.DateTimeFormat("id-ID", { dateStyle: "full", timeZone: "Asia/Jakarta" }).format(new Date())}</p>
+        <div className="welcome-profile">
+          <div className="profile-photo-wrap">
+            {profilePhotoUrl
+              ? <img className="profile-photo" src={profilePhotoUrl} alt="Foto profil Anda" />
+              : <span className="profile-photo-placeholder" aria-hidden="true"><UserRound /></span>}
+            <button
+              className="profile-photo-button"
+              type="button"
+              onClick={() => profilePhotoInput.current?.click()}
+              disabled={isProfilePhotoSubmitting}
+              aria-label="Ubah foto profil"
+              title="Ubah foto profil"
+            >
+              {isProfilePhotoSubmitting ? <RefreshCw className="spin" /> : <Upload />}
+            </button>
+            <input
+              ref={profilePhotoInput}
+              className="visually-hidden"
+              type="file"
+              accept="image/*"
+              onChange={(event) => void handleProfilePhotoChange(event)}
+            />
+          </div>
+          <div>
+            <h1>Halo, {staffContext.name}</h1>
+            <p className="daily-reminder">Jangan lupa absen hari ini</p>
+            <p className="muted">{new Intl.DateTimeFormat("id-ID", { dateStyle: "full", timeZone: "Asia/Jakarta" }).format(new Date())}</p>
+            {profilePhotoError && <p className="profile-photo-error" role="status">{profilePhotoError}</p>}
+          </div>
         </div>
         <div className="live-time">
           <Clock3 />
@@ -547,12 +929,63 @@ export function AttendancePortal() {
       {errorMessage && <div className="notice error" role="alert"><AlertCircle />{errorMessage}</div>}
       {successMessage && <div className="notice success" role="status"><CheckCircle2 />{successMessage}</div>}
 
+      <nav className="portal-nav" aria-label="Menu portal pegawai">
+        {portalTabs.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            className={`portal-nav-item${activeTab === id ? " active" : ""}`}
+            aria-current={activeTab === id ? "page" : undefined}
+            onClick={() => void handleTabChange(id)}
+            disabled={isPanelLoading}
+          >
+            <Icon />
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === "home" && (
+        <section className="portal-panel">
+          <div className="panel-heading">
+            <div><p className="eyebrow">RINGKASAN PEGAWAI</p><h2>Aktivitas hari ini</h2></div>
+            <span className="status-badge">{staffContext.role === "DOCTOR"
+              ? branches.length ? `${todayAttendances.length}/${branches.length} cabang tercatat` : "Belum ada jadwal"
+              : todayAttendance?.actual_check_out_at ? "Selesai" : todayAttendance?.actual_check_in_at ? "Sudah masuk" : "Belum absen"}</span>
+          </div>
+          <div className="summary-grid">
+            <div className="summary-card"><span>Masuk · {staffContext.role === "DOCTOR" ? currentBranch?.name || "cabang terpilih" : "hari ini"}</span><strong>{formatTime(todayAttendance?.actual_check_in_at || null)}</strong></div>
+            <div className="summary-card"><span>Pulang · {staffContext.role === "DOCTOR" ? currentBranch?.name || "cabang terpilih" : "hari ini"}</span><strong>{formatTime(todayAttendance?.actual_check_out_at || null)}</strong></div>
+            <div className="summary-card"><span>{staffContext.role === "DOCTOR" ? "Cabang sudah diabsen" : "Riwayat bulan ini"}</span><strong>{staffContext.role === "DOCTOR" ? `${todayAttendances.length} dari ${branches.length}` : `${currentMonthRows.length} hari`}</strong></div>
+          </div>
+          <div className="quick-links">
+            <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("attendance")}><BadgeCheck /><span><strong>Absensi Saya</strong><small>Absen masuk, pulang, dan lihat riwayat</small></span></button>
+            <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("schedule")}><CalendarDays /><span><strong>Jadwal Saya</strong><small>Lihat jadwal praktik atau shift</small></span></button>
+            <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("payroll")}><WalletCards /><span><strong>Gaji Saya</strong><small>Lihat slip yang sudah disetujui</small></span></button>
+          </div>
+          <p className="portal-footnote">Menu pegawai menampilkan data dari sistem klinik dan hanya untuk akun Anda.</p>
+        </section>
+      )}
+
+      {activeTab === "attendance" && (
+        <>
       {staffContext.role === "DOCTOR" && branches.length > 1 && (
         <label className="branch-picker">
           Cabang praktik hari ini
-          <select value={selectedBranchId} onChange={(event) => setSelectedBranchId(event.target.value)}>
-            {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-          </select>
+        <select
+          value={selectedBranchId}
+          onChange={(event) => setSelectedBranchId(event.target.value)}
+          disabled={!!unfinishedTodayAttendance}
+        >
+          {branches.map((branch) => {
+            const branchAttendance = todayAttendances.find((row) => row.branch_id === branch.id);
+            const status = branchAttendance?.actual_check_out_at ? "Selesai" : branchAttendance?.actual_check_in_at ? "Sudah masuk" : branchAttendance ? "Sudah dicatat" : "Belum absen";
+            return <option key={branch.id} value={branch.id}>{branch.name} · {status}</option>;
+          })}
+        </select>
+        <span className="branch-picker-note">{unfinishedTodayAttendance
+          ? "Selesaikan check-out di cabang yang sedang aktif sebelum berpindah ke cabang berikutnya."
+          : "Setiap cabang memiliki catatan masuk dan pulang terpisah. Selesaikan check-in dan check-out di cabang yang sama sebelum berpindah."}</span>
         </label>
       )}
 
@@ -568,12 +1001,15 @@ export function AttendancePortal() {
           <div className="location-heading"><MapPin /><div><strong>{currentBranch?.name}</strong><span>{geofenceConfigured
             ? `Radius absensi ${currentBranch?.geofence_radius_meters} meter`
             : "Geofence belum dikonfigurasi"}</span></div></div>
+          {staffContext.role === "DOCTOR" && unfinishedTodayAttendance && unfinishedTodayAttendance.branch_id === currentBranch?.id && (
+            <div className="notice warning compact"><AlertCircle />Absensi cabang ini masih berlangsung. Selesaikan check-out sebelum memulai absensi di cabang lain.</div>
+          )}
           {!geofenceConfigured && <div className="notice warning compact"><AlertCircle />Absensi belum dapat dilakukan di cabang ini.</div>}
           <div className="action-buttons">
             <button
               className="primary-button"
               onClick={() => beginAttendance("check-in")}
-              disabled={isSubmitting || !geofenceConfigured || !!todayAttendance}
+              disabled={isSubmitting || !geofenceConfigured || !!todayAttendance || !!unfinishedTodayAttendance}
             >
               {isSubmitting ? <RefreshCw className="spin" /> : <Camera />}
               {todayAttendance ? "Masuk tercatat" : "Masuk"}
@@ -581,7 +1017,7 @@ export function AttendancePortal() {
             <button
               className="secondary-button"
               onClick={() => beginAttendance("check-out")}
-              disabled={isSubmitting || !geofenceConfigured || !todayAttendance?.actual_check_in_at || !!todayAttendance.actual_check_out_at}
+              disabled={isSubmitting || !geofenceConfigured || !todayAttendance?.actual_check_in_at || currentBranch?.id !== todayAttendance.branch_id || !!todayAttendance.actual_check_out_at}
             >
               <Camera />
               {todayAttendance?.actual_check_out_at
@@ -611,6 +1047,7 @@ export function AttendancePortal() {
                 <div>
                   <strong>{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short" }).format(new Date(`${row.date}T12:00:00+07:00`))}</strong>
                   <span>{row.attendance_status === "LATE" ? `Terlambat ${row.late_minutes} menit` : row.attendance_status === "PRESENT" ? "Hadir" : row.attendance_status}</span>
+                  {branches.find((branch) => branch.id === row.branch_id) && <small>{branches.find((branch) => branch.id === row.branch_id)?.name}</small>}
                 </div>
                 <div className="history-times"><span>Masuk {formatTime(row.actual_check_in_at)}</span><span>Pulang {formatTime(row.actual_check_out_at)}</span></div>
               </article>
@@ -618,6 +1055,87 @@ export function AttendancePortal() {
           </div>
         )}
       </section>
+        </>
+      )}
+
+      {activeTab === "schedule" && (
+        <section className="portal-panel">
+          <div className="panel-heading"><div><p className="eyebrow">JADWAL KERJA</p><h2>Jadwal Saya</h2></div></div>
+          {isPanelLoading ? <p className="empty-state"><RefreshCw className="spin" /> Memuat jadwal...</p> : panelError ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div> : scheduleRows.length === 0 ? <p className="empty-state">Belum ada jadwal mendatang yang ditetapkan untuk akun Anda.</p> : (
+            <div className="portal-list">
+              {scheduleRows.map((row) => (
+                <article className="portal-list-row" key={row.id}>
+                  <div><strong>{formatDate(row.date)}</strong><span>{row.shiftName} · {row.branchName}</span>{row.notes && <small>{row.notes}</small>}</div>
+                  <strong className="portal-list-value">{row.startTime}–{row.endTime}</strong>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === "overtime" && (
+        <section className="portal-panel">
+          <div className="panel-heading"><div><p className="eyebrow">CATATAN KERJA TAMBAHAN</p><h2>Lembur Saya</h2></div></div>
+          {isPanelLoading ? <p className="empty-state"><RefreshCw className="spin" /> Memuat data lembur...</p> : panelError ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div> : overtimeRows.length === 0 ? <p className="empty-state">Belum ada catatan lembur untuk akun Anda.</p> : (
+            <div className="portal-list">
+              {overtimeRows.map((row) => (
+                <article className="portal-list-row" key={row.id}>
+                  <div><strong>{formatDate(row.date)}</strong><span>{row.hours.toLocaleString("id-ID")} jam · {row.minutes} menit</span>{(row.rejectionReason || row.notes) && <small>{row.rejectionReason || row.notes}</small>}</div>
+                  <div className="portal-list-end"><span className={`status-badge status-${row.status.toLowerCase()}`}>{({ DETECTED: "Terdeteksi", SUBMITTED: "Diajukan", APPROVED: "Disetujui", REJECTED: "Ditolak", PAID: "Dibayar" } as Record<string, string>)[row.status] || row.status}</span>{row.amount != null && <strong className="portal-list-value">{formatRupiah(row.amount)}</strong>}</div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === "payroll" && (
+        <section className="portal-panel">
+          <div className="panel-heading"><div><p className="eyebrow">SLIP GAJI</p><h2>Gaji Saya</h2><p className="muted">Hanya slip yang sudah disetujui atau dibayar yang ditampilkan.</p></div></div>
+          {isPanelLoading ? <p className="empty-state"><RefreshCw className="spin" /> Memuat slip gaji...</p> : panelError ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div> : payrollRows.length === 0 ? <p className="empty-state">Belum ada slip gaji yang disetujui.</p> : (
+            <div className="portal-list">
+              {payrollRows.map((row) => (
+                <article className="payroll-card" key={row.id}>
+                  <div className="panel-heading">
+                    <div><strong>{new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(new Date(row.year, row.month - 1, 1))}</strong><span className={`status-badge status-${row.status.toLowerCase()}`}>{row.status === "PAID" ? "Dibayar" : "Disetujui"}</span></div>
+                    <strong className="payroll-total">{formatRupiah(row.netSalary)}</strong>
+                  </div>
+                  <div className="summary-grid payroll-summary">
+                    <div className="summary-card"><span>Gaji pokok</span><strong>{formatRupiah(row.baseSalary)}</strong></div>
+                    <div className="summary-card"><span>Tambahan</span><strong>{formatRupiah(row.totalCompensation)}</strong></div>
+                    <div className="summary-card"><span>Potongan</span><strong>{formatRupiah(row.totalDeductions)}</strong></div>
+                  </div>
+                  {payrollItems.filter((item) => item.payrollId === row.id).length > 0 && (
+                    <details className="payroll-details">
+                      <summary>Rincian slip</summary>
+                      {payrollItems.filter((item) => item.payrollId === row.id).map((item) => (
+                        <div className="payroll-item" key={item.id}><span>{item.description}</span><strong>{item.type === "DEDUCTION" ? "−" : "+"}{formatRupiah(item.amount)}</strong></div>
+                      ))}
+                    </details>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === "profile" && (
+        <section className="portal-panel">
+          <div className="panel-heading"><div><p className="eyebrow">AKUN PEGAWAI</p><h2>Profil Saya</h2></div></div>
+          <div className="profile-details">
+            <div><span>Nama</span><strong>{staffContext.name}</strong></div>
+            <div><span>Peran</span><strong>{{ BRANCH_ADMIN: "Branch Admin", DOCTOR: "Dokter", DOCTOR_ASSISTANT: "Asisten Dokter", OB: "Staf" }[staffContext.role]}</strong></div>
+            <div><span>Cabang akun</span><strong>{branches.find((branch) => branch.id === staffContext.branchId)?.name || "Sesuai penugasan"}</strong></div>
+          </div>
+          {profilePhotoError && <div className="notice error" role="alert"><AlertCircle />{profilePhotoError}</div>}
+        </section>
+      )}
+
+      {activeTab !== "schedule" && activeTab !== "overtime" && activeTab !== "payroll" && activeTab !== "profile" && isPanelLoading && (
+        <div className="notice warning compact"><RefreshCw className="spin" /> Memuat data portal...</div>
+      )}
 
       <input
         ref={photoInput}
@@ -628,7 +1146,7 @@ export function AttendancePortal() {
         aria-label="Ambil foto bukti absensi"
         onChange={(event) => void handlePhotoSelected(event)}
       />
-      <footer>Absensi Lala Dentist · Waktu dan lokasi diverifikasi oleh server.</footer>
+      <footer>Portal Pegawai Lala Dentist · Waktu dan lokasi absensi diverifikasi oleh server.</footer>
     </main>
   );
 }

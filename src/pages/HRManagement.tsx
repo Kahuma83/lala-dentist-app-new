@@ -8,6 +8,7 @@ import { DoctorSchedulePosterModal } from "../components/poster/DoctorSchedulePo
 import { DoctorTimetableBoard } from "../components/DoctorTimetableBoard";
 import { DoctorExcelScheduleGrid } from "../components/DoctorExcelScheduleGrid";
 import { AuthService, AuthenticatedUserContext } from "../services/authService";
+import { uploadStaffProfilePhoto } from "../utils/staffProfilePhoto";
 import {
   UserRole,
   StaffPosition,
@@ -51,7 +52,8 @@ import {
   LayoutGrid,
   List,
   Table,
-  RefreshCw
+  RefreshCw,
+  Upload
 } from "lucide-react";
 
 type LoginAccountTarget = {
@@ -128,6 +130,7 @@ export const HRManagement: React.FC = () => {
   const [loginAccountsLoadError, setLoginAccountsLoadError] = useState(false);
   const [loginAccountTarget, setLoginAccountTarget] = useState<LoginAccountTarget | null>(null);
   const [loginAccountForm, setLoginAccountForm] = useState({ username: "", password: "" });
+  const [uploadingProfilePhotoStaffId, setUploadingProfilePhotoStaffId] = useState<string | null>(null);
 
   const showSuccess = (msg: string) => {
     setSuccessMessage(msg);
@@ -138,6 +141,26 @@ export const HRManagement: React.FC = () => {
   const showError = (msg: string) => {
     setErrorMessage(msg);
     setSuccessMessage(null);
+  };
+
+  const handleStaffProfilePhotoUpload = async (
+    staffId: string,
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setUploadingProfilePhotoStaffId(staffId);
+    try {
+      const cleanupWarning = await uploadStaffProfilePhoto(file, staffId);
+      if (cleanupWarning) showError(cleanupWarning);
+      else showSuccess("Foto profil pegawai berhasil diperbarui.");
+    } catch (error: unknown) {
+      showError(error instanceof Error ? error.message : "Gagal memperbarui foto profil pegawai.");
+    } finally {
+      setUploadingProfilePhotoStaffId(null);
+    }
   };
 
   useEffect(() => {
@@ -1401,6 +1424,9 @@ export const HRManagement: React.FC = () => {
                   ) : (
                     filteredStaff.map((s) => {
                       const br = branches.find((b) => b.id === s.branchId);
+                      const hasStaffLogin = Boolean(
+                        s.userAccountId || loginAccounts.some((account) => account.staffId === s.id)
+                      );
 
                       return (
                         <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
@@ -1482,6 +1508,25 @@ export const HRManagement: React.FC = () => {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              {hasStaffLogin && (
+                                <label
+                                  title={`Unggah foto profil ${s.fullName}`}
+                                  className={`p-1.5 rounded-md transition-colors ${
+                                    uploadingProfilePhotoStaffId === s.id
+                                      ? "text-slate-400"
+                                      : "text-emerald-700 hover:bg-emerald-50 cursor-pointer"
+                                  }`}
+                                >
+                                  <Upload className="w-3.5 h-3.5" />
+                                  <input
+                                    className="hidden"
+                                    type="file"
+                                    accept="image/*"
+                                    disabled={uploadingProfilePhotoStaffId === s.id}
+                                    onChange={(event) => void handleStaffProfilePhotoUpload(s.id, event)}
+                                  />
+                                </label>
+                              )}
                               <button
                                 onClick={() => handleOpenStaffModal(s)}
                                 title="Edit Data Staff"

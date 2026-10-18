@@ -329,6 +329,7 @@ export interface Staff {
   notes?: string;
   branchId?: string | null; // Primary or default branch placement
   userAccountId?: string | null; // Optional link to UserAccount
+  profilePhotoPath?: string | null;
   bankName?: string; // e.g. "BCA", "Mandiri", "BRI", "BNI", "BSI"
   bankAccountNumber?: string; // e.g. "143-089-2231"
   bankAccountHolder?: string; // e.g. "Claryssa Putri"

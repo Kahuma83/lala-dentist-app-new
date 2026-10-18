@@ -5147,6 +5147,7 @@ export class SupabaseStaffRepository implements StaffRepository {
       notes: row.notes,
       branchId: row.branch_id,
       userAccountId: row.user_account_id,
+      profilePhotoPath: row.profile_photo_path ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };

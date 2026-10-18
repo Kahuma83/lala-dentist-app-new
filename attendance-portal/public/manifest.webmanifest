@@ -1,8 +1,9 @@
 {
   "id": "/",
-  "name": "Absensi Klinik Lala Dentist",
-  "short_name": "Absensi Klinik",
-  "description": "Absensi staf Klinik Lala Dentist",
+  "id": "/",
+  "name": "MyLala",
+  "short_name": "MyLala",
+  "description": "Portal staf Klinik Lala Dentist untuk absensi, jadwal, lembur, gaji, dan profil.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -10,10 +11,16 @@
   "theme_color": "#047857",
   "icons": [
     {
-      "src": "/clinic-logo.jpg",
-      "sizes": "768x768",
-      "type": "image/jpeg",
-      "purpose": "any maskable"
+      "src": "/portal-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/portal-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
