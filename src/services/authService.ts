@@ -813,9 +813,14 @@ export class AuthService {
 
     if (isSupabaseConfigured) {
       try {
+        const supabasePatch = { ...patch } as Record<string, unknown>;
+        if (patch.staffId !== undefined) {
+          supabasePatch.staff_id = patch.staffId;
+          delete supabasePatch.staffId;
+        }
         const { data, error } = await supabase
           .from("user_accounts")
-          .update(patch)
+          .update(supabasePatch)
           .eq("id", targetAccountId)
           .select()
           .single();

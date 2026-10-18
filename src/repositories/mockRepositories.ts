@@ -3686,7 +3686,22 @@ export class MockCompensationRepository implements CompensationRepository {
   }
 
   async getCompensationRulesByStaff(staffId: string): Promise<StaffCompensationRule[]> {
-    return db.rules.filter((r: StaffCompensationRule) => r.staffId === staffId).map((r: StaffCompensationRule) => ({ ...r }));
+    const candidateIds = new Set<string>([staffId]);
+    const doctor = (db.doctors || []).find((d: DentalDoctor) => d.id === staffId || d.staffId === staffId);
+    const staff = (db.staff || []).find((s: Staff) => s.id === staffId || s.userAccountId === staffId);
+
+    if (doctor) {
+      candidateIds.add(doctor.id);
+      if (doctor.staffId) candidateIds.add(doctor.staffId);
+    }
+    if (staff) {
+      candidateIds.add(staff.id);
+      if (staff.userAccountId) candidateIds.add(staff.userAccountId);
+    }
+
+    return db.rules
+      .filter((r: StaffCompensationRule) => candidateIds.has(r.staffId))
+      .map((r: StaffCompensationRule) => ({ ...r }));
   }
 
   async createCompensationRule(
@@ -3780,7 +3795,22 @@ export class MockCompensationRepository implements CompensationRepository {
 
   async getCompensationAccruals(staffId?: string): Promise<CompensationAccrual[]> {
     if (staffId) {
-      return db.accruals.filter((a: CompensationAccrual) => a.staffId === staffId).map((a: CompensationAccrual) => ({ ...a }));
+      const candidateIds = new Set<string>([staffId]);
+      const doctor = (db.doctors || []).find((d: DentalDoctor) => d.id === staffId || d.staffId === staffId);
+      const staff = (db.staff || []).find((s: Staff) => s.id === staffId || s.userAccountId === staffId);
+
+      if (doctor) {
+        candidateIds.add(doctor.id);
+        if (doctor.staffId) candidateIds.add(doctor.staffId);
+      }
+      if (staff) {
+        candidateIds.add(staff.id);
+        if (staff.userAccountId) candidateIds.add(staff.userAccountId);
+      }
+
+      return db.accruals
+        .filter((a: CompensationAccrual) => candidateIds.has(a.staffId))
+        .map((a: CompensationAccrual) => ({ ...a }));
     }
     return db.accruals.map((a: CompensationAccrual) => ({ ...a }));
   }
@@ -3811,8 +3841,15 @@ export class MockCompensationRepository implements CompensationRepository {
     };
 
     // Find rules for doctor (excluding BASE_SALARY and DOCTOR_SITTING_FEE)
+    const doctor = (db.doctors || []).find((d: DentalDoctor) => d.id === job.doctorId || d.staffId === job.doctorId);
+    const doctorCandidateIds = new Set<string>([job.doctorId]);
+    if (doctor) {
+      doctorCandidateIds.add(doctor.id);
+      if (doctor.staffId) doctorCandidateIds.add(doctor.staffId);
+    }
+
     const doctorRules = db.rules.filter((r: StaffCompensationRule) =>
-      r.staffId === job.doctorId && isRuleEffectiveOnDate(r, treatmentDate)
+      doctorCandidateIds.has(r.staffId) && isRuleEffectiveOnDate(r, treatmentDate)
     );
     for (const rule of doctorRules) {
       if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE") continue;
@@ -3932,20 +3969,33 @@ export class MockPayrollRepository implements PayrollRepository {
     baseSalary?: number
   ): Promise<MonthlyPayroll> {
     const now = AppClock.nowISO();
-    const payrollId = `payroll-${staffId}-${year}-${month}`;
+    const staff = db.staff.find(s => s.id === staffId || s.userAccountId === staffId);
+    const doctor = db.doctors.find(d => d.id === staffId || d.staffId === staffId);
+    const candidateIds = new Set<string>([staffId]);
+    if (staff) {
+      candidateIds.add(staff.id);
+      if (staff.userAccountId) candidateIds.add(staff.userAccountId);
+    }
+    if (doctor) {
+      candidateIds.add(doctor.id);
+      if (doctor.staffId) candidateIds.add(doctor.staffId);
+    }
+
+    const payrollKeyId = staff?.id || doctor?.staffId || doctor?.id || staffId;
+    const payrollId = `payroll-${payrollKeyId}-${year}-${month}`;
     const periodDate = `${year}-${String(month).padStart(2, "0")}-15`;
 
     // Check if payroll already exists
-    let existingIndex = db.payrolls.findIndex((p: MonthlyPayroll) => p.id === payrollId || (p.staffId === staffId && p.month === month && p.year === year));
+    let existingIndex = db.payrolls.findIndex((p: MonthlyPayroll) =>
+      p.id === payrollId || (p.staffId === staffId && p.month === month && p.year === year)
+    );
 
-    const staff = db.staff.find(s => s.id === staffId);
-    const doctor = db.doctors.find(d => d.id === staffId);
-    const staffBranchId = staff?.branchId || doctor?.branchId || null;
+    const staffBranchId = staff?.branchId || doctor?.assignedBranchId || null;
 
     let effectiveBaseSalary: number = baseSalary !== undefined ? baseSalary : 2500000;
     if (baseSalary === undefined) {
       const activeBaseRule = (db.rules || []).find((r: StaffCompensationRule) =>
-        r.staffId === staffId &&
+        candidateIds.has(r.staffId) &&
         r.ruleTypeSnapshot === "BASE_SALARY" &&
         r.isActive &&
         (!r.effectiveStartDate || r.effectiveStartDate <= periodDate) &&
@@ -3956,15 +4006,20 @@ export class MockPayrollRepository implements PayrollRepository {
       }
     }
 
-    // Calculate accruals for staff
-    const staffAccruals = db.accruals.filter((a: CompensationAccrual) => a.staffId === staffId);
+    // Calculate accruals for the same person only within the target month.
+    const staffAccruals = db.accruals.filter((a: CompensationAccrual) => {
+      if (!candidateIds.has(a.staffId)) return false;
+      if (!a.accruedAt) return false;
+      const [accYear, accMonth] = a.accruedAt.slice(0, 7).split("-").map((part) => parseInt(part, 10));
+      return accYear === year && accMonth === month;
+    });
     let totalCompensation = staffAccruals.reduce((sum: number, a: CompensationAccrual) => sum + a.amount, 0);
 
     // Calculate Doctor Sitting Fee if applicable
     let doctorSittingFeeAmount = 0;
     let sittingFeeSessionCount = 0;
     const activeSittingRule = (db.rules || []).find((r: StaffCompensationRule) =>
-      r.staffId === staffId &&
+      candidateIds.has(r.staffId) &&
       r.ruleTypeSnapshot === "DOCTOR_SITTING_FEE" &&
       r.isActive &&
       (!r.effectiveStartDate || r.effectiveStartDate <= periodDate) &&
@@ -3973,7 +4028,7 @@ export class MockPayrollRepository implements PayrollRepository {
 
     if (activeSittingRule) {
       const monthlySchedules = (db.doctorSchedules || []).filter((sch: DoctorSchedule) => {
-        if (sch.doctorId !== staffId) return false;
+        if (sch.doctorId !== staffId && sch.doctorId !== doctor?.id && sch.doctorId !== doctor?.staffId) return false;
         if (staffBranchId && sch.branchId !== staffBranchId) return false;
         if (sch.status === ScheduleStatus.CANCELLED) return false;
         const [sYear, sMonth] = sch.date.split("-").map(n => parseInt(n, 10));
@@ -3981,7 +4036,7 @@ export class MockPayrollRepository implements PayrollRepository {
       });
 
       const monthlyAttendances = (db.attendances || []).filter((att: Attendance) => {
-        if (att.staffId !== staffId) return false;
+        if (att.staffId !== staffId && att.staffId !== staff?.id && att.staffId !== doctor?.staffId && att.staffId !== doctor?.id) return false;
         if (att.attendanceStatus !== AttendanceStatus.PRESENT) return false;
         const [aYear, aMonth] = att.date.split("-").map(n => parseInt(n, 10));
         return aYear === year && aMonth === month;
@@ -3996,7 +4051,8 @@ export class MockPayrollRepository implements PayrollRepository {
 
     // PHASE HR-4: Fetch APPROVED overtime records for this staff in this month/year period
     const approvedOvertimes = db.overtimes.filter((o: OvertimeRecord) => {
-      if (o.staffId !== staffId || o.status !== OvertimeStatus.APPROVED || o.branchId !== staffBranchId) {
+      const matchesStaff = o.staffId === staffId || (staff && o.staffId === staff.id) || (doctor && (o.staffId === doctor.id || o.staffId === doctor.staffId));
+      if (!matchesStaff || o.status !== OvertimeStatus.APPROVED || (staffBranchId && o.branchId !== staffBranchId)) {
         return false;
       }
       const parts = o.date.split("-");

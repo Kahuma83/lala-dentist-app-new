@@ -62,6 +62,41 @@ type LoginAccountTarget = {
   name: string;
   branchId: string | null;
   role: UserRole;
+  doctorCode?: string;
+  staffId?: string | null;
+  existingAccountId?: string;
+};
+
+const standardStaffShiftPresets = [
+  { key: "morning", name: "Shift Pagi", startTime: "08:00", endTime: "14:00" },
+  { key: "afternoon", name: "Shift Sore", startTime: "14:00", endTime: "21:00" }
+] as const;
+
+const normalizeShiftTime = (value: string) => {
+  const [hour = "", minute = "00"] = value.split(":");
+  return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+};
+
+const isStandardShiftStaff = (position?: StaffPosition) =>
+  position === StaffPosition.BRANCH_ADMIN || position === StaffPosition.ASSISTANT;
+
+const getAssignmentShiftOptions = (workShifts: WorkShift[], branchId: string, position?: StaffPosition) => {
+  const branchShifts = workShifts.filter((shift) => shift.branchId === branchId);
+  if (!isStandardShiftStaff(position)) return branchShifts;
+  return branchShifts.filter((shift) =>
+    shift.active && standardStaffShiftPresets.some((preset) =>
+      normalizeShiftTime(shift.startTime) === preset.startTime &&
+      normalizeShiftTime(shift.endTime) === preset.endTime
+    )
+  );
+};
+
+const getAssignmentShiftLabel = (shift: WorkShift) => {
+  const preset = standardStaffShiftPresets.find((item) =>
+    normalizeShiftTime(shift.startTime) === item.startTime &&
+    normalizeShiftTime(shift.endTime) === item.endTime
+  );
+  return `${preset?.name || shift.name} (${shift.startTime} - ${shift.endTime})`;
 };
 
 export const HRManagement: React.FC = () => {
@@ -129,7 +164,12 @@ export const HRManagement: React.FC = () => {
   const [isLoadingLoginAccounts, setIsLoadingLoginAccounts] = useState(isSupabaseConfigured);
   const [loginAccountsLoadError, setLoginAccountsLoadError] = useState(false);
   const [loginAccountTarget, setLoginAccountTarget] = useState<LoginAccountTarget | null>(null);
-  const [loginAccountForm, setLoginAccountForm] = useState({ username: "", password: "" });
+  const [loginAccountForm, setLoginAccountForm] = useState({
+    username: "",
+    password: "",
+    employeeCode: "",
+    joinDate: new Date().toISOString().slice(0, 10)
+  });
   const [uploadingProfilePhotoStaffId, setUploadingProfilePhotoStaffId] = useState<string | null>(null);
 
   const showSuccess = (msg: string) => {
@@ -192,10 +232,17 @@ export const HRManagement: React.FC = () => {
     const linked = loginAccounts.find((account) =>
       target.kind === "staff" ? account.staffId === target.id : account.doctorId === target.id
     );
-    setLoginAccountTarget(target);
+    setLoginAccountTarget({
+      ...target,
+      staffId: target.staffId || linked?.staffId || null
+    });
     setLoginAccountForm({
       username: linked?.username || target.name.toLowerCase().replace(/[^a-z0-9_]/g, ""),
-      password: ""
+      password: "",
+      employeeCode: target.kind === "doctor" && target.doctorCode
+        ? target.doctorCode
+        : "",
+      joinDate: new Date().toISOString().slice(0, 10)
     });
   };
 
@@ -210,25 +257,96 @@ export const HRManagement: React.FC = () => {
         role: currentUser?.role || UserRole.PATIENT,
         assignedBranchId: currentUser?.assignedBranchId || null
       };
-      const account = await AuthService.createStaffAccountSecure(actorContext, {
-        username: loginAccountForm.username,
-        name: loginAccountTarget.name,
-        role: loginAccountTarget.role,
-        branchId: loginAccountTarget.branchId,
-        password: loginAccountForm.password,
-        staffId: loginAccountTarget.kind === "staff" ? loginAccountTarget.id : null,
-        doctorId: loginAccountTarget.kind === "doctor" ? loginAccountTarget.id : null
-      });
-      setLoginAccounts((accounts) => [...accounts, account]);
-      if (loginAccountTarget.kind === "staff") {
-        await staffRepo.updateStaff(
+
+      let linkedStaffId = loginAccountTarget.kind === "staff"
+        ? loginAccountTarget.id
+        : loginAccountTarget.staffId || null;
+
+      if (loginAccountTarget.kind === "doctor" && !linkedStaffId) {
+        const employeeCode = loginAccountForm.employeeCode.trim();
+        if (!employeeCode) throw new Error("Kode pegawai dokter wajib diisi.");
+
+        const staffByCode = await staffRepo.getStaffByEmployeeCode(employeeCode);
+        let linkedStaff = staffByCode;
+        if (linkedStaff) {
+          const sameName = linkedStaff.fullName.trim().toLowerCase() === loginAccountTarget.name.trim().toLowerCase();
+          const samePhone = (linkedStaff.phone || "").replace(/\D/g, "") ===
+            (doctors.find((doctor) => doctor.id === loginAccountTarget.id)?.phone || "").replace(/\D/g, "");
+          if (!sameName || !samePhone) {
+            throw new Error(`Kode pegawai ${employeeCode} sudah digunakan oleh data staf lain.`);
+          }
+          if (linkedStaff.userAccountId && linkedStaff.userAccountId !== loginAccountTarget.existingAccountId) {
+            throw new Error("Data staf dengan kode tersebut sudah tertaut ke akun lain.");
+          }
+        } else {
+          const doctor = doctors.find((item) => item.id === loginAccountTarget.id);
+          if (!doctor) throw new Error("Data dokter tidak ditemukan. Muat ulang halaman lalu coba lagi.");
+          linkedStaff = await staffRepo.createStaff({
+            employeeCode,
+            fullName: loginAccountTarget.name,
+            phone: doctor.phone || "",
+            position: StaffPosition.DOCTOR,
+            employmentStatus: EmploymentStatus.ACTIVE,
+            branchId: loginAccountTarget.branchId,
+            joinDate: loginAccountForm.joinDate,
+            active: true,
+            notes: "Profil pegawai dokter"
+          }, currentUser?.role, currentUser?.assignedBranchId);
+        }
+
+        linkedStaffId = linkedStaff.id;
+        await doctorRepo.updateDoctor(
           loginAccountTarget.id,
-          { userAccountId: account.id },
+          { staffId: linkedStaffId },
           currentUser?.role,
           currentUser?.assignedBranchId
         );
       }
-      showSuccess(`Akun login untuk ${loginAccountTarget.name} berhasil dibuat.`);
+
+      if (!linkedStaffId) {
+        throw new Error("Akun login wajib ditautkan ke data pegawai.");
+      }
+
+      if (loginAccountTarget.existingAccountId) {
+        await staffRepo.updateStaff(
+          linkedStaffId,
+          { userAccountId: loginAccountTarget.existingAccountId },
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+        const updatedAccount = await AuthService.updateUserAccount(
+          actorContext,
+          loginAccountTarget.existingAccountId,
+          { staffId: linkedStaffId }
+        );
+        setLoginAccounts((accounts) => accounts.map((account) =>
+          account.id === updatedAccount.id ? updatedAccount : account
+        ));
+        showSuccess(`Data pegawai ${loginAccountTarget.name} berhasil ditautkan ke akun login dan portal absensi.`);
+      } else {
+        const linkedDoctorId = loginAccountTarget.kind === "doctor"
+          ? loginAccountTarget.id
+          : loginAccountTarget.role === UserRole.DOCTOR
+          ? doctors.find((doctor) => doctor.staffId === linkedStaffId)?.id || null
+          : null;
+        const account = await AuthService.createStaffAccountSecure(actorContext, {
+          username: loginAccountForm.username,
+          name: loginAccountTarget.name,
+          role: loginAccountTarget.role,
+          branchId: loginAccountTarget.branchId,
+          password: loginAccountForm.password,
+          staffId: linkedStaffId,
+          doctorId: linkedDoctorId
+        });
+        setLoginAccounts((accounts) => [...accounts, account]);
+        await staffRepo.updateStaff(
+          linkedStaffId,
+          { userAccountId: account.id },
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+        showSuccess(`Akun login untuk ${loginAccountTarget.name} berhasil dibuat dan ditautkan ke data pegawai.`);
+      }
       setLoginAccountTarget(null);
       await refreshData();
     } catch (error: unknown) {
@@ -832,6 +950,71 @@ export const HRManagement: React.FC = () => {
     });
   }, [staffShiftAssignments, currentUser, shiftBranchFilter, shiftDateFilter]);
 
+  const selectedAssignmentStaff = staff.find((item) => item.id === assignShiftForm.staffId);
+  const assignmentShiftOptions = getAssignmentShiftOptions(
+    workShifts,
+    assignShiftForm.branchId,
+    selectedAssignmentStaff?.position
+  );
+
+  const handleCreateStandardStaffShifts = async () => {
+    if (!isSuper) {
+      showError("Hanya Super Admin yang dapat menyiapkan shift standar.");
+      return;
+    }
+
+    const activeBranches = branches.filter((branch) => branch.isActive && branch.id);
+    if (!activeBranches.length) {
+      showError("Tidak ada cabang aktif untuk menyiapkan shift standar.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    let createdCount = 0;
+    try {
+      for (const branch of activeBranches) {
+        for (const preset of standardStaffShiftPresets) {
+          const alreadyConfigured = workShifts.some((shift) =>
+            shift.branchId === branch.id &&
+            shift.active &&
+            normalizeShiftTime(shift.startTime) === preset.startTime &&
+            normalizeShiftTime(shift.endTime) === preset.endTime
+          );
+          if (alreadyConfigured) continue;
+
+          await workShiftRepo.createShift({
+            branchId: branch.id,
+            name: preset.name,
+            startTime: preset.startTime,
+            endTime: preset.endTime,
+            active: true,
+            notes: "Shift standar Admin Cabang dan Asisten Dokter"
+          });
+          createdCount += 1;
+        }
+      }
+
+      await refreshData();
+      showSuccess(createdCount
+        ? `${createdCount} shift standar berhasil ditambahkan.`
+        : "Shift Pagi dan Shift Sore sudah tersedia di semua cabang aktif.");
+    } catch (err: unknown) {
+      let refreshError = "";
+      if (createdCount) {
+        try {
+          await refreshData();
+        } catch (refreshErr: unknown) {
+          refreshError = refreshErr instanceof Error ? ` Data tidak berhasil dimuat ulang: ${refreshErr.message}` : " Data tidak berhasil dimuat ulang.";
+        }
+      }
+      showError(err instanceof Error
+        ? `Gagal menyiapkan shift standar setelah ${createdCount} shift tersimpan: ${err.message}${refreshError}`
+        : `Gagal menyiapkan shift standar setelah ${createdCount} shift tersimpan.${refreshError}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSaveShiftAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -1271,15 +1454,46 @@ export const HRManagement: React.FC = () => {
                               </button>
                               {(() => {
                                 const linkedAccount = loginAccounts.find((account) => account.doctorId === doc.id);
-                                return linkedAccount ? (
-                                  <span
+                                const linkedStaffId = doc.staffId || linkedAccount?.staffId || null;
+                                const linkedStaff = linkedStaffId
+                                  ? staff.find((staffRecord) => staffRecord.id === linkedStaffId)
+                                  : null;
+                                if (
+                                  linkedAccount &&
+                                  linkedStaffId &&
+                                  linkedAccount.staffId === linkedStaffId &&
+                                  linkedStaff?.userAccountId === linkedAccount.id
+                                ) {
+                                  return <span
                                     title={`Akun Supabase terhubung: ${linkedAccount.email || linkedAccount.username}`}
                                     className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 rounded-md"
                                   >
                                     <UserCheck className="w-3 h-3" />
                                     Akun aktif
                                   </span>
-                                ) : isSuper ? (
+                                }
+                                if (linkedAccount && isSuper) {
+                                  return <button
+                                    disabled={isLoadingLoginAccounts}
+                                    onClick={() => openLoginAccountModal({
+                                      kind: "doctor",
+                                      id: doc.id,
+                                      name: doc.name || doc.fullName || "Dokter",
+                                      branchId: doc.assignedBranchId || null,
+                                      role: UserRole.DOCTOR,
+                                      doctorCode: doc.doctorCode,
+                                      staffId: linkedStaffId,
+                                      existingAccountId: linkedAccount.id
+                                    })}
+                                    title="Tautkan akun dokter ke data pegawai untuk portal absensi"
+                                    className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 rounded-md border border-amber-200 disabled:opacity-50"
+                                  >
+                                    <KeyRound className="w-3 h-3" />
+                                    Lengkapi data pegawai
+                                  </button>
+                                }
+                                if (linkedAccount) return null;
+                                return isSuper ? (
                                   <button
                                     disabled={isLoadingLoginAccounts}
                                     onClick={() => openLoginAccountModal({
@@ -1287,9 +1501,11 @@ export const HRManagement: React.FC = () => {
                                       id: doc.id,
                                       name: doc.name || doc.fullName || "Dokter",
                                       branchId: doc.assignedBranchId || null,
-                                      role: UserRole.DOCTOR
+                                      role: UserRole.DOCTOR,
+                                      doctorCode: doc.doctorCode,
+                                      staffId: linkedStaffId
                                     })}
-                                    title="Buat akun login Supabase terpisah dari data dokter"
+                                    title="Buat akun login dan tautkan ke data pegawai dokter"
                                     className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 rounded-md border border-amber-200 disabled:opacity-50"
                                   >
                                     <KeyRound className="w-3 h-3" />
@@ -1871,6 +2087,26 @@ export const HRManagement: React.FC = () => {
                 );
               })}
             </div>
+            {isSuper && (
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-slate-100 pt-4">
+                <p className="text-[11px] text-slate-500">
+                  Shift standar pegawai: Pagi 08.00–14.00 dan Sore 14.00–21.00.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm("Tambahkan Shift Pagi dan Shift Sore standar pada cabang aktif yang belum memilikinya?")) {
+                      void handleCreateStandardStaffShifts();
+                    }
+                  }}
+                  disabled={isSubmitting}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-100 disabled:opacity-50"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {isSubmitting ? "Menyiapkan shift..." : "Siapkan Shift Pagi & Sore"}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Roster Controls */}
@@ -1905,10 +2141,13 @@ export const HRManagement: React.FC = () => {
             <button
               onClick={() => {
                 const activeStaff = staff.find((s) => s.active);
+                const branchId = userBranchId || activeStaff?.branchId || branches[0]?.id || "";
+                const staffId = activeStaff?.id || "";
+                const availableShifts = getAssignmentShiftOptions(workShifts, branchId, activeStaff?.position);
                 setAssignShiftForm({
-                  staffId: activeStaff?.id || "",
-                  branchId: userBranchId || branches[0]?.id || "branch-gebang",
-                  shiftId: workShifts[0]?.id || "",
+                  staffId,
+                  branchId,
+                  shiftId: availableShifts[0]?.id || "",
                   date: shiftDateFilter || new Date().toISOString().split("T")[0],
                   notes: ""
                 });
@@ -2764,7 +3003,12 @@ export const HRManagement: React.FC = () => {
                 <label className="block text-slate-600 font-semibold mb-1">Pilih Staff *</label>
                 <select
                   value={assignShiftForm.staffId}
-                  onChange={(e) => setAssignShiftForm({ ...assignShiftForm, staffId: e.target.value })}
+                  onChange={(e) => {
+                    const staffId = e.target.value;
+                    const selectedStaff = staff.find((item) => item.id === staffId);
+                    const availableShifts = getAssignmentShiftOptions(workShifts, assignShiftForm.branchId, selectedStaff?.position);
+                    setAssignShiftForm({ ...assignShiftForm, staffId, shiftId: availableShifts[0]?.id || "" });
+                  }}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
                 >
                   {staff
@@ -2781,7 +3025,11 @@ export const HRManagement: React.FC = () => {
                 <label className="block text-slate-600 font-semibold mb-1">Cabang Tugas *</label>
                 <select
                   value={assignShiftForm.branchId}
-                  onChange={(e) => setAssignShiftForm({ ...assignShiftForm, branchId: e.target.value })}
+                  onChange={(e) => {
+                    const branchId = e.target.value;
+                    const availableShifts = getAssignmentShiftOptions(workShifts, branchId, selectedAssignmentStaff?.position);
+                    setAssignShiftForm({ ...assignShiftForm, branchId, shiftId: availableShifts[0]?.id || "" });
+                  }}
                   disabled={currentUser?.role === UserRole.BRANCH_ADMIN}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white disabled:bg-slate-100"
                 >
@@ -2800,14 +3048,26 @@ export const HRManagement: React.FC = () => {
                   onChange={(e) => setAssignShiftForm({ ...assignShiftForm, shiftId: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
                 >
-                  {workShifts
-                    .filter((w) => w.branchId === assignShiftForm.branchId)
-                    .map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name} ({w.startTime} - {w.endTime})
-                      </option>
-                    ))}
+                  {assignmentShiftOptions.length === 0 && (
+                    <option value="" disabled>
+                      {isStandardShiftStaff(selectedAssignmentStaff?.position)
+                        ? "Shift Pagi/Sore belum tersedia"
+                        : "Belum ada shift pada cabang ini"}
+                    </option>
+                  )}
+                  {assignmentShiftOptions.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {getAssignmentShiftLabel(w)}
+                    </option>
+                  ))}
                 </select>
+                {assignmentShiftOptions.length === 0 && (
+                  <p className="mt-1 text-[10px] text-amber-700">
+                    {isStandardShiftStaff(selectedAssignmentStaff?.position)
+                      ? "Shift standar belum tersedia. Super Admin dapat menambahkannya melalui tombol “Siapkan Shift Pagi & Sore”."
+                      : "Belum ada shift untuk cabang ini. Super Admin perlu mengatur master shift sebelum membuat penugasan."}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -2842,7 +3102,7 @@ export const HRManagement: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !assignmentShiftOptions.some((shift) => shift.id === assignShiftForm.shiftId)}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold"
                 >
                   {isSubmitting ? "Menyimpan..." : "Tugaskan Shift"}
@@ -3049,8 +3309,9 @@ export const HRManagement: React.FC = () => {
               <div>
                 <h3 className="text-lg font-bold text-slate-900">Buat Akun Login Supabase</h3>
                 <p className="text-sm text-slate-500 mt-1">
-                  Akun login untuk {loginAccountTarget.kind === "doctor" ? "dokter" : "staf"} {loginAccountTarget.name}.
-                  Data personel tidak akan diubah.
+                  {loginAccountTarget.existingAccountId
+                    ? `Tautkan akun dokter ${loginAccountTarget.name} ke data pegawai untuk portal absensi.`
+                    : `Akun login untuk ${loginAccountTarget.kind === "doctor" ? "dokter" : "staf"} ${loginAccountTarget.name}.`}
                 </p>
               </div>
               <button type="button" onClick={() => setLoginAccountTarget(null)} aria-label="Tutup">
@@ -3058,31 +3319,63 @@ export const HRManagement: React.FC = () => {
               </button>
             </div>
             <div className="space-y-4">
-              <label className="block text-sm font-medium text-slate-700">
-                Username
-                <input
-                  required
-                  minLength={3}
-                  value={loginAccountForm.username}
-                  onChange={(event) => setLoginAccountForm({ ...loginAccountForm, username: event.target.value })}
-                  className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg"
-                  autoComplete="username"
-                />
-              </label>
-              <label className="block text-sm font-medium text-slate-700">
-                Password awal
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={loginAccountForm.password}
-                  onChange={(event) => setLoginAccountForm({ ...loginAccountForm, password: event.target.value })}
-                  className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg"
-                  autoComplete="new-password"
-                />
-              </label>
+              {!loginAccountTarget.existingAccountId && (
+                <>
+                  <label className="block text-sm font-medium text-slate-700">
+                    Username
+                    <input
+                      required
+                      minLength={3}
+                      value={loginAccountForm.username}
+                      onChange={(event) => setLoginAccountForm({ ...loginAccountForm, username: event.target.value })}
+                      className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg"
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="block text-sm font-medium text-slate-700">
+                    Password awal
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={loginAccountForm.password}
+                      onChange={(event) => setLoginAccountForm({ ...loginAccountForm, password: event.target.value })}
+                      className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg"
+                      autoComplete="new-password"
+                    />
+                  </label>
+                </>
+              )}
+              {loginAccountTarget.kind === "doctor" && !loginAccountTarget.staffId && (
+                <>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                    Dokter juga memerlukan data pegawai agar fungsi absensi, jadwal, dan gaji memakai identitas yang sama.
+                  </div>
+                  <label className="block text-sm font-medium text-slate-700">
+                    Kode pegawai
+                    <input
+                      required
+                      value={loginAccountForm.employeeCode}
+                      onChange={(event) => setLoginAccountForm({ ...loginAccountForm, employeeCode: event.target.value })}
+                      className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg"
+                    />
+                  </label>
+                  <label className="block text-sm font-medium text-slate-700">
+                    Tanggal mulai bekerja
+                    <input
+                      type="date"
+                      required
+                      value={loginAccountForm.joinDate}
+                      onChange={(event) => setLoginAccountForm({ ...loginAccountForm, joinDate: event.target.value })}
+                      className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg"
+                    />
+                  </label>
+                </>
+              )}
               <p className="text-xs text-slate-500">
-                Akun akan dibuat di Supabase Auth dan ditautkan ke data personel yang dipilih.
+                {loginAccountTarget.existingAccountId
+                  ? "Akun login yang sudah ada tidak diubah password atau rolenya."
+                  : "Akun dibuat di Supabase Auth dan ditautkan ke data pegawai."}
               </p>
             </div>
             <div className="mt-6 flex justify-end gap-2">
@@ -3098,7 +3391,11 @@ export const HRManagement: React.FC = () => {
                 disabled={isSubmitting}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold"
               >
-                {isSubmitting ? "Membuat..." : "Buat Akun"}
+                {isSubmitting
+                  ? "Menyimpan..."
+                  : loginAccountTarget.existingAccountId
+                  ? "Tautkan Data Pegawai"
+                  : "Buat Akun"}
               </button>
             </div>
           </form>

@@ -125,6 +125,20 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     expect(items.some((i) => i.descriptionSnapshot.includes("Komisi"))).toBe(true);
   });
 
+  it("Test 7b: Doctor payroll generation resolves staff-linked IDs to the active salary rule", async () => {
+    await compRepo.createCompensationRule({
+      staffId: "doc-syafira",
+      name: "Base Salary drg. Syafira",
+      ruleTypeSnapshot: "BASE_SALARY",
+      valueSnapshot: 4500000,
+      isActive: true
+    });
+
+    const payroll = await payrollRepo.generateMonthlyPayroll("staff-doc-syafira", 9, 2026);
+    expect(payroll.staffId).toBe("staff-doc-syafira");
+    expect(payroll.baseSalary).toBe(4500000);
+  });
+
   it("Test 8: Payroll status lifecycle updates properly", async () => {
     const payroll = await payrollRepo.generateMonthlyPayroll("assistant-clary", 9, 2026);
     expect(payroll.status).toBe(PayrollStatus.DRAFT);

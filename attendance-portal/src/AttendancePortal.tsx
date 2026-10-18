@@ -5,6 +5,8 @@ import {
   AlertCircle,
   Camera,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Download,
   Home,
@@ -95,6 +97,7 @@ type InstallPromptEvent = Event & {
 };
 
 const allowedRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB"];
+const fiveDayScheduleRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR_ASSISTANT"];
 const attendanceColumns = "id,branch_id,date,attendance_status,scheduled_start_at,scheduled_end_at,actual_check_in_at,actual_check_out_at,late_minutes";
 const installDismissedKey = "lala-attendance-install-screen-dismissed";
 const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
@@ -113,6 +116,19 @@ function todayWib(): string {
     month: "2-digit",
     day: "2-digit"
   }).format(new Date());
+}
+
+function addDays(date: string, days: number): string {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function startOfWeek(date: string): string {
+  const value = new Date(`${date}T12:00:00Z`);
+  const daysSinceMonday = (value.getUTCDay() + 6) % 7;
+  value.setUTCDate(value.getUTCDate() - daysSinceMonday);
+  return value.toISOString().slice(0, 10);
 }
 
 function formatTime(value: string | null): string {
@@ -244,6 +260,7 @@ export function AttendancePortal() {
   const [isPanelLoading, setIsPanelLoading] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [scheduleRows, setScheduleRows] = useState<PortalSchedule[]>([]);
+  const [scheduleWeekStart, setScheduleWeekStart] = useState(() => startOfWeek(todayWib()));
   const [overtimeRows, setOvertimeRows] = useState<PortalOvertime[]>([]);
   const [payrollRows, setPayrollRows] = useState<PortalPayroll[]>([]);
   const [payrollItems, setPayrollItems] = useState<PortalPayrollItem[]>([]);
@@ -332,17 +349,14 @@ export function AttendancePortal() {
     let branchIds: string[] = [];
 
     if (context.role === "DOCTOR") {
-      let doctorId = context.doctorId;
-      if (!doctorId) {
-        const { data: doctor, error: doctorError } = await supabase
-          .from("dental_doctors")
-          .select("id")
-          .eq("staff_id", context.staffId)
-          .eq("active", true)
-          .maybeSingle();
-        if (doctorError) throw new Error(`Gagal membaca data dokter: ${doctorError.message}`);
-        doctorId = doctor?.id || null;
-      }
+      const { data: doctor, error: doctorError } = await supabase
+        .from("dental_doctors")
+        .select("id")
+        .eq("staff_id", context.staffId)
+        .eq("active", true)
+        .maybeSingle();
+      if (doctorError) throw new Error(`Gagal membaca data dokter: ${doctorError.message}`);
+      const doctorId = doctor?.id || context.doctorId;
 
       if (doctorId) {
         context.doctorId = doctorId;
@@ -573,7 +587,7 @@ export function AttendancePortal() {
     }
   };
 
-  const handleTabChange = async (tab: PortalTab) => {
+  const handleTabChange = async (tab: PortalTab, requestedWeekStart = scheduleWeekStart) => {
     setActiveTab(tab);
     setPanelError(null);
     if (tab === "home" || tab === "attendance" || tab === "profile") return;
@@ -582,16 +596,19 @@ export function AttendancePortal() {
     try {
       if (tab === "schedule") {
         let nextSchedules: PortalSchedule[] = [];
+        const isFiveDaySchedule = fiveDayScheduleRoles.includes(staffContext!.role);
         if (staffContext?.role === "DOCTOR") {
           if (!staffContext.doctorId) throw new Error("Data dokter belum tertaut ke akun ini. Hubungi Super Admin.");
+          const scheduleEnd = addDays(today, 2);
           const { data, error } = await supabase
             .from("doctor_schedules")
             .select("id,date,branch_id,start_time,end_time,notes")
             .eq("doctor_id", staffContext.doctorId)
             .eq("status", "ACTIVE")
             .gte("date", today)
+            .lte("date", scheduleEnd)
             .order("date", { ascending: true })
-            .limit(60);
+            .order("start_time", { ascending: true });
           if (error) throw new Error(`Gagal memuat jadwal praktik: ${error.message}`);
           nextSchedules = (data || []).map((row) => ({
             id: row.id,
@@ -604,14 +621,16 @@ export function AttendancePortal() {
             notes: row.notes
           }));
         } else {
+          const assignmentStart = isFiveDaySchedule ? today : requestedWeekStart;
+          const assignmentEnd = isFiveDaySchedule ? addDays(today, 4) : addDays(requestedWeekStart, 6);
           const { data: assignments, error: assignmentError } = await supabase
             .from("staff_shift_assignments")
             .select("id,date,branch_id,shift_id,notes")
             .eq("staff_id", staffContext!.staffId)
             .eq("active", true)
-            .gte("date", today)
-            .order("date", { ascending: true })
-            .limit(60);
+            .gte("date", assignmentStart)
+            .lte("date", assignmentEnd)
+            .order("date", { ascending: true });
           if (assignmentError) throw new Error(`Gagal memuat jadwal shift: ${assignmentError.message}`);
 
           const shiftIds = Array.from(new Set((assignments || []).map((row) => row.shift_id)));
@@ -645,7 +664,9 @@ export function AttendancePortal() {
         const branchNames = new Map<string, string>(
           (branchesResult.data || []).map((branch): [string, string] => [branch.id, branch.name])
         );
-        setScheduleRows(nextSchedules.map((row) => ({ ...row, branchName: branchNames.get(row.branchId) || "Cabang" })));
+        setScheduleRows(nextSchedules
+          .map((row) => ({ ...row, branchName: branchNames.get(row.branchId) || "Cabang" }))
+          .sort((left, right) => left.date.localeCompare(right.date) || left.startTime.localeCompare(right.startTime)));
       } else if (tab === "overtime") {
         const { data, error } = await supabase
           .from("overtime_records")
@@ -708,6 +729,13 @@ export function AttendancePortal() {
     } finally {
       setIsPanelLoading(false);
     }
+  };
+
+  const changeScheduleWeek = (offset: number) => {
+    if (staffContext && fiveDayScheduleRoles.includes(staffContext.role)) return;
+    const nextWeekStart = addDays(scheduleWeekStart, offset * 7);
+    setScheduleWeekStart(nextWeekStart);
+    if (activeTab === "schedule") void handleTabChange("schedule", nextWeekStart);
   };
 
   const beginAttendance = (action: AttendanceAction) => {
@@ -838,11 +866,13 @@ export function AttendancePortal() {
         <section className="login-card">
           <div className="login-brand">
             <img src="/portal-brand.png" alt="Logo Lala Dentist" />
-            <p className="tagline">MyLala · Portal Pegawai Klinik Lala Dentist</p>
+            <div><strong>Lala Dentist</strong><span>Portal Pegawai</span></div>
           </div>
-          <h1>Selamat Datang Kembali</h1>
-          <p className="eyebrow">PORTAL PEGAWAI</p>
-          <p className="muted">Gunakan username/email dan password yang sama dengan sistem klinik.</p>
+          <div className="login-heading">
+            <p className="eyebrow">PORTAL PEGAWAI</p>
+            <h1>Selamat Datang Kembali</h1>
+            <p className="muted">Masuk untuk mengakses absensi, jadwal, dan informasi kerja Anda.</p>
+          </div>
           {errorMessage && <div className="notice error" role="alert"><AlertCircle />{errorMessage}</div>}
           <form onSubmit={(event) => void handleLogin(event)} className="login-form">
             <label>
@@ -1060,16 +1090,69 @@ export function AttendancePortal() {
 
       {activeTab === "schedule" && (
         <section className="portal-panel">
-          <div className="panel-heading"><div><p className="eyebrow">JADWAL KERJA</p><h2>Jadwal Saya</h2></div></div>
-          {isPanelLoading ? <p className="empty-state"><RefreshCw className="spin" /> Memuat jadwal...</p> : panelError ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div> : scheduleRows.length === 0 ? <p className="empty-state">Belum ada jadwal mendatang yang ditetapkan untuk akun Anda.</p> : (
-            <div className="portal-list">
-              {scheduleRows.map((row) => (
-                <article className="portal-list-row" key={row.id}>
-                  <div><strong>{formatDate(row.date)}</strong><span>{row.shiftName} · {row.branchName}</span>{row.notes && <small>{row.notes}</small>}</div>
-                  <strong className="portal-list-value">{row.startTime}–{row.endTime}</strong>
-                </article>
-              ))}
-            </div>
+          <div className="panel-heading schedule-heading">
+            <div><p className="eyebrow">JADWAL KERJA</p><h2>Jadwal Saya</h2></div>
+            {staffContext?.role === "DOCTOR" || (staffContext && fiveDayScheduleRoles.includes(staffContext.role)) ? (
+              <span className="schedule-date-range">{formatDate(today)} – {formatDate(addDays(today, staffContext.role === "DOCTOR" ? 2 : 4))}</span>
+            ) : (
+              <div className="schedule-week-controls" aria-label="Navigasi minggu jadwal">
+              <button type="button" className="icon-button light" onClick={() => changeScheduleWeek(-1)} disabled={isPanelLoading} aria-label="Minggu sebelumnya">
+                <ChevronLeft />
+              </button>
+              <span>{formatDate(scheduleWeekStart)} – {formatDate(addDays(scheduleWeekStart, 6))}</span>
+              <button type="button" className="icon-button light" onClick={() => changeScheduleWeek(1)} disabled={isPanelLoading} aria-label="Minggu berikutnya">
+                <ChevronRight />
+              </button>
+              {scheduleWeekStart !== startOfWeek(today) && (
+                <button type="button" className="schedule-current-week" onClick={() => {
+                  const currentWeek = startOfWeek(today);
+                  setScheduleWeekStart(currentWeek);
+                  if (activeTab === "schedule") void handleTabChange("schedule", currentWeek);
+                }} disabled={isPanelLoading}>
+                  Minggu ini
+                </button>
+              )}
+              </div>
+            )}
+          </div>
+          {isPanelLoading ? <p className="empty-state"><RefreshCw className="spin" /> Memuat jadwal...</p> : panelError ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div> : (
+            <>
+              {scheduleRows.length === 0 && <p className="schedule-empty-note">{staffContext?.role === "DOCTOR"
+                ? "Belum ada jadwal dokter yang ditetapkan untuk tiga hari ini."
+                : staffContext && fiveDayScheduleRoles.includes(staffContext.role)
+                ? "Belum ada jadwal yang ditetapkan untuk lima hari ini."
+                : "Belum ada jadwal yang ditetapkan untuk minggu ini."}</p>}
+              <div className="schedule-week-list">
+                {Array.from(
+                  { length: staffContext?.role === "DOCTOR" ? 3 : staffContext && fiveDayScheduleRoles.includes(staffContext.role) ? 5 : 7 },
+                  (_, index) => staffContext?.role === "DOCTOR" || (staffContext && fiveDayScheduleRoles.includes(staffContext.role))
+                    ? addDays(today, index)
+                    : addDays(scheduleWeekStart, index)
+                ).map((date) => {
+                  const daySchedules = scheduleRows.filter((row) => row.date === date);
+                  return (
+                    <section className="schedule-day" key={date}>
+                      <h3>{new Intl.DateTimeFormat("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                        weekday: "long",
+                        day: "numeric",
+                        month: "long"
+                      }).format(new Date(`${date}T12:00:00+07:00`))}</h3>
+                      {daySchedules.length === 0 ? <p>Tidak ada jadwal</p> : daySchedules.map((row) => (
+                        <article className="schedule-day-row" key={row.id}>
+                          <div>
+                            <strong>{row.shiftName}</strong>
+                            <span>{row.branchName}</span>
+                            {row.notes && !/^salinan mingguan\b/i.test(row.notes.trim()) && <small>{row.notes}</small>}
+                          </div>
+                          <strong className="portal-list-value schedule-time">{row.startTime}–{row.endTime}</strong>
+                        </article>
+                      ))}
+                    </section>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
       )}
@@ -1126,8 +1209,8 @@ export function AttendancePortal() {
           <div className="panel-heading"><div><p className="eyebrow">AKUN PEGAWAI</p><h2>Profil Saya</h2></div></div>
           <div className="profile-details">
             <div><span>Nama</span><strong>{staffContext.name}</strong></div>
-            <div><span>Peran</span><strong>{{ BRANCH_ADMIN: "Branch Admin", DOCTOR: "Dokter", DOCTOR_ASSISTANT: "Asisten Dokter", OB: "Staf" }[staffContext.role]}</strong></div>
-            <div><span>Cabang akun</span><strong>{branches.find((branch) => branch.id === staffContext.branchId)?.name || "Sesuai penugasan"}</strong></div>
+            <div><span>Jabatan</span><strong>{{ BRANCH_ADMIN: "Branch Admin", DOCTOR: "Dokter", DOCTOR_ASSISTANT: "Asisten Dokter", OB: "Staf" }[staffContext.role]}</strong></div>
+            <div><span>Penempatan</span><strong>{branches.find((branch) => branch.id === staffContext.branchId)?.name || "Sesuai penugasan"}</strong></div>
           </div>
           {profilePhotoError && <div className="notice error" role="alert"><AlertCircle />{profilePhotoError}</div>}
         </section>

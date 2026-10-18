@@ -154,6 +154,45 @@ app.post('/api/staff', async (req, res) => {
       return res.status(400).json({ message: `Cabang penempatan wajib dipilih untuk role ${role}.` });
     }
 
+    if (role === 'DOCTOR') {
+      if (!doctorId || !staffId) {
+        return res.status(400).json({
+          message: 'Akun dokter harus ditautkan ke data dokter dan data pegawai sebelum dibuat.'
+        });
+      }
+
+      const { data: doctor, error: doctorError } = await supabaseAdmin
+        .from('dental_doctors')
+        .select('id, staff_id')
+        .eq('id', doctorId)
+        .maybeSingle();
+      if (doctorError) {
+        console.error('[server] doctor account link validation failed:', doctorError);
+        return res.status(400).json({ message: `Gagal memvalidasi data dokter: ${doctorError.message}` });
+      }
+      if (!doctor || doctor.staff_id !== staffId) {
+        return res.status(400).json({
+          message: 'Data dokter belum terhubung ke data pegawai yang dipilih. Simpan relasi pegawai dokter terlebih dahulu.'
+        });
+      }
+
+      const { data: staffRecord, error: staffError } = await supabaseAdmin
+        .from('staff')
+        .select('id, user_account_id, active')
+        .eq('id', staffId)
+        .maybeSingle();
+      if (staffError) {
+        console.error('[server] doctor staff link validation failed:', staffError);
+        return res.status(400).json({ message: `Gagal memvalidasi data pegawai dokter: ${staffError.message}` });
+      }
+      if (!staffRecord || !staffRecord.active) {
+        return res.status(400).json({ message: 'Data pegawai dokter tidak ditemukan atau berstatus nonaktif.' });
+      }
+      if (staffRecord.user_account_id) {
+        return res.status(409).json({ message: 'Data pegawai dokter sudah tertaut ke akun login lain.' });
+      }
+    }
+
     const syntheticEmail = `${username}@laladentist.id`;
 
     const { data: existing, error: existingError } = await supabaseAdmin
@@ -206,6 +245,38 @@ app.post('/api/staff', async (req, res) => {
       return res.status(400).json({
         message: `Gagal menyimpan profil user_accounts: ${insertError?.message || 'Unknown error'}`
       });
+    }
+
+    if (role === 'DOCTOR') {
+      const { data: linkedStaff, error: linkError } = await supabaseAdmin
+        .from('staff')
+        .update({ user_account_id: insertedAcc.id })
+        .eq('id', staffId)
+        .is('user_account_id', null)
+        .select('id')
+        .maybeSingle();
+
+      if (linkError || !linkedStaff) {
+        if (linkError) {
+          console.error('[server] doctor staff account link failed:', linkError);
+        }
+        const { error: profileCleanupError } = await supabaseAdmin
+          .from('user_accounts')
+          .delete()
+          .eq('id', insertedAcc.id);
+        if (profileCleanupError) {
+          console.error('[server] failed to clean up unlinked doctor account profile:', profileCleanupError);
+        }
+        const { error: authCleanupError } = await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+        if (authCleanupError) {
+          console.error('[server] failed to clean up unlinked doctor auth user:', authCleanupError);
+        }
+        return res.status(linkError ? 400 : 409).json({
+          message: linkError
+            ? `Gagal menautkan akun ke data pegawai dokter: ${linkError.message}`
+            : 'Data pegawai dokter sudah ditautkan ke akun lain. Muat ulang data lalu coba lagi.'
+        });
+      }
     }
 
     return res.status(201).json({

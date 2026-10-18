@@ -25,7 +25,8 @@ vi.mock("../lib/supabase", () => {
       eq: vi.fn().mockReturnThis(),
       or: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      insert: vi.fn().mockReturnThis()
+      insert: vi.fn().mockReturnThis(),
+      update: vi.fn().mockReturnThis()
     }))
   };
   return {
@@ -233,5 +234,41 @@ describe("Production Authentication Fix & Super Admin Identity Verification", ()
     await expect(
       AuthService.resolveUserContext("real-auth-missing-user", "newstaff@laladentist.id")
     ).rejects.toThrow(/Akun pengguna.*belum dipetakan|UserAccount.*tidak ditemukan/i);
+  });
+
+  it("10. Super Admin staff-link updates use the Supabase staff_id column", async () => {
+    const updateQuery = {
+      update: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: {
+          id: "account-1",
+          auth_user_id: "auth-1",
+          username: "doctor",
+          email: "doctor@laladentist.id",
+          name: "Doctor",
+          role: UserRole.DOCTOR,
+          staff_id: "staff-1",
+          active: true
+        },
+        error: null
+      })
+    };
+    (supabase.from as any).mockReturnValue(updateQuery);
+
+    const updated = await AuthService.updateUserAccount(
+      {
+        authUserId: "admin-auth",
+        userAccountId: "admin-account",
+        role: UserRole.SUPER_ADMIN,
+        assignedBranchId: null
+      },
+      "account-1",
+      { staffId: "staff-1" }
+    );
+
+    expect(updateQuery.update).toHaveBeenCalledWith({ staff_id: "staff-1" });
+    expect(updated.staffId).toBe("staff-1");
   });
 });

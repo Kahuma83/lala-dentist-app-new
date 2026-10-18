@@ -4136,6 +4136,7 @@ export class SupabaseDoctorRepository implements DoctorRepository {
       avatar_url: data.avatarUrl || data.photoUrl || null,
       notes: data.notes || null
     };
+    if (data.staffId !== undefined) payload.staff_id = data.staffId || null;
     if (data.id && isValidUUID(data.id)) payload.id = data.id;
 
     try {
@@ -4204,6 +4205,7 @@ export class SupabaseDoctorRepository implements DoctorRepository {
         if (updates.phone) payload.phone = updates.phone;
         if (updates.email !== undefined) payload.email = updates.email;
         if (updates.assignedBranchId !== undefined) payload.assigned_branch_id = updates.assignedBranchId;
+        if (updates.staffId !== undefined) payload.staff_id = updates.staffId || null;
         if (updates.active !== undefined) payload.active = updates.active;
         if (updates.avatarUrl !== undefined || updates.photoUrl !== undefined || (updates as any).profileImage !== undefined) {
           const photoUrl = updates.photoUrl || updates.avatarUrl || (updates as any).profileImage || null;
@@ -5299,7 +5301,25 @@ export class SupabaseCompensationRepository implements CompensationRepository {
   }
   async getCompensationRulesByStaff(staffId: string): Promise<StaffCompensationRule[]> {
     const all = await this.getCompensationRules();
-    return all.filter((r) => r.staffId === staffId);
+    const candidateIds = new Set<string>([staffId]);
+
+    const { data: staffData, error: staffError } = await supabase.from("staff").select("id,user_account_id").eq("id", staffId).maybeSingle();
+    if (!staffError && staffData) {
+      candidateIds.add(staffData.id);
+      if (staffData.user_account_id) candidateIds.add(staffData.user_account_id);
+    }
+
+    const { data: doctorData, error: doctorError } = await supabase
+      .from("dental_doctors")
+      .select("id,staff_id")
+      .or(`id.eq.${staffId},staff_id.eq.${staffId}`)
+      .maybeSingle();
+    if (!doctorError && doctorData) {
+      candidateIds.add(doctorData.id);
+      if (doctorData.staff_id) candidateIds.add(doctorData.staff_id);
+    }
+
+    return all.filter((r) => candidateIds.has(r.staffId));
   }
   async createCompensationRule(data: Omit<StaffCompensationRule, "id" | "createdAt" | "updatedAt"> & { id?: string }): Promise<StaffCompensationRule> {
     ensureSupabaseConnected();
@@ -5392,11 +5412,34 @@ export class SupabaseCompensationRepository implements CompensationRepository {
   }
   async getCompensationAccruals(staffId?: string): Promise<CompensationAccrual[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("compensation_accruals").select("*").order("accrued_at", { ascending: false });
-    if (staffId) q = q.eq("staff_id", staffId);
-    const { data, error } = await q;
+    if (!staffId) {
+      const { data, error } = await supabase.from("compensation_accruals").select("*").order("accrued_at", { ascending: false });
+      if (error) return handleSupabaseReadError("compensation_accruals", error, []);
+      return (data || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
+    }
+
+    const candidateIds = new Set<string>([staffId]);
+    const { data: staffData, error: staffError } = await supabase.from("staff").select("id,user_account_id").eq("id", staffId).maybeSingle();
+    if (!staffError && staffData) {
+      candidateIds.add(staffData.id);
+      if (staffData.user_account_id) candidateIds.add(staffData.user_account_id);
+    }
+
+    const { data: doctorData, error: doctorError } = await supabase
+      .from("dental_doctors")
+      .select("id,staff_id")
+      .or(`id.eq.${staffId},staff_id.eq.${staffId}`)
+      .maybeSingle();
+    if (!doctorError && doctorData) {
+      candidateIds.add(doctorData.id);
+      if (doctorData.staff_id) candidateIds.add(doctorData.staff_id);
+    }
+
+    const { data, error } = await supabase.from("compensation_accruals").select("*").order("accrued_at", { ascending: false });
     if (error) return handleSupabaseReadError("compensation_accruals", error, []);
-    return (data || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
+    return (data || [])
+      .filter((row: any) => candidateIds.has(row.staff_id))
+      .map((row: any) => this.mapCompensationAccrualFromDb(row));
   }
   async calculateAndAccrueForTreatment(treatmentJobId: string): Promise<CompensationAccrual[]> {
     ensureSupabaseConnected();
@@ -5585,24 +5628,42 @@ export class SupabasePayrollRepository implements PayrollRepository {
       throw new Error("Periode payroll tidak valid: tahun harus 2020 atau lebih baru.");
     }
 
-    const { data: staff, error: staffError } = await supabase
-      .from("staff")
-      .select("id, branch_id")
-      .eq("id", staffId)
-      .maybeSingle();
-    if (staffError) throw new Error(`Gagal memuat data karyawan untuk payroll: ${staffError.message}`);
-    if (!staff) throw new Error("Karyawan tidak ditemukan. Pastikan dokter sudah ditautkan ke data karyawan.");
+    let staffQuery = supabase.from("staff").select("id, branch_id, user_account_id").eq("id", staffId).maybeSingle();
+    let staff = (await staffQuery).data;
+
+    if (!staff) {
+      const { data: doctor, error: doctorError } = await supabase
+        .from("dental_doctors")
+        .select("id, staff_id, assigned_branch_id")
+        .or(`id.eq.${staffId},staff_id.eq.${staffId}`)
+        .maybeSingle();
+      if (doctorError) throw new Error(`Gagal memuat data karyawan untuk payroll: ${doctorError.message}`);
+      if (!doctor?.staff_id) throw new Error("Karyawan tidak ditemukan. Pastikan dokter sudah ditautkan ke data karyawan.");
+
+      const { data: staffByDoctor, error: staffByDoctorError } = await supabase
+        .from("staff")
+        .select("id, branch_id, user_account_id")
+        .eq("id", doctor.staff_id)
+        .maybeSingle();
+      if (staffByDoctorError) throw new Error(`Gagal memuat data karyawan untuk payroll: ${staffByDoctorError.message}`);
+      if (!staffByDoctor) throw new Error("Karyawan tidak ditemukan. Pastikan dokter sudah ditautkan ke data karyawan.");
+      staff = staffByDoctor;
+    }
 
     let branchId = staff.branch_id || null;
     if (!branchId) {
       const { data: doctor, error: doctorError } = await supabase
         .from("dental_doctors")
         .select("assigned_branch_id")
-        .eq("staff_id", staff.id)
+        .or(`id.eq.${staffId},staff_id.eq.${staffId}`)
         .maybeSingle();
       if (doctorError) throw new Error(`Gagal memuat cabang dokter untuk payroll: ${doctorError.message}`);
       branchId = doctor?.assigned_branch_id || null;
     }
+
+    const candidateIds = new Set<string>([staffId]);
+    candidateIds.add(staff.id);
+    if (staff.user_account_id) candidateIds.add(staff.user_account_id);
 
     const periodStart = `${year}-${String(month).padStart(2, "0")}-01`;
     const nextMonth = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
@@ -5612,31 +5673,27 @@ export class SupabasePayrollRepository implements PayrollRepository {
       supabase
         .from("monthly_payrolls")
         .select("*")
-        .eq("staff_id", staff.id)
+        .in("staff_id", [...candidateIds])
         .eq("month", month)
         .eq("year", year)
         .maybeSingle(),
       supabase
         .from("compensation_accruals")
-        .select("id, amount, source_id, accrued_at")
-        .eq("staff_id", staff.id)
+        .select("id, amount, source_id, accrued_at, staff_id")
         .gte("accrued_at", periodStartTimestamp)
         .lt("accrued_at", nextMonthTimestamp),
       supabase
         .from("overtime_records")
-        .select("id, date, overtime_hours, overtime_amount_snapshot")
-        .eq("staff_id", staff.id)
+        .select("id, date, overtime_hours, overtime_amount_snapshot, staff_id")
         .eq("status", "APPROVED")
         .gte("date", periodStart)
         .lt("date", nextMonth),
       baseSalary === undefined
         ? supabase
             .from("staff_compensation_rules")
-            .select("value_snapshot")
-            .eq("staff_id", staff.id)
+            .select("value_snapshot, staff_id")
             .eq("rule_type_snapshot", "BASE_SALARY")
             .eq("is_active", true)
-            .maybeSingle()
         : Promise.resolve({ data: null, error: null })
     ]);
 
@@ -5650,12 +5707,13 @@ export class SupabasePayrollRepository implements PayrollRepository {
       throw new Error(`Payroll periode ${month}/${year} sudah berstatus ${existing.status} dan tidak dapat dihitung ulang.`);
     }
 
-    const salary = Number(baseSalary ?? baseRuleResult.data?.value_snapshot ?? 0);
+    const accruals = (accrualsResult.data || []).filter((row: any) => candidateIds.has(row.staff_id));
+    const overtimes = (overtimeResult.data || []).filter((row: any) => candidateIds.has(row.staff_id));
+    const baseRule = (baseRuleResult.data || []).find((row: any) => candidateIds.has(row.staff_id));
+    const salary = Number(baseSalary ?? baseRule?.value_snapshot ?? 0);
     if (!Number.isFinite(salary) || salary < 0) {
       throw new Error("Gaji pokok harus berupa nominal nol atau lebih.");
     }
-    const accruals = accrualsResult.data || [];
-    const overtimes = overtimeResult.data || [];
     const totalCompensation = accruals.reduce((sum: number, row: any) => sum + (Number(row.amount) || 0), 0);
     const overtimeTotal = overtimes.reduce(
       (sum: number, row: any) => sum + (Number(row.overtime_amount_snapshot) || 0),
@@ -6639,7 +6697,7 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
     let q = supabase.from("staff_shift_assignments").select("*");
     if (filter?.branchId) q = q.eq("branch_id", filter.branchId);
     if (filter?.staffId) q = q.eq("staff_id", filter.staffId);
-    if (filter?.date) q = q.eq("assignment_date", filter.date);
+    if (filter?.date) q = q.eq("date", filter.date);
     const { data, error } = await q;
     if (error) return handleSupabaseReadError("staff_shift_assignments", error, []);
     return (data || []).map((row: any) => ({
@@ -6647,7 +6705,7 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       staffId: row.staff_id,
       shiftId: row.shift_id,
       branchId: row.branch_id,
-      date: row.assignment_date,
+      date: row.date,
       active: row.active ?? true,
       notes: row.notes,
       createdAt: row.created_at || AppClock.nowISO(),
@@ -6664,7 +6722,7 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       staffId: data.staff_id,
       shiftId: data.shift_id,
       branchId: data.branch_id,
-      date: data.assignment_date,
+      date: data.date,
       active: data.active ?? true,
       notes: data.notes,
       createdAt: data.created_at || AppClock.nowISO(),
@@ -6677,7 +6735,7 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       staff_id: data.staffId,
       shift_id: data.shiftId,
       branch_id: data.branchId,
-      assignment_date: data.date,
+      date: data.date,
       active: data.active ?? true,
       notes: data.notes
     };
@@ -6689,7 +6747,7 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       staffId: inserted.staff_id,
       shiftId: inserted.shift_id,
       branchId: inserted.branch_id,
-      date: inserted.assignment_date,
+      date: inserted.date,
       active: inserted.active ?? true,
       notes: inserted.notes,
       createdAt: inserted.created_at || AppClock.nowISO(),
@@ -6702,7 +6760,7 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
     if (updates.staffId) payload.staff_id = updates.staffId;
     if (updates.shiftId) payload.shift_id = updates.shiftId;
     if (updates.branchId) payload.branch_id = updates.branchId;
-    if (updates.date) payload.assignment_date = updates.date;
+    if (updates.date) payload.date = updates.date;
     if (updates.active !== undefined) payload.active = updates.active;
     if (updates.notes !== undefined) payload.notes = updates.notes;
     const { data: updated, error } = await supabase.from("staff_shift_assignments").update(payload).eq("id", id).select().single();
@@ -6712,7 +6770,7 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       staffId: updated.staff_id,
       shiftId: updated.shift_id,
       branchId: updated.branch_id,
-      date: updated.assignment_date,
+      date: updated.date,
       active: updated.active ?? true,
       notes: updated.notes,
       createdAt: updated.created_at || AppClock.nowISO(),
