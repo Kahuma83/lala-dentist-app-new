@@ -61,6 +61,21 @@ describe("patient portal booking time slots", () => {
     expect(bookingsRoute).toContain("payload.source = 'PATIENT_PORTAL'");
   });
 
+  it("exposes the same protected booking endpoint as a Cloudflare Pages Function", () => {
+    const pagesFunction = fs.readFileSync(
+      path.resolve(process.cwd(), "functions/api/bookings.js"),
+      "utf8"
+    );
+
+    expect(pagesFunction).toContain("export const onRequestPost");
+    expect(pagesFunction).toContain('path: "/auth/v1/user"');
+    expect(pagesFunction).toContain('actorAccount.role === "PATIENT"');
+    expect(pagesFunction).toContain('String(actorAccount.patient_id || "") !== String(payload.patient_id)');
+    expect(pagesFunction).toContain('payload.source = "PATIENT_PORTAL"');
+    expect(pagesFunction).toContain('path: "/rest/v1/bookings"');
+    expect(pagesFunction).toContain('prefer: "return=representation"');
+  });
+
   it("allows only one unfinished patient-portal booking across dates and branches", () => {
     const migration = fs.readFileSync(path.resolve(
       process.cwd(),
