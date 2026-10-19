@@ -2,6 +2,11 @@ import { supabase, isSupabaseConfigured } from "../lib/supabase";
 import { MockDatabase } from "../data/mockData";
 import { UserRole, UserAccount } from "../types/domain";
 import { createClient } from "@supabase/supabase-js";
+import {
+  changeAuthenticatedPassword,
+  requestPasswordResetEmail,
+  resetAuthenticatedPassword
+} from "./passwordService";
 
 export interface AuthenticatedUserContext {
   authUserId: string;
@@ -527,12 +532,12 @@ export class AuthService {
 
   /**
    * Updates password for the current authenticated user.
-   * If currentPassword is provided and email is present, re-authenticates to securely verify old password.
+   * Verifies the active account and current password before applying the change.
    */
   static async changePassword(
     newPassword: string,
-    currentPassword?: string,
-    email?: string | null
+    currentPassword: string,
+    email: string | null
   ): Promise<void> {
     if (!newPassword || newPassword.trim() === "") {
       throw new Error("Password baru tidak boleh kosong");
@@ -540,44 +545,34 @@ export class AuthService {
     if (newPassword.length < 6) {
       throw new Error("Password baru minimal harus 6 karakter");
     }
+    if (!currentPassword) {
+      throw new Error("Password saat ini wajib diisi");
+    }
+    if (currentPassword === newPassword) {
+      throw new Error("Password baru harus berbeda dari password saat ini");
+    }
+    if (!email?.trim()) {
+      throw new Error("Email akun tidak tersedia. Silakan keluar dan masuk kembali sebelum mengubah kata sandi.");
+    }
 
     if (isSupabaseConfigured) {
-      // If currentPassword & email provided, verify old password first
-      if (currentPassword && email) {
-        const { error: verifyError } = await supabase.auth.signInWithPassword({
-          email: email.trim().toLowerCase(),
-          password: currentPassword
-        });
-        if (verifyError) {
-          throw new Error("Password saat ini salah. Silakan periksa kembali.");
-        }
-      }
+      await changeAuthenticatedPassword(newPassword, currentPassword, email);
+      return;
+    }
 
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: newPassword
-      });
-
-      if (updateError) {
-        throw new Error(updateError.message || "Gagal memperbarui password di Supabase Auth");
+    if (!(typeof process !== "undefined" && process.env.VITEST)) {
+      throw new Error("Supabase belum dikonfigurasi. Perubahan kata sandi lokal/demo dinonaktifkan.");
+    }
+    const db = MockDatabase.getInstance();
+    const acc = db.userAccounts.find(
+      (a) => a.email?.toLowerCase() === email.toLowerCase()
+    );
+    if (acc) {
+      if (acc.password && acc.password !== currentPassword) {
+        throw new Error("Password saat ini salah. Silakan periksa kembali.");
       }
-      } else {
-        // Mock mode for local tests/development
-        if (!(typeof process !== "undefined" && process.env.VITEST)) {
-          throw new Error("Supabase belum dikonfigurasi. Perubahan kata sandi lokal/demo dinonaktifkan.");
-        }
-        const db = MockDatabase.getInstance();
-      if (email) {
-        const acc = db.userAccounts.find(
-          (a) => a.email?.toLowerCase() === email.toLowerCase()
-        );
-        if (acc) {
-          if (currentPassword && acc.password && acc.password !== currentPassword) {
-            throw new Error("Password saat ini salah. Silakan periksa kembali.");
-          }
-          acc.password = newPassword;
-          acc.updatedAt = new Date().toISOString();
-        }
-      }
+      acc.password = newPassword;
+      acc.updatedAt = new Date().toISOString();
     }
   }
 
@@ -591,36 +586,17 @@ export class AuthService {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // Disallow deprecated admin email aliases
-    if (
-      cleanEmail === "superadmin@laladentist.com" ||
-      cleanEmail === "super@laladentist.com" ||
-      cleanEmail === "nonapresident@gmail.com"
-    ) {
-      throw new Error("Email ini tidak terdaftar sebagai akun aktif.");
-    }
-
     if (isSupabaseConfigured) {
-      const redirectUrl =
-        redirectTo ||
-        (typeof window !== "undefined"
-          ? `${window.location.origin}/login?mode=recovery`
-          : undefined);
-
-      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: redirectUrl
-      });
-
-      if (error) {
-        throw new Error(error.message || "Gagal mengirimkan instruksi pemulihan password");
-      }
+      await requestPasswordResetEmail(cleanEmail, redirectTo);
     } else {
-      // Mock mode
-      const db = MockDatabase.getInstance();
-      const acc = db.userAccounts.find((a) => a.email?.toLowerCase() === cleanEmail);
-      if (!acc) {
-        // Safe feedback without leaking sensitive timing or errors
+      if (
+        cleanEmail === "superadmin@laladentist.com" ||
+        cleanEmail === "super@laladentist.com" ||
+        cleanEmail === "nonapresident@gmail.com"
+      ) {
+        throw new Error("Email ini tidak terdaftar sebagai akun aktif.");
       }
+      throw new Error("Pemulihan password memerlukan koneksi Supabase. Hubungi administrator.");
     }
   }
 
@@ -636,12 +612,9 @@ export class AuthService {
     }
 
     if (isSupabaseConfigured) {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword
-      });
-      if (error) {
-        throw new Error(error.message || "Gagal mengatur ulang kata sandi");
-      }
+      await resetAuthenticatedPassword(newPassword);
+    } else {
+      throw new Error("Pengaturan ulang password memerlukan koneksi Supabase. Hubungi administrator.");
     }
   }
 

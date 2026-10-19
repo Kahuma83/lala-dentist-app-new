@@ -54,11 +54,7 @@ export const ProfileSecurityModal: React.FC<{ isOpen: boolean; onClose: () => vo
 
     setLoading(true);
     try {
-      await AuthService.changePassword(
-        newPassword,
-        currentPassword || undefined,
-        currentUser.email || null
-      );
+      await AuthService.changePassword(newPassword, currentPassword, currentUser.email || null);
       setSuccess("Kata sandi berhasil diperbarui. Silakan gunakan kata sandi baru untuk login berikutnya.");
       setCurrentPassword("");
       setNewPassword("");
@@ -197,8 +193,10 @@ export const ProfileSecurityModal: React.FC<{ isOpen: boolean; onClose: () => vo
                     type="password"
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
-                    placeholder="Masukkan password saat ini (opsional jika baru)"
+                    placeholder="Masukkan password saat ini"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-10 pr-3 text-xs text-slate-800 focus:outline-none focus:border-[#c5a059] focus:bg-white transition-all shadow-inner"
+                    autoComplete="current-password"
+                    required
                   />
                 </div>
               </div>
@@ -215,6 +213,7 @@ export const ProfileSecurityModal: React.FC<{ isOpen: boolean; onClose: () => vo
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="Minimal 6 karakter"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-10 pr-3 text-xs text-slate-800 focus:outline-none focus:border-[#c5a059] focus:bg-white transition-all shadow-inner"
+                    autoComplete="new-password"
                     required
                   />
                 </div>
@@ -232,6 +231,7 @@ export const ProfileSecurityModal: React.FC<{ isOpen: boolean; onClose: () => vo
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Ulangi password baru"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 pl-10 pr-3 text-xs text-slate-800 focus:outline-none focus:border-[#c5a059] focus:bg-white transition-all shadow-inner"
+                    autoComplete="new-password"
                     required
                   />
                 </div>

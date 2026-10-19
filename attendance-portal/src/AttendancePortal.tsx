@@ -10,6 +10,7 @@ import {
   Clock3,
   Download,
   Home,
+  KeyRound,
   LogOut,
   MapPin,
   RefreshCw,
@@ -21,6 +22,10 @@ import {
 } from "lucide-react";
 import { User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "../../src/lib/supabase";
+import {
+  changeAuthenticatedPassword,
+  resetAuthenticatedPassword
+} from "../../src/services/passwordService";
 import { getGeofenceDistanceMeters, isWithinAttendanceGeofence } from "../../src/utils/attendanceGeofence";
 import { loadOwnStaffProfilePhoto, uploadStaffProfilePhoto } from "../../src/utils/staffProfilePhoto";
 
@@ -95,6 +100,15 @@ type InstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 };
+type PasswordView = "login" | "forgot" | "recovery";
+
+function getInitialPasswordView(): PasswordView {
+  const params = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return params.get("mode") === "recovery" || params.get("type") === "recovery" || hash.get("type") === "recovery"
+    ? "recovery"
+    : "login";
+}
 
 const allowedRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB"];
 const fiveDayScheduleRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR_ASSISTANT"];
@@ -266,11 +280,17 @@ export function AttendancePortal() {
   const [payrollItems, setPayrollItems] = useState<PortalPayrollItem[]>([]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordView, setPasswordView] = useState<PasswordView>(getInitialPasswordView);
+  const [newRecoveryPassword, setNewRecoveryPassword] = useState("");
+  const [confirmRecoveryPassword, setConfirmRecoveryPassword] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
   const [profilePhotoError, setProfilePhotoError] = useState<string | null>(null);
   const [isProfilePhotoSubmitting, setIsProfilePhotoSubmitting] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
@@ -431,7 +451,9 @@ export function AttendancePortal() {
         if (error) throw error;
         if (data.session && active) {
           setSessionUser(data.session.user);
-          await loadPortalContext(data.session.user);
+          if (getInitialPasswordView() !== "recovery") {
+            await loadPortalContext(data.session.user);
+          }
         }
       } catch (loadError: unknown) {
         if (active) setErrorMessage(friendlyError(loadError, "Gagal memuat data absensi."));
@@ -466,6 +488,7 @@ export function AttendancePortal() {
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage(null);
+    setSuccessMessage(null);
     setIsSubmitting(true);
     try {
       const identifier = username.trim().toLowerCase();
@@ -500,6 +523,65 @@ export function AttendancePortal() {
       setPassword("");
     } catch (loginError: unknown) {
       setErrorMessage(friendlyError(loginError, "Gagal masuk ke portal absensi."));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    if (newRecoveryPassword.length < 6) {
+      setErrorMessage("Password baru minimal harus 6 karakter.");
+      return;
+    }
+    if (newRecoveryPassword !== confirmRecoveryPassword) {
+      setErrorMessage("Konfirmasi password baru tidak cocok.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await resetAuthenticatedPassword(newRecoveryPassword);
+      const { error } = await supabase.auth.signOut();
+      if (error) throw new Error(`Password berhasil diperbarui, tetapi sesi belum berhasil diakhiri: ${error.message}`);
+      setSessionUser(null);
+      setStaffContext(null);
+      setNewRecoveryPassword("");
+      setConfirmRecoveryPassword("");
+      setPasswordView("login");
+      window.history.replaceState({}, "", window.location.pathname);
+      setSuccessMessage("Password berhasil diperbarui. Silakan login menggunakan password baru.");
+    } catch (resetError: unknown) {
+      setErrorMessage(friendlyError(resetError, "Gagal memperbarui password. Tautan mungkin sudah kedaluwarsa."));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleChangePassword = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    if (newPassword.length < 6) {
+      setErrorMessage("Password baru minimal harus 6 karakter.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setErrorMessage("Konfirmasi password baru tidak cocok.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await changeAuthenticatedPassword(newPassword, currentPassword, sessionUser?.email || null);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setSuccessMessage("Password berhasil diperbarui. Gunakan password baru saat login berikutnya.");
+    } catch (changeError: unknown) {
+      setErrorMessage(friendlyError(changeError, "Gagal memperbarui password."));
     } finally {
       setIsSubmitting(false);
     }
@@ -872,7 +954,8 @@ export function AttendancePortal() {
             <p className="muted">Masuk untuk mengakses absensi, jadwal, dan informasi kerja Anda.</p>
           </div>
           {errorMessage && <div className="notice error" role="alert"><AlertCircle />{errorMessage}</div>}
-          <form onSubmit={(event) => void handleLogin(event)} className="login-form">
+          {successMessage && <div className="notice success" role="status"><CheckCircle2 />{successMessage}</div>}
+          {passwordView === "login" && <form onSubmit={(event) => void handleLogin(event)} className="login-form">
             <label>
               Username atau email
               <input
@@ -894,11 +977,50 @@ export function AttendancePortal() {
                 disabled={isSubmitting}
               />
             </label>
+            <button
+              className="forgot-password-link"
+              type="button"
+              onClick={() => {
+                setErrorMessage(null);
+                setSuccessMessage(null);
+                setPasswordView("forgot");
+              }}
+            >
+              Lupa password?
+            </button>
             <button className="primary-button full-width" type="submit" disabled={isSubmitting || !isSupabaseConfigured}>
               {isSubmitting ? <RefreshCw className="spin" /> : <ShieldCheck />}
               {isSubmitting ? "Memeriksa akun..." : "Login"}
             </button>
-          </form>
+          </form>}
+          {passwordView === "forgot" && (
+            <section className="login-form" aria-live="polite">
+              <div className="notice warning">
+                <KeyRound />
+                <span>Akun staf masuk dengan username dan email internal, sehingga tautan pemulihan tidak dapat dikirim ke kotak masuk. Hubungi Super Admin untuk mengatur ulang password.</span>
+              </div>
+              <button className="text-button" type="button" onClick={() => { setErrorMessage(null); setPasswordView("login"); }}>
+                Kembali ke login
+              </button>
+            </section>
+          )}
+          {passwordView === "recovery" && (
+            <form onSubmit={(event) => void handleResetPassword(event)} className="login-form">
+              <p className="muted">Buat password baru untuk akun pegawai Anda. Minimal 6 karakter.</p>
+              <label>
+                Password baru
+                <input type="password" autoComplete="new-password" minLength={6} value={newRecoveryPassword} onChange={(event) => setNewRecoveryPassword(event.target.value)} required disabled={isSubmitting} />
+              </label>
+              <label>
+                Konfirmasi password baru
+                <input type="password" autoComplete="new-password" minLength={6} value={confirmRecoveryPassword} onChange={(event) => setConfirmRecoveryPassword(event.target.value)} required disabled={isSubmitting} />
+              </label>
+              <button className="primary-button full-width" type="submit" disabled={isSubmitting || !isSupabaseConfigured}>
+                {isSubmitting ? <RefreshCw className="spin" /> : <KeyRound />}
+                {isSubmitting ? "Menyimpan..." : "Simpan Password Baru"}
+              </button>
+            </form>
+          )}
           <div className="privacy-note"><ShieldCheck />Akses dan lokasi absensi divalidasi oleh server.</div>
         </section>
       </main>
@@ -1211,6 +1333,28 @@ export function AttendancePortal() {
             <div><span>Penempatan</span><strong>{branches.find((branch) => branch.id === staffContext.branchId)?.name || "Sesuai penugasan"}</strong></div>
           </div>
           {profilePhotoError && <div className="notice error" role="alert"><AlertCircle />{profilePhotoError}</div>}
+          <form className="password-form" onSubmit={(event) => void handleChangePassword(event)}>
+            <div className="panel-heading">
+              <div><p className="eyebrow">KEAMANAN AKUN</p><h2>Ubah Password</h2></div>
+            </div>
+            <p className="muted">Masukkan password saat ini untuk memverifikasi identitas sebelum menyimpan password baru.</p>
+            <label>
+              Password saat ini
+              <input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required disabled={isSubmitting} />
+            </label>
+            <label>
+              Password baru
+              <input type="password" autoComplete="new-password" minLength={6} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required disabled={isSubmitting} />
+            </label>
+            <label>
+              Konfirmasi password baru
+              <input type="password" autoComplete="new-password" minLength={6} value={confirmNewPassword} onChange={(event) => setConfirmNewPassword(event.target.value)} required disabled={isSubmitting} />
+            </label>
+            <button className="primary-button full-width" type="submit" disabled={isSubmitting}>
+              {isSubmitting ? <RefreshCw className="spin" /> : <ShieldCheck />}
+              {isSubmitting ? "Menyimpan..." : "Simpan Password Baru"}
+            </button>
+          </form>
         </section>
       )}
 

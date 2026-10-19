@@ -56,7 +56,28 @@ describe("Password Management & Recovery (Supabase Auth)", () => {
       ).rejects.toThrow("Password baru minimal harus 6 karakter");
     });
 
-    it("2. When currentPassword is provided, should verify with signInWithPassword before updating", async () => {
+    it("2. Should require the current password and account email", async () => {
+      await expect(
+        AuthService.changePassword("newSecurePass123", "", "user@example.com")
+      ).rejects.toThrow("Password saat ini wajib diisi");
+
+      await expect(
+        AuthService.changePassword("currentPass123", "currentPass123", "user@example.com")
+      ).rejects.toThrow("Password baru harus berbeda");
+
+      await expect(
+        AuthService.changePassword("newSecurePass123", "currentPass123", null)
+      ).rejects.toThrow("Email akun tidak tersedia");
+
+      expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled();
+      expect(supabase.auth.updateUser).not.toHaveBeenCalled();
+    });
+
+    it("3. Should verify the current password before updating", async () => {
+      (supabase.auth.getUser as any).mockResolvedValue({
+        data: { user: { email: "superadmin@laladentist.id" } },
+        error: null
+      });
       (supabase.auth.signInWithPassword as any).mockResolvedValue({
         data: { user: { id: "test-user-id" }, session: {} },
         error: null
@@ -76,12 +97,17 @@ describe("Password Management & Recovery (Supabase Auth)", () => {
         email: "superadmin@laladentist.id",
         password: "currentPass123"
       });
+      expect(supabase.auth.getUser).toHaveBeenCalled();
       expect(supabase.auth.updateUser).toHaveBeenCalledWith({
         password: "newSecurePass123"
       });
     });
 
-    it("3. Should reject if current password verification fails", async () => {
+    it("4. Should reject if current password verification fails", async () => {
+      (supabase.auth.getUser as any).mockResolvedValue({
+        data: { user: { email: "superadmin@laladentist.id" } },
+        error: null
+      });
       (supabase.auth.signInWithPassword as any).mockResolvedValue({
         data: { user: null, session: null },
         error: { message: "Invalid login credentials", status: 400 }
@@ -98,7 +124,11 @@ describe("Password Management & Recovery (Supabase Auth)", () => {
       expect(supabase.auth.updateUser).not.toHaveBeenCalled();
     });
 
-    it("4. Should propagate Supabase error if updateUser fails", async () => {
+    it("5. Should propagate Supabase error if updateUser fails", async () => {
+      (supabase.auth.getUser as any).mockResolvedValue({
+        data: { user: { email: "superadmin@laladentist.id" } },
+        error: null
+      });
       (supabase.auth.signInWithPassword as any).mockResolvedValue({
         data: { user: { id: "test-id" }, session: {} },
         error: null
@@ -115,6 +145,24 @@ describe("Password Management & Recovery (Supabase Auth)", () => {
           "superadmin@laladentist.id"
         )
       ).rejects.toThrow("Auth session missing or expired");
+    });
+
+    it("6. Should reject if the account email does not match the active session", async () => {
+      (supabase.auth.getUser as any).mockResolvedValue({
+        data: { user: { email: "other-user@example.com" } },
+        error: null
+      });
+
+      await expect(
+        AuthService.changePassword(
+          "newSecurePass123",
+          "currentPass123",
+          "superadmin@laladentist.id"
+        )
+      ).rejects.toThrow("Email akun tidak sesuai");
+
+      expect(supabase.auth.signInWithPassword).not.toHaveBeenCalled();
+      expect(supabase.auth.updateUser).not.toHaveBeenCalled();
     });
   });
 
@@ -135,24 +183,32 @@ describe("Password Management & Recovery (Supabase Auth)", () => {
       ).rejects.toThrow("tidak terdaftar");
     });
 
-    it("7. Should invoke supabase.auth.resetPasswordForEmail with proper redirectTo", async () => {
+    it("7. Should explain that internal staff emails cannot receive recovery links", async () => {
+      await expect(
+        AuthService.requestPasswordReset("cece@laladentist.id")
+      ).rejects.toThrow("email internal");
+
+      expect(supabase.auth.resetPasswordForEmail).not.toHaveBeenCalled();
+    });
+
+    it("8. Should invoke supabase.auth.resetPasswordForEmail with proper redirectTo", async () => {
       (supabase.auth.resetPasswordForEmail as any).mockResolvedValue({
         data: {},
         error: null
       });
 
       await AuthService.requestPasswordReset(
-        "superadmin@laladentist.id",
+        "user@example.com",
         "https://example.com/login?mode=recovery"
       );
 
       expect(supabase.auth.resetPasswordForEmail).toHaveBeenCalledWith(
-        "superadmin@laladentist.id",
+        "user@example.com",
         { redirectTo: "https://example.com/login?mode=recovery" }
       );
     });
 
-    it("8. Resetting password after recovery token updates user password via Supabase Auth", async () => {
+    it("9. Resetting password after recovery token updates user password via Supabase Auth", async () => {
       (supabase.auth.updateUser as any).mockResolvedValue({
         data: { user: { id: "user-recovered" } },
         error: null
@@ -165,7 +221,7 @@ describe("Password Management & Recovery (Supabase Auth)", () => {
       });
     });
 
-    it("9. Resetting password rejects short passwords", async () => {
+    it("10. Resetting password rejects short passwords", async () => {
       await expect(AuthService.resetPassword("123")).rejects.toThrow(
         "minimal harus 6 karakter"
       );

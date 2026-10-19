@@ -93,6 +93,9 @@ h2 { margin-bottom: 5px; font-size: 18px; }
   color: var(--portal-ink);
 }
 .login-form input:focus, .branch-picker select:focus { border-color: #3d73c8; box-shadow: 0 0 0 3px #3d73c825; }
+.forgot-password-link, .text-button { justify-self: end; padding: 0; border: 0; background: transparent; color: #315b9e; font-size: 12px; font-weight: 700; }
+.forgot-password-link:hover, .text-button:hover { color: var(--portal-blue-dark); text-decoration: underline; }
+.text-button { justify-self: center; }
 .primary-button, .secondary-button {
   min-height: 48px;
   display: inline-flex;
@@ -224,6 +227,12 @@ h2 { margin-bottom: 5px; font-size: 18px; }
 .profile-details > div { display: flex; justify-content: space-between; gap: 15px; padding: 14px 0; border-bottom: 1px solid #e4ebf5; font-size: 12px; }
 .profile-details span { color: var(--portal-muted); }
 .profile-details strong { text-align: right; }
+.password-form { display: grid; gap: 15px; max-width: 520px; margin-top: 28px; padding-top: 24px; border-top: 1px solid #e4ebf5; }
+.password-form .panel-heading { margin-bottom: 0; }
+.password-form .muted { margin: 0; }
+.password-form label { display: grid; gap: 8px; color: #344569; font-size: 12px; font-weight: 700; }
+.password-form input { width: 100%; min-height: 46px; padding: 0 13px; border: 1px solid #d7e3f4; border-radius: 12px; outline: 0; background: #fff; color: var(--portal-ink); }
+.password-form input:focus { border-color: #3d73c8; box-shadow: 0 0 0 3px #3d73c825; }
 .notice { display: flex; align-items: flex-start; gap: 10px; padding: 13px 15px; border: 1px solid; border-radius: 13px; font-size: 12px; line-height: 1.5; }
 .notice svg { width: 17px; height: 17px; margin-top: 1px; }
 .notice.error { margin-top: 16px; border-color: #f1c9c5; background: #fff4f2; color: #9b352f; }

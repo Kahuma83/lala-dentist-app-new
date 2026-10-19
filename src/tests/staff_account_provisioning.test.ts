@@ -215,7 +215,7 @@ describe("Real Staff Account Provisioning & RBAC", () => {
     expect(res1).toBeDefined();
 
     // Change password
-    await AuthService.changePassword("newpassword123", "oldpassword123", acc.email);
+    await AuthService.changePassword("newpassword123", "oldpassword123", acc.email || null);
 
     // Old password should fail or new password succeed
     const res2 = await AuthService.signIn("pwd_change_user", "newpassword123");

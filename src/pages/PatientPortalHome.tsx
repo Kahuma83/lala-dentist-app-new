@@ -13,7 +13,9 @@ import {
   FileText,
   History,
   Home,
+  KeyRound,
   ListOrdered,
+  Lock,
   LogOut,
   MapPin,
   Receipt,
@@ -156,6 +158,12 @@ export const PatientPortalHome: React.FC = () => {
   const [activePromotionIndex, setActivePromotionIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const isLoadingBookings = loading;
   const bookingError = loadWarnings.includes("bookings")
     ? "Gagal memuat janji temu pasien. Silakan coba muat ulang."
@@ -352,6 +360,33 @@ export const PatientPortalHome: React.FC = () => {
       setError(signOutError instanceof Error ? signOutError.message : "Gagal keluar dari akun.");
     } finally {
       setIsSigningOut(false);
+    }
+  };
+
+  const handleChangePassword = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    if (newPassword.length < 8) {
+      setPasswordError("Kata sandi baru minimal 8 karakter.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError("Konfirmasi kata sandi baru tidak cocok.");
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      await AuthService.changePassword(newPassword, currentPassword, currentUser?.email || null);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setPasswordSuccess("Kata sandi berhasil diperbarui.");
+    } catch (changeError) {
+      setPasswordError(changeError instanceof Error ? changeError.message : "Gagal memperbarui kata sandi.");
+    } finally {
+      setIsChangingPassword(false);
     }
   };
 
@@ -1148,6 +1183,72 @@ export const PatientPortalHome: React.FC = () => {
                 <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
                 <p>Untuk melindungi privasi, rekam medis hanya ditampilkan setelah klinik memastikan akun terhubung ke profil pasien yang benar.</p>
               </div>
+              <form onSubmit={(event) => void handleChangePassword(event)} className="mt-6 space-y-4 border-t border-slate-100 pt-5">
+                <div>
+                  <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                    <Lock className="h-4 w-4 text-[#987b3b]" />
+                    Ubah Kata Sandi
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">Verifikasi dengan kata sandi saat ini sebelum menyimpan yang baru.</p>
+                </div>
+                {passwordError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-xs text-red-700">{passwordError}</p>}
+                {passwordSuccess && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700">{passwordSuccess}</p>}
+                <label className="block space-y-1.5 text-xs font-semibold text-slate-600">
+                  Kata sandi saat ini
+                  <span className="relative block">
+                    <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      value={currentPassword}
+                      onChange={(event) => setCurrentPassword(event.target.value)}
+                      required
+                      disabled={isChangingPassword}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[#987b3b] focus:bg-white"
+                    />
+                  </span>
+                </label>
+                <label className="block space-y-1.5 text-xs font-semibold text-slate-600">
+                  Kata sandi baru
+                  <span className="relative block">
+                    <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={8}
+                      value={newPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                      required
+                      disabled={isChangingPassword}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[#987b3b] focus:bg-white"
+                    />
+                  </span>
+                </label>
+                <label className="block space-y-1.5 text-xs font-semibold text-slate-600">
+                  Konfirmasi kata sandi baru
+                  <span className="relative block">
+                    <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={8}
+                      value={confirmNewPassword}
+                      onChange={(event) => setConfirmNewPassword(event.target.value)}
+                      required
+                      disabled={isChangingPassword}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[#987b3b] focus:bg-white"
+                    />
+                  </span>
+                </label>
+                <button
+                  type="submit"
+                  disabled={isChangingPassword}
+                  className="patient-portal-primary inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isChangingPassword ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <Lock className="h-4 w-4" />}
+                  {isChangingPassword ? "Menyimpan..." : "Simpan Kata Sandi Baru"}
+                </button>
+              </form>
             </article>
           </section>
         )}
