@@ -424,25 +424,21 @@ export const BookingManagement: React.FC = () => {
 
       await repos.booking.updateBooking(
         checkInBooking.id,
-        { status: BookingStatus.COMPLETED },
+        { status: BookingStatus.CONFIRMED },
         currentUser?.role,
         currentUser?.assignedBranchId
       );
 
-      try {
-        await repos.queue.checkInVisitToQueue(
-          newVisit.id,
-          currentUser?.role,
-          currentUser?.assignedBranchId,
-          {
-            estimatedDurationMinutes: getPlannedTreatmentDurationMinutes(checkInBooking.plannedTreatments),
-            plannedTreatments: checkInBooking.plannedTreatments || [],
-            doctorId: checkInBooking.doctorId
-          }
-        );
-      } catch (qErr) {
-        console.warn("Queue auto check-in note:", qErr);
-      }
+      await repos.queue.checkInVisitToQueue(
+        newVisit.id,
+        currentUser?.role,
+        currentUser?.assignedBranchId,
+        {
+          estimatedDurationMinutes: getPlannedTreatmentDurationMinutes(checkInBooking.plannedTreatments),
+          plannedTreatments: checkInBooking.plannedTreatments || [],
+          doctorId: checkInBooking.doctorId
+        }
+      );
 
       setFormSuccess(`Pasien ${checkInBooking.patientNameSnapshot} berhasil di-checkin dan langsung masuk antrean live dokter!`);
       setIsCheckInModalOpen(false);

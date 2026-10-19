@@ -129,4 +129,22 @@ describe("RBAC DOCTOR_ASSISTANT Audit & Integrity Tests", () => {
       }
     }
   });
+
+  it("8. Only a doctor can complete or hand over treatment", async () => {
+    await expect(
+      treatmentRepo.completeTreatmentJob("treatment-test", assistantRole, gebangBranchId, claryStaffId)
+    ).rejects.toThrow("Hanya Dokter yang dapat menyelesaikan tindakan medis");
+
+    await expect(
+      treatmentRepo.handOverTreatmentJob("treatment-test", assistantRole, gebangBranchId, claryStaffId)
+    ).rejects.toThrow("Hanya Dokter yang dapat menyerahkan tindakan ke kasir");
+
+    await expect(
+      treatmentRepo.completeTreatmentJob("treatment-test", UserRole.SUPER_ADMIN)
+    ).rejects.toThrow("Hanya Dokter yang dapat menyelesaikan tindakan medis");
+
+    await expect(
+      treatmentRepo.handOverTreatmentJob("treatment-test", UserRole.SUPER_ADMIN)
+    ).rejects.toThrow("Hanya Dokter yang dapat menyerahkan tindakan ke kasir");
+  });
 });

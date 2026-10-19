@@ -71,6 +71,7 @@ export const TreatmentManagement: React.FC = () => {
   const [addingActivity, setAddingActivity] = useState<boolean>(false);
   const canManageTreatment = currentUser?.role === UserRole.DOCTOR
     || currentUser?.role === UserRole.DOCTOR_ASSISTANT;
+  const canFinalizeTreatment = currentUser?.role === UserRole.DOCTOR;
 
   const treatmentRepo = repos.treatment;
   const visitRepo = repos.visit;
@@ -222,7 +223,7 @@ export const TreatmentManagement: React.FC = () => {
   };
 
   const handleCompleteTreatment = async (id: string) => {
-    if (!canManageTreatment) return;
+    if (!canFinalizeTreatment) return;
     setError(null);
     let treatmentCompleted = false;
     let accrualCount = 0;
@@ -288,7 +289,7 @@ export const TreatmentManagement: React.FC = () => {
   };
 
   const handleHandOverTreatment = async (id: string) => {
-    if (!canManageTreatment) return;
+    if (!canFinalizeTreatment) return;
     setError(null);
     try {
       await treatmentRepo.handOverTreatmentJob(
@@ -526,6 +527,12 @@ export const TreatmentManagement: React.FC = () => {
         </button>}
       </div>
 
+      {currentUser?.role === UserRole.DOCTOR_ASSISTANT && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800">
+          Asisten dapat memulai dan menjalankan treatment. Penyelesaian tindakan dan penyerahan ke kasir dilakukan oleh Dokter.
+        </div>
+      )}
+
       {/* Messages */}
       {error && (
         <div className="bg-rose-50 border border-rose-200 text-rose-700 p-4 rounded-xl text-xs flex items-center justify-between">
@@ -755,7 +762,7 @@ export const TreatmentManagement: React.FC = () => {
                           </button>
                         )}
 
-                        {canManageTreatment && tr.status === TreatmentJobStatus.DALAM_PROSES && (
+                        {canFinalizeTreatment && tr.status === TreatmentJobStatus.DALAM_PROSES && (
                           <button
                             onClick={() => handleCompleteTreatment(tr.id)}
                             className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
@@ -765,7 +772,7 @@ export const TreatmentManagement: React.FC = () => {
                           </button>
                         )}
 
-                        {canManageTreatment && tr.status === TreatmentJobStatus.SELESAI && (
+                        {canFinalizeTreatment && tr.status === TreatmentJobStatus.SELESAI && (
                           <button
                             onClick={() => handleHandOverTreatment(tr.id)}
                             className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
