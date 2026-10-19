@@ -866,10 +866,8 @@ export function AttendancePortal() {
         <section className="login-card">
           <div className="login-brand">
             <img src="/portal-brand.png" alt="Logo Lala Dentist" />
-            <div><strong>Lala Dentist</strong><span>Portal Pegawai</span></div>
           </div>
           <div className="login-heading">
-            <p className="eyebrow">PORTAL PEGAWAI</p>
             <h1>Selamat Datang Kembali</h1>
             <p className="muted">Masuk untuk mengakses absensi, jadwal, dan informasi kerja Anda.</p>
           </div>
