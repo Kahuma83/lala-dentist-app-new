@@ -42,6 +42,7 @@ import {
   AlertTriangle
 } from "lucide-react";
 import { InvoiceDocumentModal } from "../components/documents/InvoiceDocumentModal";
+import { accrueCompensationForPaidInvoice } from "../services/paidInvoiceCompensation";
 
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
@@ -51,6 +52,7 @@ export const Invoices: React.FC = () => {
     doctors,
     invoiceRepo,
     paymentRepo,
+    compRepo,
     patientRepo,
     branchRepo,
     treatmentRepo,
@@ -99,7 +101,7 @@ export const Invoices: React.FC = () => {
       : "branch-gebang"
   );
   const [formItems, setFormItems] = useState<
-    Array<{ serviceId: string; descriptionSnapshot: string; unitPriceSnapshot: number; quantity: number }>
+    Array<{ serviceId: string; treatmentJobId?: string; descriptionSnapshot: string; unitPriceSnapshot: number; quantity: number }>
   >([
     { serviceId: "service-scaling", descriptionSnapshot: "Scaling & Polishing", unitPriceSnapshot: 150000, quantity: 1 }
   ]);
@@ -244,6 +246,7 @@ export const Invoices: React.FC = () => {
       if (!service) return null;
       return {
         serviceId: service.id,
+        treatmentJobId: treatment.id,
         descriptionSnapshot: treatment.serviceNameSnapshot || service.name,
         unitPriceSnapshot: service.basePrice,
         quantity: 1
@@ -345,6 +348,7 @@ export const Invoices: React.FC = () => {
 
     setIsSubmitting(true);
     setFormError("");
+    setPaymentPostingWarning("");
     try {
       const createdInv = await invoiceRepo.createInvoice(
         {
@@ -369,6 +373,22 @@ export const Invoices: React.FC = () => {
         );
       } catch (postErr) {
         console.warn("Auto-posting invoice journal:", postErr);
+      }
+
+      try {
+        const accruedCount = await accrueCompensationForPaidInvoice(
+          createdInv.id,
+          invoiceRepo,
+          compRepo,
+          currentUser?.role,
+          currentUser?.branchId
+        );
+        if (accruedCount > 0) {
+          setPaymentPostingWarning(`${accruedCount} akrual kompensasi tindakan otomatis dicatat untuk invoice lunas.`);
+        }
+      } catch (accrualErr) {
+        const message = accrualErr instanceof Error ? accrualErr.message : String(accrualErr);
+        setPaymentPostingWarning(`Invoice berhasil dibuat, tetapi kompensasi otomatis gagal dicatat: ${message}. Gunakan sinkronisasi kompensasi setelah masalah diperbaiki.`);
       }
 
       setShowCreateModal(false);
@@ -445,9 +465,22 @@ export const Invoices: React.FC = () => {
         postingErrors.push(postErr instanceof Error ? postErr.message : String(postErr));
       }
 
+      try {
+        await accrueCompensationForPaidInvoice(
+          selectedInvoice.id,
+          invoiceRepo,
+          compRepo,
+          currentUser?.role,
+          currentUser?.branchId
+        );
+      } catch (accrualErr) {
+        const message = accrualErr instanceof Error ? accrualErr.message : String(accrualErr);
+        postingErrors.push(`kompensasi otomatis gagal dicatat: ${message}`);
+      }
+
       if (postingErrors.length > 0) {
         setPaymentPostingWarning(
-          `Pembayaran berhasil dicatat, tetapi jurnal akuntansi gagal dibuat: ${postingErrors.join("; ")}. Buka menu Pembayaran dan gunakan tombol Sync pada transaksi ini.`
+          `Pembayaran berhasil dicatat, tetapi proses otomatis gagal: ${postingErrors.join("; ")}. Periksa masalah tersebut lalu sinkronkan ulang data terkait.`
         );
       }
       setShowPaymentModal(false);

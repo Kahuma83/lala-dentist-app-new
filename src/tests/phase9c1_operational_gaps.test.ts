@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { createPaidInvoiceForTreatment } from "./helpers/paidTreatmentInvoice";
 import {
   MockCompensationRepository,
   MockAccountingRepository,
@@ -95,6 +96,7 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
       );
 
       // Calculate accrual for treatment-job-1
+      await createPaidInvoiceForTreatment("treatment-job-1");
       const accruals = await compRepo.calculateAndAccrueForTreatment("treatment-job-1");
 
       // Filter accruals for assistant-clary: should ONLY contain treatment fees (never the 2,800,000 base salary)
@@ -128,6 +130,7 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
 
       // Accrual for Root Canal (treatment-job-3, service-root-canal base price 400000):
       // Both global 5% (20000) and specific 30% (120000) should trigger = 140,000 total
+      await createPaidInvoiceForTreatment("treatment-job-3");
       const accrualsRootCanal = await compRepo.calculateAndAccrueForTreatment("treatment-job-3");
       const andiAccruals = accrualsRootCanal.filter((a) => a.staffId === "doc-syafira");
       expect(andiAccruals.length).toBe(2);

@@ -2,6 +2,7 @@ import React, { useState, useMemo } from "react";
 import { useApp } from "../context/AppContext";
 import { UserRole, OvertimeStatus, OvertimeRecord } from "../types/domain";
 import { AppClock } from "../utils/clock";
+import { getOperationalTimeString } from "../utils/dateUtils";
 import {
   Clock,
   CheckCircle2,
@@ -32,6 +33,7 @@ export const OvertimeManager: React.FC = () => {
   } = useApp();
 
   const isBranchAdmin = currentUser?.role === UserRole.BRANCH_ADMIN;
+  const isSuperAdmin = currentUser?.role === UserRole.SUPER_ADMIN;
   const userBranchId = isBranchAdmin ? currentUser?.assignedBranchId : selectedBranchId;
 
   // Filter states
@@ -48,6 +50,8 @@ export const OvertimeManager: React.FC = () => {
   // Modals for Approve / Reject
   const [approvalModalRecord, setApprovalModalRecord] = useState<OvertimeRecord | null>(null);
   const [approverName, setApproverName] = useState(currentUser?.name || "HR Admin");
+  const [approvedMinutes, setApprovedMinutes] = useState("");
+  const [isNationalHoliday, setIsNationalHoliday] = useState(false);
 
   const [rejectionModalRecord, setRejectionModalRecord] = useState<OvertimeRecord | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
@@ -115,7 +119,14 @@ export const OvertimeManager: React.FC = () => {
     if (!approvalModalRecord) return;
     setIsSubmitting(true);
     try {
-      await overtimeRepo.approve(approvalModalRecord.id, approverName, currentUser?.role, userBranchId);
+      await overtimeRepo.approve(
+        approvalModalRecord.id,
+        approverName,
+        currentUser?.role,
+        userBranchId,
+        Number(approvedMinutes),
+        isNationalHoliday
+      );
       await refreshData();
       setApprovalModalRecord(null);
       showSuccess("Lembur berhasil disetujui (APPROVED).");
@@ -183,7 +194,7 @@ export const OvertimeManager: React.FC = () => {
     const list = isBranchAdmin && userBranchId ? overtimes.filter(o => o.branchId === userBranchId) : overtimes;
     const detected = list.filter(o => o.status === OvertimeStatus.DETECTED).reduce((acc, o) => acc + o.overtimeMinutes, 0);
     const submitted = list.filter(o => o.status === OvertimeStatus.SUBMITTED).reduce((acc, o) => acc + o.overtimeMinutes, 0);
-    const approved = list.filter(o => o.status === OvertimeStatus.APPROVED).reduce((acc, o) => acc + o.overtimeMinutes, 0);
+    const approved = list.filter(o => o.status === OvertimeStatus.APPROVED).reduce((acc, o) => acc + (o.approvedOvertimeMinutes ?? o.overtimeMinutes), 0);
     const rejected = list.filter(o => o.status === OvertimeStatus.REJECTED).reduce((acc, o) => acc + o.overtimeMinutes, 0);
 
     return { detected, submitted, approved, rejected };
@@ -214,7 +225,7 @@ export const OvertimeManager: React.FC = () => {
           </label>
           <button
             onClick={handleRunDetection}
-            disabled={isSubmitting || !scanMonth}
+            disabled={isSubmitting || !scanMonth || (!isSuperAdmin && !isBranchAdmin)}
             className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-sm shadow-emerald-600/20 active:scale-95 disabled:opacity-50"
           >
             <Search className="w-4 h-4" />
@@ -365,6 +376,9 @@ export const OvertimeManager: React.FC = () => {
                 filteredOvertimes.map((ot) => {
                   const stf = staff.find(s => s.id === ot.staffId);
                   const branch = branches.find(b => b.id === ot.branchId);
+                  const actualEndTime = /^\d{2}:\d{2}$/.test(ot.actualEndAt)
+                    ? ot.actualEndAt
+                    : getOperationalTimeString(ot.actualEndAt);
 
                   return (
                     <tr key={ot.id} className="hover:bg-slate-50/80 transition-colors">
@@ -385,7 +399,7 @@ export const OvertimeManager: React.FC = () => {
                       <td className="py-3 px-4 font-mono text-slate-600">
                         <div>Selesai: {ot.scheduledEndAt}</div>
                         <div className="text-[11px] text-emerald-600 font-medium">
-                          Aktual: {new Date(ot.actualEndAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          Aktual: {actualEndTime}
                         </div>
                       </td>
                       <td className="py-3 px-4 font-bold text-slate-900">
@@ -417,6 +431,8 @@ export const OvertimeManager: React.FC = () => {
                         {ot.status === OvertimeStatus.APPROVED && (
                           <div className="text-[11px]">
                             <span className="font-semibold text-emerald-800">Oleh: {ot.approvedBy}</span>
+                            <div>{ot.approvedOvertimeMinutes ?? ot.overtimeMinutes} menit × Rp{(ot.hourlyRateSnapshot || 0).toLocaleString("id-ID")}/jam</div>
+                            <div>Total: Rp{(ot.overtimeAmountSnapshot || 0).toLocaleString("id-ID")}{ot.isNationalHoliday ? " · Tanggal merah" : ""}</div>
                           </div>
                         )}
                         {ot.status === OvertimeStatus.REJECTED && (
@@ -427,13 +443,13 @@ export const OvertimeManager: React.FC = () => {
                         {ot.status === OvertimeStatus.SUBMITTED && (
                           <span className="text-slate-400 italic">Menunggu persetujuan...</span>
                         )}
-                        {ot.status === OvertimeStatus.DETECTED && (
+                        {(isBranchAdmin || isSuperAdmin) && ot.status === OvertimeStatus.DETECTED && (
                           <span className="text-slate-400 italic">Belum diajukan</span>
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {ot.status === OvertimeStatus.DETECTED && (
+                          {(isBranchAdmin || isSuperAdmin) && ot.status === OvertimeStatus.DETECTED && (
                             <button
                               onClick={() => handleSubmitOvertime(ot.id)}
                               disabled={isSubmitting}
@@ -443,10 +459,14 @@ export const OvertimeManager: React.FC = () => {
                               <Send className="w-3 h-3" /> Submit
                             </button>
                           )}
-                          {ot.status === OvertimeStatus.SUBMITTED && (
+                          {isSuperAdmin && ot.status === OvertimeStatus.SUBMITTED && (
                             <>
                               <button
-                                onClick={() => setApprovalModalRecord(ot)}
+                                onClick={() => {
+                                  setApprovedMinutes(String(ot.overtimeMinutes));
+                                  setIsNationalHoliday(false);
+                                  setApprovalModalRecord(ot);
+                                }}
                                 className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg font-semibold transition-colors flex items-center gap-1"
                                 title="Setujui Lembur"
                               >
@@ -497,7 +517,39 @@ export const OvertimeManager: React.FC = () => {
             <form onSubmit={handleApprove} className="space-y-3 text-xs">
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
                 <div><span className="font-semibold">Tanggal:</span> {approvalModalRecord.date}</div>
-                <div><span className="font-semibold">Durasi:</span> {approvalModalRecord.overtimeMinutes} Menit ({approvalModalRecord.overtimeHours.toFixed(1)} Jam)</div>
+                <div><span className="font-semibold">Durasi aktual:</span> {approvalModalRecord.overtimeMinutes} Menit</div>
+              </div>
+
+              <div>
+                <label className="block text-slate-600 font-semibold mb-1">Durasi yang disetujui (menit) *</label>
+                <input
+                  type="number"
+                  required
+                  min={1}
+                  max={approvalModalRecord.overtimeMinutes}
+                  step={1}
+                  value={approvedMinutes}
+                  onChange={(e) => setApprovedMinutes(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">Tidak boleh melebihi durasi aktual. Menit dihitung proporsional dari tarif per jam.</p>
+              </div>
+
+              <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3 text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={isNationalHoliday}
+                  onChange={(e) => setIsNationalHoliday(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-semibold">Tanggal merah / hari libur nasional</span>
+                  <span className="block text-[11px] text-slate-500">Centang hanya setelah memverifikasi kalender resmi. Tarif Rp30.000/jam; hari biasa dan Minggu terjadwal Rp15.000/jam.</span>
+                </span>
+              </label>
+
+              <div className="rounded-lg bg-emerald-50 px-3 py-2 text-emerald-800">
+                Estimasi upah lembur: Rp{Math.round((Number(approvedMinutes || 0) * (isNationalHoliday ? 30000 : 15000)) / 60).toLocaleString("id-ID")}
               </div>
 
               <div>

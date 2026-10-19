@@ -103,6 +103,7 @@ import {
   OvertimeRecord,
   OvertimeStatus,
   OvertimeType,
+  StaffReplacementAssignment,
   IncomeStatementReport,
   TrialBalanceReport,
   BalanceSheetReport,
@@ -127,6 +128,8 @@ import { getVisitStatusForQueueStatus, hasActiveQueueForPatientOnDate } from "..
 import { calculateQueueEstimates } from "../utils/queueScheduleUtils";
 import { getNextMedicalRecordNumber, checkRMUniqueness } from "../utils/rmUtils";
 import { isBranchMatch } from "../utils/branchUtils";
+import { allocateInvoiceNetToLines } from "../utils/invoiceLineAllocation";
+import { toOperationalDateTime } from "../utils/dateUtils";
 
 const db = MockDatabase.getInstance();
 
@@ -250,6 +253,7 @@ export class MockPatientRepository implements PatientRepository {
       medicalHistoryNotes: patientData.medicalHistoryNotes || "",
       acquisitionSource: patientData.acquisitionSource || "UNKNOWN",
       referralName: patientData.acquisitionSource === "REFERRAL" ? patientData.referralName?.trim() || undefined : undefined,
+      referringStaffId: patientData.referringStaffId || null,
       registeredBranchId: effBranch,
       branch_id: effBranch,
       assignedBranchId: effBranch,
@@ -298,6 +302,9 @@ export class MockPatientRepository implements PatientRepository {
         : updates.acquisitionSource === "REFERRAL"
           ? updates.referralName?.trim() || undefined
           : undefined,
+      referringStaffId: updates.referringStaffId === undefined
+        ? existing.referringStaffId
+        : updates.referringStaffId || null,
       registeredBranchId: effBranch,
       branch_id: effBranch,
       assignedBranchId: effBranch,
@@ -3316,6 +3323,7 @@ export class MockInvoiceRepository implements InvoiceRepository {
       branchId: string;
       items: Array<{
         serviceId?: string;
+        treatmentJobId?: string;
         descriptionSnapshot: string;
         unitPriceSnapshot: number;
         quantity: number;
@@ -3355,6 +3363,7 @@ export class MockInvoiceRepository implements InvoiceRepository {
         id: `item-${invoiceId}-${index + 1}`,
         invoiceId,
         serviceId: item.serviceId,
+        treatmentJobId: item.treatmentJobId,
         descriptionSnapshot: item.descriptionSnapshot,
         unitPriceSnapshot: item.unitPriceSnapshot,
         quantity: item.quantity,
@@ -3825,9 +3834,24 @@ export class MockCompensationRepository implements CompensationRepository {
       throw new Error("Akrual kompensasi hanya dapat dihitung untuk treatment yang sudah SELESAI atau DISERAHKAN");
     }
 
-    const service = db.services.find((s: MasterService) => s.id === job.serviceId);
-    const baseAmount = service ? service.basePrice : 150000;
-    const now = AppClock.nowISO();
+    const paidInvoices = db.invoices.filter((invoice: Invoice) =>
+      invoice.visitId === job.visitId && invoice.status === InvoiceStatus.PAID
+    );
+    if (paidInvoices.length > 1) {
+      throw new Error("Tindakan terhubung ke lebih dari satu invoice lunas. Periksa data tagihan sebelum menghitung kompensasi.");
+    }
+    const invoice = paidInvoices[0];
+    if (!invoice) return [];
+    const invoiceItems = db.invoiceItems.filter((item: InvoiceItem) => item.invoiceId === invoice.id);
+    const linkedItems = invoiceItems.filter((item: InvoiceItem) => item.treatmentJobId === job.id);
+    if (linkedItems.length === 0) return [];
+    if (linkedItems.length > 1) throw new Error("Tindakan tertaut ke lebih dari satu baris invoice.");
+    const allocations = allocateInvoiceNetToLines(
+      invoiceItems.map((item: InvoiceItem) => ({ id: item.id, amount: item.amount })),
+      invoice.netAmount
+    );
+    const baseAmount = allocations.get(linkedItems[0].id) || 0;
+    const now = invoice.updatedAt || AppClock.nowISO();
     const treatmentDate = job.completedAt ? job.completedAt.split("T")[0] : now.split("T")[0];
     const existingAccruals = db.accruals.filter((accrual: CompensationAccrual) => accrual.sourceId === job.id);
     const existingRuleKeys = new Set(existingAccruals.map((accrual) => `${accrual.staffId}:${accrual.ruleIdSnapshot}`));
@@ -3912,6 +3936,30 @@ export class MockCompensationRepository implements CompensationRepository {
         db.accruals.push(accrual);
         createdAccruals.push(accrual);
         existingRuleKeys.add(`${job.picAssistantId}:${rule.id}`);
+      }
+    }
+
+    const patient = db.patients.find((item: PatientProfile) => item.id === invoice.patientId);
+    if (patient?.referringStaffId) {
+      const referralSourceId = `referral:${patient.id}`;
+      const referralRuleId = "ADMIN_REFERRAL_RP3000_V1";
+      const referralExists = db.accruals.some((accrual: CompensationAccrual) =>
+        accrual.sourceId === referralSourceId && accrual.ruleIdSnapshot === referralRuleId
+      );
+      if (!referralExists) {
+        const referralAccrual: CompensationAccrual = {
+          id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+          staffId: patient.referringStaffId,
+          ruleIdSnapshot: referralRuleId,
+          ruleTypeSnapshot: "ADMIN_REFERRAL",
+          valueSnapshot: 3000,
+          baseAmountSnapshot: invoice.netAmount,
+          amount: 3000,
+          sourceId: referralSourceId,
+          accruedAt: now
+        };
+        db.accruals.push(referralAccrual);
+        createdAccruals.push(referralAccrual);
       }
     }
 
@@ -4014,6 +4062,17 @@ export class MockPayrollRepository implements PayrollRepository {
       return accYear === year && accMonth === month;
     });
     let totalCompensation = staffAccruals.reduce((sum: number, a: CompensationAccrual) => sum + a.amount, 0);
+    const replacementAssignments = db.replacementAssignments.filter((assignment: StaffReplacementAssignment) => {
+      const [assignmentYear, assignmentMonth] = assignment.coveredDate.split("-").map(Number);
+      return assignment.replacementStaffId === (staff?.id || staffId)
+        && Boolean(assignment.workConfirmedAt)
+        && assignmentYear === year
+        && assignmentMonth === month;
+    });
+    totalCompensation += replacementAssignments.reduce(
+      (sum: number, assignment: StaffReplacementAssignment) => sum + assignment.amountSnapshot,
+      0
+    );
 
     // Calculate Doctor Sitting Fee if applicable
     let doctorSittingFeeAmount = 0;
@@ -4073,7 +4132,23 @@ export class MockPayrollRepository implements PayrollRepository {
       }
     }
 
-    const totalDeductions = 0;
+    const absenceByDate = new Map<string, Attendance>();
+    for (const attendance of db.attendances as Attendance[]) {
+      const matchesStaff = candidateIds.has(attendance.staffId);
+      const [attendanceYear, attendanceMonth] = attendance.date.split("-").map(Number);
+      if (
+        matchesStaff
+        && attendanceYear === year
+        && attendanceMonth === month
+        && [AttendanceStatus.ABSENT, AttendanceStatus.SICK, AttendanceStatus.LEAVE].includes(attendance.attendanceStatus)
+        && !absenceByDate.has(attendance.date)
+      ) {
+        absenceByDate.set(attendance.date, attendance);
+      }
+    }
+    const dailySalary = Math.round(effectiveBaseSalary / 25);
+    const absenceRecords = [...absenceByDate.values()];
+    const totalDeductions = absenceRecords.length * dailySalary;
     const netSalary = effectiveBaseSalary + totalCompensation + totalOvertimeAmount - totalDeductions;
 
     const payroll: MonthlyPayroll = {
@@ -4129,10 +4204,23 @@ export class MockPayrollRepository implements PayrollRepository {
       db.payrollItems.push({
         id: `item-${payrollId}-accrual-${idx + 1}`,
         payrollId,
-        descriptionSnapshot: `Komisi Tindakan (#${accrual.sourceId})`,
+        descriptionSnapshot: accrual.ruleTypeSnapshot === "ADMIN_REFERRAL"
+          ? `Insentif Referral Admin (#${accrual.sourceId})`
+          : `Kompensasi Tindakan (#${accrual.sourceId})`,
         amountSnapshot: accrual.amount,
         type: "EARNING",
         sourceId: accrual.id
+      });
+    });
+
+    replacementAssignments.forEach((assignment: StaffReplacementAssignment) => {
+      db.payrollItems.push({
+        id: `item-${payrollId}-replacement-${assignment.id}`,
+        payrollId,
+        descriptionSnapshot: `Upah Pengganti (${assignment.coveredDate}; gaji pegawai digantikan Rp${assignment.absentBaseSalarySnapshot.toLocaleString("id-ID")} ÷ 25)`,
+        amountSnapshot: assignment.amountSnapshot,
+        type: "EARNING",
+        sourceId: assignment.id
       });
     });
 
@@ -4145,6 +4233,17 @@ export class MockPayrollRepository implements PayrollRepository {
         amountSnapshot: ot.overtimeAmountSnapshot || 0,
         type: "EARNING",
         sourceId: ot.id
+      });
+    });
+
+    absenceRecords.forEach((attendance: Attendance) => {
+      db.payrollItems.push({
+        id: `item-${payrollId}-absence-${attendance.id}`,
+        payrollId,
+        descriptionSnapshot: `Potongan Ketidakhadiran (${attendance.attendanceStatus} / ${attendance.date})`,
+        amountSnapshot: dailySalary,
+        type: "DEDUCTION",
+        sourceId: attendance.id
       });
     });
 
@@ -6096,6 +6195,12 @@ export class MockOvertimeRepository implements OvertimeRepository {
 
   async detectFromAttendance(attendanceId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord | null> {
     const db = MockDatabase.getInstance();
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Akses ditolak: hanya Admin Cabang atau Super Admin yang dapat mendeteksi lembur.");
+    }
+    if (currentUserRole === UserRole.BRANCH_ADMIN && !userBranchId) {
+      throw new Error("Cabang Admin tidak memiliki cabang aktif untuk mendeteksi lembur.");
+    }
     const attendance = db.attendances.find(a => a.id === attendanceId);
     if (!attendance) {
       throw new Error("Attendance record tidak ditemukan");
@@ -6106,7 +6211,7 @@ export class MockOvertimeRepository implements OvertimeRepository {
     }
 
     if (
-      attendance.attendanceStatus !== AttendanceStatus.PRESENT ||
+      ![AttendanceStatus.PRESENT, AttendanceStatus.LATE].includes(attendance.attendanceStatus) ||
       !attendance.actualCheckOutAt ||
       !attendance.scheduledEndAt ||
       attendance.scheduledEndAt === "-"
@@ -6115,9 +6220,7 @@ export class MockOvertimeRepository implements OvertimeRepository {
     }
 
     const staff = db.staff.find(s => s.id === attendance.staffId);
-    if (staff && staff.position === StaffPosition.DOCTOR) {
-      return null;
-    }
+    if (!staff || ![StaffPosition.BRANCH_ADMIN, StaffPosition.ASSISTANT].includes(staff.position)) return null;
     const doctor = db.doctors.find(d => d.staffId === attendance.staffId || d.id === attendance.staffId);
     if (doctor) {
       return null;
@@ -6128,7 +6231,7 @@ export class MockOvertimeRepository implements OvertimeRepository {
       return JSON.parse(JSON.stringify(existing));
     }
 
-    const schedEndDate = new Date(`${attendance.date}T${attendance.scheduledEndAt.padStart(5, '0')}:00Z`);
+    const schedEndDate = new Date(toOperationalDateTime(attendance.date, attendance.scheduledEndAt.padStart(5, "0")));
     const actualEndDate = new Date(attendance.actualCheckOutAt);
     const diffMs = actualEndDate.getTime() - schedEndDate.getTime();
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
@@ -6147,8 +6250,9 @@ export class MockOvertimeRepository implements OvertimeRepository {
       scheduledEndAt: attendance.scheduledEndAt,
       actualEndAt: attendance.actualCheckOutAt,
       overtimeMinutes,
-      overtimeHours: overtimeMinutes / 60,
+      overtimeHours: Number((overtimeMinutes / 60).toFixed(2)),
       overtimeType: OvertimeType.AFTER_SHIFT,
+      isNationalHoliday: false,
       calculationMethod: null,
       hourlyRateSnapshot: null,
       overtimeAmountSnapshot: null,
@@ -6171,6 +6275,12 @@ export class MockOvertimeRepository implements OvertimeRepository {
 
   async submit(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord> {
     const db = MockDatabase.getInstance();
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Akses ditolak: hanya Admin Cabang atau Super Admin yang dapat mengajukan lembur.");
+    }
+    if (currentUserRole === UserRole.BRANCH_ADMIN && !userBranchId) {
+      throw new Error("Cabang Admin tidak memiliki cabang aktif untuk mengajukan lembur.");
+    }
     const record = db.overtimes.find(o => o.id === id);
     if (!record) {
       throw new Error("OvertimeRecord tidak ditemukan");
@@ -6188,20 +6298,38 @@ export class MockOvertimeRepository implements OvertimeRepository {
     return JSON.parse(JSON.stringify(record));
   }
 
-  async approve(id: string, approverName: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord> {
+  async approve(
+    id: string,
+    approverName: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    approvedOvertimeMinutes?: number,
+    isNationalHoliday = false
+  ): Promise<OvertimeRecord> {
     const db = MockDatabase.getInstance();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak: Hanya Super Admin yang dapat menyetujui lembur.");
+    }
+    if (!approverName.trim()) throw new Error("Nama Super Admin penyetuju wajib diisi.");
     const record = db.overtimes.find(o => o.id === id);
     if (!record) {
       throw new Error("OvertimeRecord tidak ditemukan");
     }
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && record.branchId !== userBranchId) {
-      throw new Error("Akses ditolak: Branch Admin hanya dapat approve overtime cabang sendiri");
-    }
     if (record.status !== OvertimeStatus.SUBMITTED) {
       throw new Error(`Overtime record dengan status ${record.status} tidak dapat diapprove (harus SUBMITTED)`);
     }
+    const payableMinutes = approvedOvertimeMinutes ?? record.overtimeMinutes;
+    if (!Number.isInteger(payableMinutes) || payableMinutes <= 0 || payableMinutes > record.overtimeMinutes) {
+      throw new Error("Durasi lembur yang disetujui harus berupa menit positif dan tidak boleh melebihi durasi aktual.");
+    }
 
     record.status = OvertimeStatus.APPROVED;
+    record.approvedOvertimeMinutes = payableMinutes;
+    record.overtimeHours = Number((payableMinutes / 60).toFixed(2));
+    record.isNationalHoliday = isNationalHoliday;
+    record.hourlyRateSnapshot = isNationalHoliday ? 30000 : 15000;
+    record.overtimeAmountSnapshot = Math.round((payableMinutes * record.hourlyRateSnapshot) / 60);
+    record.calculationMethod = "APPROVED_MINUTES_PRORATED";
     record.approvedBy = approverName;
     record.approvedAt = AppClock.nowISO();
     record.updatedAt = AppClock.nowISO();
@@ -6211,15 +6339,16 @@ export class MockOvertimeRepository implements OvertimeRepository {
 
   async reject(id: string, approverName: string, reason: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord> {
     const db = MockDatabase.getInstance();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak: Hanya Super Admin yang dapat menolak lembur.");
+    }
+    if (!approverName.trim()) throw new Error("Nama Super Admin penolak wajib diisi.");
     if (!reason || reason.trim() === "") {
       throw new Error("Alasan penolakan (rejection reason) wajib diisi");
     }
     const record = db.overtimes.find(o => o.id === id);
     if (!record) {
       throw new Error("OvertimeRecord tidak ditemukan");
-    }
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && record.branchId !== userBranchId) {
-      throw new Error("Akses ditolak: Branch Admin hanya dapat reject overtime cabang sendiri");
     }
     if (record.status !== OvertimeStatus.SUBMITTED) {
       throw new Error(`Overtime record dengan status ${record.status} tidak dapat direject (harus SUBMITTED)`);
@@ -6249,7 +6378,7 @@ export class MockOvertimeRepository implements OvertimeRepository {
     const summary: OvertimeSummary = {
       totalDetectedMinutes: items.filter(o => o.status === OvertimeStatus.DETECTED).reduce((acc, o) => acc + o.overtimeMinutes, 0),
       totalSubmittedMinutes: items.filter(o => o.status === OvertimeStatus.SUBMITTED).reduce((acc, o) => acc + o.overtimeMinutes, 0),
-      totalApprovedMinutes: items.filter(o => o.status === OvertimeStatus.APPROVED).reduce((acc, o) => acc + o.overtimeMinutes, 0),
+      totalApprovedMinutes: items.filter(o => o.status === OvertimeStatus.APPROVED).reduce((acc, o) => acc + (o.approvedOvertimeMinutes ?? o.overtimeMinutes), 0),
       totalRejectedMinutes: items.filter(o => o.status === OvertimeStatus.REJECTED).reduce((acc, o) => acc + o.overtimeMinutes, 0),
       totalPaidMinutes: items.filter(o => o.status === OvertimeStatus.PAID).reduce((acc, o) => acc + o.overtimeMinutes, 0),
     };

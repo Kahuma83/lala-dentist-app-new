@@ -4,6 +4,7 @@ import { useApp } from "../context/AppContext";
 import { isSupabaseConfigured } from "../lib/supabase";
 import { AttendanceManager } from "../components/AttendanceManager";
 import { OvertimeManager } from "../components/OvertimeManager";
+import { AbsenceRequestManager } from "../components/AbsenceRequestManager";
 import { DoctorSchedulePosterModal } from "../components/poster/DoctorSchedulePosterModal";
 import { DoctorTimetableBoard } from "../components/DoctorTimetableBoard";
 import { DoctorExcelScheduleGrid } from "../components/DoctorExcelScheduleGrid";
@@ -124,15 +125,16 @@ export const HRManagement: React.FC = () => {
   // URL Query Sync for Active Tab via App's lightweight Router
   const { path: currentPath, navigate: routerNavigate } = useRouter();
   
-  const getTabFromUrl = (): "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime" => {
+  type HRTab = "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "absence" | "overtime";
+  const getTabFromUrl = (): HRTab => {
     try {
       const search = currentPath.includes("?")
         ? currentPath.split("?")[1]
         : (typeof window !== "undefined" ? window.location.search.replace(/^\?/, "") : "");
       const params = new URLSearchParams(search);
       const tab = params.get("tab");
-      if (tab && ["doctors", "staff", "schedules", "shifts", "attendance", "overtime"].includes(tab)) {
-        return tab as "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime";
+      if (tab && ["doctors", "staff", "schedules", "shifts", "attendance", "absence", "overtime"].includes(tab)) {
+        return tab as HRTab;
       }
     } catch {
       // fallback
@@ -141,7 +143,7 @@ export const HRManagement: React.FC = () => {
   };
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<"doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime">(getTabFromUrl);
+  const [activeTab, setActiveTab] = useState<HRTab>(getTabFromUrl);
 
   useEffect(() => {
     const tab = getTabFromUrl();
@@ -150,7 +152,7 @@ export const HRManagement: React.FC = () => {
     }
   }, [currentPath]);
 
-  const handleTabChange = (tab: "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "overtime") => {
+  const handleTabChange = (tab: HRTab) => {
     setActiveTab(tab);
     const basePath = currentPath.split("?")[0] || (isSuper ? "/super-admin/hr" : "/branch-admin/hr");
     routerNavigate(`${basePath}?tab=${tab}`);
@@ -1196,6 +1198,21 @@ export const HRManagement: React.FC = () => {
           Absensi & Kehadiran (SSOT)
         </button>
 
+        {isSuper && (
+          <button
+            onClick={() => handleTabChange("absence")}
+            className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === "absence"
+                ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
+                : "border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300"
+            }`}
+            id="tab-absence-button"
+          >
+            <Calendar className="w-4 h-4" />
+            Cuti, Izin & Sakit
+          </button>
+        )}
+
         <button
           onClick={() => handleTabChange("overtime")}
           className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
@@ -2228,6 +2245,10 @@ export const HRManagement: React.FC = () => {
       ========================================================================= */}
       {activeTab === "attendance" && (
         <AttendanceManager />
+      )}
+
+      {activeTab === "absence" && isSuper && (
+        <AbsenceRequestManager />
       )}
 
       {/* =========================================================================

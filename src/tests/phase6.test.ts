@@ -8,10 +8,12 @@ import {
   AppClock
 } from "../repositories/mockRepositories";
 import {
+  AttendanceStatus,
   PayrollStatus,
   TreatmentJobStatus,
   UserRole
 } from "../types/domain";
+import { createPaidInvoiceForTreatment } from "./helpers/paidTreatmentInvoice";
 
 describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () => {
   let compRepo: MockCompensationRepository;
@@ -82,6 +84,10 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     });
 
     // treatment-job-3 is SELESAI, service-root-canal base price is 400,000
+    await createPaidInvoiceForTreatment("treatment-job-3");
+    const testDb = MockDatabase.getInstance();
+    expect(testDb.invoiceItems.some((item) => item.treatmentJobId === "treatment-job-3")).toBe(true);
+    expect(testDb.invoices.some((invoice) => invoice.visitId === "visit-2" && invoice.status === "PAID")).toBe(true);
     const accruals = await compRepo.calculateAndAccrueForTreatment("treatment-job-3");
     expect(accruals.length).toBeGreaterThan(0);
 
@@ -97,6 +103,9 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
   it("Test 6: Calculate and accrue compensation for assistant assigned to completed treatment", async () => {
     // Complete treatment-job-1 (which has picAssistantId = "assistant-clary")
     await treatmentRepo.completeTreatmentJob("treatment-job-1");
+    const unpaidAccruals = await compRepo.calculateAndAccrueForTreatment("treatment-job-1");
+    expect(unpaidAccruals).toHaveLength(0);
+    await createPaidInvoiceForTreatment("treatment-job-1");
 
     // rule-clary-scaling is 10% of 150,000 = 15,000
     const accruals = await compRepo.calculateAndAccrueForTreatment("treatment-job-1");
@@ -105,9 +114,30 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     expect(assistantAccrual?.amount).toBe(15000);
   });
 
+  it("records one admin referral accrual only after a completed treatment invoice is paid", async () => {
+    const db = MockDatabase.getInstance();
+    const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
+    const patient = db.patients.find((candidate) => candidate.id === treatment.patientId)!;
+    const referringAdmin = db.staff.find((employee) => employee.position === "BRANCH_ADMIN")!;
+    patient.referringStaffId = referringAdmin.id;
+    await treatmentRepo.completeTreatmentJob(treatment.id);
+
+    expect(await compRepo.calculateAndAccrueForTreatment(treatment.id)).toHaveLength(0);
+    await createPaidInvoiceForTreatment(treatment.id);
+    await compRepo.calculateAndAccrueForTreatment(treatment.id);
+    await compRepo.calculateAndAccrueForTreatment(treatment.id);
+
+    const referralAccruals = db.accruals.filter((accrual) =>
+      accrual.staffId === referringAdmin.id && accrual.ruleTypeSnapshot === "ADMIN_REFERRAL"
+    );
+    expect(referralAccruals).toHaveLength(1);
+    expect(referralAccruals[0].amount).toBe(3000);
+  });
+
   it("Test 7: Generate monthly payroll compiles base salary and accruals accurately", async () => {
     // Complete treatment-job-1 and accrue
     await treatmentRepo.completeTreatmentJob("treatment-job-1");
+    await createPaidInvoiceForTreatment("treatment-job-1");
     await compRepo.calculateAndAccrueForTreatment("treatment-job-1");
 
     const payroll = await payrollRepo.generateMonthlyPayroll("assistant-clary", 9, 2026, 2500000);
@@ -122,7 +152,39 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     const items = await payrollRepo.getPayrollItems(payroll.id);
     expect(items.length).toBeGreaterThanOrEqual(2);
     expect(items.some((i) => i.descriptionSnapshot.includes("Gaji Pokok"))).toBe(true);
-    expect(items.some((i) => i.descriptionSnapshot.includes("Komisi"))).toBe(true);
+    expect(items.some((i) => i.descriptionSnapshot.includes("Kompensasi"))).toBe(true);
+  });
+
+  it("deducts unpaid scheduled absence at base salary divided by 25 days without double-counting a date", async () => {
+    const db = MockDatabase.getInstance();
+    const attendance = {
+      id: "absence-2026-09-10",
+      staffId: "assistant-clary",
+      branchId: "branch-gebang",
+      date: "2026-09-10",
+      attendanceStatus: AttendanceStatus.LEAVE,
+      scheduledStartAt: "08:00",
+      scheduledEndAt: "16:00",
+      actualCheckInAt: null,
+      actualCheckOutAt: null,
+      lateMinutes: 0,
+      earlyCheckoutMinutes: 0,
+      createdAt: "2026-09-10T00:00:00Z",
+      updatedAt: "2026-09-10T00:00:00Z"
+    };
+    db.attendances.push(
+      attendance,
+      { ...attendance, id: "duplicate-absence-record", attendanceStatus: AttendanceStatus.SICK }
+    );
+
+    const payroll = await payrollRepo.generateMonthlyPayroll("assistant-clary", 9, 2026, 2500000);
+    const items = await payrollRepo.getPayrollItems(payroll.id);
+    const absenceItems = items.filter((item) => item.type === "DEDUCTION");
+
+    expect(absenceItems).toHaveLength(1);
+    expect(absenceItems[0].amountSnapshot).toBe(100000);
+    expect(payroll.totalDeductions).toBe(100000);
+    expect(payroll.netSalary).toBe(2415000);
   });
 
   it("Test 7b: Doctor payroll generation resolves staff-linked IDs to the active salary rule", async () => {

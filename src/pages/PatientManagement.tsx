@@ -68,7 +68,7 @@ import {
 } from "../utils/rmUtils";
 
 export const PatientManagement: React.FC = () => {
-  const { currentUser, repos, branches, patients, visits, bookings, doctors, doctorSchedules, refreshData } = useApp();
+  const { currentUser, repos, branches, patients, visits, bookings, doctors, doctorSchedules, staff, refreshData } = useApp();
   const { path } = useRouter();
   const canRecordVisitPlan = currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN;
 
@@ -118,6 +118,7 @@ export const PatientManagement: React.FC = () => {
     medicalHistoryNotes: "",
     acquisitionSource: "UNKNOWN" as PatientProfile["acquisitionSource"],
     referralName: "",
+    referringStaffId: "",
     registeredBranchId: ""
   });
 
@@ -296,6 +297,7 @@ export const PatientManagement: React.FC = () => {
       medicalHistoryNotes: "",
       acquisitionSource: "UNKNOWN",
       referralName: "",
+      referringStaffId: "",
       registeredBranchId: defaultBranchId
     });
     setDuplicateWarning(null);
@@ -325,6 +327,7 @@ export const PatientManagement: React.FC = () => {
       medicalHistoryNotes: p.medicalHistoryNotes || "",
       acquisitionSource: p.acquisitionSource || "UNKNOWN",
       referralName: p.referralName || "",
+      referringStaffId: p.referringStaffId || "",
       registeredBranchId: existingBranchId
     });
     setFormError(null);
@@ -389,6 +392,7 @@ export const PatientManagement: React.FC = () => {
             medicalHistoryNotes: patientForm.medicalHistoryNotes,
             acquisitionSource: patientForm.acquisitionSource,
             referralName: patientForm.referralName,
+            referringStaffId: patientForm.referringStaffId || null,
             registeredBranchId: effBranchId,
             branch_id: effBranchId,
             assignedBranchId: effBranchId,
@@ -413,6 +417,7 @@ export const PatientManagement: React.FC = () => {
             medicalHistoryNotes: patientForm.medicalHistoryNotes,
             acquisitionSource: patientForm.acquisitionSource,
             referralName: patientForm.referralName,
+            referringStaffId: patientForm.referringStaffId || null,
             registeredBranchId: effBranchId,
             branch_id: effBranchId,
             assignedBranchId: effBranchId,
@@ -1602,6 +1607,30 @@ export const PatientManagement: React.FC = () => {
                     />
                   </div>
                 )}
+
+                <div>
+                  <label htmlFor="input-patient-referring-staff" className="block font-semibold text-slate-700 mb-1">
+                    Admin Perujuk Pasien
+                  </label>
+                  <select
+                    id="input-patient-referring-staff"
+                    value={patientForm.referringStaffId}
+                    onChange={(e) => setPatientForm({ ...patientForm, referringStaffId: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                  >
+                    <option value="">Tidak ada / belum dicatat</option>
+                    {staff
+                      .filter((employee) => employee.position === "BRANCH_ADMIN" && employee.active)
+                      .map((employee) => (
+                        <option key={employee.id} value={employee.id}>
+                          {employee.fullName} ({employee.employeeCode})
+                        </option>
+                      ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Insentif referral Rp3.000 hanya dihitung satu kali setelah tindakan selesai dan invoice lunas.
+                  </p>
+                </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>

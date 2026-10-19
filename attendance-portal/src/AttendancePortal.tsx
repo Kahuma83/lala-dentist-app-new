@@ -14,6 +14,7 @@ import {
   LogOut,
   MapPin,
   RefreshCw,
+  Settings,
   ShieldCheck,
   Timer,
   UserRound,
@@ -58,7 +59,25 @@ type StaffContext = {
   staffId: string;
 };
 type LocationFix = { latitude: number; longitude: number; accuracyMeters: number };
-type PortalTab = "home" | "attendance" | "schedule" | "overtime" | "payroll" | "profile";
+type PortalTab = "home" | "attendance" | "schedule" | "absence" | "overtime" | "payroll" | "profile";
+type AbsenceRequestType = "SICK" | "LEAVE" | "PERMISSION";
+type PortalAbsenceRequest = {
+  id: string;
+  requestType: AbsenceRequestType;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  reviewerNote: string | null;
+  createdAt: string;
+};
+type PortalReplacementAssignment = {
+  id: string;
+  coveredDate: string;
+  branchName: string;
+  amountSnapshot: number;
+  workConfirmedAt: string | null;
+};
 type PortalSchedule = {
   id: string;
   date: string;
@@ -118,9 +137,9 @@ const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
   { id: "home", label: "Beranda", icon: Home },
   { id: "attendance", label: "Absensi", icon: BadgeCheck },
   { id: "schedule", label: "Jadwal Saya", icon: CalendarDays },
+  { id: "absence", label: "Cuti & Izin", icon: CalendarDays },
   { id: "overtime", label: "Lembur Saya", icon: Timer },
-  { id: "payroll", label: "Gaji Saya", icon: WalletCards },
-  { id: "profile", label: "Profil", icon: UserRound }
+  { id: "payroll", label: "Gaji Saya", icon: WalletCards }
 ];
 
 function todayWib(): string {
@@ -275,6 +294,14 @@ export function AttendancePortal() {
   const [panelError, setPanelError] = useState<string | null>(null);
   const [scheduleRows, setScheduleRows] = useState<PortalSchedule[]>([]);
   const [scheduleWeekStart, setScheduleWeekStart] = useState(() => startOfWeek(todayWib()));
+  const [absenceRows, setAbsenceRows] = useState<PortalAbsenceRequest[]>([]);
+  const [replacementRows, setReplacementRows] = useState<PortalReplacementAssignment[]>([]);
+  const [absenceForm, setAbsenceForm] = useState({
+    requestType: "LEAVE" as AbsenceRequestType,
+    startDate: todayWib(),
+    endDate: todayWib(),
+    reason: ""
+  });
   const [overtimeRows, setOvertimeRows] = useState<PortalOvertime[]>([]);
   const [payrollRows, setPayrollRows] = useState<PortalPayroll[]>([]);
   const [payrollItems, setPayrollItems] = useState<PortalPayrollItem[]>([]);
@@ -472,6 +499,8 @@ export function AttendancePortal() {
         setAttendanceRows([]);
         setActiveTab("home");
         setScheduleRows([]);
+        setAbsenceRows([]);
+        setReplacementRows([]);
         setOvertimeRows([]);
         setPayrollRows([]);
         setPayrollItems([]);
@@ -676,7 +705,42 @@ export function AttendancePortal() {
 
     setIsPanelLoading(true);
     try {
-      if (tab === "schedule") {
+      if (tab === "absence") {
+        const [{ data, error }, { data: assignmentData, error: assignmentError }] = await Promise.all([
+          supabase
+            .from("staff_absence_requests")
+            .select("id,request_type,start_date,end_date,reason,status,reviewer_note,created_at")
+            .eq("staff_id", staffContext!.staffId)
+            .order("created_at", { ascending: false })
+            .limit(50),
+          supabase
+            .from("staff_replacement_assignments")
+            .select("id,covered_date,branch_id,amount_snapshot,work_confirmed_at")
+            .eq("replacement_staff_id", staffContext!.staffId)
+            .order("covered_date", { ascending: false })
+            .limit(50)
+        ]);
+        if (error) throw new Error(`Gagal memuat pengajuan cuti/izin: ${error.message}`);
+        if (assignmentError) throw new Error(`Gagal memuat penugasan pengganti: ${assignmentError.message}`);
+        setAbsenceRows((data || []).map((row) => ({
+          id: row.id,
+          requestType: row.request_type,
+          startDate: row.start_date,
+          endDate: row.end_date,
+          reason: row.reason,
+          status: row.status,
+          reviewerNote: row.reviewer_note,
+          createdAt: row.created_at
+        })));
+        const branchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
+        setReplacementRows((assignmentData || []).map((row) => ({
+          id: row.id,
+          coveredDate: row.covered_date,
+          branchName: branchNames.get(row.branch_id) || "Cabang",
+          amountSnapshot: Number(row.amount_snapshot),
+          workConfirmedAt: row.work_confirmed_at
+        })));
+      } else if (tab === "schedule") {
         let nextSchedules: PortalSchedule[] = [];
         const isFiveDaySchedule = fiveDayScheduleRoles.includes(staffContext!.role);
         if (staffContext?.role === "DOCTOR") {
@@ -810,6 +874,34 @@ export function AttendancePortal() {
       setPanelError(friendlyError(loadError, "Gagal memuat data portal pegawai."));
     } finally {
       setIsPanelLoading(false);
+    }
+  };
+
+  const submitAbsenceRequest = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!staffContext) return;
+    if (absenceForm.endDate < absenceForm.startDate) {
+      setErrorMessage("Tanggal akhir tidak boleh lebih awal dari tanggal mulai.");
+      return;
+    }
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const { error } = await supabase.rpc("submit_staff_absence_request", {
+        p_request_type: absenceForm.requestType,
+        p_start_date: absenceForm.startDate,
+        p_end_date: absenceForm.endDate,
+        p_reason: absenceForm.reason.trim()
+      });
+      if (error) throw new Error(`Pengajuan tidak dapat dikirim: ${error.message}`);
+      setAbsenceForm((form) => ({ ...form, reason: "" }));
+      setSuccessMessage("Pengajuan berhasil dikirim dan menunggu persetujuan Super Admin.");
+      await handleTabChange("absence");
+    } catch (requestError: unknown) {
+      setErrorMessage(friendlyError(requestError, "Gagal mengirim pengajuan."));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1034,9 +1126,33 @@ export function AttendancePortal() {
           <img src="/portal-brand.png" alt="" />
           <div><strong>Lala Dentist</strong><span>Portal Pegawai</span></div>
         </div>
-        <button className="icon-button" onClick={() => void handleSignOut()} disabled={isSubmitting} aria-label="Keluar">
-          <LogOut />
-        </button>
+        <details className="account-menu">
+          <summary aria-label="Buka menu profil">
+            <Settings aria-hidden="true" />
+            <span>Profil</span>
+          </summary>
+          <div className="account-menu-popover">
+            <div className="account-menu-person">
+              <strong>{staffContext.name}</strong>
+              <span>Portal Pegawai</span>
+            </div>
+            <button type="button" onClick={(event) => {
+              setActiveTab("profile");
+              event.currentTarget.closest("details")?.removeAttribute("open");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}>
+              <UserRound />
+              Profil Saya
+            </button>
+            <button type="button" onClick={(event) => {
+              event.currentTarget.closest("details")?.removeAttribute("open");
+              void handleSignOut();
+            }} disabled={isSubmitting}>
+              <LogOut />
+              Keluar
+            </button>
+          </div>
+        </details>
       </header>
 
       <section className="welcome-card">
@@ -1086,8 +1202,10 @@ export function AttendancePortal() {
             type="button"
             className={`portal-nav-item${activeTab === id ? " active" : ""}`}
             aria-current={activeTab === id ? "page" : undefined}
-            onClick={() => void handleTabChange(id)}
-            disabled={isPanelLoading}
+            aria-disabled={isPanelLoading}
+            onClick={() => {
+              if (!isPanelLoading) void handleTabChange(id);
+            }}
           >
             <Icon />
             <span>{label}</span>
@@ -1111,6 +1229,7 @@ export function AttendancePortal() {
           <div className="quick-links">
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("attendance")}><BadgeCheck /><span><strong>Absensi Saya</strong><small>Absen masuk, pulang, dan lihat riwayat</small></span></button>
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("schedule")}><CalendarDays /><span><strong>Jadwal Saya</strong><small>Lihat jadwal praktik atau shift</small></span></button>
+            <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("absence")}><CalendarDays /><span><strong>Cuti & Izin</strong><small>Ajukan sakit, cuti, atau izin</small></span></button>
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("payroll")}><WalletCards /><span><strong>Gaji Saya</strong><small>Lihat slip yang sudah disetujui</small></span></button>
           </div>
           <p className="portal-footnote">Menu pegawai menampilkan data dari sistem klinik dan hanya untuk akun Anda.</p>
@@ -1273,6 +1392,109 @@ export function AttendancePortal() {
                 })}
               </div>
             </>
+          )}
+        </section>
+      )}
+
+      {activeTab === "absence" && (
+        <section className="portal-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">PENGAJUAN KETIDAKHADIRAN</p>
+              <h2>Cuti, Izin & Sakit</h2>
+              <p className="muted">Pengajuan ditinjau Super Admin. Absensi dan payroll baru diperbarui setelah disetujui.</p>
+            </div>
+          </div>
+          <form className="absence-request-form" onSubmit={submitAbsenceRequest}>
+            <label>
+              Jenis pengajuan
+              <select
+                value={absenceForm.requestType}
+                onChange={(event) => setAbsenceForm({ ...absenceForm, requestType: event.target.value as AbsenceRequestType })}
+                disabled={isSubmitting}
+              >
+                <option value="LEAVE">Cuti</option>
+                <option value="PERMISSION">Izin</option>
+                <option value="SICK">Sakit</option>
+              </select>
+            </label>
+            <label>
+              Dari tanggal
+              <input
+                type="date"
+                required
+                value={absenceForm.startDate}
+                onChange={(event) => setAbsenceForm({ ...absenceForm, startDate: event.target.value })}
+                disabled={isSubmitting}
+              />
+            </label>
+            <label>
+              Sampai tanggal
+              <input
+                type="date"
+                required
+                min={absenceForm.startDate}
+                value={absenceForm.endDate}
+                onChange={(event) => setAbsenceForm({ ...absenceForm, endDate: event.target.value })}
+                disabled={isSubmitting}
+              />
+            </label>
+            <label className="absence-request-reason">
+              Alasan / keterangan
+              <textarea
+                required
+                minLength={3}
+                maxLength={2000}
+                rows={3}
+                value={absenceForm.reason}
+                onChange={(event) => setAbsenceForm({ ...absenceForm, reason: event.target.value })}
+                placeholder="Jelaskan alasan pengajuan. Untuk sakit mendadak, pengajuan dapat dikirim setelah tanggal kejadian."
+                disabled={isSubmitting}
+              />
+            </label>
+            <button className="primary-button" type="submit" disabled={isSubmitting}>
+              {isSubmitting ? <RefreshCw className="spin" /> : <CalendarDays />}
+              {isSubmitting ? "Mengirim..." : "Kirim Pengajuan"}
+            </button>
+          </form>
+          <div className="panel-heading absence-history-heading">
+            <div><p className="eyebrow">RIWAYAT</p><h2>Pengajuan Saya</h2></div>
+          </div>
+          {isPanelLoading ? <p className="empty-state"><RefreshCw className="spin" /> Memuat pengajuan...</p> : panelError ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div> : absenceRows.length === 0 ? <p className="empty-state">Belum ada pengajuan ketidakhadiran.</p> : (
+            <div className="portal-list">
+              {absenceRows.map((row) => (
+                <article className="portal-list-row" key={row.id}>
+                  <div>
+                    <strong>{({ SICK: "Sakit", LEAVE: "Cuti", PERMISSION: "Izin" } as const)[row.requestType]} · {formatDate(row.startDate)}{row.endDate !== row.startDate ? ` – ${formatDate(row.endDate)}` : ""}</strong>
+                    <span>{row.reason}</span>
+                    {row.reviewerNote && <small>Catatan Super Admin: {row.reviewerNote}</small>}
+                  </div>
+                  <div className="portal-list-end">
+                    <span className={`status-badge status-${row.status.toLowerCase()}`}>
+                      {({ PENDING: "Menunggu", APPROVED: "Disetujui", REJECTED: "Ditolak" } as const)[row.status]}
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          <p className="portal-footnote">Jika disetujui, hari kerja terjadwal akan tercatat pada absensi. Hari tanpa jadwal tidak mengurangi payroll.</p>
+          <div className="panel-heading absence-history-heading">
+            <div><p className="eyebrow">PENUGASAN</p><h2>Tugas Pengganti Saya</h2></div>
+          </div>
+          {replacementRows.length === 0 ? <p className="empty-state">Tidak ada penugasan pengganti.</p> : (
+            <div className="portal-list">
+              {replacementRows.map((row) => (
+                <article className="portal-list-row" key={row.id}>
+                  <div>
+                    <strong>{formatDate(row.coveredDate)} · {row.branchName}</strong>
+                    <span>Tugas pengganti</span>
+                    <small>{row.workConfirmedAt ? "Pekerjaan dikonfirmasi Super Admin" : "Menunggu konfirmasi pekerjaan"}</small>
+                  </div>
+                  <div className="portal-list-end"><strong className="portal-list-value">{formatRupiah(row.amountSnapshot)}</strong></div>
+                </article>
+              ))}
+            </div>
           )}
         </section>
       )}

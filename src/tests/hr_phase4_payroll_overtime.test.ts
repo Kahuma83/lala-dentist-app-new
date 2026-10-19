@@ -29,7 +29,7 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-01T18:00:00Z");
+    AppClock.setFixedTime("2026-10-01T11:00:00Z");
     await attendanceRepo.checkOut({ attendanceId: att1.id, actorRole: UserRole.SUPER_ADMIN });
 
     AppClock.setFixedTime("2026-10-02T08:00:00Z");
@@ -41,18 +41,11 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-02T18:00:00Z");
+    AppClock.setFixedTime("2026-10-02T11:00:00Z");
     await attendanceRepo.checkOut({ attendanceId: att2.id, actorRole: UserRole.SUPER_ADMIN });
 
     const ot1 = await overtimeRepo.detectFromAttendance(att1.id, UserRole.SUPER_ADMIN);
     const ot2 = await overtimeRepo.detectFromAttendance(att2.id, UserRole.SUPER_ADMIN);
-
-    // Set snapshot on both in DB directly
-    const dbInstance = MockDatabase.getInstance();
-    const dbOt1 = dbInstance.overtimes.find(o => o.id === ot1!.id);
-    const dbOt2 = dbInstance.overtimes.find(o => o.id === ot2!.id);
-    if (dbOt1) dbOt1.overtimeAmountSnapshot = 75000;
-    if (dbOt2) dbOt2.overtimeAmountSnapshot = 75000;
 
     // Approve only ot1, leave ot2 as DETECTED
     await overtimeRepo.submit(ot1!.id, UserRole.SUPER_ADMIN);
@@ -62,8 +55,8 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
     const payroll = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 10, 2026, 2500000);
     const items = await payrollRepo.getPayrollItems(payroll.id);
 
-    // Net salary should include base salary (2,500,000) + ot1 (75,000) = 2,575,000 (ot2 excluded because not APPROVED)
-    expect(payroll.netSalary).toBe(2575000);
+    // Two approved hours at Rp15,000/hour; ot2 remains excluded because it is not approved.
+    expect(payroll.netSalary).toBe(2530000);
     expect(items.some(i => i.sourceId === ot1!.id)).toBe(true);
     expect(items.some(i => i.sourceId === ot2!.id)).toBe(false);
   });
@@ -78,18 +71,16 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-05T17:00:00Z"); // 60 mins overtime
+    AppClock.setFixedTime("2026-10-05T10:00:00Z"); // 60 mins overtime
     await attendanceRepo.checkOut({ attendanceId: att.id, actorRole: UserRole.SUPER_ADMIN });
 
     const ot = await overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN);
     
-    // Manually override snapshot to a fixed custom amount in DB
+    await overtimeRepo.submit(ot!.id, UserRole.SUPER_ADMIN);
+    await overtimeRepo.approve(ot!.id, "HR Manager", UserRole.SUPER_ADMIN);
     const dbInstance = MockDatabase.getInstance();
     const dbOt = dbInstance.overtimes.find(o => o.id === ot!.id);
     if (dbOt) dbOt.overtimeAmountSnapshot = 500000;
-
-    await overtimeRepo.submit(ot!.id, UserRole.SUPER_ADMIN);
-    await overtimeRepo.approve(ot!.id, "HR Manager", UserRole.SUPER_ADMIN);
 
     const payroll = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 10, 2026, 2500000);
     expect(payroll.netSalary).toBe(3000000); // 2,500,000 + 500,000 snapshot
@@ -105,14 +96,15 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-06T18:00:00Z");
+    AppClock.setFixedTime("2026-10-06T11:00:00Z");
     await attendanceRepo.checkOut({ attendanceId: att.id, actorRole: UserRole.SUPER_ADMIN });
 
     const ot = await overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN);
-    // Leave overtimeAmountSnapshot as null
-
     await overtimeRepo.submit(ot!.id, UserRole.SUPER_ADMIN);
     await overtimeRepo.approve(ot!.id, "HR Manager", UserRole.SUPER_ADMIN);
+    const dbInstance = MockDatabase.getInstance();
+    const dbOt = dbInstance.overtimes.find(o => o.id === ot!.id);
+    if (dbOt) dbOt.overtimeAmountSnapshot = null;
 
     const payroll = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 10, 2026, 2500000);
     // Should not add null amount to total earning, netSalary remains baseSalary (2,500,000)
@@ -129,16 +121,15 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-07T18:00:00Z");
+    AppClock.setFixedTime("2026-10-07T11:00:00Z");
     await attendanceRepo.checkOut({ attendanceId: att.id, actorRole: UserRole.SUPER_ADMIN });
 
     const ot = await overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN);
+    await overtimeRepo.submit(ot!.id, UserRole.SUPER_ADMIN);
+    await overtimeRepo.approve(ot!.id, "HR Manager", UserRole.SUPER_ADMIN);
     const dbInstance = MockDatabase.getInstance();
     const dbOt = dbInstance.overtimes.find(o => o.id === ot!.id);
     if (dbOt) dbOt.overtimeAmountSnapshot = 100000;
-
-    await overtimeRepo.submit(ot!.id, UserRole.SUPER_ADMIN);
-    await overtimeRepo.approve(ot!.id, "HR Manager", UserRole.SUPER_ADMIN);
 
     const payroll1 = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 10, 2026, 2500000);
     const payroll2 = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 10, 2026, 2500000);
@@ -149,6 +140,79 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
     const items = await payrollRepo.getPayrollItems(payroll2.id);
     const otItems = items.filter(i => i.sourceId === ot!.id);
     expect(otItems.length).toBe(1); // No double inclusion
+  });
+
+  it("includes only confirmed replacement assignments using their saved amount and avoids duplicate payroll items", async () => {
+    db.replacementAssignments = [
+      {
+        id: "replacement-confirmed",
+        absenceRequestId: "absence-request-1",
+        coveredDate: "2026-10-10",
+        branchId: "branch-gebang",
+        shiftId: null,
+        absentStaffId: "staff-admin-gebang",
+        replacementStaffId: "staff-ast-clary",
+        absentBaseSalarySnapshot: 1_100_000,
+        amountSnapshot: 44_000,
+        workConfirmedBy: "super-admin",
+        workConfirmedAt: "2026-10-10T18:00:00.000Z",
+        createdAt: "2026-10-01T00:00:00.000Z"
+      },
+      {
+        id: "replacement-unconfirmed",
+        absenceRequestId: "absence-request-2",
+        coveredDate: "2026-10-11",
+        branchId: "branch-gebang",
+        shiftId: null,
+        absentStaffId: "staff-admin-gebang",
+        replacementStaffId: "staff-ast-clary",
+        absentBaseSalarySnapshot: 1_100_000,
+        amountSnapshot: 44_000,
+        workConfirmedBy: null,
+        workConfirmedAt: null,
+        createdAt: "2026-10-01T00:00:00.000Z"
+      }
+    ];
+
+    const payroll = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 10, 2026, 2_500_000);
+    const repeatedPayroll = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 10, 2026, 2_500_000);
+    const replacementItems = (await payrollRepo.getPayrollItems(repeatedPayroll.id))
+      .filter((item) => item.sourceId?.startsWith("replacement-"));
+
+    expect(payroll.totalCompensation).toBe(44_000);
+    expect(repeatedPayroll.netSalary).toBe(2_544_000);
+    expect(replacementItems).toHaveLength(1);
+    expect(replacementItems[0]).toMatchObject({
+      sourceId: "replacement-confirmed",
+      amountSnapshot: 44_000,
+      type: "EARNING"
+    });
+  });
+
+  it("includes replacement earnings when payroll is requested by the linked user account ID", async () => {
+    db.replacementAssignments = [
+      {
+        id: "replacement-linked-account",
+        absenceRequestId: "absence-request-linked",
+        coveredDate: "2026-10-10",
+        branchId: "branch-gebang",
+        shiftId: null,
+        absentStaffId: "staff-admin-gebang",
+        replacementStaffId: "staff-ast-clary",
+        absentBaseSalarySnapshot: 1_100_000,
+        amountSnapshot: 44_000,
+        workConfirmedBy: "super-admin",
+        workConfirmedAt: "2026-10-10T18:00:00.000Z",
+        createdAt: "2026-10-01T00:00:00.000Z"
+      }
+    ];
+
+    const payroll = await payrollRepo.generateMonthlyPayroll("assistant-clary", 10, 2026, 2_500_000);
+
+    expect(payroll.totalCompensation).toBe(44_000);
+    expect(payroll.netSalary).toBe(2_544_000);
+    expect((await payrollRepo.getPayrollItems(payroll.id)).some((item) => item.sourceId === "replacement-linked-account"))
+      .toBe(true);
   });
 
   it("5. Maintains branch isolation where branch admin only includes their branch's approved overtime", async () => {
@@ -162,16 +226,13 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-08T18:00:00Z");
-    await attendanceRepo.checkOut({ attendanceId: att1.id, actorRole: UserRole.SUPER_ADMIN });
+    AppClock.setFixedTime("2026-10-08T11:00:00Z");
+    await attendanceRepo.checkOut({ attendanceId: att1.id, actorRole: UserRole.SUPER_ADMIN     });
 
     const ot1 = await overtimeRepo.detectFromAttendance(att1.id, UserRole.SUPER_ADMIN);
-    const dbInstance = MockDatabase.getInstance();
-    const dbOt1 = dbInstance.overtimes.find(o => o.id === ot1!.id);
-    if (dbOt1) dbOt1.overtimeAmountSnapshot = 80000;
-
     await overtimeRepo.submit(ot1!.id, UserRole.SUPER_ADMIN);
-    await overtimeRepo.approve(ot1!.id, "Gebang Admin", UserRole.BRANCH_ADMIN, "branch-gebang");
+    await expect(overtimeRepo.approve(ot1!.id, "Gebang Admin", UserRole.BRANCH_ADMIN, "branch-gebang")).rejects.toThrow();
+    await overtimeRepo.approve(ot1!.id, "Super Admin", UserRole.SUPER_ADMIN);
   });
 
   it("6. Branch Isolation - Different Branch (OT from branch-kencong should not enter branch-gebang staff payroll)", async () => {
@@ -189,16 +250,13 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-09T18:00:00Z");
+    AppClock.setFixedTime("2026-10-09T11:00:00Z");
     await attendanceRepo.checkOut({ attendanceId: att.id, actorRole: UserRole.SUPER_ADMIN });
 
     const ot = await overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN);
-    const dbInstance = MockDatabase.getInstance();
-    const dbOt = dbInstance.overtimes.find(o => o.id === ot!.id);
-    if (dbOt) dbOt.overtimeAmountSnapshot = 90000;
-
     await overtimeRepo.submit(ot!.id, UserRole.SUPER_ADMIN);
-    await overtimeRepo.approve(ot!.id, "Kencong Admin", UserRole.BRANCH_ADMIN, "branch-kencong");
+    await expect(overtimeRepo.approve(ot!.id, "Kencong Admin", UserRole.BRANCH_ADMIN, "branch-kencong")).rejects.toThrow();
+    await overtimeRepo.approve(ot!.id, "Super Admin", UserRole.SUPER_ADMIN);
 
     // Generate payroll for Gebang-based staff
     const payroll = await payrollRepo.generateMonthlyPayroll(staffId, 10, 2026, 2500000);
