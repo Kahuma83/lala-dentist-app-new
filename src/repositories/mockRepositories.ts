@@ -4064,7 +4064,7 @@ export class MockPayrollRepository implements PayrollRepository {
     let totalCompensation = staffAccruals.reduce((sum: number, a: CompensationAccrual) => sum + a.amount, 0);
     const replacementAssignments = db.replacementAssignments.filter((assignment: StaffReplacementAssignment) => {
       const [assignmentYear, assignmentMonth] = assignment.coveredDate.split("-").map(Number);
-      return assignment.replacementStaffId === staffId
+      return assignment.replacementStaffId === (staff?.id || staffId)
         && Boolean(assignment.workConfirmedAt)
         && assignmentYear === year
         && assignmentMonth === month;

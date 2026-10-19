@@ -59,6 +59,8 @@ Prerequisite: Node.js dan akses ke project Supabase.
 
    Untuk pengajuan cuti, izin, sakit, dan penugasan pengganti, terapkan migration `20261120000000_employee_absence_requests_and_replacements.sql`. Pegawai mengajukan melalui Portal Pegawai; Super Admin meninjau dan memilih pengganti. Pengurangan ketidakhadiran serta upah pengganti dihitung terpisah. Upah pengganti memakai snapshot gaji pokok pegawai yang digantikan dibagi 25, dan baru menjadi earning setelah Super Admin mengonfirmasi pekerjaan selesai. Konfirmasi wajib dilakukan sebelum payroll periode tugas dikunci; sistem menolak konfirmasi bila payroll sudah disetujui/dibayar. Penugasan pengganti berbayar hanya tersedia untuk Admin Cabang/Asisten dengan jabatan sama di cabang yang sama.
 
+   Setelah migration absensi tersebut, terapkan `20261121000000_harden_payroll_absence_and_overtime.sql` untuk menolak persetujuan ketidakhadiran pada payroll yang sudah dikunci, mempertahankan absensi yang sebelumnya dicatat dengan status sama, mencatat ketidakhadiran dokter pada semua cabang terjadwal, dan membatasi pembuatan klaim lembur ke fungsi server yang memvalidasi absensi. Kompensasi tindakan kini dicatat otomatis ketika invoice lunas, termasuk invoice tanpa saldo; sinkronisasi manual tetap tersedia untuk rekonsiliasi.
+
 4. Di Supabase Dashboard, pastikan Realtime aktif dan policies RLS pada tabel memberikan akses yang sesuai. Perubahan Realtime hanya dikirim kepada user yang berhak membaca baris berdasarkan policies tersebut.
 
 5. Jalankan frontend dan backend lokal:

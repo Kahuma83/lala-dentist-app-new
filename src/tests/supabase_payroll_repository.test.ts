@@ -158,6 +158,47 @@ describe("Supabase payroll repository", () => {
         .rejects.toThrow(/Super Admin/);
       expect(calls).toHaveLength(0);
     });
+
+    it("creates detected overtime through the attendance-validating server function", async () => {
+      const record = {
+        id: "overtime-1",
+        staff_id: "staff-1",
+        branch_id: "branch-1",
+        attendance_id: "attendance-1",
+        date: "2026-10-12",
+        scheduled_end_at: "16:00",
+        actual_end_at: "17:00",
+        overtime_minutes: 60,
+        overtime_hours: 1,
+        status: "DETECTED"
+      };
+      vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
+        createQuery(table, calls, (call) => {
+          if (table === "attendances") {
+            return {
+              data: {
+                id: "attendance-1",
+                staff_id: "staff-1",
+                branch_id: "branch-1",
+                date: "2026-10-12",
+                attendance_status: "PRESENT",
+                scheduled_end_at: "16:00",
+                actual_check_out_at: "2026-10-12T10:00:00.000Z"
+              },
+              error: null
+            };
+          }
+          if (table === "staff") return { data: { position: "ASSISTANT" }, error: null };
+          return { data: null, error: null };
+        })) as any);
+      const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({ data: [record], error: null } as any);
+
+      const detected = await overtimeRepo.detectFromAttendance("attendance-1", UserRole.BRANCH_ADMIN, "branch-1");
+
+      expect(detected?.id).toBe("overtime-1");
+      expect(rpc).toHaveBeenCalledWith("detect_overtime_from_attendance", { p_attendance_id: "attendance-1" });
+      expect(calls.some((call) => call.table === "overtime_records" && call.action === "insert")).toBe(false);
+    });
   });
 
   it("persists payroll and period earnings using the production snapshot columns", async () => {

@@ -189,6 +189,32 @@ describe("HR-4: Payroll Integration - Approved Overtime to Monthly Payroll", () 
     });
   });
 
+  it("includes replacement earnings when payroll is requested by the linked user account ID", async () => {
+    db.replacementAssignments = [
+      {
+        id: "replacement-linked-account",
+        absenceRequestId: "absence-request-linked",
+        coveredDate: "2026-10-10",
+        branchId: "branch-gebang",
+        shiftId: null,
+        absentStaffId: "staff-admin-gebang",
+        replacementStaffId: "staff-ast-clary",
+        absentBaseSalarySnapshot: 1_100_000,
+        amountSnapshot: 44_000,
+        workConfirmedBy: "super-admin",
+        workConfirmedAt: "2026-10-10T18:00:00.000Z",
+        createdAt: "2026-10-01T00:00:00.000Z"
+      }
+    ];
+
+    const payroll = await payrollRepo.generateMonthlyPayroll("assistant-clary", 10, 2026, 2_500_000);
+
+    expect(payroll.totalCompensation).toBe(44_000);
+    expect(payroll.netSalary).toBe(2_544_000);
+    expect((await payrollRepo.getPayrollItems(payroll.id)).some((item) => item.sourceId === "replacement-linked-account"))
+      .toBe(true);
+  });
+
   it("5. Maintains branch isolation where branch admin only includes their branch's approved overtime", async () => {
     // Branch Gebang overtime
     AppClock.setFixedTime("2026-10-08T08:00:00Z");

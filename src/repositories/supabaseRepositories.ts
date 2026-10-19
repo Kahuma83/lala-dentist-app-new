@@ -7137,30 +7137,16 @@ export class SupabaseOvertimeRepository implements OvertimeRepository {
     if (staffError) throw new Error(`Gagal membaca jabatan staf untuk deteksi lembur: ${staffError.message}`);
     if (!staffRow || !["BRANCH_ADMIN", "ASSISTANT"].includes(staffRow.position)) return null;
 
-    const scheduledEndAt = String(attendance.scheduled_end_at).slice(0, 5);
-    const scheduledEnd = new Date(toOperationalDateTime(attendance.date, scheduledEndAt));
-    const actualEnd = new Date(attendance.actual_check_out_at);
-    const overtimeMinutes = Math.max(0, Math.floor((actualEnd.getTime() - scheduledEnd.getTime()) / 60000));
-    if (!Number.isFinite(overtimeMinutes) || overtimeMinutes <= 0) return null;
-
-    const { data, error } = await supabase.from("overtime_records").insert({
-      staff_id: attendance.staff_id,
-      branch_id: attendance.branch_id,
-      attendance_id: attendance.id,
-      date: attendance.date,
-      scheduled_end_at: scheduledEndAt,
-      actual_end_at: getOperationalTimeString(attendance.actual_check_out_at),
-      overtime_minutes: overtimeMinutes,
-      overtime_hours: Number((overtimeMinutes / 60).toFixed(2)),
-      overtime_type: OvertimeType.AFTER_SHIFT,
-      status: OvertimeStatus.DETECTED
-    }).select("*").single();
+    const { data, error } = await supabase.rpc("detect_overtime_from_attendance", {
+      p_attendance_id: attendance.id
+    });
     if (error) {
       const concurrentRecord = await this.getByAttendanceId(attendanceId);
       if (concurrentRecord) return concurrentRecord;
       throw new Error(`Gagal menyimpan deteksi lembur: ${error.message}`);
     }
-    return mapOvertimeFromDb(data);
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ? mapOvertimeFromDb(row) : null;
   }
   async submit(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord> {
     ensureSupabaseConnected();
