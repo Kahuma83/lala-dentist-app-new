@@ -190,6 +190,14 @@ h2 { margin-bottom: 5px; font-size: 18px; }
 .portal-footnote { margin: 15px 0 0; color: var(--portal-muted); font-size: 11px; }
 .branch-picker-note { color: #6f8278; font-size: 11px; font-weight: 500; line-height: 1.55; }
 .portal-list { margin-top: 14px; }
+.absence-request-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; padding: 16px; border: 1px solid #dce6f4; border-radius: 16px; background: #f8faff; }
+.absence-request-form label { display: grid; gap: 7px; color: #344569; font-size: 12px; font-weight: 700; }
+.absence-request-form input, .absence-request-form select, .absence-request-form textarea { width: 100%; min-height: 43px; padding: 10px 12px; border: 1px solid #d7e3f4; border-radius: 11px; outline: 0; background: white; color: var(--portal-ink); font: inherit; font-size: 12px; }
+.absence-request-form textarea { min-height: 86px; resize: vertical; line-height: 1.5; }
+.absence-request-form input:focus, .absence-request-form select:focus, .absence-request-form textarea:focus { border-color: #3d73c8; box-shadow: 0 0 0 3px #3d73c825; }
+.absence-request-reason { grid-column: 1 / -1; }
+.absence-request-form > button { justify-self: start; grid-column: 1 / -1; }
+.absence-history-heading { margin-top: 26px; padding-top: 20px; border-top: 1px solid #e4ebf5; }
 .schedule-heading { align-items: flex-start; }
 .schedule-date-range { color: #465572; font-size: 11px; font-weight: 700; text-align: right; }
 .schedule-week-controls { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
@@ -279,6 +287,8 @@ h2 { margin-bottom: 5px; font-size: 18px; }
   .portal-nav { flex-wrap: wrap; overflow-x: visible; margin-inline: -1px; }
   .portal-nav-item { min-width: 0; flex: 1 1 calc(33.333% - 6px); flex-direction: column; gap: 4px; padding: 7px 5px; font-size: 10px; }
   .portal-panel { padding: 18px; }
+  .absence-request-form { grid-template-columns: 1fr; padding: 13px; }
+  .absence-request-reason, .absence-request-form > button { grid-column: auto; }
   .summary-grid { grid-template-columns: 1fr; }
   .quick-links { grid-template-columns: 1fr; }
   .portal-list-row { align-items: flex-start; }
@@ -297,4 +307,999 @@ h2 { margin-bottom: 5px; font-size: 18px; }
   .action-buttons { grid-template-columns: 1fr; }
   .history-row { align-items: flex-start; flex-direction: column; justify-content: center; padding: 13px 0; }
   .history-times { width: 100%; display: flex; justify-content: space-between; text-align: left; }
+}
+
+:root {
+  color-scheme: dark;
+  --portal-blue: #8fc3ff;
+  --portal-blue-dark: #e4efff;
+  --portal-blue-soft: #ffffff18;
+  --portal-blue-border: #ffffff2b;
+  --portal-ink: #f3f7ff;
+  --portal-muted: #b4c4df;
+  background: #0a1730;
+  color: var(--portal-ink);
+}
+
+body {
+  background:
+    radial-gradient(ellipse at 12% 10%, #559be8d1 0, transparent 31rem),
+    radial-gradient(ellipse at 92% 30%, #6d96d2c2 0, transparent 29rem),
+    radial-gradient(ellipse at 36% 76%, #3475b5b8 0, transparent 36rem),
+    linear-gradient(145deg, #274e7d 0%, #18385f 48%, #25466f 100%);
+  background-attachment: fixed;
+}
+
+.install-card,
+.login-card {
+  border-color: #ffffff36;
+  background: linear-gradient(145deg, #315987b5, #17365fc2);
+  box-shadow: 0 28px 80px #02081780, inset 0 1px #ffffff12;
+  color: var(--portal-ink);
+  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  backdrop-filter: blur(28px) saturate(165%);
+}
+
+.install-eyebrow,
+.install-card h1,
+h1,
+.login-heading h1 {
+  color: #f1f6ff;
+}
+
+.install-description,
+.install-note,
+.muted,
+.section-heading p,
+.privacy-note {
+  color: var(--portal-muted);
+}
+
+.install-help,
+.login-form input,
+.branch-picker select,
+.absence-request-form input,
+.absence-request-form select,
+.absence-request-form textarea,
+.password-form input {
+  border-color: #ffffff30;
+  background: #0c2344b5;
+  color: #f3f7ff;
+}
+
+.login-form label,
+.branch-picker,
+.absence-request-form label,
+.password-form label {
+  color: #dce8fa;
+}
+
+.login-form input::placeholder,
+.absence-request-form textarea::placeholder,
+.password-form input::placeholder {
+  color: #91a7c8;
+}
+
+.login-form input:focus,
+.branch-picker select:focus,
+.absence-request-form input:focus,
+.absence-request-form select:focus,
+.absence-request-form textarea:focus,
+.password-form input:focus {
+  border-color: #82b9ff;
+  box-shadow: 0 0 0 3px #6da9ff35;
+}
+
+.forgot-password-link,
+.text-button,
+.install-continue {
+  color: #a9ceff;
+}
+
+.install-continue:hover,
+.forgot-password-link:hover,
+.text-button:hover {
+  color: white;
+}
+
+.portal-shell {
+  color: var(--portal-ink);
+}
+
+.topbar {
+  position: relative;
+}
+
+.brand-lockup img {
+  border-color: #ffffff36;
+  background: #ffffff14;
+}
+
+.brand-lockup strong {
+  color: #f3f7ff;
+}
+
+.brand-lockup span {
+  color: #aebfda;
+}
+
+.icon-button,
+.icon-button.light {
+  border-color: #ffffff32;
+  background: #ffffff12;
+  color: #eaf2ff;
+  backdrop-filter: blur(18px);
+}
+
+.icon-button:hover:not(:disabled) {
+  background: #ffffff21;
+}
+
+.account-menu {
+  position: relative;
+  z-index: 5;
+}
+
+.account-menu > summary {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 5px;
+  border: 1px solid #ffffff3a;
+  border-radius: 999px;
+  background: #ffffff17;
+  color: #f4f7ff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  list-style: none;
+  backdrop-filter: blur(18px);
+}
+
+.account-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-menu > summary::after {
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid #dce9ff;
+  border-bottom: 1.5px solid #dce9ff;
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.account-menu > summary img,
+.account-menu > summary > svg {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #ffffff55;
+  border-radius: 50%;
+  background: #294873;
+  color: #e4efff;
+  object-fit: cover;
+  padding: 6px;
+}
+
+.account-menu[open] > summary {
+  border-color: #9ac9ff88;
+  background: #ffffff24;
+}
+
+.account-menu-popover {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  width: min(250px, calc(100vw - 32px));
+  padding: 8px;
+  border: 1px solid #ffffff35;
+  border-radius: 17px;
+  background: #24436ec9;
+  box-shadow: 0 18px 50px #02081780;
+  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  backdrop-filter: blur(24px);
+}
+
+.account-menu-person {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px 13px;
+  border-bottom: 1px solid #ffffff20;
+}
+
+.account-menu-person strong {
+  overflow: hidden;
+  color: #f3f7ff;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu-person span {
+  color: #aebfda;
+  font-size: 10px;
+}
+
+.account-menu-popover > button {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #e5efff;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.account-menu-popover > button:hover:not(:disabled) {
+  background: #ffffff16;
+}
+
+.account-menu-popover > button:last-child {
+  color: #ffc3c3;
+}
+
+.account-menu-popover > button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.welcome-card,
+.action-card,
+.history-card,
+.portal-nav,
+.portal-panel,
+.summary-card,
+.portal-shortcut,
+.absence-request-form,
+.schedule-day {
+  border-color: #e0efff52;
+  background: #a9c8ef24;
+  box-shadow: 0 18px 45px #06183138, inset 0 1px #ffffff38, inset 0 -1px #ffffff0b;
+  -webkit-backdrop-filter: blur(26px) saturate(155%);
+  backdrop-filter: blur(26px) saturate(155%);
+}
+
+.welcome-card {
+  border-color: #c4e0ff75;
+  background:
+    radial-gradient(ellipse at 88% 8%, #ffffff26 0, transparent 44%),
+    linear-gradient(116deg, #3980d5a8 0%, #316bb9a6 52%, #244b87b8 100%);
+  box-shadow: 0 22px 48px #02081745, inset 0 1px #ffffff55, inset 0 -1px #ffffff12;
+}
+
+.welcome-card::after {
+  border-color: #ffffff35;
+}
+
+.welcome-card h1 {
+  color: #f4f8ff;
+}
+
+.welcome-card .muted,
+.daily-reminder,
+.profile-photo-hint {
+  color: #d3e5ff;
+}
+
+.profile-photo,
+.profile-photo-placeholder {
+  border-color: #ffffffad;
+  background: #203b65;
+  color: #e8f2ff;
+}
+
+.profile-photo-button {
+  border-color: #173966;
+  background: #9ac9ff;
+  color: #10284c;
+}
+
+.live-time {
+  border-color: #ffffff57;
+  background: #ffffffd9;
+  color: #17345d;
+  box-shadow: 0 8px 24px #08183328;
+  backdrop-filter: blur(14px);
+}
+
+.live-time svg {
+  color: #285b9e;
+}
+
+.portal-nav {
+  border-radius: 19px;
+  background: #c0dafa24;
+  box-shadow: 0 14px 35px #02081745, inset 0 1px #ffffff4a, inset 0 -1px #ffffff12;
+}
+
+.portal-nav-item {
+  color: #b7c7e0;
+}
+
+.portal-nav-item:hover:not(:disabled) {
+  background: #ffffff12;
+  color: #f2f7ff;
+}
+
+.portal-nav-item.active {
+  background: #d9eaff27;
+  box-shadow: inset 0 0 0 1px #a7ceff40;
+  color: #dcecff;
+}
+
+.portal-panel {
+  border-radius: 23px;
+  background: #b5d0f02b;
+}
+
+.panel-heading h2,
+.section-heading h2,
+.schedule-day h3,
+.summary-card strong,
+.portal-list-row strong,
+.history-row strong,
+.location-heading strong,
+.profile-details strong,
+.payroll-item strong {
+  color: #f0f5ff;
+}
+
+.eyebrow {
+  color: #9cc8ff;
+}
+
+.status-badge {
+  background: #9fcaff24;
+  color: #d6e9ff;
+}
+
+.status-approved,
+.status-paid {
+  background: #48c78e25;
+  color: #a7f0c5;
+}
+
+.status-rejected {
+  background: #ff7d7d24;
+  color: #ffc2bd;
+}
+
+.status-submitted {
+  background: #7caeff24;
+  color: #c4ddff;
+}
+
+.summary-card {
+  border-color: #e0efff4a;
+  background: linear-gradient(145deg, #d4e8ff38, #a9c9f024);
+}
+
+.summary-card span,
+.portal-shortcut small,
+.schedule-day-row span,
+.schedule-day-row small,
+.portal-list-row span,
+.portal-list-row small,
+.payroll-details,
+.profile-details span,
+.camera-note,
+.portal-footnote,
+.schedule-empty-note,
+.branch-picker-note,
+.empty-state,
+.payroll-details summary {
+  color: #aebfda;
+}
+
+.portal-shortcut {
+  background: #d2e5ff25;
+  color: #f1f6ff;
+}
+
+.portal-shortcut:hover {
+  border-color: #8fc3ff66;
+  background: #d2e5ff3d;
+}
+
+.portal-shortcut > svg {
+  background: linear-gradient(145deg, #66aaff, #3277d5);
+  color: #102447;
+}
+
+.absence-request-form {
+  background: #9fc4f02a;
+}
+
+.schedule-current-week {
+  border-color: #ffffff35;
+  background: #ffffff12;
+  color: #cfe3ff;
+}
+
+.schedule-day {
+  background: #d2e5ff20;
+}
+
+.schedule-day-row .schedule-time,
+.history-row small {
+  color: #a9ceff;
+}
+
+.portal-list-row,
+.payroll-card,
+.payroll-details,
+.profile-details > div,
+.password-form {
+  border-color: #ffffff20;
+}
+
+.portal-list-value,
+.payroll-total {
+  color: #9fcaff;
+}
+
+.profile-details > div,
+.payroll-details {
+  color: #d7e4f7;
+}
+
+.password-form label {
+  color: #dce8fa;
+}
+
+.primary-button {
+  background: linear-gradient(110deg, #6db1ff, #4386e0);
+  box-shadow: 0 8px 22px #2475dc38;
+  color: #092144;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: linear-gradient(110deg, #8bc2ff, #5a9af0);
+}
+
+.secondary-button {
+  border-color: #a6ccff55;
+  background: #ffffff12;
+  color: #deebff;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: #ffffff20;
+}
+
+.notice.error {
+  border-color: #ff9a8e48;
+  background: #8e34353d;
+  color: #ffd1cc;
+}
+
+.notice.success {
+  border-color: #75d8a750;
+  background: #276c5140;
+  color: #b8f1cf;
+}
+
+.notice.warning,
+.install-help {
+  border-color: #91bdff45;
+  background: #21477866;
+  color: #d3e7ff;
+}
+
+.notice.warning svg,
+.privacy-note svg {
+  color: #9fcaff;
+}
+
+.profile-photo-error {
+  color: #ffc2bd;
+}
+
+.portal-shell footer {
+  color: #8297b7;
+}
+
+.center-state {
+  color: #e2edff;
+}
+
+@media (max-width: 560px) {
+  .portal-nav {
+    background: #b8d5f03c;
+  }
+
+  .account-menu > summary {
+    min-height: 40px;
+    padding-right: 9px;
+  }
+
+  .account-menu > summary img,
+  .account-menu > summary > svg {
+    width: 30px;
+    height: 30px;
+  }
+
+  .welcome-card {
+    background:
+      radial-gradient(ellipse at 88% 8%, #ffffff2b 0, transparent 44%),
+      linear-gradient(145deg, #3980d5b8, #244b87c4);
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quick-links {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .portal-shortcut {
+    min-height: 82px;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .install-card,
+  .login-card,
+  .icon-button,
+  .account-menu-popover,
+  .welcome-card,
+  .action-card,
+  .history-card,
+  .portal-nav,
+  .portal-panel,
+  .summary-card,
+  .portal-shortcut,
+  .absence-request-form,
+  .schedule-day {
+    backdrop-filter: none;
+  }
+}
+
+:root {
+  color-scheme: light;
+  --portal-blue: #1455c0;
+  --portal-blue-dark: #102b76;
+  --portal-blue-soft: #e7f0ff;
+  --portal-blue-border: #bfd2f1;
+  --portal-ink: #101b3e;
+  --portal-muted: #63708c;
+  background: #edf4fd;
+  color: var(--portal-ink);
+}
+
+body {
+  background:
+    radial-gradient(ellipse at 8% 5%, #dcecffc9 0, transparent 34rem),
+    radial-gradient(ellipse at 94% 18%, #dce7f8b8 0, transparent 30rem),
+    linear-gradient(145deg, #f4f8fe 0%, #edf4fc 52%, #e9f1fb 100%);
+  background-attachment: fixed;
+}
+
+.install-card,
+.login-card {
+  border-color: #ffffffed;
+  background: #ffffffeb;
+  box-shadow: 0 24px 75px #173b751c, 0 3px 12px #173b750c;
+  color: var(--portal-ink);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+.install-eyebrow,
+.install-card h1,
+h1,
+.login-heading h1 {
+  color: var(--portal-blue-dark);
+}
+
+.install-description,
+.install-note,
+.muted,
+.section-heading p,
+.privacy-note {
+  color: var(--portal-muted);
+}
+
+.install-help,
+.login-form input,
+.branch-picker select,
+.absence-request-form input,
+.absence-request-form select,
+.absence-request-form textarea,
+.password-form input {
+  border-color: #c6d4e9;
+  background: #fff;
+  color: var(--portal-ink);
+}
+
+.login-form label,
+.branch-picker,
+.absence-request-form label,
+.password-form label {
+  color: #344569;
+}
+
+.forgot-password-link,
+.text-button,
+.install-continue {
+  color: #315b9e;
+}
+
+.install-continue:hover,
+.forgot-password-link:hover,
+.text-button:hover {
+  color: var(--portal-blue-dark);
+}
+
+.portal-shell {
+  color: var(--portal-ink);
+}
+
+.brand-lockup img {
+  border-color: #d7e3f4;
+  background: transparent;
+}
+
+.brand-lockup strong {
+  color: var(--portal-ink);
+}
+
+.brand-lockup span {
+  color: var(--portal-muted);
+}
+
+.icon-button,
+.icon-button.light {
+  border-color: #d7e3f4;
+  background: white;
+  color: var(--portal-blue-dark);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.account-menu > summary {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border: 1px solid #d7e3f4;
+  border-radius: 999px;
+  background: #ffffffeb;
+  color: var(--portal-blue-dark);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  list-style: none;
+}
+
+.account-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-menu > summary::after {
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.account-menu > summary > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.account-menu[open] > summary {
+  border-color: #7fa6e2;
+  background: #f5f8ff;
+}
+
+.account-menu-popover {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  width: min(250px, calc(100vw - 32px));
+  padding: 8px;
+  border: 1px solid #d7e3f4;
+  border-radius: 17px;
+  background: #fffffff2;
+  box-shadow: 0 18px 45px #173b7525;
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+.account-menu-person {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px 13px;
+  border-bottom: 1px solid #e4ebf5;
+}
+
+.account-menu-person strong {
+  overflow: hidden;
+  color: var(--portal-ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu-person span {
+  color: var(--portal-muted);
+  font-size: 10px;
+}
+
+.account-menu-popover > button {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #344569;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.account-menu-popover > button:hover:not(:disabled) {
+  background: #eaf2ff;
+}
+
+.account-menu-popover > button:last-child {
+  color: #9b352f;
+}
+
+.account-menu-popover > button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.welcome-card,
+.action-card,
+.history-card,
+.portal-nav,
+.portal-panel,
+.summary-card,
+.portal-shortcut,
+.absence-request-form,
+.schedule-day {
+  border-color: #ffffffed;
+  background: #ffffffdf;
+  box-shadow: 0 15px 45px #173b7514;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.welcome-card {
+  border-color: #1645a7;
+  background: linear-gradient(112deg, #155ed0 0%, #174cae 55%, #102b76 100%);
+  box-shadow: 0 18px 38px #123a8329;
+}
+
+.welcome-card h1 {
+  color: white;
+}
+
+.welcome-card .muted {
+  color: #e1eaff;
+}
+
+.daily-reminder,
+.profile-photo-hint {
+  color: #dce9ff;
+}
+
+.portal-nav {
+  background: #fffffff0;
+  box-shadow: 0 8px 24px #173b7512;
+}
+
+.portal-nav-item {
+  color: #465572;
+}
+
+.portal-nav-item.active {
+  background: #dce9ff;
+  color: #174b9f;
+}
+
+.portal-nav-item.active,
+.portal-nav-item.active:disabled {
+  background: linear-gradient(145deg, #1766dc, #1246ad);
+  box-shadow: 0 4px 12px #1648a333, inset 0 1px #ffffff35;
+  color: #fff;
+  opacity: 1;
+}
+
+.portal-nav-item.active:hover,
+.portal-nav-item.active:focus-visible {
+  background: linear-gradient(145deg, #1766dc, #1246ad);
+  color: #fff;
+  opacity: 1;
+}
+
+.portal-nav-item.active svg {
+  color: inherit;
+}
+
+.portal-panel {
+  background: #ffffffed;
+}
+
+.panel-heading h2,
+.section-heading h2,
+.schedule-day h3,
+.summary-card strong,
+.portal-list-row strong,
+.history-row strong,
+.location-heading strong,
+.profile-details strong,
+.payroll-item strong {
+  color: var(--portal-ink);
+}
+
+.eyebrow {
+  color: var(--portal-blue);
+}
+
+.status-badge {
+  background: #e2edff;
+  color: #234f97;
+}
+
+.status-approved,
+.status-paid {
+  background: #e8f5ee;
+  color: #286641;
+}
+
+.status-rejected {
+  background: #fff1ef;
+  color: #9b352f;
+}
+
+.status-submitted {
+  background: #eef5ff;
+  color: #385c8a;
+}
+
+.summary-card {
+  background: linear-gradient(145deg, #f9fbff, #eef4fd);
+}
+
+.summary-card span,
+.portal-shortcut small,
+.schedule-day-row span,
+.schedule-day-row small,
+.portal-list-row span,
+.portal-list-row small,
+.payroll-details,
+.profile-details span,
+.camera-note,
+.portal-footnote,
+.schedule-empty-note,
+.branch-picker-note,
+.empty-state,
+.payroll-details summary {
+  color: var(--portal-muted);
+}
+
+.portal-shortcut {
+  background: #fff;
+  color: var(--portal-ink);
+}
+
+.portal-shortcut:hover {
+  border-color: #7fa6e2;
+  background: #f5f8ff;
+}
+
+.portal-shortcut > svg {
+  background: linear-gradient(145deg, #1766dc, #1246ad);
+  color: white;
+}
+
+.absence-request-form {
+  background: #f8faff;
+}
+
+.schedule-current-week {
+  border-color: #c6d4e9;
+  background: #fff;
+  color: #194895;
+}
+
+.schedule-day {
+  background: #ffffffc9;
+}
+
+.schedule-day-row .schedule-time {
+  color: #194895;
+}
+
+.history-row small {
+  color: #315b9e;
+}
+
+.portal-list-row,
+.payroll-card,
+.payroll-details,
+.profile-details > div,
+.password-form {
+  border-color: #e4ebf5;
+}
+
+.portal-list-value {
+  color: #344569;
+}
+
+.payroll-total {
+  color: var(--portal-blue);
+}
+
+.profile-details > div,
+.payroll-details {
+  color: #465572;
+}
+
+.notice.error {
+  border-color: #f1c9c5;
+  background: #fff4f2;
+  color: #9b352f;
+}
+
+.notice.success {
+  border-color: #c6e5d1;
+  background: #f2faf5;
+  color: #286641;
+}
+
+.notice.warning,
+.install-help {
+  border-color: #bfd2f1;
+  background: #f2f7ff;
+  color: #315b9e;
+}
+
+.portal-shell footer {
+  color: #8490a6;
+}
+
+.center-state {
+  color: #344569;
+}
+
+@media (max-width: 560px) {
+  .portal-nav {
+    background: #fffffff0;
+  }
+}
+
+.portal-nav-item.active,
+.portal-nav-item.active:disabled {
+  background: linear-gradient(145deg, #1766dc, #1246ad);
+  box-shadow: 0 4px 12px #1648a333, inset 0 1px #ffffff35;
+  color: #fff;
+  opacity: 1;
 }

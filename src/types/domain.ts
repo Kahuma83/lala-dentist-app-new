@@ -241,6 +241,7 @@ export interface PatientProfile {
   medicalHistoryNotes?: string;
   acquisitionSource?: PatientAcquisitionSource;
   referralName?: string;
+  referringStaffId?: string | null;
   registeredBranchId?: string;
   branch_id?: string;
   assignedBranchId?: string;
@@ -712,6 +713,7 @@ export interface InvoiceItem {
   id: string;
   invoiceId: string;
   serviceId?: string;
+  treatmentJobId?: string;
   descriptionSnapshot: string; // Snapshot Principle
   unitPriceSnapshot: number; // Snapshot Principle
   quantity: number;
@@ -898,8 +900,10 @@ export interface OvertimeRecord {
   scheduledEndAt: string; // HH:mm
   actualEndAt: string; // HH:mm
   overtimeMinutes: number;
+  approvedOvertimeMinutes?: number | null;
   overtimeHours: number;
   overtimeType: OvertimeType;
+  isNationalHoliday?: boolean;
   calculationMethod?: string | null;
   hourlyRateSnapshot?: number | null;
   overtimeAmountSnapshot?: number | null;
@@ -914,6 +918,21 @@ export interface OvertimeRecord {
   updatedAt: string;
   createdBy?: string | null;
   updatedBy?: string | null;
+}
+
+export interface StaffReplacementAssignment {
+  id: string;
+  absenceRequestId: string;
+  coveredDate: string;
+  branchId: string;
+  shiftId: string | null;
+  absentStaffId: string;
+  replacementStaffId: string;
+  absentBaseSalarySnapshot: number;
+  amountSnapshot: number;
+  workConfirmedBy: string | null;
+  workConfirmedAt: string | null;
+  createdAt: string;
 }
 
 // ==========================================

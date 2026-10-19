@@ -25,7 +25,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-05T17:30:00Z");
+    AppClock.setFixedTime("2026-10-05T10:30:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -50,7 +50,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-09-22T16:00:00Z");
+    AppClock.setFixedTime("2026-09-22T09:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -70,7 +70,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-09-23T15:00:00Z");
+    AppClock.setFixedTime("2026-09-23T08:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -90,7 +90,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-09-24T18:00:00Z");
+    AppClock.setFixedTime("2026-09-24T11:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -112,7 +112,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "14:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-09-25T17:00:00Z");
+    AppClock.setFixedTime("2026-09-25T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -120,6 +120,22 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
 
     const ot = await overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN);
     expect(ot).toBeNull();
+  });
+
+  it("does not create overtime for Office Boy staff", async () => {
+    AppClock.setFixedTime("2026-09-25T08:00:00Z");
+    const att = await attendanceRepo.checkIn({
+      staffId: "staff-ob-gebang",
+      branchId: "branch-gebang",
+      date: "2026-09-25",
+      scheduledStartAt: "08:00",
+      scheduledEndAt: "16:00",
+      actorRole: UserRole.SUPER_ADMIN
+    });
+    AppClock.setFixedTime("2026-09-25T11:00:00Z");
+    await attendanceRepo.checkOut({ attendanceId: att.id, actorRole: UserRole.SUPER_ADMIN });
+
+    await expect(overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN)).resolves.toBeNull();
   });
 
   it("6. Skips non-PRESENT attendances (SICK, LEAVE, OFF, ABSENT)", async () => {
@@ -146,7 +162,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-09-27T17:00:00Z");
+    AppClock.setFixedTime("2026-09-27T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -169,7 +185,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-09-28T17:00:00Z");
+    AppClock.setFixedTime("2026-09-28T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -182,6 +198,52 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
     expect(ot.status).toBe(OvertimeStatus.APPROVED);
     expect(ot.approvedBy).toBe("Dr. Budi");
     expect(ot.approvedAt).not.toBeNull();
+    expect(ot.approvedOvertimeMinutes).toBe(60);
+    expect(ot.hourlyRateSnapshot).toBe(15000);
+    expect(ot.overtimeAmountSnapshot).toBe(15000);
+  });
+
+  it("calculates Sunday holiday overtime from approved minutes at Rp30,000 per hour", async () => {
+    AppClock.setFixedTime("2026-10-04T08:00:00Z");
+    const att = await attendanceRepo.checkIn({
+      staffId: "staff-ast-clary",
+      branchId: "branch-gebang",
+      date: "2026-10-04",
+      scheduledStartAt: "08:00",
+      scheduledEndAt: "16:00",
+      actorRole: UserRole.SUPER_ADMIN
+    });
+    AppClock.setFixedTime("2026-10-04T10:20:00Z");
+    await attendanceRepo.checkOut({ attendanceId: att.id, actorRole: UserRole.SUPER_ADMIN });
+
+    let ot = await overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN);
+    ot = await overtimeRepo.submit(ot!.id, UserRole.SUPER_ADMIN);
+    ot = await overtimeRepo.approve(ot.id, "Super Admin", UserRole.SUPER_ADMIN, undefined, 65, true);
+
+    expect(ot.approvedOvertimeMinutes).toBe(65);
+    expect(ot.overtimeHours).toBeCloseTo(65 / 60);
+    expect(ot.hourlyRateSnapshot).toBe(30000);
+    expect(ot.overtimeAmountSnapshot).toBe(32500);
+    expect(ot.isNationalHoliday).toBe(true);
+  });
+
+  it("rejects non-Super Admin approval and minutes exceeding the detected duration", async () => {
+    AppClock.setFixedTime("2026-10-05T08:00:00Z");
+    const att = await attendanceRepo.checkIn({
+      staffId: "staff-ast-clary",
+      branchId: "branch-gebang",
+      date: "2026-10-05",
+      scheduledStartAt: "08:00",
+      scheduledEndAt: "16:00",
+      actorRole: UserRole.SUPER_ADMIN
+    });
+    AppClock.setFixedTime("2026-10-05T10:00:00Z");
+    await attendanceRepo.checkOut({ attendanceId: att.id, actorRole: UserRole.SUPER_ADMIN });
+
+    let ot = await overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN);
+    ot = await overtimeRepo.submit(ot!.id, UserRole.SUPER_ADMIN);
+    await expect(overtimeRepo.approve(ot.id, "Branch Admin", UserRole.BRANCH_ADMIN, "branch-gebang")).rejects.toThrow(/Super Admin/);
+    await expect(overtimeRepo.approve(ot.id, "Super Admin", UserRole.SUPER_ADMIN, undefined, 61)).rejects.toThrow(/durasi aktual/);
   });
 
   it("9. Transitions SUBMITTED -> REJECTED with mandatory reason", async () => {
@@ -194,7 +256,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-09-29T17:00:00Z");
+    AppClock.setFixedTime("2026-09-29T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -221,7 +283,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-09-30T17:00:00Z");
+    AppClock.setFixedTime("2026-09-30T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -241,7 +303,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-01T17:00:00Z");
+    AppClock.setFixedTime("2026-10-01T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -267,7 +329,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-02T17:00:00Z");
+    AppClock.setFixedTime("2026-10-02T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att1.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -290,7 +352,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-03T17:00:00Z");
+    AppClock.setFixedTime("2026-10-03T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN
@@ -312,7 +374,7 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
       scheduledEndAt: "16:00",
       actorRole: UserRole.SUPER_ADMIN
     });
-    AppClock.setFixedTime("2026-10-04T17:00:00Z");
+    AppClock.setFixedTime("2026-10-04T10:00:00Z");
     await attendanceRepo.checkOut({
       attendanceId: att.id,
       actorRole: UserRole.SUPER_ADMIN

@@ -165,6 +165,7 @@ function mapAttendanceFromDb(row: any): Attendance {
   };
 }
 import { isBranchMatch } from "../utils/branchUtils";
+import { allocateInvoiceNetToLines } from "../utils/invoiceLineAllocation";
 import { getOperationalDateString, getOperationalTimeString, toOperationalDateTime } from "../utils/dateUtils";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
 import { hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
@@ -672,7 +673,8 @@ export class SupabasePatientRepository implements PatientRepository {
       address: patientData.address || "-",
       medical_history_notes: patientData.medicalHistoryNotes || null,
       acquisition_source: patientData.acquisitionSource || "UNKNOWN",
-      referral_name: patientData.acquisitionSource === "REFERRAL" ? patientData.referralName?.trim() || null : null
+      referral_name: patientData.acquisitionSource === "REFERRAL" ? patientData.referralName?.trim() || null : null,
+      referring_staff_id: patientData.referringStaffId || null
     };
 
     if (patientId) {
@@ -749,6 +751,7 @@ export class SupabasePatientRepository implements PatientRepository {
     if (updates.medicalRecordNumber !== undefined) dbPayload.medical_record_number = updates.medicalRecordNumber;
     if (updates.medicalHistoryNotes !== undefined) dbPayload.medical_history_notes = updates.medicalHistoryNotes;
     if (updates.acquisitionSource !== undefined) dbPayload.acquisition_source = updates.acquisitionSource;
+    if (updates.referringStaffId !== undefined) dbPayload.referring_staff_id = updates.referringStaffId || null;
     if (updates.referralName !== undefined || updates.acquisitionSource !== undefined) {
       dbPayload.referral_name = updates.acquisitionSource === "REFERRAL"
         ? updates.referralName?.trim() || null
@@ -899,6 +902,7 @@ export class SupabasePatientRepository implements PatientRepository {
       medicalHistoryNotes: row.medical_history_notes || (Array.isArray(row.medical_history) ? row.medical_history.join(", ") : row.medical_history) || "",
       acquisitionSource: row.acquisition_source || row.acquisitionSource || "UNKNOWN",
       referralName: row.referral_name || row.referralName || undefined,
+      referringStaffId: row.referring_staff_id || row.referringStaffId || null,
       registeredBranchId: branch,
       branch_id: branch,
       assignedBranchId: branch,
@@ -3285,6 +3289,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       id: row.id,
       invoiceId: row.invoice_id,
       serviceId: row.service_id ?? undefined,
+      treatmentJobId: row.treatment_job_id ?? undefined,
       descriptionSnapshot: row.description_snapshot,
       unitPriceSnapshot: Number(row.unit_price_snapshot || 0),
       quantity: row.quantity || 1,
@@ -3391,6 +3396,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       branchId: string;
       items: Array<{
         serviceId?: string;
+        treatmentJobId?: string;
         descriptionSnapshot: string;
         unitPriceSnapshot: number;
         quantity: number;
@@ -3435,6 +3441,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
           : `item-${invoiceId}-${index + 1}`,
         invoiceId,
         serviceId: i.serviceId,
+        treatmentJobId: i.treatmentJobId,
         descriptionSnapshot: i.descriptionSnapshot,
         unitPriceSnapshot: i.unitPriceSnapshot,
         quantity: i.quantity,
@@ -3497,6 +3504,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
               id: isValidUUID(i.id) ? i.id : undefined,
               invoice_id: savedInvId,
               service_id: isValidUUID(i.serviceId) ? i.serviceId : null,
+              treatment_job_id: isValidUUID(i.treatmentJobId) ? i.treatmentJobId : null,
               description_snapshot: i.descriptionSnapshot,
               unit_price_snapshot: i.unitPriceSnapshot,
               quantity: i.quantity,
@@ -5447,7 +5455,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
 
     const { data: job, error: jobError } = await supabase
       .from("treatment_jobs")
-      .select("id, doctor_id, pic_assistant_id, service_id, branch_id, status, completed_at")
+      .select("id, doctor_id, pic_assistant_id, service_id, branch_id, visit_id, patient_id, status, completed_at")
       .eq("id", treatmentJobId)
       .single();
     if (jobError || !job) throw new Error(`Gagal memuat tindakan untuk menghitung kompensasi: ${jobError?.message || "data tidak ditemukan"}`);
@@ -5455,12 +5463,30 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       throw new Error("Akrual kompensasi hanya dapat dihitung untuk treatment yang sudah SELESAI atau DISERAHKAN");
     }
 
-    const { data: service, error: serviceError } = await supabase
-      .from("master_services")
-      .select("base_price")
-      .eq("id", job.service_id)
-      .single();
-    if (serviceError || !service) throw new Error(`Gagal memuat tarif dasar tindakan: ${serviceError?.message || "layanan tidak ditemukan"}`);
+    const { data: invoices, error: invoicesError } = await supabase
+      .from("invoices")
+      .select("id, patient_id, net_amount, total_amount, updated_at")
+      .eq("visit_id", job.visit_id)
+      .eq("status", "PAID");
+    if (invoicesError) throw new Error(`Gagal memeriksa pelunasan invoice tindakan: ${invoicesError.message}`);
+    if (!invoices?.length) return [];
+    if (invoices.length > 1) throw new Error("Tindakan terhubung ke lebih dari satu invoice lunas. Periksa data tagihan sebelum menghitung kompensasi.");
+
+    const invoice = invoices[0];
+    const { data: invoiceItems, error: invoiceItemsError } = await supabase
+      .from("invoice_items")
+      .select("id, amount, treatment_job_id")
+      .eq("invoice_id", invoice.id);
+    if (invoiceItemsError) throw new Error(`Gagal memuat rincian invoice tindakan: ${invoiceItemsError.message}`);
+    const linkedItems = (invoiceItems || []).filter((item: any) => item.treatment_job_id === treatmentJobId);
+    if (!linkedItems.length) return [];
+    if (linkedItems.length > 1) throw new Error("Tindakan tertaut ke lebih dari satu baris invoice.");
+
+    const allocations = allocateInvoiceNetToLines(
+      (invoiceItems || []).map((item: any) => ({ id: item.id, amount: Number(item.amount) || 0 })),
+      Number(invoice.net_amount) || 0
+    );
+    const baseAmount = allocations.get(linkedItems[0].id) || 0;
 
     let doctorStaffId: string | null = null;
     if (job.doctor_id) {
@@ -5474,7 +5500,6 @@ export class SupabaseCompensationRepository implements CompensationRepository {
     }
 
     const staffIds = [...new Set([doctorStaffId, job.pic_assistant_id].filter((id): id is string => Boolean(id)))];
-    if (staffIds.length === 0) return [];
 
     const { data: ruleRows, error: rulesError } = await supabase
       .from("staff_compensation_rules")
@@ -5482,7 +5507,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       .in("staff_id", staffIds);
     if (rulesError) throw new Error(`Gagal memuat aturan kompensasi tindakan: ${rulesError.message}`);
 
-    const treatmentDate = (job.completed_at || AppClock.nowISO()).slice(0, 10);
+    const treatmentDate = (job.completed_at || invoice.updated_at || AppClock.nowISO()).slice(0, 10);
     const applicableRules = (ruleRows || [])
       .map((row: any) => this.mapCompensationRuleFromDb(row))
       .filter((rule) =>
@@ -5494,8 +5519,6 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         && (!rule.effectiveStartDate || rule.effectiveStartDate <= treatmentDate)
         && (!rule.effectiveEndDate || rule.effectiveEndDate >= treatmentDate)
       );
-    if (applicableRules.length === 0) return [];
-
     const { data: existingRows, error: existingError } = await supabase
       .from("compensation_accruals")
       .select("staff_id, rule_id_snapshot")
@@ -5503,8 +5526,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
     if (existingError) throw new Error(`Gagal memeriksa akrual kompensasi yang sudah ada: ${existingError.message}`);
 
     const existingKeys = new Set((existingRows || []).map((row: any) => `${row.staff_id}:${row.rule_id_snapshot}`));
-    const baseAmount = Math.round(Number(service.base_price) || 0);
-    const accruedAt = AppClock.nowISO();
+    const accruedAt = invoice.updated_at || AppClock.nowISO();
     const payload = applicableRules.flatMap((rule) => {
       const staffId = rule.staffId;
       const key = `${staffId}:${rule.id}`;
@@ -5528,17 +5550,58 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         accrued_at: accruedAt
       }];
     });
-    if (payload.length === 0) return [];
+    let createdAccruals: CompensationAccrual[] = [];
+    if (payload.length > 0) {
+      const { data: created, error: createError } = await supabase
+        .from("compensation_accruals")
+        .upsert(payload, {
+          onConflict: "source_id,staff_id,rule_id_snapshot",
+          ignoreDuplicates: true
+        })
+        .select("*");
+      if (createError) throw new Error(`Gagal mencatat akrual kompensasi: ${createError.message}`);
+      createdAccruals = (created || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
+    }
 
-    const { data: created, error: createError } = await supabase
-      .from("compensation_accruals")
-      .upsert(payload, {
-        onConflict: "source_id,staff_id,rule_id_snapshot",
-        ignoreDuplicates: true
-      })
-      .select("*");
-    if (createError) throw new Error(`Gagal mencatat akrual kompensasi: ${createError.message}`);
-    return (created || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
+    const { data: patient, error: patientError } = await supabase
+      .from("patient_profiles")
+      .select("referring_staff_id")
+      .eq("id", invoice.patient_id)
+      .maybeSingle();
+    if (patientError) throw new Error(`Gagal memuat Admin perujuk pasien: ${patientError.message}`);
+    const referringStaffId = patient?.referring_staff_id;
+    if (referringStaffId) {
+      const referralSourceId = `referral:${invoice.patient_id}`;
+      const referralRuleId = "ADMIN_REFERRAL_RP3000_V1";
+      const { data: existingReferral, error: existingReferralError } = await supabase
+        .from("compensation_accruals")
+        .select("id")
+        .eq("source_id", referralSourceId)
+        .eq("rule_id_snapshot", referralRuleId)
+        .maybeSingle();
+      if (existingReferralError) throw new Error(`Gagal memeriksa insentif referral yang sudah ada: ${existingReferralError.message}`);
+      if (!existingReferral) {
+        const { data: referral, error: referralError } = await supabase
+          .from("compensation_accruals")
+          .insert({
+            staff_id: referringStaffId,
+            branch_id: job.branch_id,
+            rule_id_snapshot: referralRuleId,
+            rule_type_snapshot: "ADMIN_REFERRAL",
+            value_snapshot: 3000,
+            base_amount_snapshot: Number(invoice.net_amount) || 0,
+            amount: 3000,
+            source_id: referralSourceId,
+            accrued_at: accruedAt
+          })
+          .select("*")
+          .single();
+        if (referralError) throw new Error(`Gagal mencatat insentif referral Admin: ${referralError.message}`);
+        if (referral) createdAccruals.push(this.mapCompensationAccrualFromDb(referral));
+      }
+    }
+
+    return createdAccruals;
   }
   async deleteAccrual(id: string, currentUserRole?: UserRole): Promise<boolean> {
     ensureSupabaseConnected();
@@ -5669,7 +5732,7 @@ export class SupabasePayrollRepository implements PayrollRepository {
     const nextMonth = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
     const periodStartTimestamp = new Date(Date.UTC(year, month - 1, 1)).toISOString();
     const nextMonthTimestamp = new Date(Date.UTC(year, month, 1)).toISOString();
-    const [existingResult, accrualsResult, overtimeResult, baseRuleResult] = await Promise.all([
+    const [existingResult, accrualsResult, overtimeResult, attendanceResult, replacementResult, baseRuleResult] = await Promise.all([
       supabase
         .from("monthly_payrolls")
         .select("*")
@@ -5679,7 +5742,7 @@ export class SupabasePayrollRepository implements PayrollRepository {
         .maybeSingle(),
       supabase
         .from("compensation_accruals")
-        .select("id, amount, source_id, accrued_at, staff_id")
+        .select("id, amount, source_id, accrued_at, staff_id, rule_type_snapshot")
         .gte("accrued_at", periodStartTimestamp)
         .lt("accrued_at", nextMonthTimestamp),
       supabase
@@ -5688,6 +5751,20 @@ export class SupabasePayrollRepository implements PayrollRepository {
         .eq("status", "APPROVED")
         .gte("date", periodStart)
         .lt("date", nextMonth),
+      supabase
+        .from("attendances")
+        .select("id, staff_id, date, attendance_status")
+        .in("staff_id", [...candidateIds])
+        .gte("date", periodStart)
+        .lt("date", nextMonth)
+        .in("attendance_status", ["ABSENT", "SICK", "LEAVE"]),
+      supabase
+        .from("staff_replacement_assignments")
+        .select("id,covered_date,absent_staff_id,absent_base_salary_snapshot,amount_snapshot")
+        .eq("replacement_staff_id", staff.id)
+        .gte("covered_date", periodStart)
+        .lt("covered_date", nextMonth)
+        .not("work_confirmed_at", "is", null),
       baseSalary === undefined
         ? supabase
             .from("staff_compensation_rules")
@@ -5700,6 +5777,8 @@ export class SupabasePayrollRepository implements PayrollRepository {
     if (existingResult.error) throw new Error(`Gagal memeriksa payroll periode ini: ${existingResult.error.message}`);
     if (accrualsResult.error) throw new Error(`Gagal memuat komisi tindakan periode ini: ${accrualsResult.error.message}`);
     if (overtimeResult.error) throw new Error(`Gagal memuat lembur yang disetujui: ${overtimeResult.error.message}`);
+    if (attendanceResult.error) throw new Error(`Gagal memuat ketidakhadiran periode ini: ${attendanceResult.error.message}`);
+    if (replacementResult.error) throw new Error(`Gagal memuat penugasan pengganti terkonfirmasi: ${replacementResult.error.message}`);
     if (baseRuleResult.error) throw new Error(`Gagal memuat aturan gaji pokok: ${baseRuleResult.error.message}`);
 
     const existing = existingResult.data;
@@ -5709,17 +5788,29 @@ export class SupabasePayrollRepository implements PayrollRepository {
 
     const accruals = (accrualsResult.data || []).filter((row: any) => candidateIds.has(row.staff_id));
     const overtimes = (overtimeResult.data || []).filter((row: any) => candidateIds.has(row.staff_id));
+    const absenceByDate = new Map<string, any>();
+    for (const row of attendanceResult.data || []) {
+      if (candidateIds.has(row.staff_id) && !absenceByDate.has(row.date)) absenceByDate.set(row.date, row);
+    }
     const baseRule = (baseRuleResult.data || []).find((row: any) => candidateIds.has(row.staff_id));
     const salary = Number(baseSalary ?? baseRule?.value_snapshot ?? 0);
     if (!Number.isFinite(salary) || salary < 0) {
       throw new Error("Gaji pokok harus berupa nominal nol atau lebih.");
     }
     const totalCompensation = accruals.reduce((sum: number, row: any) => sum + (Number(row.amount) || 0), 0);
+    const replacementAssignments = replacementResult.data || [];
+    const totalReplacementEarnings = replacementAssignments.reduce(
+      (sum: number, row: any) => sum + (Number(row.amount_snapshot) || 0),
+      0
+    );
+    const totalEarnings = totalCompensation + totalReplacementEarnings;
     const overtimeTotal = overtimes.reduce(
       (sum: number, row: any) => sum + (Number(row.overtime_amount_snapshot) || 0),
       0
     );
-    const totalDeductions = 0;
+    const dailySalary = Math.round(Math.round(salary) / 25);
+    const absenceRows = [...absenceByDate.values()];
+    const totalDeductions = absenceRows.length * dailySalary;
     const now = AppClock.nowISO();
     const payrollPayload = {
       staff_id: staff.id,
@@ -5727,9 +5818,9 @@ export class SupabasePayrollRepository implements PayrollRepository {
       month,
       year,
       base_salary: Math.round(salary),
-      total_compensation: totalCompensation,
+      total_compensation: totalEarnings,
       total_deductions: totalDeductions,
-      net_salary: Math.round(salary) + totalCompensation + overtimeTotal - totalDeductions,
+      net_salary: Math.round(salary) + totalEarnings + overtimeTotal - totalDeductions,
       status: PayrollStatus.DRAFT,
       updated_at: now
     };
@@ -5765,8 +5856,17 @@ export class SupabasePayrollRepository implements PayrollRepository {
       },
       ...accruals.map((row: any) => ({
         payroll_id: payrollRow.id,
-        description_snapshot: `Komisi Tindakan (#${row.source_id || row.id})`,
+        description_snapshot: row.rule_type_snapshot === "ADMIN_REFERRAL"
+          ? `Insentif Referral Admin (#${row.source_id || row.id})`
+          : `Kompensasi Tindakan (#${row.source_id || row.id})`,
         amount_snapshot: Number(row.amount) || 0,
+        type: "EARNING",
+        source_id: row.id
+      })),
+      ...replacementAssignments.map((row: any) => ({
+        payroll_id: payrollRow.id,
+        description_snapshot: `Upah Pengganti (${row.covered_date}; gaji pegawai digantikan Rp${(Number(row.absent_base_salary_snapshot) || 0).toLocaleString("id-ID")} ÷ 25)`,
+        amount_snapshot: Number(row.amount_snapshot) || 0,
         type: "EARNING",
         source_id: row.id
       })),
@@ -5778,7 +5878,14 @@ export class SupabasePayrollRepository implements PayrollRepository {
           amount_snapshot: Number(row.overtime_amount_snapshot),
           type: "EARNING",
           source_id: row.id
-        }))
+        })),
+      ...absenceRows.map((row: any) => ({
+        payroll_id: payrollRow.id,
+        description_snapshot: `Potongan Ketidakhadiran (${row.attendance_status} / ${row.date})`,
+        amount_snapshot: dailySalary,
+        type: "DEDUCTION",
+        source_id: row.id
+      }))
     ];
     const { error: itemsError } = await supabase.from("payroll_items").insert(payrollItems);
     if (itemsError) {
@@ -6929,157 +7036,228 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
 // =====================================================================
 // 24. SUPABASE OVERTIME REPOSITORY
 // =====================================================================
+function mapOvertimeFromDb(row: any): OvertimeRecord {
+  return {
+    id: row.id,
+    staffId: row.staff_id,
+    branchId: row.branch_id,
+    attendanceId: row.attendance_id,
+    date: row.date,
+    scheduledEndAt: row.scheduled_end_at || "17:00",
+    actualEndAt: row.actual_end_at || "17:00",
+    overtimeMinutes: row.overtime_minutes || 0,
+    approvedOvertimeMinutes: row.approved_overtime_minutes,
+    overtimeHours: row.overtime_hours || 0,
+    overtimeType: row.overtime_type || OvertimeType.AFTER_SHIFT,
+    isNationalHoliday: row.is_national_holiday || false,
+    calculationMethod: row.calculation_method,
+    hourlyRateSnapshot: row.hourly_rate_snapshot,
+    overtimeAmountSnapshot: row.overtime_amount_snapshot,
+    status: row.status || OvertimeStatus.DETECTED,
+    notes: row.notes,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at,
+    rejectedBy: row.rejected_by,
+    rejectedAt: row.rejected_at,
+    rejectionReason: row.rejection_reason,
+    createdAt: row.created_at || AppClock.nowISO(),
+    updatedAt: row.updated_at || AppClock.nowISO(),
+    createdBy: row.created_by,
+    updatedBy: row.updated_by
+  };
+}
+
 export class SupabaseOvertimeRepository implements OvertimeRepository {
   async getById(id: string): Promise<OvertimeRecord | null> {
     ensureSupabaseConnected();
     const { data, error } = await supabase.from("overtime_records").select("*").eq("id", id).maybeSingle();
     if (error) return handleSupabaseReadError("overtime_records", error, null);
-    if (!data) return null;
-    return {
-      id: data.id,
-      staffId: data.staff_id,
-      branchId: data.branch_id,
-      attendanceId: data.attendance_id,
-      date: data.overtime_date,
-      scheduledEndAt: data.scheduled_end_at || "17:00",
-      actualEndAt: data.actual_end_at || "17:00",
-      overtimeMinutes: data.overtime_minutes || 0,
-      overtimeHours: data.overtime_hours || 0,
-      overtimeType: data.overtime_type || OvertimeType.AFTER_SHIFT,
-      status: data.status || OvertimeStatus.DETECTED,
-      notes: data.notes,
-      createdAt: data.created_at || AppClock.nowISO(),
-      updatedAt: data.updated_at || AppClock.nowISO()
-    };
+    return data ? mapOvertimeFromDb(data) : null;
   }
   async getByAttendanceId(attendanceId: string): Promise<OvertimeRecord | null> {
     ensureSupabaseConnected();
     const { data, error } = await supabase.from("overtime_records").select("*").eq("attendance_id", attendanceId).maybeSingle();
     if (error) return handleSupabaseReadError("overtime_records", error, null);
-    if (!data) return null;
-    return {
-      id: data.id,
-      staffId: data.staff_id,
-      branchId: data.branch_id,
-      attendanceId: data.attendance_id,
-      date: data.overtime_date,
-      scheduledEndAt: data.scheduled_end_at || "17:00",
-      actualEndAt: data.actual_end_at || "17:00",
-      overtimeMinutes: data.overtime_minutes || 0,
-      overtimeHours: data.overtime_hours || 0,
-      overtimeType: data.overtime_type || OvertimeType.AFTER_SHIFT,
-      status: data.status || OvertimeStatus.DETECTED,
-      notes: data.notes,
-      createdAt: data.created_at || AppClock.nowISO(),
-      updatedAt: data.updated_at || AppClock.nowISO()
-    };
+    return data ? mapOvertimeFromDb(data) : null;
   }
   async getByStaff(staffId: string): Promise<OvertimeRecord[]> {
     ensureSupabaseConnected();
     const { data, error } = await supabase.from("overtime_records").select("*").eq("staff_id", staffId);
     if (error) return handleSupabaseReadError("overtime_records", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      branchId: row.branch_id,
-      attendanceId: row.attendance_id,
-      date: row.overtime_date,
-      scheduledEndAt: row.scheduled_end_at || "17:00",
-      actualEndAt: row.actual_end_at || "17:00",
-      overtimeMinutes: row.overtime_minutes || 0,
-      overtimeHours: row.overtime_hours || 0,
-      overtimeType: row.overtime_type || OvertimeType.AFTER_SHIFT,
-      status: row.status || OvertimeStatus.DETECTED,
-      notes: row.notes,
-      createdAt: row.created_at || AppClock.nowISO(),
-      updatedAt: row.updated_at || AppClock.nowISO()
-    }));
+    return (data || []).map(mapOvertimeFromDb);
   }
   async getByBranch(branchId: string): Promise<OvertimeRecord[]> {
     ensureSupabaseConnected();
     const { data, error } = await supabase.from("overtime_records").select("*").eq("branch_id", branchId);
     if (error) return handleSupabaseReadError("overtime_records", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      branchId: row.branch_id,
-      attendanceId: row.attendance_id,
-      date: row.overtime_date,
-      scheduledEndAt: row.scheduled_end_at || "17:00",
-      actualEndAt: row.actual_end_at || "17:00",
-      overtimeMinutes: row.overtime_minutes || 0,
-      overtimeHours: row.overtime_hours || 0,
-      overtimeType: row.overtime_type || OvertimeType.AFTER_SHIFT,
-      status: row.status || OvertimeStatus.DETECTED,
-      notes: row.notes,
-      createdAt: row.created_at || AppClock.nowISO(),
-      updatedAt: row.updated_at || AppClock.nowISO()
-    }));
+    return (data || []).map(mapOvertimeFromDb);
   }
   async getByDateRange(dateFrom: string, dateTo: string, branchId?: string): Promise<OvertimeRecord[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("overtime_records").select("*").gte("overtime_date", dateFrom).lte("overtime_date", dateTo);
+    let q = supabase.from("overtime_records").select("*").gte("date", dateFrom).lte("date", dateTo);
     if (branchId) q = q.eq("branch_id", branchId);
     const { data, error } = await q;
     if (error) return handleSupabaseReadError("overtime_records", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      branchId: row.branch_id,
-      attendanceId: row.attendance_id,
-      date: row.overtime_date,
-      scheduledEndAt: row.scheduled_end_at || "17:00",
-      actualEndAt: row.actual_end_at || "17:00",
-      overtimeMinutes: row.overtime_minutes || 0,
-      overtimeHours: row.overtime_hours || 0,
-      overtimeType: row.overtime_type || OvertimeType.AFTER_SHIFT,
-      status: row.status || OvertimeStatus.DETECTED,
-      notes: row.notes,
-      createdAt: row.created_at || AppClock.nowISO(),
-      updatedAt: row.updated_at || AppClock.nowISO()
-    }));
+    return (data || []).map(mapOvertimeFromDb);
   }
   async list(): Promise<OvertimeRecord[]> {
     ensureSupabaseConnected();
     const { data, error } = await supabase.from("overtime_records").select("*");
     if (error) return handleSupabaseReadError("overtime_records", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      staffId: row.staff_id,
-      branchId: row.branch_id,
-      attendanceId: row.attendance_id,
-      date: row.overtime_date,
-      scheduledEndAt: row.scheduled_end_at || "17:00",
-      actualEndAt: row.actual_end_at || "17:00",
-      overtimeMinutes: row.overtime_minutes || 0,
-      overtimeHours: row.overtime_hours || 0,
-      overtimeType: row.overtime_type || OvertimeType.AFTER_SHIFT,
-      status: row.status || OvertimeStatus.DETECTED,
-      notes: row.notes,
-      createdAt: row.created_at || AppClock.nowISO(),
-      updatedAt: row.updated_at || AppClock.nowISO()
-    }));
+    return (data || []).map(mapOvertimeFromDb);
   }
-  async detectFromAttendance(attendanceId: string): Promise<OvertimeRecord | null> {
-    return this.getByAttendanceId(attendanceId);
+  async detectFromAttendance(attendanceId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord | null> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Akses ditolak: hanya Admin Cabang atau Super Admin yang dapat mendeteksi lembur.");
+    }
+    if (currentUserRole === UserRole.BRANCH_ADMIN && !userBranchId) {
+      throw new Error("Cabang Admin tidak memiliki cabang aktif untuk mendeteksi lembur.");
+    }
+    const existing = await this.getByAttendanceId(attendanceId);
+    if (existing) return existing;
+
+    const { data: attendance, error: attendanceError } = await supabase
+      .from("attendances")
+      .select("id, staff_id, branch_id, date, attendance_status, scheduled_end_at, actual_check_out_at")
+      .eq("id", attendanceId)
+      .maybeSingle();
+    if (attendanceError) throw new Error(`Gagal membaca absensi untuk deteksi lembur: ${attendanceError.message}`);
+    if (!attendance || !attendance.actual_check_out_at || !attendance.scheduled_end_at) return null;
+    if (!["PRESENT", "LATE"].includes(attendance.attendance_status)) return null;
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && attendance.branch_id !== userBranchId) {
+      throw new Error("Akses ditolak: Branch Admin hanya dapat mendeteksi lembur cabang sendiri.");
+    }
+
+    const { data: staffRow, error: staffError } = await supabase
+      .from("staff")
+      .select("position")
+      .eq("id", attendance.staff_id)
+      .maybeSingle();
+    if (staffError) throw new Error(`Gagal membaca jabatan staf untuk deteksi lembur: ${staffError.message}`);
+    if (!staffRow || !["BRANCH_ADMIN", "ASSISTANT"].includes(staffRow.position)) return null;
+
+    const scheduledEndAt = String(attendance.scheduled_end_at).slice(0, 5);
+    const scheduledEnd = new Date(toOperationalDateTime(attendance.date, scheduledEndAt));
+    const actualEnd = new Date(attendance.actual_check_out_at);
+    const overtimeMinutes = Math.max(0, Math.floor((actualEnd.getTime() - scheduledEnd.getTime()) / 60000));
+    if (!Number.isFinite(overtimeMinutes) || overtimeMinutes <= 0) return null;
+
+    const { data, error } = await supabase.from("overtime_records").insert({
+      staff_id: attendance.staff_id,
+      branch_id: attendance.branch_id,
+      attendance_id: attendance.id,
+      date: attendance.date,
+      scheduled_end_at: scheduledEndAt,
+      actual_end_at: getOperationalTimeString(attendance.actual_check_out_at),
+      overtime_minutes: overtimeMinutes,
+      overtime_hours: Number((overtimeMinutes / 60).toFixed(2)),
+      overtime_type: OvertimeType.AFTER_SHIFT,
+      status: OvertimeStatus.DETECTED
+    }).select("*").single();
+    if (error) {
+      const concurrentRecord = await this.getByAttendanceId(attendanceId);
+      if (concurrentRecord) return concurrentRecord;
+      throw new Error(`Gagal menyimpan deteksi lembur: ${error.message}`);
+    }
+    return mapOvertimeFromDb(data);
   }
-  async submit(id: string): Promise<OvertimeRecord> {
+  async submit(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Akses ditolak: hanya Admin Cabang atau Super Admin yang dapat mengajukan lembur.");
+    }
+    if (currentUserRole === UserRole.BRANCH_ADMIN && !userBranchId) {
+      throw new Error("Cabang Admin tidak memiliki cabang aktif untuk mengajukan lembur.");
+    }
     const item = await this.getById(id);
-    if (!item) throw new Error("Overtime not found");
-    return { ...item, status: OvertimeStatus.SUBMITTED };
+    if (!item) throw new Error("Catatan lembur tidak ditemukan.");
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
+      throw new Error("Akses ditolak: Branch Admin hanya dapat mengajukan lembur cabang sendiri.");
+    }
+    if (item.status !== OvertimeStatus.DETECTED) throw new Error("Hanya catatan DETECTED yang dapat diajukan.");
+    const { data, error } = await supabase.from("overtime_records")
+      .update({ status: OvertimeStatus.SUBMITTED, updated_at: AppClock.nowISO() })
+      .eq("id", id).eq("status", OvertimeStatus.DETECTED).select("*").maybeSingle();
+    if (error) throw new Error(`Gagal mengajukan lembur: ${error.message}`);
+    if (!data) throw new Error("Status lembur berubah atau akses tidak diizinkan; muat ulang data dan coba lagi.");
+    return mapOvertimeFromDb(data);
   }
-  async approve(id: string, approverName: string): Promise<OvertimeRecord> {
+  async approve(
+    id: string,
+    approverName: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    approvedOvertimeMinutes?: number,
+    isNationalHoliday = false
+  ): Promise<OvertimeRecord> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak: Hanya Super Admin yang dapat menyetujui lembur.");
+    }
+    if (!approverName.trim()) throw new Error("Nama Super Admin penyetuju wajib diisi.");
     const item = await this.getById(id);
-    if (!item) throw new Error("Overtime not found");
-    return { ...item, status: OvertimeStatus.APPROVED };
+    if (!item) throw new Error("Catatan lembur tidak ditemukan.");
+    if (item.status !== OvertimeStatus.SUBMITTED) throw new Error("Hanya catatan SUBMITTED yang dapat disetujui.");
+    const payableMinutes = approvedOvertimeMinutes ?? item.overtimeMinutes;
+    if (!Number.isInteger(payableMinutes) || payableMinutes <= 0 || payableMinutes > item.overtimeMinutes) {
+      throw new Error("Durasi lembur yang disetujui harus berupa menit positif dan tidak boleh melebihi durasi aktual.");
+    }
+    const hourlyRate = isNationalHoliday ? 30000 : 15000;
+    const { data, error } = await supabase.from("overtime_records").update({
+      status: OvertimeStatus.APPROVED,
+      approved_overtime_minutes: payableMinutes,
+      overtime_hours: Number((payableMinutes / 60).toFixed(2)),
+      is_national_holiday: isNationalHoliday,
+      calculation_method: "APPROVED_MINUTES_PRORATED",
+      hourly_rate_snapshot: hourlyRate,
+      overtime_amount_snapshot: Math.round((payableMinutes * hourlyRate) / 60),
+      approved_by: approverName,
+      approved_at: AppClock.nowISO(),
+      updated_at: AppClock.nowISO(),
+      updated_by: approverName
+    }).eq("id", id).eq("status", OvertimeStatus.SUBMITTED).select("*").maybeSingle();
+    if (error) throw new Error(`Gagal menyetujui lembur: ${error.message}`);
+    if (!data) throw new Error("Status lembur berubah atau akses tidak diizinkan; muat ulang data dan coba lagi.");
+    return mapOvertimeFromDb(data);
   }
-  async reject(id: string, approverName: string, reason: string): Promise<OvertimeRecord> {
+  async reject(id: string, approverName: string, reason: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak: Hanya Super Admin yang dapat menolak lembur.");
+    }
+    if (!reason.trim()) throw new Error("Alasan penolakan wajib diisi.");
+    if (!approverName.trim()) throw new Error("Nama Super Admin penolak wajib diisi.");
     const item = await this.getById(id);
-    if (!item) throw new Error("Overtime not found");
-    return { ...item, status: OvertimeStatus.REJECTED, notes: reason };
+    if (!item) throw new Error("Catatan lembur tidak ditemukan.");
+    if (item.status !== OvertimeStatus.SUBMITTED) throw new Error("Hanya catatan SUBMITTED yang dapat ditolak.");
+    const { data, error } = await supabase.from("overtime_records").update({
+      status: OvertimeStatus.REJECTED,
+      rejection_reason: reason.trim(),
+      rejected_by: approverName,
+      rejected_at: AppClock.nowISO(),
+      updated_at: AppClock.nowISO(),
+      updated_by: approverName
+    }).eq("id", id).eq("status", OvertimeStatus.SUBMITTED).select("*").maybeSingle();
+    if (error) throw new Error(`Gagal menolak lembur: ${error.message}`);
+    if (!data) throw new Error("Status lembur berubah atau akses tidak diizinkan; muat ulang data dan coba lagi.");
+    return mapOvertimeFromDb(data);
   }
-  async getSummary(): Promise<OvertimeSummary> {
-    return { totalDetectedMinutes: 0, totalSubmittedMinutes: 0, totalApprovedMinutes: 0, totalRejectedMinutes: 0, totalPaidMinutes: 0 };
+  async getSummary(branchId?: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeSummary> {
+    if (currentUserRole === UserRole.BRANCH_ADMIN && (!userBranchId || (branchId && branchId !== userBranchId))) {
+      throw new Error("Akses ditolak: Branch Admin hanya dapat melihat ringkasan lembur cabang sendiri.");
+    }
+    const scopedBranchId = currentUserRole === UserRole.BRANCH_ADMIN ? userBranchId : branchId;
+    const records = scopedBranchId ? await this.getByBranch(scopedBranchId) : await this.list();
+    return records.reduce((summary, record) => {
+      const minutes = record.approvedOvertimeMinutes ?? record.overtimeMinutes;
+      if (record.status === OvertimeStatus.DETECTED) summary.totalDetectedMinutes += minutes;
+      if (record.status === OvertimeStatus.SUBMITTED) summary.totalSubmittedMinutes += minutes;
+      if (record.status === OvertimeStatus.APPROVED) summary.totalApprovedMinutes += minutes;
+      if (record.status === OvertimeStatus.REJECTED) summary.totalRejectedMinutes += minutes;
+      if (record.status === OvertimeStatus.PAID) summary.totalPaidMinutes += minutes;
+      return summary;
+    }, { totalDetectedMinutes: 0, totalSubmittedMinutes: 0, totalApprovedMinutes: 0, totalRejectedMinutes: 0, totalPaidMinutes: 0 });
   }
 }
 

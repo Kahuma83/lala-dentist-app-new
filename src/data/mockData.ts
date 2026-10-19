@@ -55,6 +55,7 @@ import {
   OvertimeRecord,
   OvertimeStatus,
   OvertimeType,
+  StaffReplacementAssignment,
   ClinicBranding,
   MedicalRecord,
   MedicalRecordStatus,
@@ -3527,6 +3528,7 @@ export class MockDatabase {
   staffShiftAssignments = JSON.parse(JSON.stringify(MOCK_STAFF_SHIFT_ASSIGNMENTS));
   attendances: Attendance[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_ATTENDANCES)) : [];
   overtimes: OvertimeRecord[] = [];
+  replacementAssignments: StaffReplacementAssignment[] = [];
   medicalRecords: MedicalRecord[] = [];
   clinicBranding: ClinicBranding = JSON.parse(JSON.stringify(DEFAULT_CLINIC_BRANDING));
   promotions: PromotionMedia[] = JSON.parse(JSON.stringify(MOCK_PROMOTIONS));
@@ -3636,6 +3638,7 @@ export class MockDatabase {
         if (Array.isArray(stored.staffShiftAssignments)) this.staffShiftAssignments = stored.staffShiftAssignments;
         if (Array.isArray(stored.attendances)) this.attendances = stored.attendances;
         if (Array.isArray(stored.overtimes)) this.overtimes = stored.overtimes;
+        if (Array.isArray(stored.replacementAssignments)) this.replacementAssignments = stored.replacementAssignments;
         if (Array.isArray(stored.medicalRecords)) this.medicalRecords = stored.medicalRecords;
         if (Array.isArray(stored.promotions)) this.promotions = stored.promotions;
         if (stored.clinicBranding) this.clinicBranding = stored.clinicBranding;
@@ -3679,6 +3682,7 @@ export class MockDatabase {
         staffShiftAssignments: this.staffShiftAssignments,
         attendances: this.attendances,
         overtimes: this.overtimes,
+        replacementAssignments: this.replacementAssignments,
         medicalRecords: this.medicalRecords,
         promotions: this.promotions,
         clinicBranding: this.clinicBranding,
@@ -3728,6 +3732,7 @@ export class MockDatabase {
     this.instance.staffShiftAssignments = JSON.parse(JSON.stringify(MOCK_STAFF_SHIFT_ASSIGNMENTS));
     this.instance.attendances = JSON.parse(JSON.stringify(MOCK_ATTENDANCES));
     this.instance.overtimes = [];
+    this.instance.replacementAssignments = [];
     this.instance.medicalRecords = [];
     this.instance.clinicBranding = JSON.parse(JSON.stringify(DEFAULT_CLINIC_BRANDING));
     this.instance.promotions = JSON.parse(JSON.stringify(MOCK_PROMOTIONS));
@@ -3749,6 +3754,7 @@ export class MockDatabase {
     db.accruals = [];
     db.medicalRecords = [];
     db.overtimes = [];
+    db.replacementAssignments = [];
     return db;
   }
 }

@@ -332,8 +332,8 @@ export const Compensation: React.FC = () => {
       await loadData();
       setFeedbackMessage(
         createdCount > 0
-          ? `${createdCount} akrual kompensasi berhasil disinkronkan dari tindakan selesai.`
-          : `Tidak ada akrual baru dari ${completedTreatments.length} tindakan selesai. Pastikan aturan kompensasi aktif dan tanggal berlakunya sesuai.`
+          ? `${createdCount} akrual kompensasi berhasil disinkronkan dari tindakan selesai dengan invoice lunas.`
+          : `Tidak ada akrual baru dari ${completedTreatments.length} tindakan selesai. Pastikan invoice terkait sudah LUNAS serta aturan kompensasi aktif dan tanggal berlakunya sesuai.`
       );
       if (failures.length > 0) {
         setErrorMessage(`${failures.length} tindakan gagal disinkronkan. Contoh: ${failures[0]}`);
@@ -376,7 +376,7 @@ export const Compensation: React.FC = () => {
           <p className="text-xs text-slate-500 mt-1">
             {isAssistant
               ? "Daftar rincian insentif dan komisi dari pelayanan tindakan medis yang telah Anda kerjakan"
-              : "Pengaturan skema komisi persentase, fee flat per tindakan medis, dan aturan gaji pokok (Base Salary) seluruh karyawan"}
+              : "Atur fee per layanan dan gaji pokok. Kompensasi tindakan baru diakru setelah tindakan selesai dan invoice terkait berstatus LUNAS."}
           </p>
         </div>
 
@@ -682,7 +682,7 @@ export const Compensation: React.FC = () => {
           {currentUser?.role === UserRole.SUPER_ADMIN && (
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 border-b border-slate-100">
               <p className="text-xs text-slate-500">
-                Sinkronkan akrual yang belum tercatat untuk semua tindakan selesai. Akrual yang sudah ada tidak diduplikasi.
+                Sinkronkan kompensasi tindakan yang sudah selesai dan invoice-nya lunas. Akrual yang sudah ada tidak diduplikasi.
               </p>
               <button
                 type="button"
@@ -691,7 +691,7 @@ export const Compensation: React.FC = () => {
                 className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${syncingAccruals ? "animate-spin" : ""}`} />
-                {syncingAccruals ? "Menyinkronkan..." : "Sinkronkan Akrual Tindakan"}
+                {syncingAccruals ? "Menyinkronkan..." : "Sinkronkan Tindakan Lunas"}
               </button>
             </div>
           )}
@@ -718,7 +718,7 @@ export const Compensation: React.FC = () => {
               ) : accruals.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-slate-400">
-                    Belum ada akrual komisi tercatat. Akrual dihitung saat tindakan selesai; Super Admin dapat menyinkronkan tindakan yang tertinggal.
+                    Belum ada akrual kompensasi tercatat. Akrual hanya dihitung setelah tindakan selesai dan invoice LUNAS; Super Admin dapat menyinkronkan tindakan yang memenuhi syarat.
                   </td>
                 </tr>
               ) : (

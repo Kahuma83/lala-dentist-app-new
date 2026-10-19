@@ -57,6 +57,8 @@ Prerequisite: Node.js dan akses ke project Supabase.
 
    Untuk absensi dokter yang berjadwal di beberapa cabang pada tanggal yang sama, terapkan migration `20261118000000_doctor_multi_branch_daily_attendance.sql`. Setiap cabang mempunyai satu pasangan check-in/check-out tersendiri per hari; dokter harus menyelesaikan check-out di cabang aktif sebelum mulai absensi cabang berikutnya. Jadwal dan geofence cabang tetap divalidasi server. Riwayat absensi yang sudah ada tidak diubah.
 
+   Untuk pengajuan cuti, izin, sakit, dan penugasan pengganti, terapkan migration `20261120000000_employee_absence_requests_and_replacements.sql`. Pegawai mengajukan melalui Portal Pegawai; Super Admin meninjau dan memilih pengganti. Pengurangan ketidakhadiran serta upah pengganti dihitung terpisah. Upah pengganti memakai snapshot gaji pokok pegawai yang digantikan dibagi 25, dan baru menjadi earning setelah Super Admin mengonfirmasi pekerjaan selesai. Konfirmasi wajib dilakukan sebelum payroll periode tugas dikunci; sistem menolak konfirmasi bila payroll sudah disetujui/dibayar. Penugasan pengganti berbayar hanya tersedia untuk Admin Cabang/Asisten dengan jabatan sama di cabang yang sama.
+
 4. Di Supabase Dashboard, pastikan Realtime aktif dan policies RLS pada tabel memberikan akses yang sesuai. Perubahan Realtime hanya dikirim kepada user yang berhak membaca baris berdasarkan policies tersebut.
 
 5. Jalankan frontend dan backend lokal:

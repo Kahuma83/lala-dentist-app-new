@@ -43,9 +43,10 @@ describe("HR-5: Payroll Accounting Integration", () => {
       db.staff.push(staff);
     }
 
-    // 2. Clear any existing accruals and overtimes for this staff/period
-    db.accruals = db.accruals.filter(a => a.staffId !== opts.staffId);
-    db.overtimes = db.overtimes.filter(o => o.staffId !== opts.staffId);
+    // 2. Clear existing payroll inputs for every identifier linked to this staff record.
+    const staffIds = new Set([opts.staffId, staff.id, staff.userAccountId].filter(Boolean));
+    db.accruals = db.accruals.filter(a => !staffIds.has(a.staffId));
+    db.overtimes = db.overtimes.filter(o => !staffIds.has(o.staffId));
 
     // 3. Add compensation accrual if requested
     if (opts.compensationAmount && opts.compensationAmount > 0) {

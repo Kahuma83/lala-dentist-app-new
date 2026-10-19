@@ -99,7 +99,7 @@ export const Invoices: React.FC = () => {
       : "branch-gebang"
   );
   const [formItems, setFormItems] = useState<
-    Array<{ serviceId: string; descriptionSnapshot: string; unitPriceSnapshot: number; quantity: number }>
+    Array<{ serviceId: string; treatmentJobId?: string; descriptionSnapshot: string; unitPriceSnapshot: number; quantity: number }>
   >([
     { serviceId: "service-scaling", descriptionSnapshot: "Scaling & Polishing", unitPriceSnapshot: 150000, quantity: 1 }
   ]);
@@ -244,6 +244,7 @@ export const Invoices: React.FC = () => {
       if (!service) return null;
       return {
         serviceId: service.id,
+        treatmentJobId: treatment.id,
         descriptionSnapshot: treatment.serviceNameSnapshot || service.name,
         unitPriceSnapshot: service.basePrice,
         quantity: 1

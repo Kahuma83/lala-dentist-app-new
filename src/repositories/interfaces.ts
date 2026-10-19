@@ -672,6 +672,7 @@ export interface InvoiceRepository {
       branchId: string;
       items: Array<{
         serviceId?: string;
+        treatmentJobId?: string;
         descriptionSnapshot: string;
         unitPriceSnapshot: number;
         quantity: number;
@@ -1016,7 +1017,14 @@ export interface OvertimeRepository {
   list(currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord[]>;
   detectFromAttendance(attendanceId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord | null>;
   submit(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord>;
-  approve(id: string, approverName: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord>;
+  approve(
+    id: string,
+    approverName: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    approvedOvertimeMinutes?: number,
+    isNationalHoliday?: boolean
+  ): Promise<OvertimeRecord>;
   reject(id: string, approverName: string, reason: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeRecord>;
   getSummary(branchId?: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<OvertimeSummary>;
 }

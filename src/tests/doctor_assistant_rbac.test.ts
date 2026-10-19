@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { UserRole, QueueStatus, TreatmentJobStatus } from "../types/domain";
+import { createPaidInvoiceForTreatment } from "./helpers/paidTreatmentInvoice";
 import { MockDatabase } from "../data/mockData";
 import {
   MockQueueRepository,
@@ -120,6 +121,7 @@ describe("RBAC DOCTOR_ASSISTANT Audit & Integrity Tests", () => {
     );
 
     if (finishedTreatment) {
+      await createPaidInvoiceForTreatment(finishedTreatment.id);
       const accruals = await compRepo.calculateAndAccrueForTreatment(finishedTreatment.id);
       const assistantAccrual = accruals.find((a) => a.staffId === claryStaffId);
       if (assistantAccrual) {

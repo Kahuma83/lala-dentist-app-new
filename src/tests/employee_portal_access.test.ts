@@ -21,9 +21,14 @@ describe("employee portal navigation and row-level access", () => {
 
   it("exposes the employee portal navigation sections", () => {
     const portal = fs.readFileSync(portalPath, "utf-8");
-    for (const section of ["Beranda", "Absensi", "Jadwal Saya", "Lembur Saya", "Gaji Saya", "Profil"]) {
+    for (const section of ["Beranda", "Absensi", "Jadwal Saya", "Cuti & Izin", "Lembur Saya", "Gaji Saya"]) {
       expect(portal).toContain(`label: "${section}"`);
     }
+    expect(portal).not.toContain('label: "Profil"');
+    expect(portal).toContain('<details className="account-menu">');
+    expect(portal).toContain("<Settings aria-hidden=\"true\" />");
+    expect(portal).toContain("Profil Saya");
+    expect(portal).toContain("Keluar");
     expect(portal).not.toContain("Foto profil hanya terlihat oleh Anda. Maksimal 512 KB.");
   });
 
