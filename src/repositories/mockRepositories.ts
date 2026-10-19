@@ -2932,9 +2932,6 @@ export class MockTreatmentRepository implements TreatmentRepository {
     }
 
     // Security Checks
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && job.branchId !== userBranchId) {
-      throw new Error("Branch Admin tidak dapat mengelola treatment cabang lain");
-    }
     if (
       currentUserRole === UserRole.DOCTOR &&
       currentUserId &&
@@ -2987,15 +2984,19 @@ export class MockTreatmentRepository implements TreatmentRepository {
     currentUserId?: string | null,
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
+    if (
+      currentUserRole &&
+      currentUserRole !== UserRole.DOCTOR
+    ) {
+      throw new Error("Hanya Dokter yang dapat menyelesaikan tindakan medis");
+    }
+
     const job = db.treatmentJobs.find((t) => t.id === id);
     if (!job) {
       throw new Error("TreatmentJob tidak ditemukan");
     }
 
     // Security Checks
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && job.branchId !== userBranchId) {
-      throw new Error("Branch Admin tidak dapat mengelola treatment cabang lain");
-    }
     if (
       currentUserRole === UserRole.DOCTOR &&
       currentUserId &&
@@ -3051,15 +3052,19 @@ export class MockTreatmentRepository implements TreatmentRepository {
     currentUserId?: string | null,
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
+    if (
+      currentUserRole &&
+      currentUserRole !== UserRole.DOCTOR
+    ) {
+      throw new Error("Hanya Dokter yang dapat menyerahkan tindakan ke kasir");
+    }
+
     const job = db.treatmentJobs.find((t) => t.id === id);
     if (!job) {
       throw new Error("TreatmentJob tidak ditemukan");
     }
 
     // Security Checks
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && job.branchId !== userBranchId) {
-      throw new Error("Branch Admin tidak dapat mengelola treatment cabang lain");
-    }
     if (
       currentUserRole === UserRole.DOCTOR &&
       currentUserId &&

@@ -2341,7 +2341,7 @@ export class SupabaseBookingRepository implements BookingRepository {
       try {
         const executeUpdate = async (requestPayload: any) => {
           let q = supabase.from("bookings").update(requestPayload).eq("id", id);
-          if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
+          if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
             q = q.eq("branch_id", userBranchId);
           }
           return q.select().single();
@@ -3039,16 +3039,24 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
+    if (currentUserRole === UserRole.DOCTOR_ASSISTANT || currentUserRole === UserRole.SUPER_ADMIN) {
+      const { data, error } = await supabase.rpc("start_treatment_job_secure", {
+        p_treatment_id: id,
+        p_notes: actorData?.notes || "Memulai tindakan medis"
+      });
+      if (error) throw new Error(`Supabase error: ${error.message}`);
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) throw new Error("Gagal memulai treatment: data tidak ditemukan");
+      return this.mapTreatmentFromDb(row);
+    }
+
     const now = new Date().toISOString();
-    let q = supabase.from("treatment_jobs").update({
+    const q = supabase.from("treatment_jobs").update({
       status: TreatmentJobStatus.DALAM_PROSES,
       started_at: now,
       updated_at: now
     }).eq("id", id);
 
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
-      q = q.eq("branch_id", userBranchId);
-    }
     const { data, error } = await q.select().single();
     if (error) throw new Error(`Supabase error: ${error.message}`);
 
@@ -3078,6 +3086,13 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
+    if (
+      currentUserRole &&
+      currentUserRole !== UserRole.DOCTOR
+    ) {
+      throw new Error("Hanya Dokter yang dapat menyelesaikan tindakan medis");
+    }
+
     const { data, error } = await supabase.rpc("complete_treatment_job_secure", {
       p_treatment_id: id,
       p_notes: actorData?.notes || "Penyelesaian tindakan medis"
@@ -3096,6 +3111,13 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
+    if (
+      currentUserRole &&
+      currentUserRole !== UserRole.DOCTOR
+    ) {
+      throw new Error("Hanya Dokter yang dapat menyerahkan tindakan ke kasir");
+    }
+
     const now = new Date().toISOString();
     let q = supabase.from("treatment_jobs").update({
       status: TreatmentJobStatus.DISERAHKAN,
@@ -3103,9 +3125,6 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       updated_at: now
     }).eq("id", id);
 
-    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
-      q = q.eq("branch_id", userBranchId);
-    }
     const { data, error } = await q.select().single();
     if (error) throw new Error(`Supabase error: ${error.message}`);
 

@@ -115,7 +115,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const displayClinicName = branding?.name || "Lala Dentist";
   const displayTagline = branding?.tagline || "Senyum Indah dimulai di Laladentist";
 
-  // Super Admin Menu categorized into: Dashboard, Operasional, Master Data, Keuangan, SDM, Laporan, Pengaturan Sistem
+  // Super Admin Menu categorized by daily workflow and responsibility.
   const superAdminMenu = [
     {
       title: "DASHBOARD",
@@ -129,7 +129,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Check-In Pasien", path: "/super-admin/check-in", icon: UserCheck },
         { name: "Antrean Klinik", path: "/super-admin/queue", icon: ListOrdered },
         { name: "Daftar Treatment", path: "/super-admin/treatments", icon: Activity },
-        { name: "Jadwal Dokter", path: "/super-admin/schedules", icon: CalendarRange }
+        { name: "Jadwal Dokter", path: "/super-admin/schedules", icon: CalendarRange },
+        { name: "Follow Up Pasien", path: "/super-admin/h1-confirmation", icon: PhoneCall }
       ]
     },
     {
@@ -138,43 +139,36 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Cabang Klinik", path: "/super-admin/configuration?tab=branches", icon: Building2 },
         { name: "Dokter", path: "/super-admin/configuration?tab=doctors", icon: UserCheck },
         { name: "Layanan & Tindakan", path: "/super-admin/configuration?tab=services", icon: Briefcase },
-        { name: "Tarif Cabang", path: "/super-admin/configuration?tab=tariffs", icon: Tag },
-        { name: "Media Promosi", path: "/super-admin/configuration?tab=promotions", icon: Sparkles }
+        { name: "Tarif Cabang", path: "/super-admin/configuration?tab=tariffs", icon: Tag }
       ]
     },
     {
-      title: "WEBSITE",
-      items: [{ name: "Kelola Website", path: "/super-admin/website", icon: PanelsTopLeft }]
+      title: "PROMOSI & WEBSITE",
+      items: [
+        { name: "Media Promosi", path: "/super-admin/configuration?tab=promotions", icon: Sparkles },
+        { name: "Kelola Website", path: "/super-admin/website", icon: PanelsTopLeft }
+      ]
     },
     {
       title: "KEUANGAN",
       items: [
         { name: "Invoice", path: "/super-admin/invoices", icon: Receipt },
         { name: "Pembayaran", path: "/super-admin/payments", icon: CreditCard },
-        { name: "Pengeluaran", path: "/super-admin/expenses", icon: ArrowDownRight },
-        { name: "Kompensasi Dokter", path: "/super-admin/compensation", icon: Percent }
+        { name: "Pengeluaran", path: "/super-admin/expenses", icon: ArrowDownRight }
       ]
-    },
-    {
-      title: "FOLLOW UP PASIEN",
-      items: [{ name: "Follow Up Pasien", path: "/super-admin/h1-confirmation", icon: PhoneCall }]
     },
     {
       title: "SDM",
       items: [
         { name: "Manajemen SDM", path: "/super-admin/hr", icon: Users },
-        { name: "Payroll", path: "/super-admin/payroll", icon: DollarSign }
+        { name: "Payroll", path: "/super-admin/payroll", icon: DollarSign },
+        { name: "Kompensasi Dokter", path: "/super-admin/compensation", icon: Percent }
       ]
     },
     {
-      title: "LAPORAN",
+      title: "LAPORAN & ANALISA",
       items: [
-        { name: "Laporan Keuangan", path: "/super-admin/accounting", icon: BookOpen }
-      ]
-    },
-    {
-      title: "ANALISA",
-      items: [
+        { name: "Laporan Keuangan", path: "/super-admin/accounting", icon: BookOpen },
         { name: "Analisa Kunjungan", path: "/super-admin/analytics", icon: BarChart3 }
       ]
     },
@@ -476,15 +470,15 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           style={{ height: "calc(100vh - 80px)" }}
         >
           {/* Sidebar Navigation Items list */}
-          <div className="flex-1 overflow-y-auto py-5 px-4 space-y-6">
+          <div className="flex-1 overflow-y-auto py-3 px-3 space-y-3">
             {activeMenu.map((group, groupIdx) => (
-              <div key={groupIdx} className="space-y-2">
+              <div key={groupIdx} className="space-y-1">
                 {!isCollapsed && (
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-3">
+                  <h3 className="text-[9px] font-extrabold text-slate-400 uppercase tracking-[0.12em] px-3">
                     {group.title}
                   </h3>
                 )}
-                <ul className="space-y-1">
+                <ul className="space-y-0.5">
                   {group.items.map((item, itemIdx) => {
                     const isSrvTab = item.path.includes("?tab=");
                     let isActive = false;
@@ -499,7 +493,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                       <li key={itemIdx}>
                         <Link
                           to={item.path}
-                          className={`flex items-center gap-3.5 px-3 py-2 rounded-xl text-xs font-bold transition-all relative group
+                          className={`flex items-center gap-3 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all relative group
                             ${isActive
                               ? "bg-[#faf6ec] text-[#8a6f27] border-l-4 border-[#c5a059]"
                               : "text-[#5f6673] hover:bg-[#faf6ec]/50 hover:text-[#17233C]"

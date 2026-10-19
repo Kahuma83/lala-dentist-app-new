@@ -515,17 +515,18 @@ export const LiveQueueManagement: React.FC = () => {
       if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.COMPLETED) return false;
       return true;
     });
-    const requestedBookingId = isCheckInPage
-      ? new URLSearchParams(window.location.search).get("bookingId")
-      : null;
+    const checkInParams = new URLSearchParams(window.location.search);
+    const requestedBookingId = isCheckInPage ? checkInParams.get("bookingId") : null;
+    const requestedPatientId = isCheckInPage ? checkInParams.get("patientId") : null;
+    const requestedMode = isCheckInPage ? checkInParams.get("mode") : null;
     const selectedBooking = activeBookings.find((booking) => booking.id === requestedBookingId)
       || activeBookings[0];
 
-    setCheckInMode("booking");
+    setCheckInMode(requestedMode === "walkin" ? "walkin" : "booking");
     setSelectedBookingIdForCheckIn(selectedBooking?.id || requestedBookingId || "");
     setCustomDuration(getPlannedTreatmentDurationMinutes(selectedBooking?.plannedTreatments));
     setSelectedVisitIdForCheckIn("");
-    setWalkInPatientId("");
+    setWalkInPatientId(requestedPatientId || "");
     setWalkInDoctorId(walkInAvailableDoctors[0]?.id || "");
     setWalkInPlannedServices([]);
     setShowCheckInModal(true);

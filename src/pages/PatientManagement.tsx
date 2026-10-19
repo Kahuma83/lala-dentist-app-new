@@ -69,8 +69,19 @@ import {
 
 export const PatientManagement: React.FC = () => {
   const { currentUser, repos, branches, patients, visits, bookings, doctors, doctorSchedules, staff, refreshData } = useApp();
-  const { path } = useRouter();
+  const { path, navigate } = useRouter();
   const canRecordVisitPlan = currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN;
+  const checkInRoutePrefix = currentUser?.role === UserRole.SUPER_ADMIN
+    ? "/super-admin"
+    : currentUser?.role === UserRole.BRANCH_ADMIN
+      ? "/branch-admin"
+      : null;
+
+  const navigateToCheckIn = (query?: URLSearchParams) => {
+    if (!checkInRoutePrefix) return;
+    const suffix = query?.toString();
+    navigate(`${checkInRoutePrefix}/check-in${suffix ? `?${suffix}` : ""}`);
+  };
 
   // Search and Filtering State
   const [searchQuery, setSearchQuery] = useState("");
@@ -513,30 +524,10 @@ export const PatientManagement: React.FC = () => {
     }
   };
 
-  // Open Walk-In Modal for specific patient or general
   const handleOpenWalkIn = (p?: PatientProfile) => {
-    setFormError(null);
-    setWalkInConfirmation(null);
-
-    const targetBranch = currentUser?.role === UserRole.BRANCH_ADMIN
-      ? (currentUser.assignedBranchId || "")
-      : (selectedBranchFilter !== "ALL" ? selectedBranchFilter : branches[0]?.id || "");
-    const availableDoctors = getActiveDoctorsForSchedule(
-      doctors,
-      doctorSchedules || [],
-      targetBranch,
-      getOperationalDateString(new Date().toISOString()),
-      branches
-    );
-
-    setWalkInForm({
-      patientId: p ? p.id : (patients[0]?.id || ""),
-      branchId: targetBranch,
-      doctorId: availableDoctors[0]?.id || "",
-      complaint: ""
-    });
-    setWalkInPlannedServices([]);
-    setIsWalkInOpen(true);
+    const params = new URLSearchParams({ mode: "walkin" });
+    if (p) params.set("patientId", p.id);
+    navigateToCheckIn(params);
   };
 
   // Submit Walk-In Registration
@@ -625,20 +616,8 @@ export const PatientManagement: React.FC = () => {
     }
   };
 
-  // Open Booking Visit Modal
   const handleOpenBookingVisit = () => {
-    setFormError(null);
-    const availableBookings = bookings.filter((b) => {
-      if (currentUser?.role === UserRole.BRANCH_ADMIN && b.branchId !== currentUser.assignedBranchId) return false;
-      if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.COMPLETED) return false;
-      return true;
-    });
-
-    setBookingVisitForm({
-      bookingId: availableBookings[0]?.id || "",
-      complaint: ""
-    });
-    setIsBookingVisitOpen(true);
+    navigateToCheckIn();
   };
 
   // Submit Booking Visit
@@ -695,17 +674,12 @@ export const PatientManagement: React.FC = () => {
         }
       );
 
-      // Mark booking as COMPLETED/FULFILLED
-      try {
-        await repos.booking.updateBooking(
-          targetBooking.id,
-          { status: BookingStatus.COMPLETED },
-          currentUser?.role,
-          currentUser?.assignedBranchId
-        );
-      } catch (bErr) {
-        console.warn("Update booking status on check-in note:", bErr);
-      }
+      await repos.booking.updateBooking(
+        targetBooking.id,
+        { status: BookingStatus.CONFIRMED },
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
 
       await refreshData();
       setIsBookingVisitOpen(false);
@@ -913,21 +887,25 @@ export const PatientManagement: React.FC = () => {
             </button>
           )}
 
-          <button
-            onClick={() => handleOpenWalkIn()}
-            className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all transform active:scale-95"
-            id="btn-walkin-quick"
-          >
-            <Footprints className="w-4 h-4" /> Pasien Walk-In
-          </button>
+          {checkInRoutePrefix && (
+            <>
+              <button
+                onClick={() => handleOpenWalkIn()}
+                className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all transform active:scale-95"
+                id="btn-walkin-quick"
+              >
+                <Footprints className="w-4 h-4" /> Pasien Walk-In
+              </button>
 
-          <button
-            onClick={handleOpenBookingVisit}
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all transform active:scale-95"
-            id="btn-booking-visit"
-          >
-            <Calendar className="w-4 h-4" /> Kunjungan Booking
-          </button>
+              <button
+                onClick={handleOpenBookingVisit}
+                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all transform active:scale-95"
+                id="btn-booking-visit"
+              >
+                <Calendar className="w-4 h-4" /> Kunjungan Booking
+              </button>
+            </>
+          )}
 
           {currentUser?.role !== UserRole.DOCTOR_ASSISTANT && currentUser?.role !== UserRole.DOCTOR && (
             <button
@@ -1112,13 +1090,15 @@ export const PatientManagement: React.FC = () => {
                               >
                                 <Eye className="w-3 h-3" /> Detail
                               </button>
-                              <button
-                                onClick={() => handleOpenWalkIn(p)}
-                                className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded text-[11px] font-semibold transition-colors flex items-center gap-1"
-                                title="Registrasi Walk-In"
-                              >
-                                <Footprints className="w-3 h-3" /> Walk-In
-                              </button>
+                              {checkInRoutePrefix && (
+                                <button
+                                  onClick={() => handleOpenWalkIn(p)}
+                                  className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded text-[11px] font-semibold transition-colors flex items-center gap-1"
+                                  title="Lanjutkan ke halaman Check-In"
+                                >
+                                  <Footprints className="w-3 h-3" /> Check-In
+                                </button>
+                              )}
                               {currentUser?.role !== UserRole.DOCTOR_ASSISTANT && currentUser?.role !== UserRole.DOCTOR && (
                                 <button
                                   onClick={() => handleOpenEditPatient(p)}
@@ -1221,12 +1201,14 @@ export const PatientManagement: React.FC = () => {
                 <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-emerald-600" /> Riwayat Kunjungan ({patientVisits.length})
                 </h3>
-                <button
-                  onClick={() => handleOpenWalkIn(selectedPatient)}
-                  className="text-[11px] font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1"
-                >
-                  + Walk-In
-                </button>
+                {checkInRoutePrefix && (
+                  <button
+                    onClick={() => handleOpenWalkIn(selectedPatient)}
+                    className="text-[11px] font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1"
+                  >
+                    + Check-In
+                  </button>
+                )}
               </div>
 
               {loadingHistory ? (

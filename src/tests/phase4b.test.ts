@@ -275,7 +275,7 @@ describe("Phase 4B — TreatmentActivity & Actor Audit Trail", () => {
     await treatmentRepo.startTreatmentJob("treatment-job-2", UserRole.SUPER_ADMIN);
 
     AppClock.setFixedTime("2026-09-21T09:45:00Z");
-    await treatmentRepo.completeTreatmentJob("treatment-job-2", UserRole.SUPER_ADMIN);
+    await treatmentRepo.completeTreatmentJob("treatment-job-2", UserRole.DOCTOR);
 
     const list = await activityRepo.listActivitiesByTreatment("treatment-job-2");
     const completedAct = list.find((a) => a.activityType === TreatmentActivityType.COMPLETED);
@@ -285,7 +285,7 @@ describe("Phase 4B — TreatmentActivity & Actor Audit Trail", () => {
 
   it("Test 23: handOverTreatmentJob automatically creates a HANDED_OVER activity", async () => {
     AppClock.setFixedTime("2026-09-21T10:00:00Z");
-    await treatmentRepo.handOverTreatmentJob("treatment-job-3", UserRole.SUPER_ADMIN);
+    await treatmentRepo.handOverTreatmentJob("treatment-job-3", UserRole.DOCTOR);
 
     const list = await activityRepo.listActivitiesByTreatment("treatment-job-3");
     const handoverAct = list.find((a) => a.activityType === TreatmentActivityType.HANDED_OVER);
@@ -298,7 +298,7 @@ describe("Phase 4B — TreatmentActivity & Actor Audit Trail", () => {
 
     // Try completing a job that hasn't been started (status = BELUM_DIMULAI)
     await expect(
-      treatmentRepo.completeTreatmentJob("treatment-job-2", UserRole.SUPER_ADMIN)
+      treatmentRepo.completeTreatmentJob("treatment-job-2", UserRole.DOCTOR)
     ).rejects.toThrow();
 
     const currentList = await activityRepo.listActivitiesByTreatment("treatment-job-2");
@@ -324,18 +324,18 @@ describe("Phase 4B — TreatmentActivity & Actor Audit Trail", () => {
 
   it("Test 26: Double completeTreatmentJob is rejected", async () => {
     await treatmentRepo.startTreatmentJob("treatment-job-2", UserRole.SUPER_ADMIN);
-    await treatmentRepo.completeTreatmentJob("treatment-job-2", UserRole.SUPER_ADMIN);
+    await treatmentRepo.completeTreatmentJob("treatment-job-2", UserRole.DOCTOR);
 
     await expect(
-      treatmentRepo.completeTreatmentJob("treatment-job-2", UserRole.SUPER_ADMIN)
+      treatmentRepo.completeTreatmentJob("treatment-job-2", UserRole.DOCTOR)
     ).rejects.toThrow();
   });
 
   it("Test 27: Double handOverTreatmentJob is rejected", async () => {
-    await treatmentRepo.handOverTreatmentJob("treatment-job-3", UserRole.SUPER_ADMIN);
+    await treatmentRepo.handOverTreatmentJob("treatment-job-3", UserRole.DOCTOR);
 
     await expect(
-      treatmentRepo.handOverTreatmentJob("treatment-job-3", UserRole.SUPER_ADMIN)
+      treatmentRepo.handOverTreatmentJob("treatment-job-3", UserRole.DOCTOR)
     ).rejects.toThrow();
   });
 
