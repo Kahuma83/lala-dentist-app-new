@@ -54,8 +54,8 @@ Jika pasien meminta perubahan waktu, status **Minta Reschedule** hanya mencatat 
 **Penanggung jawab:** Admin Cabang  
 **Menu utama:** **Alur Pasien → Check-In Pasien**
 
-1. Pada halaman **Check-In Pasien**, pilih tab **Dari Booking / Visit**.
-2. Pilih booking pasien yang datang. Jika pasien sudah memiliki visit, pastikan memilih visit/booking yang tepat.
+1. Pada halaman **Check-In Pasien**, pilih jadwal pasien atau visit yang akan dilayani.
+2. Untuk Walk-In yang sudah dijadwalkan, pilih jadwal dengan sumber **Walk-In**. Visit lama tanpa booking tetap dapat dipilih sebagai visit.
 3. Periksa dokter dan keluhan/rencana kunjungan.
 4. Atur estimasi durasi layanan bila perlu.
 5. Klik **Check-In Sekarang**.
@@ -131,17 +131,17 @@ Pembayaran sebagian meninggalkan sisa tagihan pada invoice. Catat pembayaran ber
 
 ## B. Pasien datang langsung (Walk-In)
 
-Walk-In tidak memiliki janji yang dibuat sebelumnya, tetapi tetap dicatat sebagai jadwal pada slot dokter yang tersedia. Check-in tidak otomatis dilakukan saat jadwal dibuat.
+Walk-In tidak memiliki janji yang dibuat sebelumnya, tetapi tetap dicatat sebagai jadwal pada slot dokter yang tersedia. Check-in tidak otomatis dilakukan saat jadwal dibuat. Tidak ada formulir Walk-In langsung yang melewati jadwal; semua pasien Walk-In memakai alur jadwal dan check-in yang sama.
 
 1. Buka **Alur Pasien → Jadwal Pasien**, lalu klik **Jadwal Baru**.
 2. Cari profil pasien atau tambahkan melalui **+ Pasien Baru** di formulir.
 3. Pilih sumber **Walk-In**, lalu pilih dokter dan slot kosong yang tersedia pada jadwal dokter hari itu.
 4. Simpan jadwal. Walk-In menempati slot yang sama seperti janji temu; sistem tidak menimpa jadwal pasien lain.
-5. Jika waktunya sudah dekat dan pasien siap, lakukan **Check-In** dari detail jadwal. Jika slot masih lama, biarkan pasien terjadwal dan check-in saat waktunya mendekat.
+5. Jika waktunya sudah dekat dan pasien siap, lakukan **Check-In** dari detail jadwal. Jadwal Walk-In muncul bersama jadwal lain pada halaman Check-In Pasien. Jika slot masih lama, biarkan pasien terjadwal dan check-in saat waktunya mendekat.
 6. Bila semua slot hari itu penuh, tawarkan slot kosong berikutnya. Setelah check-in, lanjutkan dari bagian **Panggil pasien dan mulai konsultasi** pada alur booking.
 7. Setelah pemeriksaan dan treatment, lanjutkan dari **Terbitkan invoice**, **Terima pembayaran**, lalu **Buka dan cetak kwitansi**.
 
-Jika aplikasi menyatakan pasien sudah memiliki booking aktif hari ini atau sudah berada dalam antrean, jangan ulangi sebagai Walk-In. Cari booking/visit tersebut pada tab **Dari Booking / Visit** untuk mencegah kunjungan atau antrean ganda.
+Jika aplikasi menyatakan pasien sudah memiliki booking aktif hari ini atau sudah berada dalam antrean, jangan ulangi sebagai Walk-In. Cari jadwal/visit pasien pada halaman Check-In Pasien untuk mencegah kunjungan atau antrean ganda.
 
 ## Alur ringkas per jabatan
 

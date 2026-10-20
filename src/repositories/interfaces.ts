@@ -8,6 +8,7 @@ import {
   PatientVisit,
   PatientVisitAnalyticsRecord,
   QueueItem,
+  QueueStatus,
   LiveQueueSnapshot,
   TreatmentJob,
   TreatmentActivity,
@@ -497,6 +498,19 @@ export interface QueueRepository {
   ): Promise<QueueItem>;
   skipQueuePatient(
     queueId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<QueueItem>;
+  cancelQueuePatient(
+    queueId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<QueueItem>;
+  restoreQueueStatus(
+    queueId: string,
+    status: QueueStatus,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null

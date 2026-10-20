@@ -1375,6 +1375,14 @@ export class SupabaseQueueRepository implements QueueRepository {
     return this.updateStatus(queueId, QueueStatus.SKIPPED);
   }
 
+  async cancelQueuePatient(queueId: string): Promise<QueueItem> {
+    return this.updateStatus(queueId, QueueStatus.CANCELLED);
+  }
+
+  async restoreQueueStatus(queueId: string, status: QueueStatus): Promise<QueueItem> {
+    return this.updateStatus(queueId, status);
+  }
+
   async removeQueuePatient(queueId: string): Promise<void> {
     const fallbackList = this.getFallbackQueue();
     const idx = fallbackList.findIndex((q) => q.id === queueId);

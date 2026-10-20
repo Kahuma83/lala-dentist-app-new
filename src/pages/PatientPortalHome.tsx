@@ -22,7 +22,6 @@ import {
   Receipt,
   Send,
   ShieldCheck,
-  Sparkles,
   Stethoscope,
   UserRound
 } from "lucide-react";
@@ -565,7 +564,7 @@ export const PatientPortalHome: React.FC = () => {
     }
   };
 
-  const renderBookingCard = (booking: Booking) => (
+  const renderBookingCard = (booking: Booking, featured = false) => (
     (() => {
       const isOnlineBooking = booking.source === BookingSource.PATIENT_PORTAL || booking.source === BookingSource.ANDROID;
       const estimate = activePatientBooking?.id === booking.id ? bookingQueueEstimate : null;
@@ -578,11 +577,48 @@ export const PatientPortalHome: React.FC = () => {
         && portalClock >= scheduledAt - 60 * 60 * 1000
         && portalClock <= checkInDeadline;
       const needsStaffConfirmation = isOnlineBooking && isActiveBooking && portalClock > checkInDeadline;
+      const bookingDoctorId = booking.doctorId.trim().toLowerCase();
+      const normalizedBookingDoctorId = bookingDoctorId.replace(/^doc-/, "");
+      const bookingDoctor = doctors.find((doctor) => {
+        const doctorId = doctor.id.trim().toLowerCase();
+        const doctorCode = doctor.doctorCode?.trim().toLowerCase();
+        return doctorId === bookingDoctorId
+          || doctorId.replace(/^doc-/, "") === normalizedBookingDoctorId
+          || doctorCode === bookingDoctorId
+          || doctorCode?.replace(/^doc-/, "") === normalizedBookingDoctorId;
+      });
+      const doctorPhotoUrl = bookingDoctor?.avatarUrl || bookingDoctor?.photoUrl || bookingDoctor?.profileImage;
+      const doctorInitials = (bookingDoctor?.name || booking.doctorNameSnapshot || "Dokter")
+        .replace(/^drg?\.?\s*/i, "")
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase())
+        .join("") || "D";
       return (
-      <article key={booking.id} className="patient-portal-card rounded-2xl border border-[#d8c79d] bg-white p-5 shadow-sm">
+      <article key={booking.id} className={`${featured ? "patient-portal-upcoming-card h-full bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c]" : "patient-portal-card bg-white"} relative rounded-2xl border border-[#d8c79d] p-5 shadow-sm`}>
+        {featured && (
+          <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]" aria-hidden="true">
+            <div className="absolute inset-0 opacity-40">
+              <svg className="h-full w-full" viewBox="0 0 1000 80" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+                <path d="M-100,60 C150,-10 350,90 550,20 C750,-50 850,100 1150,40" stroke="url(#patientCardSilkWhiteGradient)" strokeWidth="2.5" />
+                <path d="M-50,70 C200,10 400,100 600,30 C800,-40 900,110 1200,50" stroke="url(#patientCardSilkWhiteGradient)" strokeWidth="1" />
+                <defs>
+                  <linearGradient id="patientCardSilkWhiteGradient" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#ffffff" stopOpacity="0.1" />
+                    <stop offset="50%" stopColor="#ffffff" stopOpacity="0.6" />
+                    <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
+            <div className="absolute inset-y-0 left-1/3 w-1/4 skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+          </div>
+        )}
+        <div className={featured ? "patient-portal-upcoming-content relative z-[1]" : undefined}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Janji temu</p>
+            <p className={`text-xs font-bold uppercase tracking-wider ${featured ? "text-[#171717]" : "text-slate-400"}`}>{featured ? "Konsultasi mendatang" : "Janji temu"}</p>
             <h3 className="mt-1 text-base font-bold text-slate-900">
               {booking.plannedTreatments?.map((item) => item.serviceNameSnapshot).filter(Boolean).join(", ") || "Perawatan gigi"}
             </h3>
@@ -595,17 +631,43 @@ export const PatientPortalHome: React.FC = () => {
           <div className="flex items-start gap-2 text-slate-600">
             <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
             <div>
-              <dt className="font-semibold text-slate-400">Waktu</dt>
-              <dd className="mt-0.5 font-medium text-slate-700">{formatAppointmentDate(booking.bookingDateTime)}</dd>
+              <dt className={`font-semibold ${featured ? "text-[#171717]" : "text-slate-400"}`}>Waktu</dt>
+              <dd className={`mt-0.5 font-medium ${featured ? "text-[#171717]" : "text-slate-700"}`}>{formatAppointmentDate(booking.bookingDateTime)}</dd>
             </div>
           </div>
           <div className="flex items-start gap-2 text-slate-600">
-            <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+            {featured ? (
+              <span className="patient-portal-doctor-photo relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#f1e2bb] text-base font-extrabold text-[#684b16] sm:h-24 sm:w-24">
+                {doctorInitials}
+                {doctorPhotoUrl && (
+                  <img
+                    src={doctorPhotoUrl}
+                    alt={`Foto ${bookingDoctor?.name || booking.doctorNameSnapshot || "dokter"}`}
+                    className="absolute inset-0 h-full w-full object-cover"
+                    loading="lazy"
+                    onError={(event) => {
+                      event.currentTarget.style.display = "none";
+                    }}
+                  />
+                )}
+              </span>
+            ) : (
+              <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+            )}
             <div>
-              <dt className="font-semibold text-slate-400">Dokter dan cabang</dt>
-              <dd className="mt-0.5 font-medium text-slate-700">
-                {booking.doctorNameSnapshot || "Dokter"} · {booking.branchNameSnapshot || "Cabang klinik"}
+              <dt className={`font-semibold ${featured ? "text-[#171717]" : "text-slate-400"}`}>{featured ? "Dokter konsultasi" : "Dokter dan cabang"}</dt>
+              <dd className={`mt-0.5 font-medium ${featured ? "text-[#171717]" : "text-slate-700"}`}>
+                {bookingDoctor?.name || booking.doctorNameSnapshot || "Dokter"}
               </dd>
+              {featured && bookingDoctor?.specialization && (
+                <dd className="mt-0.5 text-[11px] text-[#171717]">{bookingDoctor.specialization}</dd>
+              )}
+              {featured && (
+                <dd className="mt-0.5 text-[11px] text-[#171717]">{booking.branchNameSnapshot || "Cabang klinik"}</dd>
+              )}
+              {!featured && (
+                <dd className="mt-0.5 font-medium text-slate-700">{booking.branchNameSnapshot || "Cabang klinik"}</dd>
+              )}
             </div>
           </div>
         </dl>
@@ -633,7 +695,9 @@ export const PatientPortalHome: React.FC = () => {
               </div>
             </div>
             <p className="mt-3 text-[11px] leading-5 text-slate-600">
-              Setelah tiba, minta petugas melakukan check-in resmi mulai 60 menit sebelum sampai 15 menit setelah jadwal. Jika antrean klinik mundur, ikuti estimasi terbaru. Booking tidak otomatis dibatalkan; jika melewati batas, hubungi petugas untuk konfirmasi.
+              {featured
+                ? "Check-in resmi dilakukan petugas setelah Anda tiba, mulai 60 menit sebelum hingga 15 menit setelah jadwal. Jika melewati batas, hubungi petugas; janji tidak otomatis dibatalkan."
+                : "Setelah tiba, minta petugas melakukan check-in resmi mulai 60 menit sebelum sampai 15 menit setelah jadwal. Jika antrean klinik mundur, ikuti estimasi terbaru. Booking tidak otomatis dibatalkan; jika melewati batas, hubungi petugas untuk konfirmasi."}
             </p>
             {arrivalConfirmationError && (
               <p role="alert" className="mt-2 text-[11px] text-rose-700">{arrivalConfirmationError}</p>
@@ -679,12 +743,13 @@ export const PatientPortalHome: React.FC = () => {
             ) : null}
           </div>
         )}
+        </div>
       </article>
       );
     })()
   );
 
-  const renderQueueStatus = (item: QueueItem) => {
+  const renderQueueStatus = (item: QueueItem, featured = false) => {
     const queueDoctorId = item.doctorId.trim().toLowerCase();
     const normalizedQueueDoctorId = queueDoctorId.replace(/^doc-/, "");
     const queueDoctor = doctors.find((doctor) => {
@@ -702,11 +767,13 @@ export const PatientPortalHome: React.FC = () => {
         : "Dokter belum ditentukan");
 
     return (
-    <article key={item.id} className="patient-portal-queue-card rounded-3xl border p-5 sm:p-6">
+    <article key={item.id} className={`patient-portal-queue-card ${featured ? "patient-portal-queue-featured" : ""} rounded-3xl border p-5 sm:p-6`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#76591f]">Antrean klinik</p>
-          <h3 className="mt-1 text-xl font-extrabold tracking-tight text-[#493919]">Nomor antrean {item.queueNumber}</h3>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#76591f]">{featured ? "Status antrean" : "Antrean klinik"}</p>
+          <h3 className={`${featured ? "mt-2 text-4xl" : "mt-1 text-xl"} font-extrabold tracking-tight text-[#493919]`}>
+            {featured ? item.queueNumber : `Nomor antrean ${item.queueNumber}`}
+          </h3>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-[#b28a3d]/30 bg-white/75 px-3 py-1 text-[10px] font-bold text-[#684b16]">
@@ -864,15 +931,31 @@ export const PatientPortalHome: React.FC = () => {
 
   return (
     <main className="patient-portal-shell min-h-screen pb-28 text-slate-900 md:pb-0">
-      <header className="patient-portal-header sticky top-0 z-10 border-b border-[#e3d6b8] bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
+      <header className="patient-portal-header sticky top-0 z-10 min-h-20 border-b border-[#916b1c]/40 bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c]">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+          <div className="absolute inset-0 opacity-40">
+            <svg className="h-full w-full" viewBox="0 0 1000 80" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+              <path d="M-100,60 C150,-10 350,90 550,20 C750,-50 850,100 1150,40" stroke="url(#patientSilkWhiteGradient)" strokeWidth="2.5" />
+              <path d="M-50,70 C200,10 400,100 600,30 C800,-40 900,110 1200,50" stroke="url(#patientSilkWhiteGradient)" strokeWidth="1" />
+              <defs>
+                <linearGradient id="patientSilkWhiteGradient" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity="0.1" />
+                  <stop offset="50%" stopColor="#ffffff" stopOpacity="0.6" />
+                  <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <div className="absolute inset-y-0 left-1/3 w-1/4 skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+        </div>
+        <div className="relative z-[1] mx-auto flex min-h-20 max-w-6xl items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-            <div className="patient-portal-logo-mark flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full">
-              <LalaLogo src={branding?.logoUrl || "/logo-lala.svg"} className="h-full w-full scale-[1.4]" />
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-1 shadow-sm sm:h-11 sm:w-11">
+              <LalaLogo src={branding?.logoUrl || "/logo-lala.svg"} className="h-full w-full scale-[1.25]" />
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-extrabold tracking-tight text-[#59421f] sm:text-base">{clinicName}</p>
-              <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-[#806b42] sm:text-[10px]">Portal Pasien</p>
+            <div className="min-w-0 drop-shadow-[0_1px_2px_rgba(70,50,17,0.25)]">
+              <p className="truncate text-xs font-extrabold tracking-tight text-white sm:text-base">{clinicName}</p>
+              <p className="mt-0.5 text-[8px] font-semibold tracking-wide text-[#fff8e9] sm:text-[10px]">Senyum indah dimulai di Laladentist</p>
             </div>
           </div>
           <nav aria-label="Navigasi portal pasien" className="patient-portal-desktop-nav hidden items-center gap-1 rounded-2xl border p-1 md:flex">
@@ -890,12 +973,12 @@ export const PatientPortalHome: React.FC = () => {
               </button>
             ))}
           </nav>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="hidden text-right sm:block">
-              <span className="block max-w-40 truncate text-xs font-semibold text-slate-700">{patientName}</span>
-              <span className="block text-[10px] text-slate-400">Akun pasien</span>
+          <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/60 bg-white/95 py-1 pl-2 pr-1 shadow-sm sm:gap-2 sm:pl-3 sm:pr-1.5">
+            <span className="block max-w-20 text-right sm:max-w-40">
+              <span className="block truncate text-[9px] font-semibold text-[#806b42] sm:text-[10px]">Halo, Kak</span>
+              <span className="block truncate text-[10px] font-semibold text-[#493919] sm:text-xs">{patientName}</span>
             </span>
-            <span className="patient-portal-avatar flex h-10 w-10 items-center justify-center rounded-full text-sm font-extrabold text-[#684b16]" aria-label={`Inisial ${initials}`}>
+            <span className="patient-portal-avatar flex h-8 w-8 items-center justify-center rounded-full text-xs font-extrabold text-[#684b16] sm:h-9 sm:w-9 sm:text-sm" aria-label={`Inisial ${initials}`}>
               {initials}
             </span>
             <button
@@ -903,7 +986,7 @@ export const PatientPortalHome: React.FC = () => {
               onClick={() => void handleSignOut()}
               disabled={isSigningOut}
               aria-label={isSigningOut ? "Sedang keluar" : "Keluar"}
-              className="patient-portal-signout ml-1 inline-flex h-10 w-10 items-center justify-center rounded-xl border transition disabled:opacity-50 sm:w-auto sm:px-3"
+              className="patient-portal-signout inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 sm:h-9 sm:w-auto sm:rounded-xl sm:px-3"
             >
               <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">{isSigningOut ? "Keluar..." : "Keluar"}</span>
@@ -923,26 +1006,9 @@ export const PatientPortalHome: React.FC = () => {
 
         {section === "home" && (
           <>
-            <div className="patient-portal-welcome mb-5 overflow-hidden rounded-3xl border border-[#eadfc9] bg-white px-5 py-4 shadow-sm sm:px-6 sm:py-5">
-              <div className="relative z-[1] flex items-center gap-3">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#fff8e8] to-[#ead7aa] text-[#92702d] shadow-inner">
-                  <Sparkles className="h-5 w-5" />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#806b42]">Selamat datang kembali</p>
-                  <h1 className="mt-0.5 truncate text-xl font-extrabold tracking-tight text-[#59421f] sm:text-2xl">
-                    Halo Kak <span className="text-[#8a6729]">{patientName}</span>
-                  </h1>
-                  <p className="mt-0.5 font-serif text-sm italic tracking-wide text-[#5c5548] sm:text-base">
-                    Senyum indahmu berawal dari sini
-                  </p>
-                </div>
-              </div>
-              <span className="patient-portal-welcome-orb" aria-hidden="true" />
-            </div>
             <section
-              className={`patient-portal-hero relative flex flex-col justify-end overflow-hidden rounded-[2rem] text-white shadow-lg ${
-                activePromotion ? "min-h-[340px] px-5 pb-7 pt-20 sm:min-h-[380px] sm:px-8 sm:pb-9" : "min-h-[132px] px-5 py-5 sm:px-8 sm:py-6"
+              className={`patient-portal-hero relative flex flex-col justify-end overflow-hidden rounded-[1.5rem] text-white shadow-lg ${
+                activePromotion ? "aspect-[16/8] min-h-[180px] px-4 py-4 sm:aspect-[16/5] sm:min-h-[220px] sm:px-8 sm:py-6" : "min-h-[120px] px-4 py-4 sm:px-8 sm:py-5"
               }`}
               aria-label={activePromotion?.title ? `Promosi: ${activePromotion.title}` : "Informasi portal pasien"}
             >
@@ -974,7 +1040,7 @@ export const PatientPortalHome: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSection("appointments")}
-                  className="patient-portal-booking-cta mt-5 inline-flex items-center gap-2 rounded-full border px-4 py-3 text-xs font-bold transition hover:-translate-y-0.5"
+                  className="patient-portal-booking-cta mt-3 inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-xs font-bold transition hover:-translate-y-0.5"
                 >
                   <CalendarPlus className="h-4 w-4" /> Buat Janji
                 </button>
@@ -1004,56 +1070,119 @@ export const PatientPortalHome: React.FC = () => {
               )}
             </section>
 
-            {currentUser?.patientId && (
-              <section className="mt-4" aria-label="Status antrean pasien">
-                {loadWarnings.includes("queue_items") ? (
-                  <p role="alert" className="rounded-xl bg-red-50 p-4 text-xs text-red-700">Status antrean gagal dimuat. Muat ulang halaman atau coba kembali nanti.</p>
-                ) : activePatientQueue ? (
-                  renderQueueStatus(activePatientQueue)
-                ) : activePatientBooking
-                  && (activePatientBooking.source === BookingSource.PATIENT_PORTAL || activePatientBooking.source === BookingSource.ANDROID) ? (
-                  renderBookingCard(activePatientBooking)
-                ) : (
-                  <article className="patient-portal-queue-card rounded-3xl border p-5">
-                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#76591f]">Antrean klinik</p>
-                    <p className="mt-1 text-xl font-extrabold tracking-tight text-[#493919]">Belum ada antrean aktif</p>
-                    <p className="mt-2 max-w-xl text-sm leading-6 text-[#493919]">Nomor antrean akan tampil di sini setelah check-in di cabang klinik.</p>
-                  </article>
-                )}
-              </section>
-            )}
+            <section className="patient-portal-home-panels mt-5 grid items-stretch gap-4 md:grid-cols-2" aria-label="Antrean dan konsultasi">
+              {loadWarnings.includes("queue_items") ? (
+                <article className="patient-portal-card rounded-3xl border border-rose-200 bg-white p-5 sm:p-6">
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#806326]">Status antrean</p>
+                  <p role="alert" className="mt-3 rounded-xl bg-red-50 p-4 text-xs text-red-700">Status antrean gagal dimuat. Muat ulang halaman atau coba kembali nanti.</p>
+                </article>
+              ) : activePatientQueue ? (
+                renderQueueStatus(activePatientQueue, true)
+              ) : (
+                <article className="patient-portal-queue-panel patient-portal-card overflow-hidden rounded-3xl border border-[#d8c79d] bg-white p-5 sm:p-6">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-[#806326]">Status antrean</p>
+                      <h2 className="mt-1 text-base font-bold text-slate-900">Antrean klinik</h2>
+                    </div>
+                    <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[#fbf5e6] to-[#efe0bd] text-[#876a2d]">
+                      <ListOrdered className="h-5 w-5" />
+                    </span>
+                  </div>
+                  {activePatientBooking ? (
+                    <div className="patient-portal-queue-preview rounded-2xl border p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-semibold text-[#76591f]">Nomor antrean</span>
+                        <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-bold text-[#684b16]">Belum check-in</span>
+                      </div>
+                      <p className="mt-1 text-4xl font-extrabold tracking-tight text-[#493919]">—</p>
+                      <p className="mt-2 text-xs font-semibold text-[#493919]">
+                        {bookingQueueEstimate
+                          ? `Estimasi ${bookingQueueEstimate.patientsAhead} pasien sebelum Anda`
+                          : "Nomor resmi diberikan petugas setelah check-in"}
+                      </p>
+                      {bookingQueueEstimate?.estimatedServiceAt && (
+                        <p className="mt-1 text-[11px] text-[#76591f]">Perkiraan dilayani {formatAppointmentDate(bookingQueueEstimate.estimatedServiceAt)}</p>
+                      )}
+                      <p className="mt-3 border-t border-[#b28a3d]/20 pt-3 text-[10px] leading-5 text-[#76591f]">
+                        {bookingQueueEstimate
+                          ? "Estimasi diperbarui berkala dan dapat berubah mengikuti kondisi klinik."
+                          : "Setelah tiba, minta petugas klinik melakukan check-in resmi."}
+                      </p>
+                      {bookingQueueEstimateError && (
+                        <p role="alert" className="mt-2 text-[11px] text-rose-700">{bookingQueueEstimateError}</p>
+                      )}
+                    </div>
+                  ) : currentUser?.patientId ? (
+                    <div className="patient-portal-queue-preview rounded-2xl border p-4">
+                      <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-bold text-[#684b16]">Belum ada antrean aktif</span>
+                      <p className="mt-3 text-sm font-semibold text-[#493919]">Nomor antrean tampil setelah check-in di klinik.</p>
+                      <button
+                        type="button"
+                        onClick={() => setSection("appointments")}
+                        className="patient-portal-primary mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition hover:brightness-95"
+                      >
+                        <CalendarPlus className="h-4 w-4" /> Buat janji
+                      </button>
+                    </div>
+                  ) : (
+                    renderLinkNotice("Status antrean")
+                  )}
+                </article>
+              )}
 
-            <section className="mt-6 grid gap-4 lg:grid-cols-[1.35fr_0.85fr]">
+              <div className="patient-portal-consultation-panel">
+                {isLoadingBookings ? (
+                  <div className="h-full rounded-3xl border border-[#d8c79d] bg-white p-5 text-xs text-slate-500">Memuat janji temu...</div>
+                ) : upcomingBooking || activePatientBooking ? (
+                  renderBookingCard(upcomingBooking || activePatientBooking!, true)
+                ) : currentUser?.patientId ? (
+                  <article className="patient-portal-upcoming-empty flex h-full min-h-52 flex-col items-start justify-between rounded-3xl border p-5 sm:p-6">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-[#806326]">Konsultasi mendatang</p>
+                      <h2 className="mt-2 text-lg font-bold text-[#493919]">Belum ada jadwal konsultasi</h2>
+                      <p className="mt-2 text-xs leading-5 text-[#76591f]">Janji temu yang dikonfirmasi klinik akan tampil di sini.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSection("appointments")}
+                      className="patient-portal-primary mt-5 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition hover:brightness-95"
+                    >
+                      <CalendarPlus className="h-4 w-4" /> Buat janji
+                    </button>
+                  </article>
+                ) : (
+                  renderLinkNotice("Jadwal dan riwayat janji temu")
+                )}
+                {upcomingBooking && (
+                  <button
+                    type="button"
+                    onClick={() => setSection("appointments")}
+                    className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-[#806326] hover:underline"
+                  >
+                    Buka semua janji temu <span aria-hidden="true">→</span>
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section className="mt-4 grid gap-4 lg:grid-cols-[1.35fr_0.85fr]">
               <article className="patient-portal-card rounded-3xl border border-[#e8dcc2] bg-white p-5 sm:p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Janji temu</p>
-                    <h2 className="mt-1 text-lg font-bold text-slate-900">Jadwal berikutnya</h2>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Aktivitas</p>
+                    <h2 className="mt-1 text-lg font-bold text-slate-900">Riwayat perawatan</h2>
                   </div>
                   <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#fbf5e6] to-[#efe0bd] text-[#876a2d]">
-                    <CalendarDays className="h-5 w-5" />
+                    <History className="h-5 w-5" />
                   </span>
-                </div>
-                <div className="mt-5">
-                  {isLoadingBookings ? (
-                    <p className="rounded-xl bg-slate-50 px-4 py-5 text-xs text-slate-500">Memuat janji temu...</p>
-                  ) : upcomingBooking ? (
-                    renderBookingCard(upcomingBooking)
-                  ) : currentUser?.patientId ? (
-                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5">
-                      <p className="text-sm font-semibold text-slate-800">Belum ada janji temu mendatang</p>
-                      <p className="mt-1 text-xs leading-5 text-slate-500">Janji temu yang sudah dibuat akan tampil di sini.</p>
-                    </div>
-                  ) : (
-                    renderLinkNotice("Jadwal dan riwayat janji temu")
-                  )}
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSection("appointments")}
+                  onClick={() => setSection("history")}
                   className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-[#806326] hover:underline"
                 >
-                  Buka semua janji temu <span aria-hidden="true">→</span>
+                  Buka riwayat perawatan <span aria-hidden="true">→</span>
                 </button>
               </article>
 

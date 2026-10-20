@@ -57,6 +57,7 @@ export const TreatmentManagement: React.FC = () => {
   // Create Modal state
   const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
   const [selectedVisitId, setSelectedVisitId] = useState<string>("");
+  const [lockedVisitId, setLockedVisitId] = useState<string | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
   const [estimatedDuration, setEstimatedDuration] = useState<number>(30);
@@ -382,6 +383,7 @@ export const TreatmentManagement: React.FC = () => {
     if (!eligibleVisits.some((visit) => visit.id === requestedVisitId)) return;
 
     processedVisitQuery.current = requestedVisitId;
+    setLockedVisitId(requestedVisitId);
     setSelectedVisitId(requestedVisitId);
     const queueItem = queueItems.find((item) => item.visitId === requestedVisitId);
     const visit = eligibleVisits.find((item) => item.id === requestedVisitId);
@@ -831,7 +833,8 @@ export const TreatmentManagement: React.FC = () => {
                     setSelectedDoctorId("");
                   }}
                   required
-                  className="w-full border border-slate-200 rounded-lg p-2 text-xs bg-white text-slate-800 focus:ring-2 focus:ring-teal-500"
+                  disabled={Boolean(lockedVisitId)}
+                  className="w-full border border-slate-200 rounded-lg p-2 text-xs bg-white text-slate-800 focus:ring-2 focus:ring-teal-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-600"
                 >
                   <option value="">-- Pilih Visit --</option>
                   {eligibleVisits.map((v) => (
@@ -840,6 +843,11 @@ export const TreatmentManagement: React.FC = () => {
                     </option>
                   ))}
                 </select>
+                {lockedVisitId && (
+                  <p className="mt-1.5 text-[11px] text-slate-500">
+                    Visit dikunci sesuai pasien yang dipilih dari antrean. Kembali ke daftar antrean untuk memilih pasien lain.
+                  </p>
+                )}
                 {eligibleVisits.length === 0 && (
                   <p className="mt-1.5 text-[11px] text-amber-700">
                     Belum ada pasien check-in dengan antrean aktif. Pasien baru muncul di sini setelah check-in pada menu Antrean.

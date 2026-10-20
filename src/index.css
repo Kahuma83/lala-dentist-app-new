@@ -103,13 +103,14 @@
 
 .patient-auth-submit,
 .patient-portal-primary {
-  background: linear-gradient(110deg, #80602a 0%, #a9873f 48%, #c9aa66 100%);
+  background: linear-gradient(110deg, #916b1c 0%, #ebd4a8 48%, #e1b951 72%, #916b1c 100%);
+  color: #493919 !important;
   box-shadow: 0 6px 16px rgba(108, 79, 30, 0.24);
 }
 
 .patient-auth-submit:hover,
 .patient-portal-primary:hover {
-  background: linear-gradient(110deg, #6f5122 0%, #987738 50%, #b99753 100%);
+  background: linear-gradient(110deg, #795816 0%, #d9bf8f 48%, #d3a92f 72%, #795816 100%);
   box-shadow: 0 8px 20px rgba(108, 79, 30, 0.3);
 }
 
@@ -125,7 +126,7 @@
 }
 
 .patient-portal-header {
-  box-shadow: 0 5px 20px rgba(73, 57, 29, 0.08);
+  box-shadow: 0 4px 12px rgba(73, 57, 29, 0.2);
 }
 
 .patient-portal-logo-mark {
@@ -143,47 +144,19 @@
 }
 
 .patient-portal-signout {
-  border-color: rgba(161, 122, 48, 0.55);
-  color: #76591f;
-  background: linear-gradient(145deg, #fffefa, #f4ead2);
+  border-color: rgba(145, 107, 28, 0.42);
+  color: #684b16;
+  background: linear-gradient(145deg, #fffefa, #f5e8c5);
   box-shadow: 0 3px 8px rgba(96, 72, 29, 0.11);
 }
 
 .patient-portal-signout:hover {
-  background: linear-gradient(145deg, #f5e8c5, #e7d19b);
+  background: linear-gradient(145deg, #f5e8c5, #e1b951);
 }
 
-.patient-portal-welcome {
-  position: relative;
-  isolation: isolate;
-  border-color: rgba(165, 130, 60, 0.6);
-  background:
-    radial-gradient(ellipse at 88% 0%, rgba(255, 255, 255, 0.72), transparent 32%),
-    radial-gradient(circle at 100% 100%, rgba(209, 175, 98, 0.23), transparent 38%),
-    linear-gradient(115deg, #fffefa 0%, #f7edda 58%, #e8d29d 100%);
-  box-shadow: 0 10px 24px rgba(91, 68, 27, 0.16), inset 0 1px rgba(255, 255, 255, 0.9);
-}
-
-.patient-portal-welcome h1,
 .patient-portal-page-heading h1 {
   font-family: "Aptos Display", "Segoe UI Variable Display", "Segoe UI", sans-serif;
   letter-spacing: -0.035em;
-}
-
-.patient-portal-welcome p:last-of-type {
-  font-family: Georgia, "Times New Roman", serif;
-}
-
-.patient-portal-welcome-orb {
-  position: absolute;
-  z-index: 0;
-  top: -2.75rem;
-  right: -1rem;
-  width: 7rem;
-  height: 7rem;
-  border: 1px solid rgba(161, 132, 77, 0.12);
-  border-radius: 9999px;
-  box-shadow: 0 0 0 1rem rgba(161, 132, 77, 0.035), 0 0 0 2rem rgba(161, 132, 77, 0.025);
 }
 
 .patient-portal-page-heading {
@@ -213,7 +186,7 @@
 }
 
 .patient-portal-promo-overlay {
-  background: linear-gradient(180deg, rgba(255, 250, 234, 0.06) 0%, rgba(248, 235, 201, 0.08) 56%, rgba(75, 55, 22, 0.42) 100%);
+  background: linear-gradient(90deg, rgba(45, 32, 12, 0.58) 0%, rgba(62, 45, 18, 0.3) 58%, rgba(75, 55, 22, 0.08) 100%);
 }
 
 .patient-portal-promo-title,
@@ -253,6 +226,68 @@
   background-size: auto, auto, 17px 17px, auto;
   border-color: rgba(151, 113, 43, 0.72);
   box-shadow: 0 12px 30px rgba(110, 83, 35, 0.16), inset 0 1px rgba(255, 255, 255, 0.9);
+}
+
+.patient-portal-queue-featured,
+.patient-portal-queue-panel,
+.patient-portal-consultation-panel {
+  min-width: 0;
+  height: 100%;
+}
+
+.patient-portal-queue-featured {
+  min-height: 100%;
+  padding: 1.25rem;
+}
+
+.patient-portal-queue-preview {
+  min-height: 10rem;
+  border-color: rgba(151, 113, 43, 0.35);
+  background:
+    radial-gradient(ellipse at 90% 0%, rgba(255, 255, 255, 0.9), transparent 42%),
+    linear-gradient(125deg, #f5e8c8 0%, #fffaf0 55%, #ead7aa 100%);
+}
+
+.patient-portal-upcoming-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: rgba(145, 107, 28, 0.55);
+  box-shadow: 0 12px 30px rgba(110, 83, 35, 0.2), inset 0 1px rgba(255, 255, 255, 0.45);
+}
+
+.patient-portal-upcoming-content {
+  color: #171717;
+  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.patient-portal-upcoming-content h3,
+.patient-portal-upcoming-content dt,
+.patient-portal-upcoming-content dd {
+  font-family: inherit;
+  letter-spacing: 0;
+}
+
+.patient-portal-consultation-panel {
+  order: 1;
+}
+
+.patient-portal-queue-featured,
+.patient-portal-queue-panel {
+  order: 2;
+}
+
+.patient-portal-doctor-photo {
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(151, 113, 43, 0.3), 0 4px 10px rgba(91, 68, 27, 0.12);
+}
+
+.patient-portal-upcoming-empty {
+  border-color: rgba(151, 113, 43, 0.55);
+  background: linear-gradient(135deg, #fffefa 0%, #f7edda 62%, #ead7aa 100%);
+  box-shadow: 0 10px 28px rgba(67, 53, 28, 0.09);
 }
 
 .patient-portal-desktop-nav {

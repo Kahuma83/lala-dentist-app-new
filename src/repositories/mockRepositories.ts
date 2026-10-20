@@ -2700,6 +2700,51 @@ export class MockQueueRepository implements QueueRepository {
     return { ...item };
   }
 
+  async cancelQueuePatient(
+    queueId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<QueueItem> {
+    const item = db.queueItems.find((queueItem) => queueItem.id === queueId);
+    if (!item) throw new Error("Antrean tidak ditemukan");
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
+      throw new Error("Branch Admin tidak dapat mengelola antrean cabang lain");
+    }
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+      throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
+    }
+
+    item.status = QueueStatus.CANCELLED;
+    item.updatedAt = AppClock.nowISO();
+    const operationalDate = (item.arrivalAt || item.checkInTime || "").split("T")[0];
+    await this.recalculateQueue(item.branchId, item.doctorId, operationalDate);
+    return { ...item };
+  }
+
+  async restoreQueueStatus(
+    queueId: string,
+    status: QueueStatus,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<QueueItem> {
+    const item = db.queueItems.find((queueItem) => queueItem.id === queueId);
+    if (!item) throw new Error("Antrean tidak ditemukan");
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
+      throw new Error("Branch Admin tidak dapat mengelola antrean cabang lain");
+    }
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+      throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
+    }
+
+    item.status = status;
+    item.updatedAt = AppClock.nowISO();
+    const operationalDate = (item.arrivalAt || item.checkInTime || "").split("T")[0];
+    await this.recalculateQueue(item.branchId, item.doctorId, operationalDate);
+    return { ...item };
+  }
+
   async removeQueuePatient(
     queueId: string,
     currentUserRole?: UserRole,

@@ -9,10 +9,10 @@ import {
   DentalBranch,
   Booking,
   BookingStatus,
+  BookingSource,
   MedicalRecord,
   MedicalRecordStatus,
-  TreatmentJob,
-  MasterService
+  TreatmentJob
 } from "../types/domain";
 import {
   Search,
@@ -26,7 +26,6 @@ import {
   CheckCircle,
   Clock,
   UserPlus,
-  Footprints,
   Eye,
   Edit2,
   Lock,
@@ -50,10 +49,8 @@ import { formatRupiah, formatDate, formatDateTime } from "../utils/formatter";
 import { PatientExcelModal } from "../components/PatientExcelModal";
 import { ImportPatientExecutionResult } from "../utils/excelPatientUtils";
 import { useRouter } from "../components/Router";
-import { TreatmentPicker } from "../components/TreatmentPicker";
-import { getPlannedTreatmentDurationMinutes, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
-import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
-import { getActiveDoctorsForSchedule } from "../utils/doctorScheduleUtils";
+import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
+import { hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 import { getOperationalDateString } from "../utils/dateUtils";
 import {
   getRMConfig,
@@ -67,9 +64,8 @@ import {
 } from "../utils/rmUtils";
 
 export const PatientManagement: React.FC = () => {
-  const { currentUser, repos, branches, patients, visits, bookings, doctors, doctorSchedules, staff, refreshData } = useApp();
+  const { currentUser, repos, branches, patients, visits, bookings, staff, refreshData } = useApp();
   const { path, navigate } = useRouter();
-  const canRecordVisitPlan = currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN;
   const checkInRoutePrefix = currentUser?.role === UserRole.SUPER_ADMIN
     ? "/super-admin"
     : currentUser?.role === UserRole.BRANCH_ADMIN
@@ -101,7 +97,6 @@ export const PatientManagement: React.FC = () => {
   // Modals visibility
   const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
   const [isEditPatientOpen, setIsEditPatientOpen] = useState(false);
-  const [isWalkInOpen, setIsWalkInOpen] = useState(false);
   const [isBookingVisitOpen, setIsBookingVisitOpen] = useState(false);
   const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
   const [excelModalTab, setExcelModalTab] = useState<"export" | "import">("import");
@@ -147,40 +142,11 @@ export const PatientManagement: React.FC = () => {
     hasDuplicates: boolean;
   } | null>(null);
 
-  // Walk-In Registration Form State
-  const [walkInForm, setWalkInForm] = useState({
-    patientId: "",
-    branchId: currentUser?.role === UserRole.BRANCH_ADMIN ? (currentUser.assignedBranchId || "") : (branches[0]?.id || ""),
-    doctorId: "",
-    complaint: ""
-  });
-  const [walkInPlannedServices, setWalkInPlannedServices] = useState<MasterService[]>([]);
-  const walkInAvailableDoctors = getActiveDoctorsForSchedule(
-    doctors,
-    doctorSchedules || [],
-    walkInForm.branchId,
-    getOperationalDateString(new Date().toISOString()),
-    branches
-  );
-
   useEffect(() => {
     if (currentUser?.role === UserRole.BRANCH_ADMIN && selectedBranchFilter === "ALL") {
       setSelectedBranchFilter("ALL");
     }
   }, [currentUser?.role, currentUser?.assignedBranchId, selectedBranchFilter]);
-
-  useEffect(() => {
-    if (!isWalkInOpen) return;
-    if (walkInAvailableDoctors.some((doctor) => doctor.id === walkInForm.doctorId)) return;
-    setWalkInForm((previous) => ({ ...previous, doctorId: walkInAvailableDoctors[0]?.id || "" }));
-  }, [isWalkInOpen, walkInAvailableDoctors, walkInForm.doctorId]);
-
-  // Walk-In Success Confirmation State
-  const [walkInConfirmation, setWalkInConfirmation] = useState<{
-    visit: PatientVisit;
-    patient: PatientProfile;
-    branchName: string;
-  } | null>(null);
 
   // Booking Visit Registration Form State
   const [bookingVisitForm, setBookingVisitForm] = useState({
@@ -215,13 +181,6 @@ export const PatientManagement: React.FC = () => {
   // Patient Deletion State
   const [patientToDelete, setPatientToDelete] = useState<PatientProfile | null>(null);
   const [isDeletingPatient, setIsDeletingPatient] = useState(false);
-
-  // Synchronize Walk-In Branch ID if user context changes
-  useEffect(() => {
-    if (currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.assignedBranchId) {
-      setWalkInForm((prev) => ({ ...prev, branchId: currentUser.assignedBranchId! }));
-    }
-  }, [currentUser]);
 
   // Load patient's visits when selectedPatient changes
   useEffect(() => {
@@ -494,11 +453,6 @@ export const PatientManagement: React.FC = () => {
         setFormSuccess(newP.medicalRecordNumber
           ? `Pasien baru berhasil didaftarkan dengan Nomor RM: ${newP.medicalRecordNumber}`
           : "Pasien baru berhasil didaftarkan. Nomor RM akan diterbitkan saat check-in pertama.");
-        // Auto select new patient if Walk-In modal is pending
-        if (isWalkInOpen) {
-          setWalkInForm((prev) => ({ ...prev, patientId: newP.id }));
-        }
-
         // If custom manual RM was entered and higher than starting counter, automatically advance counter
         const extracted = extractNumberFromRM(rmToSubmit);
         if (extracted !== null && extracted >= rmConfigForm.startingNumber) {
@@ -578,96 +532,11 @@ export const PatientManagement: React.FC = () => {
     }
   };
 
-  const handleOpenWalkIn = (p?: PatientProfile) => {
-    const params = new URLSearchParams({ mode: "walkin" });
+  const handleOpenWalkInSchedule = (p?: PatientProfile) => {
+    if (!checkInRoutePrefix) return;
+    const params = new URLSearchParams({ source: BookingSource.WALK_IN });
     if (p) params.set("patientId", p.id);
-    navigateToCheckIn(params);
-  };
-
-  // Submit Walk-In Registration
-  const handleSubmitWalkIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
-    setIsSubmitting(true);
-
-    try {
-      if (!walkInForm.patientId) {
-        throw new Error("Silakan pilih pasien terlebih dahulu.");
-      }
-      if (!walkInForm.branchId) {
-        throw new Error("Silakan pilih cabang kunjungan.");
-      }
-      if (!walkInAvailableDoctors.some((doctor) => doctor.id === walkInForm.doctorId)) {
-        throw new Error("Pilih dokter dengan jadwal aktif di cabang ini hari ini.");
-      }
-
-      const referenceTime = new Date().toISOString();
-      const latestBookings = await repos.booking.getBookingsByBranch(
-        walkInForm.branchId,
-        currentUser?.role,
-        currentUser?.assignedBranchId
-      );
-      if (hasActiveBookingForPatientOnDate(latestBookings, walkInForm.patientId, walkInForm.branchId, referenceTime)) {
-        throw new Error("Pasien ini sudah memiliki booking aktif hari ini. Catat kedatangannya melalui booking agar tidak terdaftar dua kali.");
-      }
-      const branchQueue = await repos.queue.getQueueByBranch(
-        walkInForm.branchId,
-        currentUser?.role,
-        currentUser?.assignedBranchId
-      );
-      if (hasActiveQueueForPatientOnDate(branchQueue, walkInForm.patientId, walkInForm.branchId, referenceTime)) {
-        throw new Error("Pasien ini sudah berada di antrean aktif hari ini.");
-      }
-
-      // Create WALK_IN Visit (bookingId MUST be null)
-      const createdVisit = await repos.visit.createVisit(
-        {
-          patientId: walkInForm.patientId,
-          branchId: walkInForm.branchId,
-          visitType: VisitType.WALK_IN,
-          visitStatus: VisitStatus.WAITING,
-          bookingId: null, // STRICT RULE: Walk-in has null bookingId
-          doctorId: walkInForm.doctorId,
-          complaint: walkInForm.complaint,
-          plannedTreatments: snapshotPlannedTreatments(walkInPlannedServices),
-          visitDateTime: new Date().toISOString()
-        },
-        currentUser?.role,
-        currentUser?.assignedBranchId
-      );
-
-      // Automatically check-in visit into live queue
-      await repos.queue.checkInVisitToQueue(
-        createdVisit.id,
-        currentUser?.role,
-        currentUser?.assignedBranchId,
-        {
-          estimatedDurationMinutes: getPlannedTreatmentDurationMinutes(createdVisit.plannedTreatments),
-          plannedTreatments: createdVisit.plannedTreatments,
-          doctorId: createdVisit.doctorId
-        }
-      );
-
-      const targetPatient = await repos.patient.getPatientById(walkInForm.patientId)
-        || patients.find((p) => p.id === walkInForm.patientId);
-      const targetBranch = branches.find((b) => b.id === walkInForm.branchId);
-
-      await refreshData();
-
-      if (targetPatient && targetBranch) {
-        setWalkInConfirmation({
-          visit: createdVisit,
-          patient: targetPatient,
-          branchName: targetBranch.name
-        });
-      }
-
-      setFormSuccess("Pasien Walk-In berhasil didaftarkan ke antrean.");
-    } catch (err: any) {
-      setFormError(err.message || "Gagal mendaftarkan kunjungan Walk-In.");
-    } finally {
-      setIsSubmitting(false);
-    }
+    navigate(`${checkInRoutePrefix}/bookings?${params.toString()}`);
   };
 
   const handleOpenBookingVisit = () => {
@@ -942,11 +811,11 @@ export const PatientManagement: React.FC = () => {
           {checkInRoutePrefix && (
             <>
               <button
-                onClick={() => handleOpenWalkIn()}
+                onClick={() => handleOpenWalkInSchedule()}
                 className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all transform active:scale-95"
                 id="btn-walkin-quick"
               >
-                <Footprints className="w-4 h-4" /> Pasien Walk-In
+                <Calendar className="w-4 h-4" /> Jadwalkan Walk-In
               </button>
 
               <button
@@ -1144,11 +1013,11 @@ export const PatientManagement: React.FC = () => {
                               </button>
                               {checkInRoutePrefix && (
                                 <button
-                                  onClick={() => handleOpenWalkIn(p)}
+                                  onClick={() => handleOpenWalkInSchedule(p)}
                                   className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded text-[11px] font-semibold transition-colors flex items-center gap-1"
-                                  title="Lanjutkan ke halaman Check-In"
+                                  title="Buat jadwal Walk-In untuk pasien ini"
                                 >
-                                  <Footprints className="w-3 h-3" /> Check-In
+                                  <Calendar className="w-3 h-3" /> Jadwalkan
                                 </button>
                               )}
                               {currentUser?.role !== UserRole.DOCTOR_ASSISTANT && currentUser?.role !== UserRole.DOCTOR && (
@@ -1255,10 +1124,10 @@ export const PatientManagement: React.FC = () => {
                 </h3>
                 {checkInRoutePrefix && (
                   <button
-                    onClick={() => handleOpenWalkIn(selectedPatient)}
+                    onClick={() => handleOpenWalkInSchedule(selectedPatient)}
                     className="text-[11px] font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1"
                   >
-                    + Check-In
+                    + Jadwalkan Walk-In
                   </button>
                 )}
               </div>
@@ -1848,202 +1717,6 @@ export const PatientManagement: React.FC = () => {
                       {isSubmitting ? "Menyimpan..." : "Simpan Pasien"}
                     </button>
                   </div>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================== */}
-      {/* MODAL 2: WALK-IN REGISTRATION MODAL        */}
-      {/* ========================================== */}
-      {isWalkInOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 animate-scale-in">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Footprints className="w-4 h-4 text-amber-500" /> Registrasi Pasien Walk-In
-              </h2>
-              <button onClick={() => setIsWalkInOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Walk-in Success Confirmation Screen */}
-            {walkInConfirmation ? (
-              <div className="space-y-4 text-center py-2" id="walkin-success-modal">
-                <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 mx-auto">
-                  <CheckCircle className="w-6 h-6 animate-bounce" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800">Walk-In Berhasil Didaftarkan!</h3>
-                  <p className="text-xs text-slate-500 mt-1">Kunjungan langsung tanpa booking telah dicatat ke sistem.</p>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl text-left text-xs space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Nama Pasien:</span>
-                    <strong className="text-slate-800">{walkInConfirmation.patient.fullName || walkInConfirmation.patient.name}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Nomor RM:</span>
-                    <strong className="font-mono text-slate-800">{walkInConfirmation.patient.medicalRecordNumber || "Belum diterbitkan"}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Cabang Kunjungan:</span>
-                    <strong className="text-slate-800">{walkInConfirmation.branchName}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Tipe Visit:</span>
-                    <strong className="text-amber-600 font-bold">WALK_IN (bookingId = null)</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Waktu Kedatangan:</span>
-                    <span className="text-slate-700">{formatDateTime(walkInConfirmation.visit.visitDateTime)}</span>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setIsWalkInOpen(false);
-                    setWalkInConfirmation(null);
-                  }}
-                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs transition-colors"
-                >
-                  Tutup & Kembali
-                </button>
-              </div>
-            ) : (
-              /* Walk-In Form */
-              <form onSubmit={handleSubmitWalkIn} className="space-y-3 text-xs" id="form-walkin">
-                {formError && (
-                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />
-                    <span>{formError}</span>
-                  </div>
-                )}
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-slate-700">Pilih Pasien Terdaftar</label>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAddPatient()}
-                      className="text-[11px] text-emerald-600 hover:underline font-bold"
-                    >
-                      + Pasien Baru
-                    </button>
-                  </div>
-                  <select
-                    value={walkInForm.patientId}
-                    onChange={(e) => setWalkInForm({ ...walkInForm, patientId: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    id="select-walkin-patient"
-                  >
-                    {patients.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.fullName || p.name} ({p.medicalRecordNumber || "No RM"}) - {p.phone}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Cabang Kunjungan
-                    {currentUser?.role === UserRole.BRANCH_ADMIN && (
-                      <span className="text-slate-400 font-normal text-[10px] ml-1">(Locked: Branch Admin Scope)</span>
-                    )}
-                  </label>
-                  {currentUser?.role === UserRole.BRANCH_ADMIN ? (
-                    <div className="bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-slate-700 font-bold flex items-center justify-between">
-                      <span>{branches.find((b) => b.id === currentUser.assignedBranchId)?.name || "Cabang Anda"}</span>
-                      <Lock className="w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  ) : (
-                    <select
-                      value={walkInForm.branchId}
-                      onChange={(e) => setWalkInForm({ ...walkInForm, branchId: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                      id="select-walkin-branch"
-                    >
-                      {branches.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Dokter Pemeriksa (Jadwal Aktif Hari Ini)</label>
-                  {walkInAvailableDoctors.length > 0 ? (
-                    <select
-                      value={walkInForm.doctorId}
-                      onChange={(e) => setWalkInForm({ ...walkInForm, doctorId: e.target.value })}
-                      required
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    >
-                      <option value="">-- Pilih Dokter Terjadwal --</option>
-                      {walkInAvailableDoctors.map((doctor) => (
-                        <option key={doctor.id} value={doctor.id}>{doctor.name}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="p-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-[11px]">
-                      Tidak ada dokter dengan jadwal aktif di cabang ini hari ini.
-                    </p>
-                  )}
-                </div>
-
-                {canRecordVisitPlan && (
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Rencana Tindakan untuk Estimasi Antrean</label>
-                    <TreatmentPicker
-                      multiSelect
-                      selectedServiceIds={walkInPlannedServices.map((service) => service.id)}
-                      onSelectServices={setWalkInPlannedServices}
-                      branchId={walkInForm.branchId}
-                    />
-                    <p className="text-[11px] text-emerald-800 font-semibold mt-2">
-                      Total estimasi rencana: {getPlannedTreatmentDurationMinutes(snapshotPlannedTreatments(walkInPlannedServices), 0)} menit
-                      {walkInPlannedServices.length === 0 ? " (belum dipilih; antrean memakai default 30 menit)" : ""}
-                    </p>
-                  </div>
-                )}
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Keluhan Pasien (Walk-In)</label>
-                  <textarea
-                    rows={2}
-                    value={walkInForm.complaint}
-                    onChange={(e) => setWalkInForm({ ...walkInForm, complaint: e.target.value })}
-                    placeholder="Sakit gigi geraham, mau scaling langsung, dll..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  />
-                </div>
-
-                <div className="p-3 bg-amber-50 border border-amber-100 rounded-lg text-[11px] text-amber-800 leading-relaxed">
-                  <strong>Prinsip Domain:</strong> Kunjungan Walk-In secara otomatis diatur dengan <code className="font-mono bg-amber-100 px-1 rounded">visitType = WALK_IN</code> dan <code className="font-mono bg-amber-100 px-1 rounded">bookingId = null</code>. Tidak membuat data Booking buatan.
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => setIsWalkInOpen(false)}
-                    className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-semibold"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmitting || !walkInAvailableDoctors.length || !walkInForm.doctorId}
-                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold transition-all disabled:opacity-50"
-                  >
-                    {isSubmitting ? "Mendaftarkan..." : "Daftarkan Walk-In"}
-                  </button>
                 </div>
               </form>
             )}

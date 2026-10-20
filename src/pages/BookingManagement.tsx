@@ -47,7 +47,7 @@ import { useRouter } from "../components/Router";
 import { TreatmentPicker } from "../components/TreatmentPicker";
 import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
 import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
-import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
+import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate, isActiveQueueStatus } from "../utils/bookingQueueGuards";
 
 const addCalendarDays = (date: string, days: number) => {
   const value = new Date(`${date}T12:00:00Z`);
@@ -153,6 +153,10 @@ export const BookingManagement: React.FC = () => {
 
   const [bookingToCancel, setBookingToCancel] = useState<Booking | null>(null);
   const [isCancellingBooking, setIsCancellingBooking] = useState<boolean>(false);
+  const [bookingToClose, setBookingToClose] = useState<Booking | null>(null);
+  const [isClosingBooking, setIsClosingBooking] = useState(false);
+  const [bookingCloseError, setBookingCloseError] = useState<string | null>(null);
+  const [bookingCloseFeedback, setBookingCloseFeedback] = useState<{ bookingId: string; message: string } | null>(null);
 
   const effectiveBranchId = currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId : (branchFilter !== "ALL" ? branchFilter : selectedBranchId);
   const patientProfileForDetail = selectedBooking
@@ -454,6 +458,30 @@ export const BookingManagement: React.FC = () => {
     });
     return ids;
   }, [queueItems, visits]);
+
+  const getStaleBookingCloseBlockReason = (booking: Booking): string | null => {
+    if (
+      (booking.status !== BookingStatus.PENDING && booking.status !== BookingStatus.CONFIRMED) ||
+      getOperationalDateString(booking.bookingDateTime) >= getTodayDateString()
+    ) {
+      return "Hanya booking aktif yang tanggalnya sudah lewat yang dapat ditutup.";
+    }
+    if (completedBookingIds.has(booking.id)) {
+      return "Kunjungan ini sudah selesai atau dilewati. Riwayatnya tidak dapat dibatalkan dari sini.";
+    }
+
+    const linkedVisits = visits.filter((visit) => visit.bookingId === booking.id);
+    if (!linkedVisits.some((visit) => visit.visitStatus !== VisitStatus.COMPLETED && visit.visitStatus !== VisitStatus.CANCELLED)) {
+      return "Kunjungan aktif yang terkait booking ini tidak ditemukan.";
+    }
+
+    const linkedVisitIds = new Set(linkedVisits.map((visit) => visit.id));
+    const activeQueueItems = queueItems.filter((item) =>
+      (item.bookingId === booking.id || linkedVisitIds.has(item.visitId)) &&
+      isActiveQueueStatus(item.status)
+    );
+    return null;
+  };
 
   // Calculate statistics for active, completed, cancelled
   const bookingStats = useMemo(() => {
@@ -819,6 +847,144 @@ export const BookingManagement: React.FC = () => {
       console.error("Gagal membatalkan booking:", err);
     } finally {
       setIsCancellingBooking(false);
+    }
+  };
+
+  const handleCloseStaleBooking = async () => {
+    if (!bookingToClose) return;
+    setIsClosingBooking(true);
+    setBookingCloseError(null);
+
+    try {
+      const [latestBooking, latestVisits, latestQueueItems] = await Promise.all([
+        repos.booking.getBookingById(bookingToClose.id, currentUser?.role, currentUser?.assignedBranchId),
+        repos.visit.getVisits(),
+        repos.queue.getQueueItems()
+      ]);
+
+      if (!latestBooking) throw new Error("Booking tidak ditemukan. Muat ulang halaman dan periksa kembali.");
+      if (
+        (latestBooking.status !== BookingStatus.PENDING && latestBooking.status !== BookingStatus.CONFIRMED) ||
+        getOperationalDateString(latestBooking.bookingDateTime) >= getTodayDateString()
+      ) {
+        throw new Error("Booking ini tidak lagi memenuhi syarat untuk ditutup.");
+      }
+
+      const linkedVisits = latestVisits.filter((visit) => visit.bookingId === latestBooking.id);
+      const activeVisits = linkedVisits.filter((visit) =>
+        visit.visitStatus !== VisitStatus.COMPLETED && visit.visitStatus !== VisitStatus.CANCELLED
+      );
+      const linkedVisitIds = new Set(linkedVisits.map((visit) => visit.id));
+
+      if (activeVisits.length === 0) {
+        throw new Error("Tidak ditemukan kunjungan aktif yang perlu ditutup.");
+      }
+      if (latestVisits.some((visit) => visit.bookingId === latestBooking.id && visit.visitStatus === VisitStatus.COMPLETED)) {
+        throw new Error("Booking memiliki kunjungan yang sudah selesai dan tidak dapat ditutup melalui tindakan ini.");
+      }
+
+      const activeQueueItems = latestQueueItems.filter((item) =>
+        (item.bookingId === latestBooking.id || linkedVisitIds.has(item.visitId)) &&
+        isActiveQueueStatus(item.status)
+      );
+
+      const visitsBeingUpdated: PatientVisit[] = [];
+      const queuesBeingUpdated: Array<{ id: string; status: QueueStatus }> = [];
+      try {
+        for (const queueItem of activeQueueItems) {
+          const previousStatus = Object.values(QueueStatus).find((status) => status === queueItem.status);
+          if (!previousStatus) {
+            throw new Error(`Status antrean ${queueItem.queueNumber} tidak dikenali dan tidak dapat dibatalkan dengan aman.`);
+          }
+          queuesBeingUpdated.push({ id: queueItem.id, status: previousStatus });
+          await repos.queue.cancelQueuePatient(
+            queueItem.id,
+            currentUser?.role,
+            currentUser?.assignedBranchId,
+            currentUser?.id
+          );
+        }
+        for (const visit of activeVisits) {
+          visitsBeingUpdated.push(visit);
+          await repos.visit.updateVisitStatus(
+            visit.id,
+            VisitStatus.CANCELLED,
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+        }
+        await repos.booking.updateBooking(
+          latestBooking.id,
+          { status: BookingStatus.CANCELLED },
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      } catch (updateError) {
+        const rollbackFailures: string[] = [];
+        try {
+          await repos.booking.updateBooking(
+            latestBooking.id,
+            { status: latestBooking.status },
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+        } catch (rollbackError) {
+          rollbackFailures.push(latestBooking.id);
+          console.error(`Gagal memulihkan status booking ${latestBooking.id}:`, rollbackError);
+        }
+        for (const queueItem of [...queuesBeingUpdated].reverse()) {
+          try {
+            await repos.queue.restoreQueueStatus(
+              queueItem.id,
+              queueItem.status,
+              currentUser?.role,
+              currentUser?.assignedBranchId,
+              currentUser?.id
+            );
+          } catch (rollbackError) {
+            rollbackFailures.push(queueItem.id);
+            console.error(`Gagal memulihkan status antrean ${queueItem.id}:`, rollbackError);
+          }
+        }
+        for (const visit of [...visitsBeingUpdated].reverse()) {
+          try {
+            await repos.visit.updateVisitStatus(
+              visit.id,
+              visit.visitStatus,
+              currentUser?.role,
+              currentUser?.assignedBranchId
+            );
+          } catch (rollbackError) {
+            rollbackFailures.push(visit.id);
+            console.error(`Gagal memulihkan status kunjungan ${visit.id}:`, rollbackError);
+          }
+        }
+
+        if (rollbackFailures.length > 0) {
+          throw new Error("Penutupan booking gagal dan sebagian status booking, antrean, atau kunjungan mungkin belum pulih. Periksa kembali data sebelum mencoba lagi.");
+        }
+        throw updateError;
+      }
+
+      const successMessage = "Jadwal lama berhasil dibatalkan, termasuk antrean aktif terkait. Profil pasien dan riwayat tetap tersimpan.";
+      setBookings((current) => current.map((booking) =>
+        booking.id === latestBooking.id ? { ...booking, status: BookingStatus.CANCELLED } : booking
+      ));
+      setVisits((current) => current.map((visit) =>
+        visit.bookingId === latestBooking.id && visit.visitStatus !== VisitStatus.COMPLETED && visit.visitStatus !== VisitStatus.CANCELLED
+          ? { ...visit, visitStatus: VisitStatus.CANCELLED }
+          : visit
+      ));
+      setSelectedBooking({ ...latestBooking, status: BookingStatus.CANCELLED });
+      setBookingCloseFeedback({ bookingId: latestBooking.id, message: successMessage });
+      setBookingToClose(null);
+      await loadData();
+    } catch (error) {
+      console.error("Gagal menutup booking lama:", error);
+      setBookingCloseError(error instanceof Error ? error.message : "Gagal menutup booking lama. Silakan coba lagi.");
+      await loadData();
+    } finally {
+      setIsClosingBooking(false);
     }
   };
 
@@ -2498,8 +2664,36 @@ export const BookingManagement: React.FC = () => {
                       ? "Jadwal ini sudah selesai dilayani, jadi tidak dapat dijadwalkan ulang."
                       : "Pasien sudah Check-In, jadi jadwal ini tidak dapat dijadwalkan ulang."}
                   </p>
+                  {checkedInBookingIds.has(selectedBooking.id) &&
+                    !completedBookingIds.has(selectedBooking.id) &&
+                    getOperationalDateString(selectedBooking.bookingDateTime) < getTodayDateString() && (() => {
+                      const closeBlockReason = getStaleBookingCloseBlockReason(selectedBooking);
+                      return (
+                    <button
+                      type="button"
+                      disabled={Boolean(closeBlockReason)}
+                      onClick={() => {
+                        setBookingCloseError(null);
+                        setBookingToClose(selectedBooking);
+                      }}
+                      className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-600 px-4 py-3 text-left text-white shadow-sm transition hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:shadow-none"
+                    >
+                      <span className="block text-xs font-bold">Batalkan Jadwal Tertinggal</span>
+                      <span className={`mt-1 block text-[10px] leading-relaxed ${closeBlockReason ? "text-slate-600" : "text-rose-50"}`}>
+                        {closeBlockReason || "Batalkan booking dan antrean aktif terkait; profil serta riwayat pasien tetap disimpan."}
+                      </span>
+                    </button>
+                      );
+                    })()}
                 </div>
               )}
+            {bookingCloseFeedback?.bookingId === selectedBooking.id && (
+              <div role="status" className="border-t border-emerald-100 bg-white p-4">
+                <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  {bookingCloseFeedback.message}
+                </p>
+              </div>
+            )}
           </aside>
         </div>
       )}
@@ -2622,6 +2816,73 @@ export const BookingManagement: React.FC = () => {
       )}
 
       {/* Check-in Modal */}
+      {bookingToClose && (
+        <div
+          className="fixed inset-0 z-[210] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="close-stale-booking-title"
+          onClick={() => !isClosingBooking && setBookingToClose(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {(() => {
+              const linkedVisitIds = new Set(
+                visits.filter((visit) => visit.bookingId === bookingToClose.id).map((visit) => visit.id)
+              );
+              const hasInConsultationQueue = queueItems.some((item) =>
+                (item.bookingId === bookingToClose.id || linkedVisitIds.has(item.visitId)) &&
+                item.status === QueueStatus.IN_CONSULTATION
+              );
+              return (
+                <>
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+              <XCircle className="h-6 w-6" />
+            </div>
+            <h3 id="close-stale-booking-title" className="text-center text-base font-bold text-slate-900">
+              {hasInConsultationQueue ? "Batalkan Walau Berstatus Konsultasi?" : "Tutup Booking Tertinggal?"}
+            </h3>
+            <p className="mt-2 text-center text-xs leading-relaxed text-slate-600">
+              Booking <strong>{bookingToClose.patientNameSnapshot || "Pasien"}</strong> tanggal{" "}
+              <strong>{formatIndonesianDate(getOperationalDateString(bookingToClose.bookingDateTime))}</strong> akan
+              dibatalkan bersama antrean dan kunjungan aktif terkait. Data profil dan riwayat tetap disimpan.
+            </p>
+            {hasInConsultationQueue && (
+              <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                Perhatian: status antrean menunjukkan pasien sedang dalam konsultasi. Gunakan pembatalan paksa ini hanya jika status tersebut tertinggal dan pasien sudah tidak sedang dilayani.
+              </p>
+            )}
+            {bookingCloseError && (
+              <p role="alert" className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {bookingCloseError}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={isClosingBooking}
+                onClick={() => setBookingToClose(null)}
+                className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50"
+              >
+                Kembali
+              </button>
+              <button
+                type="button"
+                disabled={isClosingBooking}
+                onClick={handleCloseStaleBooking}
+                className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-rose-700 disabled:cursor-wait disabled:opacity-50"
+              >
+                {isClosingBooking ? "Membatalkan..." : hasInConsultationQueue ? "Ya, Batalkan Paksa" : "Ya, Tutup Booking"}
+              </button>
+            </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
       {/* Modal Konfirmasi Batalkan Booking */}
       {bookingToCancel && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">

@@ -57,10 +57,12 @@ export enum ConfirmationStatusH1 {
 
 export enum QueueStatus {
   WAITING = "WAITING",
+  CALLING = "CALLING",
   IN_PREPARATION = "IN_PREPARATION",
   IN_CONSULTATION = "IN_CONSULTATION",
   COMPLETED = "COMPLETED",
-  SKIPPED = "SKIPPED"
+  SKIPPED = "SKIPPED",
+  CANCELLED = "CANCELLED"
 }
 
 export enum TreatmentJobStatus {

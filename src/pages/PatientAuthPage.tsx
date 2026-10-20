@@ -261,19 +261,19 @@ export const PatientAuthPage: React.FC<{ installOnly?: boolean }> = ({ installOn
                 <LalaLogo src={logoUrl} className="h-full w-full object-contain p-2" />
               )}
             </div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-[#174d49]">Laladentist</h1>
+            <h1 className="text-2xl font-extrabold tracking-tight text-[#5a421f]">Laladentist</h1>
             <p className="mt-2 text-sm leading-6 text-slate-600">Pasang aplikasi agar lebih mudah membuka layanan pasien.</p>
             <button
               type="button"
               onClick={handleInstallApp}
-              className="mt-7 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#087f78] px-5 py-3 text-sm font-bold text-white shadow-md transition hover:bg-[#066d67]"
+              className="patient-portal-primary mt-7 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition hover:brightness-95"
             >
               <Download className="h-4 w-4" />
               Pasang
             </button>
             <a
               href="/patient/login"
-              className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-[#d5e9e3] bg-white px-5 py-3 text-sm font-bold text-[#087f78] transition hover:bg-[#f4fbf9]"
+              className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-[#d7c18f] bg-white px-5 py-3 text-sm font-bold text-[#80602a] transition hover:bg-[#fffaf0]"
             >
               Login
             </a>
@@ -313,7 +313,7 @@ export const PatientAuthPage: React.FC<{ installOnly?: boolean }> = ({ installOn
             <div className="mb-6 rounded-2xl border border-[#e7dec9] bg-[#fffdf8] p-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#edf1e9] text-[#315744]">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f7edda] text-[#8a6f27]">
                     <Smartphone className="h-4 w-4" />
                   </span>
                   <div>
@@ -324,7 +324,7 @@ export const PatientAuthPage: React.FC<{ installOnly?: boolean }> = ({ installOn
                 <button
                   type="button"
                   onClick={handleInstallApp}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#254d40] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#193a31]"
+                  className="patient-portal-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[10px] font-bold transition hover:brightness-95"
                 >
                   <Download className="h-3.5 w-3.5" />
                   Pasang
