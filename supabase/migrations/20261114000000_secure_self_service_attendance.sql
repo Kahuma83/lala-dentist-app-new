@@ -90,6 +90,9 @@ ALTER TABLE public.attendances
   DROP CONSTRAINT IF EXISTS attendances_location_valid;
 
 ALTER TABLE public.attendances
+  DROP CONSTRAINT IF EXISTS attendances_checkout_location_valid;
+
+ALTER TABLE public.attendances
   ADD CONSTRAINT attendances_location_valid
   CHECK (
     (check_in_latitude IS NULL AND check_in_longitude IS NULL AND check_in_accuracy_meters IS NULL)
