@@ -48,7 +48,6 @@ export const Compensation: React.FC = () => {
     configRepo,
     branchRepo,
     accountingRepo,
-    accountingPostingService,
     refreshData
   } = useApp();
   const { navigate } = useRouter();
@@ -61,7 +60,6 @@ export const Compensation: React.FC = () => {
   const [branches, setBranches] = useState<DentalBranch[]>([]);
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [syncingAccruals, setSyncingAccruals] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"RULES" | "ACCRUALS">("RULES");
@@ -140,23 +138,6 @@ export const Compensation: React.FC = () => {
     return journals.find(
       (j) => j.sourceType === JournalSourceType.COMPENSATION && j.sourceId === accrualId
     );
-  };
-
-  const handleSyncAccrual = async (accrualId: string) => {
-    setSyncingId(accrualId);
-    try {
-      await accountingPostingService.postCompensation(
-        accrualId,
-        currentUser?.role,
-        currentUser?.branchId,
-        currentUser?.name || "Admin"
-      );
-      await loadData();
-    } catch (err: any) {
-      setErrorMessage(err.message || "Gagal memposting kompensasi ke akuntansi");
-    } finally {
-      setSyncingId(null);
-    }
   };
 
   const getBranchName = (branchId?: string | null) => {
@@ -767,15 +748,12 @@ export const Compensation: React.FC = () => {
                               {jrn.journalNumber}
                             </button>
                           ) : (
-                            <button
-                              onClick={() => handleSyncAccrual(a.id)}
-                              disabled={syncingId === a.id}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors disabled:opacity-50"
-                              title="Post kompensasi ke akuntansi"
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200"
+                              title="Jurnal kompensasi diposting melalui payroll"
                             >
-                              <RefreshCw className={`w-3 h-3 ${syncingId === a.id ? "animate-spin" : ""}`} />
-                              Sync Jurnal
-                            </button>
+                              Menunggu payroll
+                            </span>
                           )}
                           {currentUser?.role === UserRole.SUPER_ADMIN && (
                             <button
@@ -1041,7 +1019,7 @@ export const Compensation: React.FC = () => {
             </h3>
             <p className="text-xs text-slate-600 text-center mt-2 leading-relaxed">
               Apakah Anda yakin ingin menghapus catatan akrual kompensasi sebesar{" "}
-              <strong>Rp {accrualToDelete.amount.toLocaleString("id-ID")}</strong>? Tindakan ini tidak dapat dibatalkan.
+              <strong>Rp {accrualToDelete.amount.toLocaleString("id-ID")}</strong>? Akrual yang sudah masuk payroll atau memiliki jurnal tidak dapat dihapus.
             </p>
             <div className="mt-6 flex items-center justify-end gap-3">
               <button

@@ -10,6 +10,9 @@ export interface ParsedPatientRow {
   dateOfBirth: string; // YYYY-MM-DD
   phone: string;
   email?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  emergencyContactRelationship?: string;
   address: string;
   medicalHistoryNotes?: string;
   registeredBranchId?: string;
@@ -132,6 +135,9 @@ export function exportPatientsToExcel(
       "Usia": age,
       "Nomor Telepon / WhatsApp": p.phone || "-",
       "Email": p.email || "-",
+      "Nama Kontak Darurat": p.emergencyContactName || "-",
+      "Telepon Kontak Darurat": p.emergencyContactPhone || "-",
+      "Hubungan Kontak Darurat": p.emergencyContactRelationship || "-",
       "Alamat Lengkap": p.address || "-",
       "Riwayat Medis / Alergi": p.medicalHistoryNotes || "-",
       "Cabang Terdaftar": branch ? branch.name : "Lintas Cabang / Pusat",
@@ -151,6 +157,9 @@ export function exportPatientsToExcel(
     { wch: 8 },
     { wch: 18 },
     { wch: 24 },
+    { wch: 24 },
+    { wch: 18 },
+    { wch: 22 },
     { wch: 32 },
     { wch: 28 },
     { wch: 22 },
@@ -178,6 +187,9 @@ export function downloadPatientExcelTemplate(): void {
       "Tanggal Lahir (YYYY-MM-DD) *": "1990-05-15",
       "Nomor Telepon / WhatsApp *": "081234567890",
       "Email": "budi.santoso@gmail.com",
+      "Nama Kontak Darurat": "Siti Santoso",
+      "Telepon Kontak Darurat": "081234567891",
+      "Hubungan Kontak Darurat": "Ibu",
       "Alamat Lengkap": "Jl. Kalimantan No. 45, Sumbersari, Jember",
       "Riwayat Medis / Alergi": "Alergi obat Amoxicillin",
       "Cabang (Gebang / Kampus / Ambulu / Kencong / Lengkong / Muktisari)": "Gebang"
@@ -189,6 +201,9 @@ export function downloadPatientExcelTemplate(): void {
       "Tanggal Lahir (YYYY-MM-DD) *": "1996-11-20",
       "Nomor Telepon / WhatsApp *": "085712345678",
       "Email": "siti.nur@gmail.com",
+      "Nama Kontak Darurat": "Nurhaliza",
+      "Telepon Kontak Darurat": "085712345679",
+      "Hubungan Kontak Darurat": "Ibu",
       "Alamat Lengkap": "Jl. Mastrip Timur No. 10, Jember",
       "Riwayat Medis / Alergi": "Riwayat hipertensi ringan",
       "Cabang (Gebang / Kampus / Ambulu / Kencong / Lengkong / Muktisari)": "Kampus"
@@ -200,6 +215,9 @@ export function downloadPatientExcelTemplate(): void {
       "Tanggal Lahir (YYYY-MM-DD) *": "2002-03-08",
       "Nomor Telepon / WhatsApp *": "082198765432",
       "Email": "ahmad.fauzi@yahoo.com",
+      "Nama Kontak Darurat": "",
+      "Telepon Kontak Darurat": "",
+      "Hubungan Kontak Darurat": "",
       "Alamat Lengkap": "Jl. Gajah Mada No. 88, Kaliwates, Jember",
       "Riwayat Medis / Alergi": "Tidak ada alergi",
       "Cabang (Gebang / Kampus / Ambulu / Kencong / Lengkong / Muktisari)": "Ambulu"
@@ -215,6 +233,9 @@ export function downloadPatientExcelTemplate(): void {
     { wch: 26 },
     { wch: 26 },
     { wch: 25 },
+    { wch: 24 },
+    { wch: 20 },
+    { wch: 24 },
     { wch: 38 },
     { wch: 28 },
     { wch: 32 }
@@ -263,6 +284,9 @@ export async function parsePatientExcelFile(
     const rmKey = findKey(row, ["norm", "rekam", "medicalrecord", "rm", "nomorrm"]);
     const phoneKey = findKey(row, ["telepon", "phone", "hp", "wa", "whatsapp", "kontak", "nohp"]);
     const emailKey = findKey(row, ["email", "surel", "mail"]);
+    const emergencyNameKey = findKey(row, ["namakontakdarurat", "kontakdaruratnama", "emergencycontactname"]);
+    const emergencyPhoneKey = findKey(row, ["teleponkontakdarurat", "nomorkontakdarurat", "emergencycontactphone"]);
+    const emergencyRelationshipKey = findKey(row, ["hubungankontakdarurat", "hubungandarurat", "emergencycontactrelationship"]);
     const dobKey = findKey(row, ["lahir", "dob", "birth", "tgllahir", "tanggallahir"]);
     const genderKey = findKey(row, ["gender", "kelamin", "jk", "sex", "jeniskelamin"]);
     const addressKey = findKey(row, ["alamat", "address", "domisili", "kota"]);
@@ -277,6 +301,9 @@ export async function parsePatientExcelFile(
     const rawRM = rmKey ? String(row[rmKey]).trim() : "";
     const rawPhone = phoneKey ? normalizePhone(row[phoneKey]) : "";
     const rawEmail = emailKey ? String(row[emailKey]).trim() : "";
+    const rawEmergencyName = emergencyNameKey ? String(row[emergencyNameKey]).trim() : "";
+    const rawEmergencyPhone = emergencyPhoneKey ? normalizePhone(row[emergencyPhoneKey]) : "";
+    const rawEmergencyRelationship = emergencyRelationshipKey ? String(row[emergencyRelationshipKey]).trim() : "";
     const rawDob = dobKey ? normalizeDate(row[dobKey]) : "1995-01-01";
     const rawGender = genderKey ? normalizeGender(row[genderKey]) : "L";
     const rawAddress = addressKey ? String(row[addressKey]).trim() : "";
@@ -381,6 +408,9 @@ export async function parsePatientExcelFile(
       dateOfBirth: rawDob,
       phone: rawPhone,
       email: rawEmail || undefined,
+      emergencyContactName: rawEmergencyName || undefined,
+      emergencyContactPhone: rawEmergencyPhone || undefined,
+      emergencyContactRelationship: rawEmergencyRelationship || undefined,
       address: rawAddress || "-",
       medicalHistoryNotes: rawNotes || undefined,
       registeredBranchId: branchId,
@@ -486,7 +516,11 @@ export async function executePatientImport(
           continue;
         } else if (options.duplicateStrategy === "update") {
           // Fetch the freshest notes from database/repository to append rather than overwrite
-          const freshPatient = await patientRepo.getPatientById(activeMatch.id);
+          const freshPatient = await patientRepo.getPatientById(
+            activeMatch.id,
+            options.currentUserRole,
+            options.userBranchId
+          );
           const currentNotes = freshPatient?.medicalHistoryNotes || activeMatch.medicalHistoryNotes || "";
           
           let mergedNotes = currentNotes;
@@ -505,6 +539,9 @@ export async function executePatientImport(
               fullName: row.name,
               phone: row.phone || activeMatch.phone,
               email: row.email || activeMatch.email,
+              emergencyContactName: row.emergencyContactName || activeMatch.emergencyContactName,
+              emergencyContactPhone: row.emergencyContactPhone || activeMatch.emergencyContactPhone,
+              emergencyContactRelationship: row.emergencyContactRelationship || activeMatch.emergencyContactRelationship,
               dateOfBirth: row.dateOfBirth || activeMatch.dateOfBirth,
               gender: row.gender || activeMatch.gender,
               address: row.address !== "-" ? row.address : activeMatch.address,
@@ -531,6 +568,9 @@ export async function executePatientImport(
           medicalRecordNumber: rmToUse,
           phone: row.phone,
           email: row.email || "",
+          emergencyContactName: row.emergencyContactName || "",
+          emergencyContactPhone: row.emergencyContactPhone || "",
+          emergencyContactRelationship: row.emergencyContactRelationship || "",
           dateOfBirth: row.dateOfBirth,
           gender: row.gender,
           address: row.address || "-",

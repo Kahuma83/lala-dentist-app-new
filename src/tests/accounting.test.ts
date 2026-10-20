@@ -474,7 +474,7 @@ describe("Accounting Phase 1: Chart of Accounts, Journal Engine & General Ledger
     expect(fetched).toBeNull();
   });
 
-  it("Test 21: Void a POSTED journal with reason and audit trail", async () => {
+  it("Test 21: Reject voiding a POSTED journal until reversal is supported", async () => {
     const draft = await accountingRepo.createDraftJournal(
       {
         journalDate: "2026-03-31",
@@ -491,27 +491,16 @@ describe("Accounting Phase 1: Chart of Accounts, Journal Engine & General Ledger
 
     await accountingRepo.postJournal(draft.id, "Drg. Syarif", UserRole.SUPER_ADMIN);
 
-    const voided = await accountingRepo.voidJournal(
-      draft.id,
-      "Drg. Syarif",
-      "Koreksi: Salah input cabang transaksi",
-      UserRole.SUPER_ADMIN
-    );
-
-    expect(voided.status).toBe(JournalStatus.VOID);
-    expect(voided.voidedBy).toBe("Drg. Syarif");
-    expect(voided.voidReason).toBe("Koreksi: Salah input cabang transaksi");
-    expect(voided.voidedAt).toBeDefined();
-
-    // Reject voiding twice
     await expect(
       accountingRepo.voidJournal(
         draft.id,
         "Drg. Syarif",
-        "Void lagi",
+        "Koreksi: Salah input cabang transaksi",
         UserRole.SUPER_ADMIN
       )
-    ).rejects.toThrow(/sudah dalam status VOID/i);
+    ).rejects.toThrow(/jurnal pembalik/i);
+
+    expect((await accountingRepo.getJournalById(draft.id))?.status).toBe(JournalStatus.POSTED);
   });
 
   // =========================================================================

@@ -86,6 +86,8 @@ import {
   ConfirmationStatusH1,
   QueueStatus,
   TreatmentJobStatus,
+  ClinicalConsentDocument,
+  ClinicalConsentScope,
   AccountType,
   NormalBalance,
   AccountCategory,
@@ -112,6 +114,7 @@ import {
   ClinicBranding,
   MediaUploadResult,
   MedicalRecord,
+  PatientMedicalProfile,
   MedicalRecordStatus,
   PromotionMedia,
   BackupJob,
@@ -133,6 +136,24 @@ import { toOperationalDateTime } from "../utils/dateUtils";
 
 const db = MockDatabase.getInstance();
 
+function canReadPatientMedicalNotes(
+  patient: PatientProfile,
+  currentUserRole?: UserRole,
+  userBranchId?: string | null
+): boolean {
+  if (currentUserRole === UserRole.SUPER_ADMIN) return true;
+  if (currentUserRole !== UserRole.DOCTOR || !userBranchId) return false;
+  if (
+    patient.registeredBranchId === userBranchId ||
+    patient.branch_id === userBranchId ||
+    patient.assignedBranchId === userBranchId ||
+    patient.branchId === userBranchId
+  ) {
+    return true;
+  }
+  return db.visits.some((visit) => visit.patientId === patient.id && visit.branchId === userBranchId);
+}
+
 export class MockPatientRepository implements PatientRepository {
   async getPatients(currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]> {
     const hasExplicitBranchMetadata = db.patients.some(
@@ -151,22 +172,38 @@ export class MockPatientRepository implements PatientRepository {
       db.bookings.filter((b) => b.branchId === userBranchId).forEach((b) => { if (b.patientId) branchPatientIds.add(b.patientId); });
       db.queueItems.filter((q) => q.branchId === userBranchId).forEach((q) => { if (q.patientId) branchPatientIds.add(q.patientId); });
       db.treatmentJobs.filter((t) => t.branchId === userBranchId).forEach((t) => { if (t.patientId) branchPatientIds.add(t.patientId); });
-      return db.patients.filter((p) => 
+      const patients = db.patients.filter((p) =>
         branchPatientIds.has(p.id) ||
         p.registeredBranchId === userBranchId ||
         p.branch_id === userBranchId ||
         p.assignedBranchId === userBranchId ||
         p.branchId === userBranchId
       );
+      return patients.map((patient) =>
+        canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
+          ? { ...patient }
+          : { ...patient, medicalHistoryNotes: undefined }
+      );
     }
 
     // Branch Admins and super-admins should see the full global patient registry by default.
-    return [...db.patients];
+    return db.patients.map((patient) =>
+      canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
+        ? { ...patient }
+        : { ...patient, medicalHistoryNotes: undefined }
+    );
   }
 
-  async getPatientById(id: string): Promise<PatientProfile | null> {
+  async getPatientById(
+    id: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientProfile | null> {
     const patient = db.patients.find((p) => p.id === id);
-    return patient ? { ...patient } : null;
+    if (!patient) return null;
+    return canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
+      ? { ...patient }
+      : { ...patient, medicalHistoryNotes: undefined };
   }
 
   async searchPatients(query: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]> {
@@ -218,7 +255,7 @@ export class MockPatientRepository implements PatientRepository {
 
   async createPatient(
     patientData: Omit<PatientProfile, "id" | "medicalRecordNumber" | "createdAt" | "updatedAt"> & { id?: string; medicalRecordNumber?: string; registeredBranchId?: string; branch_id?: string; assignedBranchId?: string; branchId?: string },
-    _currentUserRole?: UserRole,
+    currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<PatientProfile> {
     const nameToUse = (patientData.fullName || patientData.name || "").trim();
@@ -227,6 +264,19 @@ export class MockPatientRepository implements PatientRepository {
     }
 
     const effBranch = patientData.registeredBranchId || (patientData as any).branch_id || (patientData as any).assignedBranchId || (patientData as any).branchId || userBranchId || undefined;
+    if (
+      patientData.medicalHistoryNotes?.trim() &&
+      (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN)
+    ) {
+      throw new Error("Riwayat medis hanya dapat diubah oleh Dokter atau Super Admin.");
+    }
+    if (
+      patientData.medicalHistoryNotes?.trim() &&
+      currentUserRole === UserRole.DOCTOR &&
+      (!userBranchId || effBranch !== userBranchId)
+    ) {
+      throw new Error("Dokter hanya dapat mengubah riwayat medis dalam cabang yang diizinkan.");
+    }
 
     // Keep new records unnumbered until a visit is checked in.
     let finalRM = patientData.medicalRecordNumber ? patientData.medicalRecordNumber.trim() : "";
@@ -247,6 +297,9 @@ export class MockPatientRepository implements PatientRepository {
       fullName: nameToUse,
       phone: patientData.phone || "",
       email: patientData.email || "",
+      emergencyContactName: patientData.emergencyContactName?.trim() || "",
+      emergencyContactPhone: patientData.emergencyContactPhone?.trim() || "",
+      emergencyContactRelationship: patientData.emergencyContactRelationship?.trim() || "",
       identityDocumentType: patientData.identityDocumentType,
       identityDocumentNumber: patientData.identityDocumentNumber?.trim() || "",
       placeOfBirth: patientData.placeOfBirth?.trim() || "",
@@ -276,14 +329,30 @@ export class MockPatientRepository implements PatientRepository {
 
   async updatePatient(
     id: string,
-    updates: Partial<Omit<PatientProfile, "id" | "createdAt" | "updatedAt">> & { registeredBranchId?: string; branch_id?: string; assignedBranchId?: string; branchId?: string }
+    updates: Partial<Omit<PatientProfile, "id" | "createdAt" | "updatedAt">> & { registeredBranchId?: string; branch_id?: string; assignedBranchId?: string; branchId?: string },
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
   ): Promise<PatientProfile> {
+    if (
+      updates.medicalHistoryNotes?.trim() &&
+      currentUserRole !== UserRole.DOCTOR &&
+      currentUserRole !== UserRole.SUPER_ADMIN
+    ) {
+      throw new Error("Riwayat medis hanya dapat diubah oleh Dokter atau Super Admin.");
+    }
     const index = db.patients.findIndex((p) => p.id === id);
     if (index === -1) {
       throw new Error("Patient not found");
     }
 
     const existing = db.patients[index];
+    if (
+      updates.medicalHistoryNotes?.trim() &&
+      currentUserRole === UserRole.DOCTOR &&
+      !canReadPatientMedicalNotes(existing, currentUserRole, userBranchId)
+    ) {
+      throw new Error("Dokter hanya dapat mengubah riwayat medis dalam cabang yang diizinkan.");
+    }
 
     if (updates.medicalRecordNumber) {
       const newRM = updates.medicalRecordNumber.trim();
@@ -776,6 +845,11 @@ export class MockDoctorRepository implements DoctorRepository {
     return doctor ? { ...doctor } : null;
   }
 
+  async getDoctorByStaffId(staffId: string): Promise<DentalDoctor | null> {
+    const doctor = db.doctors.find((item: DentalDoctor) => item.staffId === staffId);
+    return doctor ? { ...doctor } : null;
+  }
+
   async getDoctorByCode(code: string): Promise<DentalDoctor | null> {
     const cleanCode = code.trim().toLowerCase();
     const doctor = db.doctors.find(
@@ -1144,6 +1218,14 @@ export class MockStaffRepository implements StaffRepository {
       throw new Error("Kode staff wajib diisi");
     }
 
+    const nik = data.nik?.trim() || null;
+    if (nik && !/^\d{16}$/.test(nik)) {
+      throw new Error("NIK harus terdiri dari 16 digit angka");
+    }
+    if (nik && db.staff.some((s: Staff) => s.nik === nik)) {
+      throw new Error("NIK sudah terdaftar");
+    }
+
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
       if (data.branchId && data.branchId !== userBranchId) {
         throw new Error("Branch Admin hanya dapat mendaftarkan staff untuk cabangnya sendiri");
@@ -1163,6 +1245,7 @@ export class MockStaffRepository implements StaffRepository {
     const newStaff: Staff = {
       id: data.id || `staff-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       employeeCode: data.employeeCode.trim(),
+      nik,
       fullName: data.fullName.trim(),
       phone: data.phone || "",
       position: data.position || StaffPosition.OTHER,
@@ -1207,6 +1290,17 @@ export class MockStaffRepository implements StaffRepository {
       if (existing) {
         throw new Error("Kode staff sudah terdaftar");
       }
+    }
+
+    if (updates.nik !== undefined) {
+      const nik = updates.nik?.trim() || null;
+      if (nik && !/^\d{16}$/.test(nik)) {
+        throw new Error("NIK harus terdiri dari 16 digit angka");
+      }
+      if (nik && db.staff.some((s: Staff) => s.id !== id && s.nik === nik)) {
+        throw new Error("NIK sudah terdaftar");
+      }
+      updates = { ...updates, nik };
     }
 
     let active = current.active;
@@ -4099,6 +4193,14 @@ export class MockCompensationRepository implements CompensationRepository {
     }
     const idx = (db.accruals || []).findIndex((a: CompensationAccrual) => a.id === id);
     if (idx === -1) return false;
+    if ((db.payrollItems || []).some((item: PayrollItem) => item.sourceId === id)) {
+      throw new Error("Akrual ini sudah dimasukkan ke rincian payroll dan tidak dapat dihapus.");
+    }
+    if ((db.journals || []).some((journal: JournalEntry) =>
+      journal.sourceType === JournalSourceType.COMPENSATION && journal.sourceId === id
+    )) {
+      throw new Error("Akrual ini sudah memiliki jurnal akuntansi. Batalkan melalui proses koreksi jurnal sebelum menghapus sumbernya.");
+    }
     db.accruals.splice(idx, 1);
     db.saveToStorage();
     return true;
@@ -4595,6 +4697,14 @@ export class MockPayrollRepository implements PayrollRepository {
     }
     const idx = (db.payrolls || []).findIndex((p: MonthlyPayroll) => p.id === id);
     if (idx === -1) return false;
+    if (db.payrolls[idx].status !== PayrollStatus.DRAFT) {
+      throw new Error("Hanya payroll berstatus DRAFT yang dapat dihapus. Payroll yang sudah masuk tahap Review tidak boleh dihapus.");
+    }
+    if ((db.journals || []).some((journal: JournalEntry) =>
+      journal.sourceType === JournalSourceType.PAYROLL && journal.sourceId === id
+    )) {
+      throw new Error("Payroll ini sudah memiliki jurnal akuntansi dan tidak dapat dihapus sebelum koreksi jurnal diselesaikan.");
+    }
     db.payrolls.splice(idx, 1);
     db.payrollItems = (db.payrollItems || []).filter((item: PayrollItem) => item.payrollId !== id);
     return true;
@@ -5070,17 +5180,19 @@ export class MockAccountingRepository implements AccountingRepository {
           if (j.status === JournalStatus.VOID) return false;
           if (j.sourceType !== data.sourceType || j.sourceId !== data.sourceId) return false;
           
-          if (data.sourceType === JournalSourceType.PAYROLL) {
-            if (data.event && j.event) {
-              if (data.event !== j.event) return false;
-            } else {
-              const isDataAccrual = data.event === "ACCRUAL" || data.description?.includes("Accrual") || data.description?.includes("Akrual");
-              const isDataPayment = data.event === "PAYMENT" || data.description?.includes("Payment") || data.description?.includes("Pembayaran") || data.description?.includes("Paid");
-              const isJAccrual = j.event === "ACCRUAL" || j.description?.includes("Accrual") || j.description?.includes("Akrual");
-              const isJPayment = j.event === "PAYMENT" || j.description?.includes("Payment") || j.description?.includes("Pembayaran") || j.description?.includes("Paid");
-              if (isDataAccrual && isJPayment) return false;
-              if (isDataPayment && isJAccrual) return false;
-            }
+          if (
+            data.sourceType === JournalSourceType.PAYROLL ||
+            data.sourceType === JournalSourceType.EXPENSE
+          ) {
+            const getEvent = (event?: JournalEntry["event"], description?: string) => {
+              if (event) return event;
+              if (description && /(pembayaran|payment|paid)/i.test(description)) return "PAYMENT";
+              if (description && /(akrual|accrual)/i.test(description)) return "ACCRUAL";
+              return null;
+            };
+            const dataEvent = getEvent(data.event, data.description);
+            const existingEvent = getEvent(j.event, j.description);
+            if (dataEvent && existingEvent && dataEvent !== existingEvent) return false;
           }
           return true;
         }
@@ -5253,6 +5365,9 @@ export class MockAccountingRepository implements AccountingRepository {
     if (journal.status === JournalStatus.VOID) {
       throw new Error("Jurnal sudah dalam status VOID");
     }
+    if (journal.status === JournalStatus.POSTED) {
+      throw new Error("Jurnal POSTED tidak dapat di-VOID sebelum tersedia proses jurnal pembalik.");
+    }
 
     const now = AppClock.nowISO();
     journal.status = JournalStatus.VOID;
@@ -5276,8 +5391,8 @@ export class MockAccountingRepository implements AccountingRepository {
     }
 
     const journal = db.journals[index];
-    if (journal.status === JournalStatus.POSTED) {
-      throw new Error("Immutability Violation: Jurnal yang telah diposting (POSTED) tidak dapat dihapus");
+    if (journal.status !== JournalStatus.DRAFT) {
+      throw new Error("Hanya draft jurnal yang dapat dihapus. Jurnal POSTED atau VOID harus dipertahankan sebagai audit trail.");
     }
 
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && journal.branchId !== userBranchId) {
@@ -5298,6 +5413,9 @@ export class MockAccountingRepository implements AccountingRepository {
       return false;
     }
     const journal = db.journals[index];
+    if (journal.status !== JournalStatus.DRAFT) {
+      throw new Error("Hanya draft jurnal yang dapat dihapus. Jurnal POSTED atau VOID harus dipertahankan sebagai audit trail.");
+    }
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && journal.branchId !== userBranchId) {
       throw new Error("Akses ditolak: Branch Admin hanya dapat menghapus jurnal di cabangnya sendiri");
     }
@@ -6513,25 +6631,122 @@ export class MockOvertimeRepository implements OvertimeRepository {
   }
 }
 
+function assertMedicalRecordRole(currentUserRole: UserRole | undefined): void {
+  if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+    throw new Error("Anda tidak memiliki akses ke data ini.");
+  }
+}
+
+function assertMedicalRecordAccess(
+  currentUserRole: UserRole | undefined,
+  userBranchId: string | null | undefined,
+  recordBranchId: string
+): void {
+  assertMedicalRecordRole(currentUserRole);
+  if (currentUserRole === UserRole.SUPER_ADMIN) return;
+  if (!userBranchId || recordBranchId !== userBranchId) {
+    throw new Error("Anda tidak memiliki akses ke data ini.");
+  }
+}
+
 export class MockMedicalRecordRepository implements MedicalRecordRepository {
+  async getConsentDocumentsByVisit(
+    visitId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<ClinicalConsentDocument[]> {
+    assertMedicalRecordRole(currentUserRole);
+    const db = MockDatabase.getInstance();
+    const visit = db.visits.find((item) => item.id === visitId);
+    if (!visit) throw new Error("Data kunjungan tidak ditemukan.");
+    assertMedicalRecordAccess(currentUserRole, userBranchId, visit.branchId);
+    return [];
+  }
+
+  async uploadConsentDocument(
+    _data: {
+      visitId: string;
+      branchId: string;
+      scope: ClinicalConsentScope;
+      treatmentJobId?: string;
+      file: File;
+    },
+    currentUserRole?: UserRole
+  ): Promise<ClinicalConsentDocument> {
+    assertMedicalRecordRole(currentUserRole);
+    throw new Error("Unggah dokumen consent hanya tersedia pada koneksi Supabase.");
+  }
+
+  async downloadConsentDocument(
+    _documentId: string,
+    currentUserRole?: UserRole
+  ): Promise<{ fileName: string; blob: Blob }> {
+    assertMedicalRecordRole(currentUserRole);
+    throw new Error("Unduh dokumen consent hanya tersedia pada koneksi Supabase.");
+  }
+
+  async getPatientMedicalProfile(
+    patientId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ) {
+    assertMedicalRecordRole(currentUserRole);
+    const db = MockDatabase.getInstance();
+    const profile = db.patientMedicalProfiles.find((item) => item.patientId === patientId);
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      const canAccessBranch = profile?.branchId
+        ? profile.branchId === userBranchId
+        : db.visits.some((visit) => visit.patientId === patientId && visit.branchId === userBranchId);
+      if (!userBranchId || !canAccessBranch) throw new Error("Anda tidak memiliki akses ke data ini.");
+    }
+    if (profile) return JSON.parse(JSON.stringify(profile));
+    const patient = db.patients.find((item) => item.id === patientId);
+    return patient
+      ? { patientId, medicalHistoryNotes: patient.medicalHistoryNotes || "" }
+      : null;
+  }
+
+  async savePatientMedicalProfile(
+    profile: PatientMedicalProfile,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ) {
+    assertMedicalRecordRole(currentUserRole);
+    const db = MockDatabase.getInstance();
+    const existing = db.patientMedicalProfiles.find((item) => item.patientId === profile.patientId);
+    const profileBranchId = existing?.branchId ?? profile.branchId;
+    const canAccessBranch = currentUserRole === UserRole.SUPER_ADMIN ||
+      (Boolean(userBranchId) && (
+        profileBranchId
+          ? profileBranchId === userBranchId
+          : db.visits.some((visit) => visit.patientId === profile.patientId && visit.branchId === userBranchId)
+      ));
+    if (!canAccessBranch) throw new Error("Anda tidak memiliki akses ke data ini.");
+
+    const saved = {
+      ...existing,
+      ...profile,
+      branchId: existing?.branchId ?? profile.branchId ?? userBranchId,
+      updatedAt: AppClock.nowISO(),
+      updatedBy: currentUserId || undefined
+    };
+    if (existing) Object.assign(existing, saved);
+    else db.patientMedicalProfiles.push(saved);
+    db.saveToStorage();
+    return JSON.parse(JSON.stringify(saved));
+  }
+
   async getMedicalRecordById(
     id: string,
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<MedicalRecord | null> {
+    assertMedicalRecordRole(currentUserRole);
     const db = MockDatabase.getInstance();
     const record = db.medicalRecords.find((r) => r.id === id);
     if (!record) return null;
-
-    if (
-      (currentUserRole === UserRole.BRANCH_ADMIN ||
-        currentUserRole === UserRole.DOCTOR_ASSISTANT ||
-        currentUserRole === UserRole.DOCTOR) &&
-      userBranchId &&
-      record.branchId !== userBranchId
-    ) {
-      throw new Error("Anda tidak memiliki akses ke data ini.");
-    }
+    assertMedicalRecordAccess(currentUserRole, userBranchId, record.branchId);
 
     return JSON.parse(JSON.stringify(record));
   }
@@ -6541,19 +6756,11 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<MedicalRecord | null> {
+    assertMedicalRecordRole(currentUserRole);
     const db = MockDatabase.getInstance();
     const record = db.medicalRecords.find((r) => r.visitId === visitId);
     if (!record) return null;
-
-    if (
-      (currentUserRole === UserRole.BRANCH_ADMIN ||
-        currentUserRole === UserRole.DOCTOR_ASSISTANT ||
-        currentUserRole === UserRole.DOCTOR) &&
-      userBranchId &&
-      record.branchId !== userBranchId
-    ) {
-      throw new Error("Anda tidak memiliki akses ke data ini.");
-    }
+    assertMedicalRecordAccess(currentUserRole, userBranchId, record.branchId);
 
     return JSON.parse(JSON.stringify(record));
   }
@@ -6563,16 +6770,15 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<MedicalRecord[]> {
+    assertMedicalRecordRole(currentUserRole);
     const db = MockDatabase.getInstance();
     let records = db.medicalRecords.filter((r) => r.patientId === patientId);
-
-    if (
-      (currentUserRole === UserRole.BRANCH_ADMIN ||
-        currentUserRole === UserRole.DOCTOR_ASSISTANT ||
-        currentUserRole === UserRole.DOCTOR) &&
-      userBranchId
-    ) {
+    if (currentUserRole === UserRole.SUPER_ADMIN) {
+      // Super Admin can read across branches.
+    } else if (currentUserRole === UserRole.DOCTOR && userBranchId) {
       records = records.filter((r) => r.branchId === userBranchId);
+    } else {
+      throw new Error("Anda tidak memiliki akses ke data ini.");
     }
 
     records.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -6590,8 +6796,13 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
       anamnesis?: string;
       clinicalExamination?: string;
       diagnosis: string;
+      diagnosisCode?: string;
+      procedureCodes?: string[];
       treatmentPlan?: string;
       doctorNotes?: string;
+      odontogram?: MedicalRecord["odontogram"];
+      vitalSigns?: MedicalRecord["vitalSigns"];
+      medicalHistorySnapshot?: MedicalRecord["medicalHistorySnapshot"];
       status?: MedicalRecordStatus | "DRAFT" | "FINAL";
       customId?: string;
     },
@@ -6599,6 +6810,7 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
     userBranchId?: string | null,
     currentUserId?: string | null
   ): Promise<MedicalRecord> {
+    assertMedicalRecordRole(currentUserRole);
     const db = MockDatabase.getInstance();
 
     const visit = db.visits.find((v) => v.id === data.visitId);
@@ -6610,13 +6822,16 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
       throw new Error("Pasien tidak sesuai dengan kunjungan.");
     }
 
-    if (
-      (currentUserRole === UserRole.BRANCH_ADMIN ||
-        currentUserRole === UserRole.DOCTOR_ASSISTANT ||
-        currentUserRole === UserRole.DOCTOR) &&
-      userBranchId &&
-      (visit.branchId !== userBranchId || data.branchId !== userBranchId)
-    ) {
+    if (visit.branchId !== data.branchId) {
+      throw new Error("Cabang tidak sesuai dengan kunjungan.");
+    }
+    assertMedicalRecordAccess(currentUserRole, userBranchId, visit.branchId);
+    const targetStatus = data.status || MedicalRecordStatus.DRAFT;
+    if (targetStatus === MedicalRecordStatus.FINAL && currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat menandatangani & memfinalisasi rekam medis.");
+    }
+
+    if (targetStatus !== MedicalRecordStatus.DRAFT && targetStatus !== MedicalRecordStatus.FINAL) {
       throw new Error("Anda tidak memiliki akses ke data ini.");
     }
 
@@ -6629,18 +6844,30 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
 
     if (existingIndex >= 0) {
       const existing = db.medicalRecords[existingIndex];
+      if (existing.status === MedicalRecordStatus.FINAL || existing.isLocked) {
+        throw new Error("Rekam medis final terkunci; gunakan addendum untuk koreksi.");
+      }
       existing.chiefComplaint = data.chiefComplaint;
       existing.anamnesis = data.anamnesis || existing.anamnesis || "";
       existing.clinicalExamination = data.clinicalExamination || existing.clinicalExamination || "";
       existing.diagnosis = data.diagnosis;
+      existing.diagnosisCode = data.diagnosisCode;
+      existing.procedureCodes = data.procedureCodes || [];
       existing.treatmentPlan = data.treatmentPlan || existing.treatmentPlan || "";
       existing.doctorNotes = data.doctorNotes || existing.doctorNotes || "";
-      existing.status = data.status || existing.status || MedicalRecordStatus.DRAFT;
+      existing.odontogram = data.odontogram || existing.odontogram || { schemaVersion: 1, teeth: {} };
+      existing.vitalSigns = data.vitalSigns || {};
+      existing.medicalHistorySnapshot = data.medicalHistorySnapshot || existing.medicalHistorySnapshot;
+      existing.status = targetStatus;
+      existing.signedByDoctorId = targetStatus === MedicalRecordStatus.FINAL ? data.doctorId : undefined;
+      existing.signedAt = targetStatus === MedicalRecordStatus.FINAL ? nowIso : undefined;
+      existing.isLocked = targetStatus === MedicalRecordStatus.FINAL;
       existing.updatedAt = nowIso;
       existing.patientNameSnapshot = patientName;
       existing.doctorNameSnapshot = doctorName;
       existing.branchNameSnapshot = branchName;
 
+      db.saveToStorage();
       return JSON.parse(JSON.stringify(existing));
     } else {
       const newRecord: MedicalRecord = {
@@ -6653,9 +6880,18 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
         anamnesis: data.anamnesis || "",
         clinicalExamination: data.clinicalExamination || "",
         diagnosis: data.diagnosis,
+        diagnosisCode: data.diagnosisCode,
+        procedureCodes: data.procedureCodes || [],
         treatmentPlan: data.treatmentPlan || "",
         doctorNotes: data.doctorNotes || "",
-        status: data.status || MedicalRecordStatus.DRAFT,
+        odontogram: data.odontogram || { schemaVersion: 1, teeth: {} },
+        odontogramHistory: [],
+        vitalSigns: data.vitalSigns || {},
+        medicalHistorySnapshot: data.medicalHistorySnapshot,
+        status: targetStatus,
+        signedByDoctorId: targetStatus === MedicalRecordStatus.FINAL ? data.doctorId : undefined,
+        signedAt: targetStatus === MedicalRecordStatus.FINAL ? nowIso : undefined,
+        isLocked: targetStatus === MedicalRecordStatus.FINAL,
         createdAt: nowIso,
         updatedAt: nowIso,
         patientNameSnapshot: patientName,
@@ -6664,8 +6900,39 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
       };
 
       db.medicalRecords.push(newRecord);
+      db.saveToStorage();
       return JSON.parse(JSON.stringify(newRecord));
     }
+  }
+
+  async finalizeMedicalRecord(
+    id: string,
+    doctorId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<MedicalRecord> {
+    if (currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya Dokter yang dapat menandatangani & memfinalisasi rekam medis.");
+    }
+
+    const db = MockDatabase.getInstance();
+    const record = db.medicalRecords.find((item) => item.id === id);
+    if (!record) throw new Error("Rekam medis tidak ditemukan.");
+    assertMedicalRecordAccess(currentUserRole, userBranchId, record.branchId);
+    if (record.status === MedicalRecordStatus.FINAL || record.isLocked) {
+      throw new Error("Rekam medis sudah final dan terkunci.");
+    }
+    if (record.doctorId !== doctorId) {
+      throw new Error("Hanya dokter penanggung jawab yang dapat menandatangani rekam medis.");
+    }
+
+    const nowIso = AppClock.nowISO();
+    record.status = MedicalRecordStatus.FINAL;
+    record.signedByDoctorId = doctorId;
+    record.signedAt = nowIso;
+    record.isLocked = true;
+    record.updatedAt = nowIso;
+    return JSON.parse(JSON.stringify(record));
   }
 }
 

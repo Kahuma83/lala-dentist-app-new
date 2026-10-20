@@ -115,4 +115,34 @@ describe("Supabase Invoice & Payment Resilience", () => {
     expect(settledInv?.outstandingAmount).toBe(0);
     expect(settledInv?.status).toBe(InvoiceStatus.PAID);
   });
+
+  it("should reject a payment above the current invoice balance without changing payment or invoice data", async () => {
+    const inv = await invoiceRepo.createInvoice({
+      visitId: `visit-overpayment-${Date.now()}`,
+      patientId: "pat-2",
+      branchId: "branch-kampus",
+      items: [
+        {
+          serviceId: "service-restoration",
+          descriptionSnapshot: "Tambal Gigi Komposit",
+          unitPriceSnapshot: 200000,
+          quantity: 1
+        }
+      ]
+    });
+    const paymentBefore = await paymentRepo.getPaymentsByInvoice(inv.id);
+
+    await expect(paymentRepo.createPayment({
+      invoiceId: inv.id,
+      amount: inv.outstandingAmount + 1,
+      paymentMethod: PaymentMethod.CASH,
+      staffId: "staff-1"
+    })).rejects.toThrow(/melebihi sisa tagihan/);
+
+    const invoiceAfter = await invoiceRepo.getInvoiceById(inv.id);
+    const paymentsAfter = await paymentRepo.getPaymentsByInvoice(inv.id);
+    expect(invoiceAfter?.paidAmount).toBe(0);
+    expect(invoiceAfter?.outstandingAmount).toBe(inv.outstandingAmount);
+    expect(paymentsAfter).toHaveLength(paymentBefore.length);
+  });
 });

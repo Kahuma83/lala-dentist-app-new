@@ -66,6 +66,10 @@ import {
   TreatmentActivityType,
   MedicalRecord,
   MedicalRecordStatus,
+  OdontogramData,
+  PatientMedicalProfile,
+  ClinicalConsentDocument,
+  ClinicalConsentScope,
   Invoice,
   InvoiceItem,
   InvoiceStatus,
@@ -560,16 +564,27 @@ export class SupabaseBranchRepository implements BranchRepository {
 // 2. SUPABASE PATIENT REPOSITORY
 // =====================================================================
 export class SupabasePatientRepository implements PatientRepository {
-  async getPatients(_currentUserRole?: UserRole, _userBranchId?: string | null): Promise<PatientProfile[]> {
+  async getPatients(currentUserRole?: UserRole, _userBranchId?: string | null): Promise<PatientProfile[]> {
     ensureSupabaseConnected();
 
     if (isSupabaseConfigured && supabase) {
+      if (currentUserRole === UserRole.DOCTOR) {
+        const { data, error } = await supabase.from("patient_profiles").select("*");
+        if (error) {
+          throw new Error(`Gagal membaca pasien yang ditugaskan kepada dokter: ${error.message}`);
+        }
+        return this.attachMedicalHistoryNotes(
+          (data || []).map(this.mapPatientFromDb.bind(this)),
+          currentUserRole
+        );
+      }
+
       // 1. Try querying 'patient_profiles' table first (as requested)
       try {
         // RLS scopes branch staff; global portal profiles may have no registered branch.
         const { data, error } = await supabase.from("patient_profiles").select("*");
         if (!error && Array.isArray(data)) {
-          return data.map(this.mapPatientFromDb.bind(this));
+          return this.attachMedicalHistoryNotes(data.map(this.mapPatientFromDb.bind(this)), currentUserRole);
         }
       } catch (e) {
         console.warn("[Supabase] getPatients from 'patient_profiles' failed:", e);
@@ -579,7 +594,7 @@ export class SupabasePatientRepository implements PatientRepository {
       try {
         const { data, error } = await supabase.from("patients").select("*");
         if (!error && Array.isArray(data)) {
-          return data.map(this.mapPatientFromDb.bind(this));
+          return this.attachMedicalHistoryNotes(data.map(this.mapPatientFromDb.bind(this)), currentUserRole);
         }
       } catch (e) {
         console.warn("[Supabase] getPatients from 'patients' error:", e);
@@ -589,14 +604,34 @@ export class SupabasePatientRepository implements PatientRepository {
     return [];
   }
 
-  async getPatientById(id: string): Promise<PatientProfile | null> {
+  async getPatientById(
+    id: string,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<PatientProfile | null> {
     ensureSupabaseConnected();
     if (isSupabaseConfigured && supabase) {
+      if (currentUserRole === UserRole.DOCTOR) {
+        const { data, error } = await supabase
+          .from("patient_profiles")
+          .select("*")
+          .eq("id", id)
+          .maybeSingle();
+        if (error) throw new Error(`Gagal membaca pasien yang ditugaskan kepada dokter: ${error.message}`);
+        if (!data) return null;
+        const [patient] = await this.attachMedicalHistoryNotes(
+          [this.mapPatientFromDb(data)],
+          currentUserRole
+        );
+        return patient;
+      }
+
       let lastError: any = null;
       try {
         const { data, error } = await supabase.from("patients").select("*").eq("id", id).single();
         if (!error && data) {
-          return this.mapPatientFromDb(data);
+          const [patient] = await this.attachMedicalHistoryNotes([this.mapPatientFromDb(data)], currentUserRole);
+          return patient;
         }
         if (error) lastError = error;
       } catch (e) {
@@ -606,7 +641,8 @@ export class SupabasePatientRepository implements PatientRepository {
       try {
         const { data, error } = await supabase.from("patient_profiles").select("*").eq("id", id).single();
         if (!error && data) {
-          return this.mapPatientFromDb(data);
+          const [patient] = await this.attachMedicalHistoryNotes([this.mapPatientFromDb(data)], currentUserRole);
+          return patient;
         }
         if (error) {
           if (error.code === "PGRST116") return null;
@@ -638,10 +674,17 @@ export class SupabasePatientRepository implements PatientRepository {
 
   async createPatient(
     patientData: Omit<PatientProfile, "id" | "medicalRecordNumber" | "createdAt" | "updatedAt"> & { id?: string; medicalRecordNumber?: string; registeredBranchId?: string; branch_id?: string; assignedBranchId?: string; branchId?: string },
-    _currentUserRole?: UserRole,
+    currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<PatientProfile> {
     ensureSupabaseConnected();
+    if (
+      patientData.medicalHistoryNotes?.trim() &&
+      currentUserRole !== UserRole.DOCTOR &&
+      currentUserRole !== UserRole.SUPER_ADMIN
+    ) {
+      throw new Error("Riwayat medis hanya dapat diubah oleh Dokter atau Super Admin.");
+    }
 
     const nameToUse = (patientData.fullName || patientData.name || "").trim();
     if (!nameToUse) {
@@ -669,6 +712,9 @@ export class SupabasePatientRepository implements PatientRepository {
       full_name: nameToUse,
       phone: patientData.phone || "",
       email: patientData.email || null,
+      emergency_contact_name: patientData.emergencyContactName?.trim() || null,
+      emergency_contact_phone: patientData.emergencyContactPhone?.trim() || null,
+      emergency_contact_relationship: patientData.emergencyContactRelationship?.trim() || null,
       identity_document_type: patientData.identityDocumentType || null,
       identity_document_number: patientData.identityDocumentNumber?.trim() || null,
       place_of_birth: patientData.placeOfBirth?.trim() || null,
@@ -679,7 +725,6 @@ export class SupabasePatientRepository implements PatientRepository {
       religion: patientData.religion?.trim() || null,
       marital_status: patientData.maritalStatus?.trim() || null,
       education: patientData.education?.trim() || null,
-      medical_history_notes: patientData.medicalHistoryNotes || null,
       acquisition_source: patientData.acquisitionSource || "UNKNOWN",
       referral_name: patientData.acquisitionSource === "REFERRAL" ? patientData.referralName?.trim() || null : null,
       referring_staff_id: patientData.referringStaffId || null
@@ -727,7 +772,17 @@ export class SupabasePatientRepository implements PatientRepository {
       }
 
       if (successData) {
-        return this.mapPatientFromDb(successData);
+        const patient = this.mapPatientFromDb(successData);
+        if (patientData.medicalHistoryNotes?.trim()) {
+          await this.saveMedicalHistoryNotes(
+            patient.id,
+            patientData.medicalHistoryNotes,
+            currentUserRole === UserRole.DOCTOR ? userBranchId || null : effBranch || null,
+            currentUserRole
+          );
+          patient.medicalHistoryNotes = patientData.medicalHistoryNotes;
+        }
+        return patient;
       }
 
       throw new Error(lastErrorMsg || "Gagal menyimpan data pasien ke tabel patient_profiles / patients Supabase (RLS/Koneksi bermasalah).");
@@ -739,10 +794,17 @@ export class SupabasePatientRepository implements PatientRepository {
   async updatePatient(
     id: string,
     updates: Partial<Omit<PatientProfile, "id" | "createdAt" | "updatedAt">> & { registeredBranchId?: string; branch_id?: string; assignedBranchId?: string; branchId?: string },
-    _currentUserRole?: UserRole,
+    currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<PatientProfile> {
     ensureSupabaseConnected();
+    if (
+      updates.medicalHistoryNotes?.trim() &&
+      currentUserRole !== UserRole.DOCTOR &&
+      currentUserRole !== UserRole.SUPER_ADMIN
+    ) {
+      throw new Error("Riwayat medis hanya dapat diubah oleh Dokter atau Super Admin.");
+    }
     const dbPayload: any = {
       updated_at: AppClock.nowISO()
     };
@@ -753,6 +815,9 @@ export class SupabasePatientRepository implements PatientRepository {
     }
     if (updates.phone !== undefined) dbPayload.phone = updates.phone;
     if (updates.email !== undefined) dbPayload.email = updates.email;
+    if (updates.emergencyContactName !== undefined) dbPayload.emergency_contact_name = updates.emergencyContactName?.trim() || null;
+    if (updates.emergencyContactPhone !== undefined) dbPayload.emergency_contact_phone = updates.emergencyContactPhone?.trim() || null;
+    if (updates.emergencyContactRelationship !== undefined) dbPayload.emergency_contact_relationship = updates.emergencyContactRelationship?.trim() || null;
     if (updates.identityDocumentType !== undefined) dbPayload.identity_document_type = updates.identityDocumentType || null;
     if (updates.identityDocumentNumber !== undefined) dbPayload.identity_document_number = updates.identityDocumentNumber?.trim() || null;
     if (updates.placeOfBirth !== undefined) dbPayload.place_of_birth = updates.placeOfBirth?.trim() || null;
@@ -764,7 +829,6 @@ export class SupabasePatientRepository implements PatientRepository {
     if (updates.gender !== undefined) dbPayload.gender = updates.gender;
     if (updates.dateOfBirth !== undefined) dbPayload.date_of_birth = updates.dateOfBirth;
     if (updates.medicalRecordNumber !== undefined) dbPayload.medical_record_number = updates.medicalRecordNumber;
-    if (updates.medicalHistoryNotes !== undefined) dbPayload.medical_history_notes = updates.medicalHistoryNotes;
     if (updates.acquisitionSource !== undefined) dbPayload.acquisition_source = updates.acquisitionSource;
     if (updates.referringStaffId !== undefined) dbPayload.referring_staff_id = updates.referringStaffId || null;
     if (updates.referralName !== undefined || updates.acquisitionSource !== undefined) {
@@ -783,11 +847,10 @@ export class SupabasePatientRepository implements PatientRepository {
     }
 
     if (isSupabaseConfigured && supabase) {
+      let updatedData: any = null;
       try {
         const { data: pData } = await supabase.from("patients").update(dbPayload).eq("id", id).select().single();
-        if (pData) {
-          return this.mapPatientFromDb(pData);
-        }
+        if (pData) updatedData = pData;
       } catch (e) {
         // ...
       }
@@ -795,11 +858,28 @@ export class SupabasePatientRepository implements PatientRepository {
       try {
         const { data, error } = await supabase.from("patient_profiles").update(dbPayload).eq("id", id).select().single();
         if (!error && data) {
-          return this.mapPatientFromDb(data);
+          updatedData = data;
         }
-        if (error) throw new Error(error.message);
+        if (error && !updatedData) throw new Error(error.message);
       } catch (e: any) {
-        throw new Error(e?.message || "Gagal memperbarui data pasien");
+        if (!updatedData) throw new Error(e?.message || "Gagal memperbarui data pasien");
+      }
+
+      if (updatedData) {
+        const patient = this.mapPatientFromDb(updatedData);
+        if (
+          updates.medicalHistoryNotes !== undefined &&
+          (currentUserRole === UserRole.DOCTOR || currentUserRole === UserRole.SUPER_ADMIN)
+        ) {
+          await this.saveMedicalHistoryNotes(
+            id,
+            updates.medicalHistoryNotes,
+            currentUserRole === UserRole.DOCTOR ? userBranchId || null : effBranch || null,
+            currentUserRole
+          );
+          patient.medicalHistoryNotes = updates.medicalHistoryNotes;
+        }
+        return patient;
       }
     }
 
@@ -911,6 +991,9 @@ export class SupabasePatientRepository implements PatientRepository {
       fullName: row.full_name || row.name || row.fullName || "Pasien",
       phone: row.phone || row.phone_number || "",
       email: row.email,
+      emergencyContactName: row.emergency_contact_name || row.emergencyContactName || "",
+      emergencyContactPhone: row.emergency_contact_phone || row.emergencyContactPhone || "",
+      emergencyContactRelationship: row.emergency_contact_relationship || row.emergencyContactRelationship || "",
       identityDocumentType: row.identity_document_type || row.identityDocumentType || undefined,
       identityDocumentNumber: row.identity_document_number || row.identityDocumentNumber || undefined,
       placeOfBirth: row.place_of_birth || row.placeOfBirth || "",
@@ -921,7 +1004,6 @@ export class SupabasePatientRepository implements PatientRepository {
       religion: row.religion || "",
       maritalStatus: row.marital_status || row.maritalStatus || "",
       education: row.education || "",
-      medicalHistoryNotes: row.medical_history_notes || (Array.isArray(row.medical_history) ? row.medical_history.join(", ") : row.medical_history) || "",
       acquisitionSource: row.acquisition_source || row.acquisitionSource || "UNKNOWN",
       referralName: row.referral_name || row.referralName || undefined,
       referringStaffId: row.referring_staff_id || row.referringStaffId || null,
@@ -932,6 +1014,84 @@ export class SupabasePatientRepository implements PatientRepository {
       createdAt: row.created_at || row.registered_at || AppClock.nowISO(),
       updatedAt: row.updated_at || AppClock.nowISO()
     };
+  }
+
+  private async attachMedicalHistoryNotes(
+    patients: PatientProfile[],
+    currentUserRole?: UserRole
+  ): Promise<PatientProfile[]> {
+    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+      return patients;
+    }
+    const patientIds = patients.map((patient) => patient.id).filter(Boolean);
+    if (patientIds.length === 0) return patients;
+
+    const { data, error } = await supabase
+      .from("patient_medical_profiles")
+      .select("patient_id, medical_history_notes")
+      .in("patient_id", patientIds);
+    if (error) {
+      if (!this.isMissingPatientMedicalProfilesTable(error)) {
+        throw new Error(`Supabase error: ${error.message}`);
+      }
+      const { data: legacyData, error: legacyError } = await supabase
+        .from("patient_profiles")
+        .select("id, medical_history_notes")
+        .in("id", patientIds);
+      if (legacyError) throw new Error(`Gagal membaca riwayat medis: ${legacyError.message}`);
+      const legacyNotesByPatientId = new Map(
+        (legacyData || []).map((row) => [row.id, row.medical_history_notes || ""])
+      );
+      return patients.map((patient) => ({
+        ...patient,
+        medicalHistoryNotes: legacyNotesByPatientId.get(patient.id) || ""
+      }));
+    }
+
+    const notesByPatientId = new Map(
+      (data || []).map((row) => [row.patient_id, row.medical_history_notes || ""])
+    );
+    return patients.map((patient) => ({
+      ...patient,
+      medicalHistoryNotes: notesByPatientId.get(patient.id) || ""
+    }));
+  }
+
+  private async saveMedicalHistoryNotes(
+    patientId: string,
+    notes: string,
+    branchId: string | null,
+    currentUserRole?: UserRole
+  ): Promise<void> {
+    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Riwayat medis hanya dapat diubah oleh Dokter atau Super Admin.");
+    }
+    const { error } = await supabase.from("patient_medical_profiles").upsert(
+      {
+        patient_id: patientId,
+        branch_id: branchId,
+        medical_history_notes: notes,
+        updated_at: AppClock.nowISO()
+      },
+      { onConflict: "patient_id" }
+    );
+    if (error && this.isMissingPatientMedicalProfilesTable(error)) {
+      const { error: legacyError } = await supabase
+        .from("patient_profiles")
+        .update({ medical_history_notes: notes })
+        .eq("id", patientId);
+      if (legacyError) throw new Error(`Gagal menyimpan riwayat medis: ${legacyError.message}`);
+      return;
+    }
+    if (error) throw new Error(`Gagal menyimpan riwayat medis: ${error.message}`);
+  }
+
+  private isMissingPatientMedicalProfilesTable(error: { code?: string; message?: string }): boolean {
+    return (
+      error.code === "42P01" ||
+      error.code === "PGRST205" ||
+      /patient_medical_profiles.*(not found|does not exist)/i.test(error.message || "")
+    );
   }
 }
 
@@ -1600,6 +1760,256 @@ export class SupabaseQueueRepository implements QueueRepository {
 // 4. SUPABASE MEDICAL RECORD REPOSITORY
 // =====================================================================
 export class SupabaseMedicalRecordRepository implements MedicalRecordRepository {
+  async getConsentDocumentsByVisit(
+    visitId: string,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<ClinicalConsentDocument[]> {
+    this.assertConsentDocumentRole(currentUserRole);
+    ensureSupabaseConnected();
+    let query = supabase
+      .from("clinical_consent_documents")
+      .select("*")
+      .eq("visit_id", visitId)
+      .order("uploaded_at", { ascending: false });
+    const { data, error } = await query;
+    if (error) throw new Error(`Gagal membaca dokumen consent: ${error.message}`);
+    return (data || []).map((row) => this.mapConsentDocumentFromDb(row));
+  }
+
+  async uploadConsentDocument(
+    data: {
+      visitId: string;
+      branchId: string;
+      scope: ClinicalConsentScope;
+      treatmentJobId?: string;
+      file: File;
+    },
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<ClinicalConsentDocument> {
+    this.assertConsentDocumentRole(currentUserRole);
+    if (!data.file || data.file.size < 1 || data.file.size > 10 * 1024 * 1024) {
+      throw new Error("Dokumen consent harus berukuran maksimal 10 MB dan tidak kosong.");
+    }
+    const extensionByType: Record<string, string> = {
+      "application/pdf": "pdf",
+      "image/jpeg": "jpg",
+      "image/png": "png"
+    };
+    const extension = extensionByType[data.file.type];
+    if (!extension) throw new Error("Format dokumen consent harus PDF, JPG, atau PNG.");
+    if (data.scope === "VISIT" && data.treatmentJobId) {
+      throw new Error("Dokumen consent kunjungan tidak boleh ditautkan ke tindakan.");
+    }
+    if (data.scope === "TREATMENT" && !data.treatmentJobId) {
+      throw new Error("Pilih tindakan yang memerlukan consent sebelum mengunggah dokumen.");
+    }
+    ensureSupabaseConnected();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError) throw new Error(`Gagal memverifikasi pengguna untuk dokumen consent: ${authError.message}`);
+    if (!authData.user) throw new Error("Sesi pengguna tidak tersedia untuk mengunggah dokumen consent.");
+
+    let doctorId: string | null = null;
+    if (currentUserRole === UserRole.DOCTOR) {
+      const { data: account, error: accountError } = await supabase
+        .from("user_accounts")
+        .select("doctor_id")
+        .eq("auth_user_id", authData.user.id)
+        .eq("active", true)
+        .single();
+      if (accountError) throw new Error(`Gagal memeriksa penugasan dokter: ${accountError.message}`);
+      doctorId = account.doctor_id;
+      if (!doctorId) throw new Error("Akun dokter belum ditautkan ke data dokter.");
+    }
+
+    const { data: visit, error: visitError } = await supabase
+      .from("patient_visits")
+      .select("branch_id, doctor_id")
+      .eq("id", data.visitId)
+      .single();
+    if (visitError) throw new Error(`Gagal memeriksa kunjungan consent: ${visitError.message}`);
+    if (visit.branch_id !== data.branchId) throw new Error("Cabang tidak sesuai dengan kunjungan.");
+
+    if (currentUserRole === UserRole.DOCTOR && data.scope === "VISIT" && visit.doctor_id !== doctorId) {
+      throw new Error("Unggah consent kunjungan hanya dapat dilakukan dokter yang ditugaskan pada kunjungan ini.");
+    }
+
+    if (data.scope === "TREATMENT") {
+      const { data: job, error: jobError } = await supabase
+        .from("treatment_jobs")
+        .select("visit_id, branch_id, service_id, doctor_id, assigned_doctor_id")
+        .eq("id", data.treatmentJobId!)
+        .single();
+      if (jobError) throw new Error(`Gagal memeriksa tindakan consent: ${jobError.message}`);
+      if (job.visit_id !== data.visitId || job.branch_id !== data.branchId) {
+        throw new Error("Tindakan tidak sesuai dengan kunjungan atau cabang.");
+      }
+      const { data: service, error: serviceError } = await supabase
+        .from("master_services")
+        .select("requires_consent")
+        .eq("id", job.service_id)
+        .single();
+      if (serviceError) throw new Error(`Gagal memeriksa persyaratan consent layanan: ${serviceError.message}`);
+      if (!service.requires_consent) throw new Error("Layanan ini tidak ditandai wajib consent.");
+      if (
+        currentUserRole === UserRole.DOCTOR &&
+        (job.assigned_doctor_id || job.doctor_id) !== doctorId
+      ) {
+        throw new Error("Unggah consent tindakan hanya dapat dilakukan dokter yang ditugaskan pada tindakan ini.");
+      }
+    }
+
+    const safeFileName = data.file.name
+      .replace(/[\\/\u0000-\u001f\u007f]/g, "_")
+      .trim()
+      .slice(0, 255) || `consent.${extension}`;
+    const objectPath = `${data.branchId}/${data.visitId}/${authData.user.id}/${crypto.randomUUID()}.${extension}`;
+    const { error: uploadError } = await supabase.storage
+      .from("clinical-consent-documents")
+      .upload(objectPath, data.file, {
+        contentType: data.file.type,
+        cacheControl: "0",
+        upsert: false
+      });
+    if (uploadError) throw new Error(`Gagal mengunggah dokumen consent: ${uploadError.message}`);
+
+    const { data: saved, error: saveError } = await supabase
+      .from("clinical_consent_documents")
+      .insert({
+        visit_id: data.visitId,
+        branch_id: data.branchId,
+        scope: data.scope,
+        treatment_job_id: data.treatmentJobId || null,
+        object_path: objectPath,
+        original_file_name: safeFileName,
+        content_type: data.file.type,
+        size_bytes: data.file.size,
+        uploaded_by: authData.user.id
+      })
+      .select("*")
+      .single();
+    if (saveError) {
+      const { error: cleanupError } = await supabase.storage
+        .from("clinical-consent-documents")
+        .remove([objectPath]);
+      const cleanupMessage = cleanupError ? ` Penghapusan file sementara juga gagal: ${cleanupError.message}` : "";
+      throw new Error(`Gagal mencatat metadata dokumen consent: ${saveError.message}.${cleanupMessage}`);
+    }
+    return this.mapConsentDocumentFromDb(saved);
+  }
+
+  async downloadConsentDocument(
+    documentId: string,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<{ fileName: string; blob: Blob }> {
+    this.assertConsentDocumentRole(currentUserRole);
+    ensureSupabaseConnected();
+    let query = supabase
+      .from("clinical_consent_documents")
+      .select("branch_id, object_path, original_file_name")
+      .eq("id", documentId);
+    const { data: document, error: documentError } = await query.single();
+    if (documentError) throw new Error(`Gagal memeriksa akses dokumen consent: ${documentError.message}`);
+    const { data: blob, error: downloadError } = await supabase.storage
+      .from("clinical-consent-documents")
+      .download(document.object_path);
+    if (downloadError) throw new Error(`Gagal mengunduh dokumen consent: ${downloadError.message}`);
+    if (!blob) throw new Error("Dokumen consent tidak ditemukan pada penyimpanan.");
+    return { fileName: document.original_file_name, blob };
+  }
+
+  private assertConsentDocumentRole(role?: UserRole): void {
+    if (role !== UserRole.DOCTOR && role !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Dokter atau Super Admin yang dapat mengakses dokumen consent.");
+    }
+  }
+
+  private mapConsentDocumentFromDb(row: {
+    id: string;
+    visit_id: string;
+    branch_id: string;
+    scope: ClinicalConsentScope;
+    treatment_job_id: string | null;
+    original_file_name: string;
+    content_type: string;
+    size_bytes: number | string;
+    uploaded_at: string;
+  }): ClinicalConsentDocument {
+    return {
+      id: row.id,
+      visitId: row.visit_id,
+      branchId: row.branch_id,
+      scope: row.scope,
+      treatmentJobId: row.treatment_job_id || undefined,
+      fileName: row.original_file_name,
+      contentType: row.content_type,
+      sizeBytes: Number(row.size_bytes),
+      uploadedAt: row.uploaded_at
+    };
+  }
+
+  async getPatientMedicalProfile(
+    patientId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientMedicalProfile | null> {
+    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Dokter atau Super Admin yang dapat membaca profil medis pasien.");
+    }
+    ensureSupabaseConnected();
+    const { data, error } = await supabase
+      .from("patient_medical_profiles")
+      .select("*")
+      .eq("patient_id", patientId)
+      .maybeSingle();
+    if (error) throw new Error(`Gagal membaca profil medis pasien: ${error.message}`);
+    if (!data) return null;
+    if (
+      currentUserRole === UserRole.DOCTOR &&
+      data.branch_id &&
+      data.branch_id !== userBranchId
+    ) {
+      throw new Error("Anda tidak memiliki akses ke profil medis pasien ini.");
+    }
+    return this.mapPatientMedicalProfile(data);
+  }
+
+  async savePatientMedicalProfile(
+    profile: PatientMedicalProfile,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<PatientMedicalProfile> {
+    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Dokter atau Super Admin yang dapat mengubah profil medis pasien.");
+    }
+    ensureSupabaseConnected();
+    const existing = await this.getPatientMedicalProfile(profile.patientId, currentUserRole, userBranchId);
+    const { data, error } = await supabase
+      .from("patient_medical_profiles")
+      .upsert(
+        {
+          patient_id: profile.patientId,
+          branch_id: existing?.branchId ?? profile.branchId ?? userBranchId ?? null,
+          blood_type: profile.bloodType || null,
+          allergies: profile.allergies || null,
+          systemic_diseases: profile.systemicDiseases || null,
+          routine_medications: profile.routineMedications || null,
+          medical_warnings: profile.medicalWarnings || null,
+          medical_history_notes: profile.medicalHistoryNotes || null,
+          updated_by: currentUserId || null,
+          updated_at: AppClock.nowISO()
+        },
+        { onConflict: "patient_id" }
+      )
+      .select("*")
+      .single();
+    if (error) throw new Error(`Gagal menyimpan profil medis pasien: ${error.message}`);
+    return this.mapPatientMedicalProfile(data);
+  }
+
   async getMedicalRecordById(id: string): Promise<MedicalRecord | null> {
     ensureSupabaseConnected();
     const { data, error } = await supabase.from("clinical_medical_records").select("*").eq("id", id).single();
@@ -1638,26 +2048,43 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
       anamnesis?: string;
       clinicalExamination?: string;
       diagnosis: string;
+      diagnosisCode?: string;
+      procedureCodes?: string[];
       treatmentPlan?: string;
       doctorNotes?: string;
+      odontogram?: OdontogramData;
+      vitalSigns?: MedicalRecord["vitalSigns"];
+      medicalHistorySnapshot?: PatientMedicalProfile;
       status?: MedicalRecordStatus | "DRAFT" | "FINAL";
       customId?: string;
     }
   ): Promise<MedicalRecord> {
     ensureSupabaseConnected();
+    if (data.status === MedicalRecordStatus.FINAL) {
+      throw new Error("Simpan sebagai draft terlebih dahulu, lalu gunakan finalisasi oleh dokter penanggung jawab.");
+    }
     const existing = await this.getMedicalRecordByVisit(data.visitId);
 
     if (existing) {
       const { data: updated, error } = await supabase
         .from("clinical_medical_records")
         .update({
+          anamnesis: data.anamnesis || "",
+          physical_examination: data.clinicalExamination || "",
+          treatment_notes: data.treatmentPlan || data.doctorNotes || null,
           chief_complaint: data.chiefComplaint,
-          anamnesis: data.anamnesis,
-          clinical_examination: data.clinicalExamination,
+          clinical_examination: data.clinicalExamination || "",
           diagnosis: data.diagnosis,
-          treatment_plan: data.treatmentPlan,
-          doctor_notes: data.doctorNotes,
-          status: data.status || MedicalRecordStatus.DRAFT,
+          diagnosis_icd10: data.diagnosisCode
+            ? [{ code: data.diagnosisCode, system: "ICD-10-WHO-2019" }]
+            : [],
+          procedure_icd9cm_codes: data.procedureCodes || [],
+          treatment_plan: data.treatmentPlan || null,
+          doctor_notes: data.doctorNotes || null,
+          odontogram: data.odontogram || { schemaVersion: 1, teeth: {} },
+          vital_signs: data.vitalSigns || {},
+          medical_history_snapshot: data.medicalHistorySnapshot || {},
+          status: MedicalRecordStatus.DRAFT,
           updated_at: AppClock.nowISO()
         })
         .eq("id", existing.id)
@@ -1675,13 +2102,22 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
         patient_id: data.patientId,
         branch_id: data.branchId,
         doctor_id: data.doctorId,
+        anamnesis: data.anamnesis || "",
+        physical_examination: data.clinicalExamination || "",
+        treatment_notes: data.treatmentPlan || data.doctorNotes || null,
         chief_complaint: data.chiefComplaint,
-        anamnesis: data.anamnesis,
-        clinical_examination: data.clinicalExamination,
+        clinical_examination: data.clinicalExamination || "",
         diagnosis: data.diagnosis,
-        treatment_plan: data.treatmentPlan,
-        doctor_notes: data.doctorNotes,
-        status: data.status || MedicalRecordStatus.DRAFT
+        diagnosis_icd10: data.diagnosisCode
+          ? [{ code: data.diagnosisCode, system: "ICD-10-WHO-2019" }]
+          : [],
+        procedure_icd9cm_codes: data.procedureCodes || [],
+        treatment_plan: data.treatmentPlan || null,
+        doctor_notes: data.doctorNotes || null,
+        odontogram: data.odontogram || { schemaVersion: 1, teeth: {} },
+        vital_signs: data.vitalSigns || {},
+        medical_history_snapshot: data.medicalHistorySnapshot || {},
+        status: MedicalRecordStatus.DRAFT
       })
       .select()
       .single();
@@ -1690,8 +2126,13 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
     return this.mapMedicalRecordFromDb(created);
   }
 
-  async finalizeMedicalRecord(id: string, doctorId: string, currentUserRole?: UserRole): Promise<MedicalRecord> {
-    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+  async finalizeMedicalRecord(
+    id: string,
+    doctorId: string,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<MedicalRecord> {
+    if (currentUserRole !== UserRole.DOCTOR) {
       throw new Error("Hanya Dokter yang dapat menandatangani & memfinalisasi rekam medis.");
     }
 
@@ -1703,6 +2144,7 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
         status: MedicalRecordStatus.FINAL,
         signed_by_doctor_id: doctorId,
         signed_at: now,
+        is_locked: true,
         updated_at: now
       })
       .eq("id", id)
@@ -1720,16 +2162,90 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
       visitId: row.visit_id,
       branchId: row.branch_id,
       doctorId: row.doctor_id,
-      chiefComplaint: row.chief_complaint || row.anamnesis || "Keluhan Gigi",
+      chiefComplaint: row.chief_complaint || row.anamnesis || "",
       anamnesis: row.anamnesis,
-      clinicalExamination: row.clinical_examination || row.physical_examination,
-      diagnosis: row.diagnosis || "Karies Dentis",
+      clinicalExamination: row.clinical_examination || row.physical_examination || "",
+      diagnosis: row.diagnosis || "",
+      diagnosisCode: Array.isArray(row.diagnosis_icd10)
+        ? row.diagnosis_icd10.find((entry: any) => typeof entry?.code === "string")?.code
+          || row.diagnosis_icd10.find((entry: any) => typeof entry === "string")
+        : undefined,
+      procedureCodes: Array.isArray(row.procedure_icd9cm_codes)
+        ? row.procedure_icd9cm_codes.filter((code: unknown): code is string => typeof code === "string")
+        : [],
       treatmentPlan: row.treatment_plan || row.treatment_notes,
       doctorNotes: row.doctor_notes || row.treatment_notes,
+      odontogram: this.mapOdontogram(row.odontogram),
+      odontogramHistory: Array.isArray(row.odontogram_history)
+        ? row.odontogram_history.map((entry: any) => ({
+            odontogram: this.mapOdontogram(entry.odontogram),
+            changedAt: entry.changed_at,
+            changedBy: entry.changed_by || undefined
+          }))
+        : [],
+      vitalSigns: this.mapVitalSigns(row.vital_signs),
+      medicalHistorySnapshot: this.mapPatientMedicalProfile(
+        row.medical_history_snapshot,
+        row.patient_id
+      ),
       status: row.status || MedicalRecordStatus.DRAFT,
+      signedByDoctorId: row.signed_by_doctor_id || undefined,
+      signedAt: row.signed_at || undefined,
+      isLocked: Boolean(row.is_locked),
       createdAt: row.created_at || AppClock.nowISO(),
       updatedAt: row.updated_at || AppClock.nowISO()
     };
+  }
+
+  private mapOdontogram(value: unknown): OdontogramData {
+    if (
+      value &&
+      typeof value === "object" &&
+      "schemaVersion" in value &&
+      value.schemaVersion === 1 &&
+      "teeth" in value &&
+      value.teeth &&
+      typeof value.teeth === "object"
+    ) {
+      return value as OdontogramData;
+    }
+    return { schemaVersion: 1, teeth: {} };
+  }
+
+  private mapPatientMedicalProfile(row: any, patientId?: string): PatientMedicalProfile {
+    return {
+      patientId: row?.patient_id || patientId || "",
+      branchId: row?.branch_id || undefined,
+      bloodType: row?.blood_type || undefined,
+      allergies: row?.allergies || "",
+      systemicDiseases: row?.systemic_diseases || "",
+      routineMedications: row?.routine_medications || "",
+      medicalWarnings: row?.medical_warnings || "",
+      medicalHistoryNotes: row?.medical_history_notes || "",
+      updatedAt: row?.updated_at || undefined,
+      updatedBy: row?.updated_by || undefined
+    };
+  }
+
+  private mapVitalSigns(value: unknown): MedicalRecord["vitalSigns"] {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const allowedKeys = [
+      "systolicBloodPressure",
+      "diastolicBloodPressure",
+      "pulseBpm",
+      "temperatureCelsius",
+      "respiratoryRatePerMinute",
+      "oxygenSaturationPercent",
+      "weightKg",
+      "heightCm"
+    ] as const;
+    const source = value as Record<string, unknown>;
+    return Object.fromEntries(
+      allowedKeys.flatMap((key) => {
+        const item = source[key];
+        return typeof item === "number" && Number.isFinite(item) ? [[key, item]] : [];
+      })
+    );
   }
 }
 
@@ -3916,64 +4432,61 @@ export class SupabasePaymentRepository implements PaymentRepository {
     _currentUserRole?: UserRole,
     _userBranchId?: string | null
   ): Promise<PaymentTransaction> {
+    if (!Number.isSafeInteger(data.amount) || data.amount <= 0) {
+      throw new Error("Nominal pembayaran harus berupa angka bulat positif");
+    }
     if (!useRepositoryTestFallbacks() && (!isSupabaseConfigured || !supabase)) {
       throw new Error("Koneksi ke Supabase belum terkonfigurasi. Data belum dapat disimpan ke server remote.");
     }
-    const now = AppClock.nowISO();
 
-    // 1. Look up invoice to get branch & calculate new amounts
-    let invoiceBranchId = "";
-    let targetInv: Invoice | null = null;
-
-    const fallbackInvoices = this.getFallbackInvoices();
-    targetInv = fallbackInvoices.find((i) => i.id === data.invoiceId) || null;
-
-    if (!targetInv && isValidUUID(data.invoiceId)) {
-      try {
-        const { data: inv, error: invErr } = await supabase.from("invoices").select("*").eq("id", data.invoiceId).single();
-        if (invErr && invErr.code !== "PGRST116") {
-          throw new Error(`Gagal membaca invoice dari Supabase: ${invErr.message}`);
-        }
-        if (!invErr && inv) {
-          targetInv = {
-            id: inv.id,
-            invoiceNumber: inv.invoice_number,
-            visitId: inv.visit_id,
-            patientId: inv.patient_id,
-            branchId: inv.branch_id,
-            totalAmount: Number(inv.total_amount || 0),
-            discountAmount: Number(inv.discount_amount || 0),
-            taxAmount: Number(inv.tax_amount || 0),
-            netAmount: Number(inv.net_amount || 0),
-            paidAmount: Number(inv.paid_amount || 0),
-            outstandingAmount: Number(inv.outstanding_amount || 0),
-            status: inv.status as InvoiceStatus,
-            createdAt: inv.created_at,
-            updatedAt: inv.updated_at
-          };
-        }
-      } catch (e: any) {
-        console.warn("[Supabase] createPayment invoice lookup error:", e?.message);
+    if (!useRepositoryTestFallbacks()) {
+      ensureSupabaseConnected();
+      if (!isValidUUID(data.invoiceId) || !isValidUUID(data.staffId)) {
+        throw new Error("Pembayaran tidak dapat disimpan: invoice atau staf yang valid tidak ditemukan.");
       }
+
+      const { data: created, error } = await supabase.rpc("record_invoice_payment_atomic", {
+        p_invoice_id: data.invoiceId,
+        p_amount: data.amount,
+        p_payment_method: data.paymentMethod,
+        p_reference_number: data.referenceNumber || null,
+        p_staff_id: data.staffId,
+        p_payment_id: data.customId && isValidUUID(data.customId) ? data.customId : null,
+        p_receipt_number: data.customReceiptNumber || null
+      });
+      if (error) {
+        throw new Error(`Gagal menyimpan pembayaran di Supabase: ${error.message}`);
+      }
+      const paymentRow = Array.isArray(created) ? created[0] : created;
+      if (!paymentRow?.id) {
+        throw new Error("Supabase tidak mengembalikan data pembayaran yang tersimpan.");
+      }
+      return this.mapPaymentFromDb(paymentRow);
     }
 
-    if (targetInv && targetInv.branchId) {
-      invoiceBranchId = targetInv.branchId;
-    }
+    const now = AppClock.nowISO();
+    const fallbackInvoices = this.getFallbackInvoices();
+    const targetInv = fallbackInvoices.find((invoice) => invoice.id === data.invoiceId) || null;
     if (!targetInv || !targetInv.id || !targetInv.branchId) {
       throw new Error("Pembayaran tidak dapat disimpan: invoice yang dituju tidak ditemukan.");
     }
-    if (!useRepositoryTestFallbacks() && (!isValidUUID(targetInv.id) || !isValidUUID(invoiceBranchId))) {
-      throw new Error("Pembayaran tidak dapat disimpan: invoice Supabase yang valid tidak ditemukan.");
+    if (targetInv.status === InvoiceStatus.CANCELLED) {
+      throw new Error("Tidak dapat menerima pembayaran untuk invoice yang telah DIBATALKAN");
+    }
+    if (targetInv.status === InvoiceStatus.PAID || targetInv.outstandingAmount <= 0) {
+      throw new Error("Invoice sudah LUNAS (Paid). Tidak ada sisa tagihan yang perlu dibayar");
+    }
+    if (data.amount > targetInv.outstandingAmount) {
+      throw new Error(`Nominal pembayaran (Rp ${data.amount.toLocaleString("id-ID")}) melebihi sisa tagihan (Rp ${targetInv.outstandingAmount.toLocaleString("id-ID")})`);
     }
 
-    const currentPaid = targetInv ? Number(targetInv.paidAmount || 0) : 0;
-    const currentNet = targetInv ? Number(targetInv.netAmount || 0) : data.amount;
+    const invoiceBranchId = targetInv.branchId;
+    const currentPaid = Number(targetInv.paidAmount || 0);
+    const currentNet = Number(targetInv.netAmount || 0);
     const newPaid = currentPaid + data.amount;
     const newOutstanding = Math.max(0, currentNet - newPaid);
     const newStatus = newOutstanding <= 0 ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID;
 
-    // 2. Prepare Payment Object
     const paymentId = data.customId || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `pmt-${Date.now()}`);
     const existingPayments = this.getFallbackPayments();
     const receiptNumber = data.customReceiptNumber || generateReceiptNumber(invoiceBranchId, now, existingPayments, MOCK_BRANCHES);
@@ -3994,61 +4507,15 @@ export class SupabasePaymentRepository implements PaymentRepository {
       updatedAt: now
     };
 
-    // Save to local fallback persistence immediately
     const updatedPayments = [fallbackPayment, ...existingPayments.filter((p) => p.id !== paymentId)];
     this.saveFallbackPayments(updatedPayments);
-
-    // Update invoice in fallback persistence
-    if (targetInv) {
-      const updatedInvoices = fallbackInvoices.map((inv) =>
-        inv.id === data.invoiceId
-          ? { ...inv, paidAmount: newPaid, outstandingAmount: newOutstanding, status: newStatus, updatedAt: now }
-          : inv
-      );
-      this.saveFallbackInvoices(updatedInvoices);
-    }
-
-    // 3. Attempt remote Supabase persistence safely
-    if (isSupabaseConfigured && supabase && isValidUUID(data.invoiceId)) {
-      try {
-        const payload: any = {
-          invoice_id: data.invoiceId,
-          branch_id: isValidUUID(invoiceBranchId) ? invoiceBranchId : null,
-          amount: data.amount,
-          payment_method: data.paymentMethod,
-          reference_number: data.referenceNumber || null,
-          transaction_date_time: now,
-          staff_id: data.staffId,
-          status: "SUCCESS"
-        };
-        if (isValidUUID(paymentId)) payload.id = paymentId;
-
-        const { data: created, error } = await supabase.from("payment_transactions").insert(payload).select().single();
-        if (!error && created) {
-          const { error: invoiceUpdateError } = await supabase.from("invoices").update({
-            paid_amount: newPaid,
-            outstanding_amount: newOutstanding,
-            status: newStatus,
-            updated_at: now
-          }).eq("id", data.invoiceId);
-          if (invoiceUpdateError) {
-            throw new Error(`Pembayaran tersimpan, tetapi saldo invoice gagal diperbarui: ${invoiceUpdateError.message}`);
-          }
-
-          const mapped = this.mapPaymentFromDb(created);
-          return mapped;
-        } else if (error) {
-          if (!useRepositoryTestFallbacks()) {
-            throw new Error(`Gagal menyimpan pembayaran di Supabase: ${error.message}`);
-          }
-        }
-      } catch (err: any) {
-        if (!useRepositoryTestFallbacks()) throw err;
-      }
-    }
-
-    if (useRepositoryTestFallbacks()) return fallbackPayment;
-    throw new Error("Pembayaran tidak tersimpan ke Supabase.");
+    const updatedInvoices = fallbackInvoices.map((invoice) =>
+      invoice.id === data.invoiceId
+        ? { ...invoice, paidAmount: newPaid, outstandingAmount: newOutstanding, status: newStatus, updatedAt: now }
+        : invoice
+    );
+    this.saveFallbackInvoices(updatedInvoices);
+    return fallbackPayment;
   }
 
   async deletePayment(id: string, currentUserRole?: UserRole, _userBranchId?: string | null): Promise<boolean> {
@@ -4247,6 +4714,22 @@ export class SupabaseDoctorRepository implements DoctorRepository {
     }
     const fallback = this.getFallbackDoctors();
     return fallback.find((d) => d.id === id) || null;
+  }
+
+  async getDoctorByStaffId(staffId: string): Promise<DentalDoctor | null> {
+    if (!useRepositoryTestFallbacks()) ensureSupabaseConnected();
+    if (isSupabaseConfigured && supabase && isValidUUID(staffId)) {
+      const { data, error } = await supabase
+        .from("dental_doctors")
+        .select("*")
+        .eq("staff_id", staffId)
+        .maybeSingle();
+      if (error && error.code !== "PGRST116") {
+        return handleSupabaseReadError("dental_doctors", error, null);
+      }
+      if (data) return this.mapDoctorFromDb(data);
+    }
+    return this.getFallbackDoctors().find((doctor) => doctor.staffId === staffId) || null;
   }
 
   async getDoctorByCode(code: string): Promise<DentalDoctor | null> {
@@ -4757,6 +5240,12 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
       basePrice: Number(row.base_price),
       estimatedDurationMinutes: row.estimated_duration_minutes || 30,
       category: row.category,
+      clinicalCategory: row.clinical_category || undefined,
+      clinicalTarget: row.clinical_target || undefined,
+      requiresConsent: Boolean(row.requires_consent),
+      isMultiStage: Boolean(row.is_multi_stage),
+      tracksMaterialLots: Boolean(row.tracks_material_lots),
+      icd9cmCode: row.icd9cm_code || undefined,
       isActive: row.is_active ?? true,
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -4780,6 +5269,12 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
       base_price: data.basePrice,
       estimated_duration_minutes: data.estimatedDurationMinutes,
       category: data.category,
+      clinical_category: data.clinicalCategory || null,
+      clinical_target: data.clinicalTarget || "NONE",
+      requires_consent: data.requiresConsent ?? false,
+      is_multi_stage: data.isMultiStage ?? false,
+      tracks_material_lots: data.tracksMaterialLots ?? false,
+      icd9cm_code: data.icd9cmCode || null,
       is_active: data.isActive ?? true
     };
     if (data.id) payload.id = data.id;
@@ -4796,6 +5291,12 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
     if (updates.basePrice !== undefined) payload.base_price = updates.basePrice;
     if (updates.estimatedDurationMinutes !== undefined) payload.estimated_duration_minutes = updates.estimatedDurationMinutes;
     if (updates.category) payload.category = updates.category;
+    if (updates.clinicalCategory !== undefined) payload.clinical_category = updates.clinicalCategory || null;
+    if (updates.clinicalTarget !== undefined) payload.clinical_target = updates.clinicalTarget;
+    if (updates.requiresConsent !== undefined) payload.requires_consent = updates.requiresConsent;
+    if (updates.isMultiStage !== undefined) payload.is_multi_stage = updates.isMultiStage;
+    if (updates.tracksMaterialLots !== undefined) payload.tracks_material_lots = updates.tracksMaterialLots;
+    if (updates.icd9cmCode !== undefined) payload.icd9cm_code = updates.icd9cmCode || null;
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
 
     const { data, error } = await supabase.from("master_services").update(payload).eq("id", id).select().single();
@@ -5308,6 +5809,7 @@ export class SupabaseStaffRepository implements StaffRepository {
     return {
       id: row.id,
       employeeCode: row.employee_code,
+      nik: row.nik ?? null,
       fullName: row.full_name,
       phone: row.phone,
       position: row.position,
@@ -5376,6 +5878,7 @@ export class SupabaseStaffRepository implements StaffRepository {
 
     const payload: any = {
       employee_code: employeeCode,
+      nik: data.nik?.trim() || null,
       full_name: data.fullName,
       phone: data.phone,
       position: data.position,
@@ -5397,6 +5900,7 @@ export class SupabaseStaffRepository implements StaffRepository {
     ensureSupabaseConnected();
     const payload: any = {};
     if (updates.employeeCode) payload.employee_code = updates.employeeCode;
+    if (updates.nik !== undefined) payload.nik = updates.nik?.trim() || null;
     if (updates.fullName) payload.full_name = updates.fullName;
     if (updates.phone) payload.phone = updates.phone;
     if (updates.position) payload.position = updates.position;
@@ -5769,6 +6273,25 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       throw new Error("Akses ditolak: Hanya Super Admin atau Branch Admin yang dapat menghapus akrual kompensasi.");
     }
     if (!isValidUUID(id)) throw new Error("ID akrual kompensasi tidak valid.");
+    const { data: payrollItems, error: payrollItemsError } = await supabase
+      .from("payroll_items")
+      .select("id")
+      .eq("source_id", id)
+      .limit(1);
+    if (payrollItemsError) throw new Error(`Gagal memeriksa penggunaan akrual di payroll: ${payrollItemsError.message}`);
+    if ((payrollItems || []).length > 0) {
+      throw new Error("Akrual ini sudah dimasukkan ke rincian payroll dan tidak dapat dihapus.");
+    }
+    const { data: journals, error: journalsError } = await supabase
+      .from("journal_entries")
+      .select("id")
+      .eq("source_type", JournalSourceType.COMPENSATION)
+      .eq("source_id", id)
+      .limit(1);
+    if (journalsError) throw new Error(`Gagal memeriksa jurnal akrual: ${journalsError.message}`);
+    if ((journals || []).length > 0) {
+      throw new Error("Akrual ini sudah memiliki jurnal akuntansi. Batalkan melalui proses koreksi jurnal sebelum menghapus sumbernya.");
+    }
     const { data, error } = await supabase
       .from("compensation_accruals")
       .delete()
@@ -6076,11 +6599,12 @@ export class SupabasePayrollRepository implements PayrollRepository {
     if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
       throw new Error("Akses ditolak: Hanya Super Admin atau Branch Admin yang dapat menghapus slip gaji.");
     }
-    const { error: itemsError } = await supabase.from("payroll_items").delete().eq("payroll_id", id);
-    if (itemsError) throw new Error(`Gagal menghapus rincian payroll: ${itemsError.message}`);
-    const { data, error } = await supabase.from("monthly_payrolls").delete().eq("id", id).select("id").maybeSingle();
+    if (!isValidUUID(id)) throw new Error("ID payroll tidak valid.");
+    const { data, error } = await supabase.rpc("delete_unposted_payroll", {
+      p_payroll_id: id
+    });
     if (error) throw new Error(`Gagal menghapus payroll: ${error.message}`);
-    return !!data;
+    return data === true;
   }
 }
 
@@ -6284,6 +6808,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: row.description,
       sourceType: row.source_type,
       sourceId: row.source_id,
+      event: row.event,
       status: row.status,
       totalDebit: Number(row.total_debit || 0),
       totalCredit: Number(row.total_credit || 0),
@@ -6313,6 +6838,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: data.description,
       sourceType: data.source_type,
       sourceId: data.source_id,
+      event: data.event,
       status: data.status,
       lines: (lineRows || []).map((line: any) => ({
         id: line.id,
@@ -6344,6 +6870,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: row.description,
       sourceType: row.source_type,
       sourceId: row.source_id,
+      event: row.event,
       status: row.status,
       totalDebit: Number(row.total_debit || 0),
       totalCredit: Number(row.total_credit || 0),
@@ -6375,13 +6902,48 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: data.description,
       source_type: data.sourceType,
       source_id: data.sourceId,
+      event: data.event || null,
       status: "DRAFT",
       total_debit: totalDebit,
       total_credit: totalCredit,
       created_by: createdBy
     };
     const { data: inserted, error } = await supabase.from("journal_entries").insert(payload).select().single();
-    if (error) throw new Error(`Gagal membuat draft journal: ${error.message}`);
+    if (error) {
+      if (error.code === "23505" && data.sourceId) {
+        const existingJournals = await this.getJournalsBySource(
+          data.sourceType,
+          data.sourceId
+        );
+        const existing = existingJournals.find(
+          (journal) => journal.event === data.event
+        );
+        if (existing) {
+          const completeJournal = await this.getJournalById(existing.id);
+          if (!completeJournal) {
+            throw new Error(
+              `Jurnal untuk sumber ${data.sourceType} (${data.sourceId}) sudah dibuat proses lain, tetapi belum dapat dimuat. Coba sinkronkan ulang.`
+            );
+          }
+          if (completeJournal.status === "DRAFT") {
+            const actualDebit = completeJournal.lines.reduce((sum, line) => sum + line.debit, 0);
+            const actualCredit = completeJournal.lines.reduce((sum, line) => sum + line.credit, 0);
+            if (
+              completeJournal.lines.length === 0 ||
+              actualDebit !== completeJournal.totalDebit ||
+              actualCredit !== completeJournal.totalCredit ||
+              actualDebit !== actualCredit
+            ) {
+              throw new Error(
+                `Jurnal ${completeJournal.journalNumber} untuk sumber ${data.sourceType} (${data.sourceId}) masih dibuat proses lain dan belum lengkap. Coba sinkronkan ulang.`
+              );
+            }
+          }
+          return completeJournal;
+        }
+      }
+      throw new Error(`Gagal membuat draft journal: ${error.message}`);
+    }
 
     const linePayload = data.lines.map((line) => ({
       journal_entry_id: inserted.id,
@@ -6408,6 +6970,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: inserted.description,
       sourceType: inserted.source_type,
       sourceId: inserted.source_id,
+      event: inserted.event,
       status: inserted.status,
       lines: [],
       totalDebit,
@@ -6459,6 +7022,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: data.description,
       sourceType: data.source_type,
       sourceId: data.source_id,
+      event: data.event,
       status: data.status,
       lines: [],
       totalDebit: Number(data.total_debit || 0),
@@ -6470,38 +7034,19 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       updatedAt: data.updated_at
     };
   }
-  async voidJournal(id: string, voidedBy: string, reason?: string): Promise<JournalEntry> {
+  async voidJournal(id: string, _voidedBy: string, _reason?: string): Promise<JournalEntry> {
     ensureSupabaseConnected();
-    const voidedAt = AppClock.nowISO();
-    const { data, error } = await supabase.from("journal_entries").update({
-      status: "VOID",
-      voided_at: voidedAt,
-      voided_by: voidedBy,
-      void_reason: reason || null,
-      updated_at: voidedAt
-    }).eq("id", id).select().single();
-    if (error) throw new Error(`Gagal void journal: ${error.message}`);
-    return {
-      id: data.id,
-      journalNumber: data.journal_number,
-      journalDate: data.journal_date,
-      branchId: data.branch_id,
-      description: data.description,
-      sourceType: data.source_type,
-      sourceId: data.source_id,
-      status: data.status,
-      lines: [],
-      totalDebit: Number(data.total_debit || 0),
-      totalCredit: Number(data.total_credit || 0),
-      createdBy: data.created_by || "System",
-      createdAt: data.created_at,
-      postedAt: data.posted_at,
-      postedBy: data.posted_by,
-      voidedAt: data.voided_at,
-      voidedBy: data.voided_by,
-      voidReason: data.void_reason,
-      updatedAt: data.updated_at
-    };
+    const { data: current, error: currentError } = await supabase
+      .from("journal_entries")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle();
+    if (currentError) throw new Error(`Gagal memeriksa status jurnal sebelum pembatalan: ${currentError.message}`);
+    if (!current) throw new Error("Jurnal tidak ditemukan.");
+    if (current.status !== JournalStatus.POSTED) {
+      throw new Error("Hanya jurnal POSTED yang dapat dikoreksi; draft dapat dihapus tanpa pembatalan.");
+    }
+    throw new Error("Jurnal POSTED tidak dapat di-VOID sebelum tersedia proses jurnal pembalik.");
   }
   async deleteDraftJournal(id: string): Promise<boolean> {
     ensureSupabaseConnected();
@@ -6513,6 +7058,16 @@ export class SupabaseAccountingRepository implements AccountingRepository {
   }
   async deleteJournal(id: string): Promise<boolean> {
     ensureSupabaseConnected();
+    const { data: current, error: currentError } = await supabase
+      .from("journal_entries")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle();
+    if (currentError) throw new Error(`Gagal memeriksa status jurnal sebelum penghapusan: ${currentError.message}`);
+    if (!current) return false;
+    if (current.status !== JournalStatus.DRAFT) {
+      throw new Error("Hanya draft jurnal yang dapat dihapus. Jurnal POSTED atau VOID harus dipertahankan sebagai audit trail.");
+    }
     const { error: lineError } = await supabase.from("journal_lines").delete().eq("journal_entry_id", id);
     if (lineError) throw new Error(`Gagal menghapus baris jurnal: ${lineError.message}`);
     const { error } = await supabase.from("journal_entries").delete().eq("id", id);

@@ -62,6 +62,11 @@ import {
   MediaUploadResult,
   MedicalRecord,
   MedicalRecordStatus,
+  OdontogramData,
+  PatientMedicalProfile,
+  ClinicalVitalSigns,
+  ClinicalConsentDocument,
+  ClinicalConsentScope,
   PromotionMedia,
   BackupJob,
   BackupManifest,
@@ -96,7 +101,11 @@ export interface DuplicateCheckResult {
 
 export interface PatientRepository {
   getPatients(currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]>;
-  getPatientById(id: string): Promise<PatientProfile | null>;
+  getPatientById(
+    id: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientProfile | null>;
   searchPatients(query: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]>;
   createPatient(
     patientData: Omit<PatientProfile, "id" | "medicalRecordNumber" | "createdAt" | "updatedAt"> & { id?: string; medicalRecordNumber?: string },
@@ -180,6 +189,7 @@ export interface StaffRepository {
 export interface DoctorRepository {
   getDoctors(currentUserRole?: UserRole, userBranchId?: string | null): Promise<DentalDoctor[]>;
   getDoctorById(id: string): Promise<DentalDoctor | null>;
+  getDoctorByStaffId(staffId: string): Promise<DentalDoctor | null>;
   getDoctorByCode(code: string): Promise<DentalDoctor | null>;
   getDoctorsByBranch(branchId: string): Promise<DentalDoctor[]>;
   createDoctor(
@@ -640,6 +650,43 @@ export interface TreatmentActivityRepository {
 }
 
 export interface MedicalRecordRepository {
+  getConsentDocumentsByVisit(
+    visitId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<ClinicalConsentDocument[]>;
+
+  uploadConsentDocument(
+    data: {
+      visitId: string;
+      branchId: string;
+      scope: ClinicalConsentScope;
+      treatmentJobId?: string;
+      file: File;
+    },
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<ClinicalConsentDocument>;
+
+  downloadConsentDocument(
+    documentId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<{ fileName: string; blob: Blob }>;
+
+  getPatientMedicalProfile(
+    patientId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientMedicalProfile | null>;
+
+  savePatientMedicalProfile(
+    profile: PatientMedicalProfile,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<PatientMedicalProfile>;
+
   getMedicalRecordById(
     id: string,
     currentUserRole?: UserRole,
@@ -668,14 +715,26 @@ export interface MedicalRecordRepository {
       anamnesis?: string;
       clinicalExamination?: string;
       diagnosis: string;
+      diagnosisCode?: string;
+      procedureCodes?: string[];
       treatmentPlan?: string;
       doctorNotes?: string;
+      odontogram?: OdontogramData;
+      vitalSigns?: ClinicalVitalSigns;
+      medicalHistorySnapshot?: PatientMedicalProfile;
       status?: MedicalRecordStatus | "DRAFT" | "FINAL";
       customId?: string;
     },
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null
+  ): Promise<MedicalRecord>;
+
+  finalizeMedicalRecord(
+    id: string,
+    doctorId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
   ): Promise<MedicalRecord>;
 }
 

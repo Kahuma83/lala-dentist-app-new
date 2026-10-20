@@ -12,7 +12,12 @@ import {
   BookingSource,
   MedicalRecord,
   MedicalRecordStatus,
-  TreatmentJob
+  TreatmentJob,
+  OdontogramData,
+  PatientMedicalProfile,
+  ClinicalVitalSigns,
+  ClinicalConsentDocument,
+  ClinicalConsentScope
 } from "../types/domain";
 import {
   Search,
@@ -47,11 +52,13 @@ import {
 } from "lucide-react";
 import { formatRupiah, formatDate, formatDateTime } from "../utils/formatter";
 import { PatientExcelModal } from "../components/PatientExcelModal";
+import { Odontogram } from "../components/Odontogram";
 import { ImportPatientExecutionResult } from "../utils/excelPatientUtils";
 import { useRouter } from "../components/Router";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
 import { hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 import { getOperationalDateString } from "../utils/dateUtils";
+import { normalizeIcd10WhoCode, parseIcd9CmProcedureCodes } from "../utils/clinicalCodeUtils";
 import {
   getRMConfig,
   saveRMConfig,
@@ -64,8 +71,13 @@ import {
 } from "../utils/rmUtils";
 
 export const PatientManagement: React.FC = () => {
-  const { currentUser, repos, branches, patients, visits, bookings, staff, refreshData } = useApp();
+  const { currentUser, repos, branches, patients, visits, bookings, treatmentJobs, staff, services, refreshData } = useApp();
   const { path, navigate } = useRouter();
+  const canReadMedicalRecords =
+    currentUser?.role === UserRole.DOCTOR || currentUser?.role === UserRole.SUPER_ADMIN;
+  const canEditMedicalRecords =
+    canReadMedicalRecords;
+  const canFinalizeMedicalRecords = currentUser?.role === UserRole.DOCTOR;
   const checkInRoutePrefix = currentUser?.role === UserRole.SUPER_ADMIN
     ? "/super-admin"
     : currentUser?.role === UserRole.BRANCH_ADMIN
@@ -117,6 +129,9 @@ export const PatientManagement: React.FC = () => {
     medicalRecordNumber: "",
     phone: "",
     email: "",
+    emergencyContactName: "",
+    emergencyContactPhone: "",
+    emergencyContactRelationship: "",
     identityDocumentType: "NIK" as "NIK" | "PASSPORT",
     identityDocumentNumber: "",
     placeOfBirth: "",
@@ -146,6 +161,9 @@ export const PatientManagement: React.FC = () => {
     if (currentUser?.role === UserRole.BRANCH_ADMIN && selectedBranchFilter === "ALL") {
       setSelectedBranchFilter("ALL");
     }
+    if (currentUser?.role === UserRole.DOCTOR && selectedBranchFilter !== "ALL") {
+      setSelectedBranchFilter("ALL");
+    }
   }, [currentUser?.role, currentUser?.assignedBranchId, selectedBranchFilter]);
 
   // Booking Visit Registration Form State
@@ -160,18 +178,46 @@ export const PatientManagement: React.FC = () => {
   const [loadingMR, setLoadingMR] = useState(false);
   const [existingMR, setExistingMR] = useState<MedicalRecord | null>(null);
   const [visitTreatments, setVisitTreatments] = useState<TreatmentJob[]>([]);
+  const [consentDocuments, setConsentDocuments] = useState<ClinicalConsentDocument[]>([]);
+  const [uploadingConsentKey, setUploadingConsentKey] = useState<string | null>(null);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const [medicalProfile, setMedicalProfile] = useState<PatientMedicalProfile>({
+    patientId: "",
+    allergies: "",
+    systemicDiseases: "",
+    routineMedications: "",
+    medicalWarnings: "",
+    medicalHistoryNotes: ""
+  });
+  const [savingMedicalProfile, setSavingMedicalProfile] = useState(false);
+  const [medicalProfileSaved, setMedicalProfileSaved] = useState(false);
   const [mrForm, setMrForm] = useState({
     chiefComplaint: "",
     anamnesis: "",
     clinicalExamination: "",
     diagnosis: "",
+    diagnosisCode: "",
+    procedureCodesText: "",
     treatmentPlan: "",
     doctorNotes: "",
+    odontogram: { schemaVersion: 1, teeth: {} } as OdontogramData,
+    vitalSigns: {} as ClinicalVitalSigns,
     status: MedicalRecordStatus.DRAFT as MedicalRecordStatus | "DRAFT" | "FINAL"
   });
   const [mrError, setMrError] = useState<string | null>(null);
   const [savingMR, setSavingMR] = useState(false);
   const [showFinalConfirm, setShowFinalConfirm] = useState(false);
+
+  const updateVitalSign = (key: keyof ClinicalVitalSigns, rawValue: string) => {
+    const parsedValue = rawValue.trim() === "" ? undefined : Number(rawValue);
+    setMrForm((previous) => ({
+      ...previous,
+      vitalSigns: {
+        ...previous.vitalSigns,
+        [key]: parsedValue !== undefined && Number.isFinite(parsedValue) ? parsedValue : undefined
+      }
+    }));
+  };
 
   // Error & UI Feedback State
   const [formError, setFormError] = useState<string | null>(null);
@@ -201,6 +247,30 @@ export const PatientManagement: React.FC = () => {
   const filteredPatients = useMemo(() => {
     let list = patients;
 
+    if (currentUser?.role === UserRole.DOCTOR) {
+      if (!currentUser.doctorId) {
+        list = [];
+      } else {
+        const assignedPatientIds = new Set<string>();
+        visits
+          .filter((visit) => visit.doctorId === currentUser.doctorId && visit.visitStatus !== VisitStatus.CANCELLED)
+          .forEach((visit) => assignedPatientIds.add(visit.patientId));
+        bookings
+          .filter((booking) =>
+            booking.doctorId === currentUser.doctorId &&
+            (booking.status === BookingStatus.PENDING || booking.status === BookingStatus.CONFIRMED) &&
+            new Date(booking.bookingDateTime).getTime() >= Date.now() - 24 * 60 * 60 * 1000
+          )
+          .forEach((booking) => assignedPatientIds.add(booking.patientId));
+        treatmentJobs
+          .filter((treatment) =>
+            (treatment.assignedDoctorId || treatment.doctorId) === currentUser.doctorId
+          )
+          .forEach((treatment) => assignedPatientIds.add(treatment.patientId));
+        list = list.filter((patient) => assignedPatientIds.has(patient.id));
+      }
+    }
+
     // Filter by branch if user explicitly selected a specific branch
     if (selectedBranchFilter !== "ALL") {
       const branchId = selectedBranchFilter;
@@ -225,7 +295,7 @@ export const PatientManagement: React.FC = () => {
       const rmMatch = (p.medicalRecordNumber || "").toLowerCase().includes(q);
       return nameMatch || phoneMatch || rmMatch;
     });
-  }, [patients, visits, bookings, searchQuery, selectedBranchFilter]);
+  }, [patients, visits, bookings, treatmentJobs, currentUser?.role, currentUser?.doctorId, searchQuery, selectedBranchFilter]);
 
   // Map of patient ID to visits count and branch names
   const patientVisitStats = useMemo(() => {
@@ -267,6 +337,9 @@ export const PatientManagement: React.FC = () => {
       medicalRecordNumber: "",
       phone: "",
       email: "",
+      emergencyContactName: "",
+      emergencyContactPhone: "",
+      emergencyContactRelationship: "",
       identityDocumentType: "NIK",
       identityDocumentNumber: "",
       placeOfBirth: "",
@@ -304,6 +377,9 @@ export const PatientManagement: React.FC = () => {
       medicalRecordNumber: p.medicalRecordNumber || "",
       phone: p.phone,
       email: p.email || "",
+      emergencyContactName: p.emergencyContactName || "",
+      emergencyContactPhone: p.emergencyContactPhone || "",
+      emergencyContactRelationship: p.emergencyContactRelationship || "",
       identityDocumentType: p.identityDocumentType || "NIK",
       identityDocumentNumber: p.identityDocumentNumber || "",
       placeOfBirth: p.placeOfBirth || "",
@@ -396,6 +472,9 @@ export const PatientManagement: React.FC = () => {
             ...(rmToSubmit ? { medicalRecordNumber: rmToSubmit } : {}),
             phone: patientForm.phone,
             email: patientEmail,
+            emergencyContactName: patientForm.emergencyContactName.trim(),
+            emergencyContactPhone: patientForm.emergencyContactPhone.trim(),
+            emergencyContactRelationship: patientForm.emergencyContactRelationship.trim(),
             identityDocumentType: patientForm.identityDocumentType,
             identityDocumentNumber: identityNumber,
             placeOfBirth: patientForm.placeOfBirth.trim(),
@@ -406,7 +485,7 @@ export const PatientManagement: React.FC = () => {
             religion: patientForm.religion,
             maritalStatus: patientForm.maritalStatus,
             education: patientForm.education,
-            medicalHistoryNotes: patientForm.medicalHistoryNotes,
+            ...(canReadMedicalRecords ? { medicalHistoryNotes: patientForm.medicalHistoryNotes } : {}),
             acquisitionSource: patientForm.acquisitionSource,
             referralName: patientForm.referralName,
             referringStaffId: patientForm.referringStaffId || null,
@@ -416,7 +495,7 @@ export const PatientManagement: React.FC = () => {
             branchId: effBranchId
           },
           currentUser?.role,
-          effBranchId
+          currentUser?.assignedBranchId
         );
         setFormSuccess("Data pasien berhasil diperbarui.");
       } else {
@@ -428,6 +507,9 @@ export const PatientManagement: React.FC = () => {
             medicalRecordNumber: rmToSubmit || undefined,
             phone: patientForm.phone,
             email: patientEmail,
+            emergencyContactName: patientForm.emergencyContactName.trim(),
+            emergencyContactPhone: patientForm.emergencyContactPhone.trim(),
+            emergencyContactRelationship: patientForm.emergencyContactRelationship.trim(),
             identityDocumentType: patientForm.identityDocumentType,
             identityDocumentNumber: identityNumber,
             placeOfBirth: patientForm.placeOfBirth.trim(),
@@ -438,7 +520,7 @@ export const PatientManagement: React.FC = () => {
             religion: patientForm.religion,
             maritalStatus: patientForm.maritalStatus,
             education: patientForm.education,
-            medicalHistoryNotes: patientForm.medicalHistoryNotes,
+            ...(canReadMedicalRecords ? { medicalHistoryNotes: patientForm.medicalHistoryNotes } : {}),
             acquisitionSource: patientForm.acquisitionSource,
             referralName: patientForm.referralName,
             referringStaffId: patientForm.referringStaffId || null,
@@ -448,7 +530,7 @@ export const PatientManagement: React.FC = () => {
             branchId: effBranchId
           },
           currentUser?.role,
-          effBranchId
+          currentUser?.assignedBranchId
         );
         setFormSuccess(newP.medicalRecordNumber
           ? `Pasien baru berhasil didaftarkan dengan Nomor RM: ${newP.medicalRecordNumber}`
@@ -616,11 +698,18 @@ export const PatientManagement: React.FC = () => {
 
   // Open Medical Record Modal for Visit
   const handleOpenMedicalRecord = async (v: PatientVisit) => {
+    if (!selectedPatient) {
+      setMrError("Pilih pasien terlebih dahulu sebelum membuka rekam medis.");
+      return;
+    }
     setSelectedVisitForMR(v);
     setMrModalOpen(true);
     setLoadingMR(true);
     setMrError(null);
     setShowFinalConfirm(false);
+    setMedicalProfileSaved(false);
+    setConsentDocuments([]);
+    setConsentError(null);
 
     try {
       // 1. Fetch existing Medical Record
@@ -631,14 +720,34 @@ export const PatientManagement: React.FC = () => {
       );
       setExistingMR(mr);
 
+      const profile = await repos.medicalRecord.getPatientMedicalProfile(
+        selectedPatient.id,
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
+      setMedicalProfile({
+        patientId: selectedPatient.id,
+        branchId: profile?.branchId || v.branchId,
+        bloodType: profile?.bloodType || "",
+        allergies: profile?.allergies || "",
+        systemicDiseases: profile?.systemicDiseases || "",
+        routineMedications: profile?.routineMedications || "",
+        medicalWarnings: profile?.medicalWarnings || "",
+        medicalHistoryNotes: profile?.medicalHistoryNotes || selectedPatient.medicalHistoryNotes || ""
+      });
+
       if (mr) {
         setMrForm({
           chiefComplaint: mr.chiefComplaint || "",
           anamnesis: mr.anamnesis || "",
           clinicalExamination: mr.clinicalExamination || "",
           diagnosis: mr.diagnosis || "",
+          diagnosisCode: mr.diagnosisCode || "",
+          procedureCodesText: (mr.procedureCodes || []).join("\n"),
           treatmentPlan: mr.treatmentPlan || "",
           doctorNotes: mr.doctorNotes || "",
+          odontogram: mr.odontogram || { schemaVersion: 1, teeth: {} },
+          vitalSigns: mr.vitalSigns || {},
           status: mr.status
         });
       } else {
@@ -647,19 +756,31 @@ export const PatientManagement: React.FC = () => {
           anamnesis: "",
           clinicalExamination: "",
           diagnosis: "",
+          diagnosisCode: "",
+          procedureCodesText: "",
           treatmentPlan: "",
           doctorNotes: "",
+          odontogram: { schemaVersion: 1, teeth: {} },
+          vitalSigns: {},
           status: MedicalRecordStatus.DRAFT
         });
       }
 
       // 2. Fetch treatments for this visit
-      const tList = await repos.treatment.listTreatmentsByVisit(
-        v.id,
-        currentUser?.role,
-        currentUser?.assignedBranchId
-      );
+      const [tList, documentList] = await Promise.all([
+        repos.treatment.listTreatmentsByVisit(
+          v.id,
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        ),
+        repos.medicalRecord.getConsentDocumentsByVisit(
+          v.id,
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        )
+      ]);
       setVisitTreatments(tList);
+      setConsentDocuments(documentList);
     } catch (err: any) {
       setMrError(err.message || "Gagal memuat rekam medis.");
     } finally {
@@ -667,11 +788,94 @@ export const PatientManagement: React.FC = () => {
     }
   };
 
+  const handleUploadConsentDocument = async (
+    file: File,
+    scope: ClinicalConsentScope,
+    treatmentJobId?: string
+  ) => {
+    if (!selectedVisitForMR || !canEditMedicalRecords) return;
+    const uploadKey = treatmentJobId || "VISIT";
+    setUploadingConsentKey(uploadKey);
+    setConsentError(null);
+    try {
+      const document = await repos.medicalRecord.uploadConsentDocument(
+        {
+          visitId: selectedVisitForMR.id,
+          branchId: selectedVisitForMR.branchId,
+          scope,
+          treatmentJobId,
+          file
+        },
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
+      setConsentDocuments((previous) => [document, ...previous]);
+    } catch (error) {
+      setConsentError(error instanceof Error ? error.message : "Gagal mengunggah dokumen consent.");
+    } finally {
+      setUploadingConsentKey(null);
+    }
+  };
+
+  const handleDownloadConsentDocument = async (document: ClinicalConsentDocument) => {
+    setConsentError(null);
+    try {
+      const downloaded = await repos.medicalRecord.downloadConsentDocument(
+        document.id,
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
+      const objectUrl = URL.createObjectURL(downloaded.blob);
+      const anchor = window.document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = downloaded.fileName;
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      setConsentError(error instanceof Error ? error.message : "Gagal mengunduh dokumen consent.");
+    }
+  };
+
+  const handleSaveMedicalProfile = async () => {
+    if (!selectedPatient || !selectedVisitForMR || !canEditMedicalRecords) return;
+    setSavingMedicalProfile(true);
+    setMrError(null);
+    setMedicalProfileSaved(false);
+    try {
+      const savedProfile = await repos.medicalRecord.savePatientMedicalProfile(
+        {
+          ...medicalProfile,
+          patientId: selectedPatient.id,
+          branchId: medicalProfile.branchId || selectedVisitForMR.branchId
+        },
+        currentUser?.role,
+        currentUser?.assignedBranchId,
+        currentUser?.id
+      );
+      setMedicalProfile(savedProfile);
+      setMedicalProfileSaved(true);
+    } catch (err: any) {
+      setMrError(err.message || "Gagal menyimpan profil medis pasien.");
+    } finally {
+      setSavingMedicalProfile(false);
+    }
+  };
+
   // Save Medical Record
   const handleSaveMedicalRecord = async (overrideStatus?: MedicalRecordStatus | "DRAFT" | "FINAL") => {
     if (!selectedVisitForMR || !selectedPatient) return;
+    if (!canEditMedicalRecords) {
+      setMrError("Hanya dokter yang berwenang menyimpan rekam medis digital.");
+      return;
+    }
 
     const targetStatus = overrideStatus || mrForm.status;
+    if (targetStatus === MedicalRecordStatus.FINAL && !canFinalizeMedicalRecords) {
+      setMrError("Hanya dokter penanggung jawab yang dapat menandatangani dan memfinalisasi rekam medis.");
+      return;
+    }
 
     if (
       targetStatus === MedicalRecordStatus.FINAL &&
@@ -692,10 +896,30 @@ export const PatientManagement: React.FC = () => {
       if (!mrForm.diagnosis.trim()) {
         throw new Error("Diagnosis wajib diisi.");
       }
+      const diagnosisCode = normalizeIcd10WhoCode(mrForm.diagnosisCode);
+      const procedureCodes = parseIcd9CmProcedureCodes(mrForm.procedureCodesText);
+      if (Object.values(mrForm.vitalSigns).some((value) => value !== undefined && (!Number.isFinite(value) || value < 0))) {
+        throw new Error("Nilai tanda vital harus berupa angka nol atau lebih.");
+      }
 
-      const activeDoctorId = currentUser?.doctorId || selectedVisitForMR.doctorId || "doc-syafira";
+      const activeDoctorId = currentUser?.doctorId || selectedVisitForMR.doctorId;
+      if (!activeDoctorId) {
+        throw new Error("Dokter untuk kunjungan ini belum ditentukan. Tetapkan dokter sebelum menyimpan rekam medis digital.");
+      }
 
-      const saved = await repos.medicalRecord.createOrUpdateMedicalRecord(
+      const savedProfile = await repos.medicalRecord.savePatientMedicalProfile(
+        {
+          ...medicalProfile,
+          patientId: selectedPatient.id,
+          branchId: medicalProfile.branchId || selectedVisitForMR.branchId
+        },
+        currentUser?.role,
+        currentUser?.assignedBranchId,
+        currentUser?.id
+      );
+      setMedicalProfile(savedProfile);
+
+      const draft = await repos.medicalRecord.createOrUpdateMedicalRecord(
         {
           visitId: selectedVisitForMR.id,
           patientId: selectedPatient.id,
@@ -705,14 +929,27 @@ export const PatientManagement: React.FC = () => {
           anamnesis: mrForm.anamnesis,
           clinicalExamination: mrForm.clinicalExamination,
           diagnosis: mrForm.diagnosis,
+          diagnosisCode: diagnosisCode || undefined,
+          procedureCodes,
           treatmentPlan: mrForm.treatmentPlan,
           doctorNotes: mrForm.doctorNotes,
-          status: targetStatus
+          odontogram: mrForm.odontogram,
+          vitalSigns: mrForm.vitalSigns,
+          medicalHistorySnapshot: savedProfile,
+          status: MedicalRecordStatus.DRAFT
         },
         currentUser?.role,
         currentUser?.assignedBranchId,
         currentUser?.id
       );
+      const saved = targetStatus === MedicalRecordStatus.FINAL
+        ? await repos.medicalRecord.finalizeMedicalRecord(
+            draft.id,
+            activeDoctorId,
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          )
+        : draft;
 
       setExistingMR(saved);
       setMrForm((prev) => ({ ...prev, status: saved.status }));
@@ -744,13 +981,21 @@ export const PatientManagement: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold text-slate-800 tracking-tight">Master Pasien Global</h1>
+            <h1 className="text-lg font-bold text-slate-800 tracking-tight">
+              {currentUser?.role === UserRole.DOCTOR ? "Pasien dalam Penugasan Saya" : "Master Pasien Global"}
+            </h1>
             <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-              {currentUser?.role === UserRole.SUPER_ADMIN ? "Lintas Cabang" : "Branch Scope"}
+              {currentUser?.role === UserRole.SUPER_ADMIN
+                ? "Lintas Cabang"
+                : currentUser?.role === UserRole.DOCTOR
+                  ? "Jadwal & Tindakan Saya"
+                  : "Branch Scope"}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Data identitas pasien bersifat global (1 Pasien = 1 Rekam Medis). Kunjungan terikat pada cabang operasional.
+            {currentUser?.role === UserRole.DOCTOR
+              ? "Menampilkan pasien dengan kunjungan, jadwal aktif, atau tindakan yang ditugaskan kepada Anda."
+              : "Data identitas pasien bersifat global (1 Pasien = 1 Rekam Medis). Kunjungan terikat pada cabang operasional."}
           </p>
         </div>
 
@@ -864,35 +1109,42 @@ export const PatientManagement: React.FC = () => {
           </div>
 
           {/* Filter Cabang Dropdown (Semua Cabang vs Cabang Tertentu) */}
-          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500/20 focus-within:border-emerald-500">
-            <Building2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-            <label htmlFor="select-branch-filter-toolbar" className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">
-              Cabang:
-            </label>
-            <select
-              id="select-branch-filter-toolbar"
-              value={selectedBranchFilter}
-              onChange={(e) => setSelectedBranchFilter(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1"
-            >
-              <option value="ALL">🌐 Semua Cabang (Global)</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  🏥 {b.name}
-                </option>
-              ))}
-            </select>
-            {selectedBranchFilter !== "ALL" && (
-              <button
-                type="button"
-                onClick={() => setSelectedBranchFilter("ALL")}
-                className="text-slate-400 hover:text-rose-600 p-0.5 ml-0.5 transition-colors"
-                title="Reset ke Semua Cabang"
+          {currentUser?.role === UserRole.DOCTOR ? (
+            <div className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800">
+              <User className="h-4 w-4" />
+              Pasien dalam penugasan Anda
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500/20 focus-within:border-emerald-500">
+              <Building2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <label htmlFor="select-branch-filter-toolbar" className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">
+                Cabang:
+              </label>
+              <select
+                id="select-branch-filter-toolbar"
+                value={selectedBranchFilter}
+                onChange={(e) => setSelectedBranchFilter(e.target.value)}
+                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1"
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+                <option value="ALL">🌐 Semua Cabang (Global)</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    🏥 {b.name}
+                  </option>
+                ))}
+              </select>
+              {selectedBranchFilter !== "ALL" && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedBranchFilter("ALL")}
+                  className="text-slate-400 hover:text-rose-600 p-0.5 ml-0.5 transition-colors"
+                  title="Reset ke Semua Cabang"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
@@ -1077,6 +1329,16 @@ export const PatientManagement: React.FC = () => {
                   <span className="font-mono font-semibold text-slate-700">{selectedPatient.phone || "Tidak diisi"}</span>
                 </div>
               </div>
+              {(selectedPatient.emergencyContactName || selectedPatient.emergencyContactPhone) && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                  <span className="mb-1 block text-[10px] font-bold">Kontak Darurat</span>
+                  <span className="block text-xs font-semibold">{selectedPatient.emergencyContactName || "Nama tidak diisi"}</span>
+                  <span className="font-mono text-[11px]">{selectedPatient.emergencyContactPhone || "Nomor tidak diisi"}</span>
+                  {selectedPatient.emergencyContactRelationship && (
+                    <span className="ml-2 text-[10px] text-amber-800">({selectedPatient.emergencyContactRelationship})</span>
+                  )}
+                </div>
+              )}
 
               <div className="flex items-start gap-2.5 text-slate-600">
                 <User className="w-3.5 h-3.5 text-slate-400 mt-0.5 flex-shrink-0" />
@@ -1106,7 +1368,7 @@ export const PatientManagement: React.FC = () => {
                 </div>
               </div>
 
-              {selectedPatient.medicalHistoryNotes && (
+              {canReadMedicalRecords && selectedPatient.medicalHistoryNotes && (
                 <div className="bg-rose-50 border border-rose-100 p-3 rounded-lg text-rose-800">
                   <span className="font-bold flex items-center gap-1 text-[11px] mb-0.5">
                     <AlertTriangle className="w-3.5 h-3.5 text-rose-500" /> Catatan Riwayat Medis / Alergi:
@@ -1131,6 +1393,12 @@ export const PatientManagement: React.FC = () => {
                   </button>
                 )}
               </div>
+              {canReadMedicalRecords && (
+                <div className="mb-3 rounded-lg border border-teal-100 bg-teal-50 p-3 text-[11px] leading-relaxed text-teal-900">
+                  <span className="font-bold">Rekam medis digital bersifat opsional.</span>{" "}
+                  Dokter dapat mengisi catatan kunjungan di sini atau tetap menggunakan pencatatan manual. Pilihan ini tidak memblokir treatment maupun alur kunjungan.
+                </div>
+              )}
 
               {loadingHistory ? (
                 <div className="text-center py-6 text-slate-400 text-xs">
@@ -1178,14 +1446,17 @@ export const PatientManagement: React.FC = () => {
                           <div className="text-[9px] text-blue-600 font-mono">Ref Booking: {v.bookingId}</div>
                         )}
 
-                        <div className="pt-1.5 flex items-center justify-end">
-                          <button
-                            onClick={() => handleOpenMedicalRecord(v)}
-                            className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded text-[11px] font-bold flex items-center gap-1 transition-colors"
-                          >
-                            <FileText className="w-3 h-3" /> Rekam Medis
-                          </button>
-                        </div>
+                        {canReadMedicalRecords && (
+                          <div className="pt-1.5 flex items-center justify-end">
+                            <button
+                              onClick={() => handleOpenMedicalRecord(v)}
+                              className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded text-[11px] font-bold flex items-center gap-1 transition-colors"
+                              title="Buka atau isi rekam medis digital untuk kunjungan ini (opsional)"
+                            >
+                              <FileText className="w-3 h-3" /> Rekam Medis Digital
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1527,6 +1798,42 @@ export const PatientManagement: React.FC = () => {
                   </p>
                 </div>
 
+                <section className="space-y-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+                  <div>
+                    <h3 className="font-bold text-slate-800">Kontak Darurat <span className="font-normal text-slate-400">(opsional)</span></h3>
+                    <p className="mt-0.5 text-[10px] text-slate-500">Orang yang dapat dihubungi bila pasien membutuhkan bantuan.</p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <input
+                      type="text"
+                      maxLength={150}
+                      value={patientForm.emergencyContactName}
+                      onChange={(event) => setPatientForm({ ...patientForm, emergencyContactName: event.target.value })}
+                      placeholder="Nama kontak"
+                      aria-label="Nama kontak darurat"
+                      className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-slate-800"
+                    />
+                    <input
+                      type="tel"
+                      maxLength={50}
+                      value={patientForm.emergencyContactPhone}
+                      onChange={(event) => setPatientForm({ ...patientForm, emergencyContactPhone: event.target.value })}
+                      placeholder="Nomor telepon"
+                      aria-label="Nomor telepon kontak darurat"
+                      className="w-full rounded-lg border border-slate-200 bg-white p-2.5 font-mono text-slate-800"
+                    />
+                    <input
+                      type="text"
+                      maxLength={80}
+                      value={patientForm.emergencyContactRelationship}
+                      onChange={(event) => setPatientForm({ ...patientForm, emergencyContactRelationship: event.target.value })}
+                      placeholder="Hubungan (keluarga, dll.)"
+                      aria-label="Hubungan kontak darurat"
+                      className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-slate-800"
+                    />
+                  </div>
+                </section>
+
                 <div>
                   <label htmlFor="input-patient-acquisition-source" className="block font-semibold text-slate-700 mb-1">
                     Sumber Mengetahui Klinik <span className="font-normal text-slate-400">(opsional)</span>
@@ -1669,16 +1976,18 @@ export const PatientManagement: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Catatan Riwayat Medis / Alergi</label>
-                  <input
-                    type="text"
-                    value={patientForm.medicalHistoryNotes}
-                    onChange={(e) => setPatientForm({ ...patientForm, medicalHistoryNotes: e.target.value })}
-                    placeholder="Alergi penicillin, hipertensi, dll..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  />
-                </div>
+                {canReadMedicalRecords && (
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Catatan Riwayat Medis / Alergi</label>
+                    <input
+                      type="text"
+                      value={patientForm.medicalHistoryNotes}
+                      onChange={(e) => setPatientForm({ ...patientForm, medicalHistoryNotes: e.target.value })}
+                      placeholder="Alergi obat, penyakit sistemik, obat rutin..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                    />
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between pt-3 border-t border-slate-100">
                   {patientForm.id && (currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) ? (
@@ -1823,7 +2132,7 @@ export const PatientManagement: React.FC = () => {
                   </span>
                 </div>
                 <h2 className="text-base font-bold text-slate-800 mt-1">
-                  Rekam Medis: {selectedPatient.fullName || selectedPatient.name}
+                  Rekam Medis Digital: {selectedPatient.fullName || selectedPatient.name}
                 </h2>
                 <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
                   <span>Visit: {formatDateTime(selectedVisitForMR.visitDateTime)}</span>
@@ -1846,6 +2155,14 @@ export const PatientManagement: React.FC = () => {
                 <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />
                   <span>{mrError}</span>
+                </div>
+              )}
+              <div className="rounded-lg border border-teal-100 bg-teal-50 p-3 text-[11px] leading-relaxed text-teal-900">
+                Catatan digital ini opsional untuk kunjungan ini. Jika dokter memilih pencatatan manual, tutup formulir ini; kunjungan dan treatment tetap dapat dilanjutkan.
+              </div>
+              {!canEditMedicalRecords && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600">
+                  Hanya Dokter dan Super Admin yang dapat membaca isi rekam medis klinis.
                 </div>
               )}
 
@@ -1892,6 +2209,98 @@ export const PatientManagement: React.FC = () => {
                   }}
                   className="space-y-4"
                 >
+                  <section className="space-y-3 rounded-xl border border-rose-100 bg-rose-50/60 p-3.5">
+                    <div>
+                      <h3 className="text-xs font-bold text-rose-900">Medical Alert & Riwayat Medis</h3>
+                      <p className="mt-0.5 text-[10px] text-rose-800">
+                        Profil ini berlaku lintas kunjungan dan hanya dapat diubah dokter atau Super Admin.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-[11px] font-semibold text-slate-700">
+                        Golongan darah
+                        <select
+                          value={medicalProfile.bloodType || ""}
+                          disabled={!canEditMedicalRecords || loadingMR}
+                          onChange={(event) => setMedicalProfile((profile) => ({ ...profile, bloodType: event.target.value }))}
+                          className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs disabled:bg-slate-100"
+                        >
+                          <option value="">Belum diketahui</option>
+                          {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((type) => (
+                            <option key={type} value={type}>{type}</option>
+                          ))}
+                        </select>
+                      </label>
+                      {[
+                        ["Alergi", "allergies", "Contoh: penisilin, lateks, anestesi lokal"],
+                        ["Penyakit sistemik", "systemicDiseases", "Contoh: diabetes, hipertensi, penyakit jantung"],
+                        ["Obat rutin", "routineMedications", "Nama obat, dosis, dan frekuensi bila diketahui"],
+                        ["Peringatan medis", "medicalWarnings", "Contoh: penggunaan pengencer darah atau riwayat perdarahan"],
+                        ["Riwayat medis tambahan", "medicalHistoryNotes", "Riwayat penyakit, alergi, atau tindakan medis terdahulu"]
+                      ].map(([label, key, placeholder]) => (
+                        <label key={key} className="text-[11px] font-semibold text-slate-700">
+                          {label}
+                          <textarea
+                            rows={2}
+                            value={medicalProfile[key as keyof PatientMedicalProfile] as string || ""}
+                            disabled={!canEditMedicalRecords || loadingMR}
+                            onChange={(event) => {
+                              setMedicalProfile((profile) => ({ ...profile, [key]: event.target.value }));
+                              setMedicalProfileSaved(false);
+                            }}
+                            placeholder={placeholder}
+                            className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs disabled:bg-slate-100"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    {canEditMedicalRecords && (
+                      <div className="flex items-center justify-end gap-2">
+                        {medicalProfileSaved && <span className="text-[10px] font-semibold text-emerald-700">Profil medis tersimpan</span>}
+                        <button
+                          type="button"
+                          onClick={handleSaveMedicalProfile}
+                          disabled={savingMedicalProfile || loadingMR}
+                          className="rounded-lg bg-rose-700 px-3 py-2 text-[11px] font-bold text-white hover:bg-rose-800 disabled:opacity-50"
+                        >
+                          {savingMedicalProfile ? "Menyimpan profil..." : "Simpan Profil Medis"}
+                        </button>
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-800">Tanda Vital Kunjungan Ini</h3>
+                      <p className="mt-0.5 text-[10px] text-slate-500">Isi sesuai hasil pengukuran; boleh dikosongkan bila tidak diukur.</p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      {([
+                        ["Tekanan darah sistolik", "systolicBloodPressure", "mmHg"],
+                        ["Tekanan darah diastolik", "diastolicBloodPressure", "mmHg"],
+                        ["Nadi", "pulseBpm", "x/menit"],
+                        ["Suhu", "temperatureCelsius", "°C"],
+                        ["Laju napas", "respiratoryRatePerMinute", "x/menit"],
+                        ["Saturasi oksigen", "oxygenSaturationPercent", "%"],
+                        ["Berat badan", "weightKg", "kg"],
+                        ["Tinggi badan", "heightCm", "cm"]
+                      ] as Array<[string, keyof ClinicalVitalSigns, string]>).map(([label, key, unit]) => (
+                        <label key={key} className="text-[10px] font-semibold text-slate-600">
+                          {label} ({unit})
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={mrForm.vitalSigns[key] ?? ""}
+                            disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
+                            onChange={(event) => updateVitalSign(key, event.target.value)}
+                            className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs disabled:bg-slate-100"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+
                   {/* Linked Treatments Section */}
                   {visitTreatments.length > 0 && (
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
@@ -1920,6 +2329,132 @@ export const PatientManagement: React.FC = () => {
                     </div>
                   )}
 
+                  {canReadMedicalRecords && (
+                    <section className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3.5">
+                      <div>
+                        <h3 className="text-xs font-bold text-indigo-950">Dokumen Informed Consent</h3>
+                        <p className="mt-1 text-[10px] leading-relaxed text-indigo-900">
+                          Unggah dokumen yang sudah disiapkan dan ditandatangani di luar aplikasi. Aplikasi tidak membuat teks consent atau memverifikasi validitas hukumnya. Format PDF/JPG/PNG, maksimal 10 MB.
+                        </p>
+                      </div>
+                      {consentError && (
+                        <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[10px] text-rose-700">
+                          {consentError}
+                        </div>
+                      )}
+
+                      <div className="rounded-lg border border-indigo-100 bg-white p-3 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-[11px] font-bold text-slate-800">Consent umum kunjungan</div>
+                            <div className="text-[10px] text-slate-500">Berlaku untuk kunjungan ini.</div>
+                          </div>
+                          {canEditMedicalRecords && (
+                            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-indigo-800">
+                              <Upload className="h-3.5 w-3.5" />
+                              {uploadingConsentKey === "VISIT" ? "Mengunggah..." : "Unggah dokumen"}
+                              <input
+                                type="file"
+                                accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                                className="sr-only"
+                                disabled={Boolean(uploadingConsentKey)}
+                                onChange={(event) => {
+                                  const file = event.currentTarget.files?.[0];
+                                  event.currentTarget.value = "";
+                                  if (file) void handleUploadConsentDocument(file, "VISIT");
+                                }}
+                              />
+                            </label>
+                          )}
+                        </div>
+                        {consentDocuments
+                          .filter((document) => document.scope === "VISIT")
+                          .map((document) => (
+                            <div key={document.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-slate-50 px-2.5 py-2">
+                              <div className="min-w-0">
+                                <div className="truncate text-[10px] font-semibold text-slate-700">{document.fileName}</div>
+                                <div className="text-[9px] text-slate-500">
+                                  {formatDateTime(document.uploadedAt)} · {(document.sizeBytes / 1024).toFixed(0)} KB
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void handleDownloadConsentDocument(document)}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50"
+                              >
+                                <Download className="h-3 w-3" /> Unduh
+                              </button>
+                            </div>
+                          ))}
+                        {!consentDocuments.some((document) => document.scope === "VISIT") && (
+                          <p className="text-[10px] text-slate-500">Belum ada dokumen consent umum untuk kunjungan ini.</p>
+                        )}
+                      </div>
+
+                      {visitTreatments
+                        .filter((treatment) => services.some((service) => service.id === treatment.serviceId && service.requiresConsent))
+                        .map((treatment) => {
+                          const treatmentDocuments = consentDocuments.filter(
+                            (document) => document.scope === "TREATMENT" && document.treatmentJobId === treatment.id
+                          );
+                          return (
+                            <div key={treatment.id} className="rounded-lg border border-indigo-100 bg-white p-3 space-y-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <div className="text-[11px] font-bold text-slate-800">Consent tindakan: {treatment.serviceNameSnapshot}</div>
+                                  <div className="text-[10px] text-slate-500">Layanan ini ditandai wajib consent.</div>
+                                </div>
+                                {canEditMedicalRecords && (
+                                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-indigo-800">
+                                    <Upload className="h-3.5 w-3.5" />
+                                    {uploadingConsentKey === treatment.id ? "Mengunggah..." : "Unggah dokumen"}
+                                    <input
+                                      type="file"
+                                      accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                                      className="sr-only"
+                                      disabled={Boolean(uploadingConsentKey)}
+                                      onChange={(event) => {
+                                        const file = event.currentTarget.files?.[0];
+                                        event.currentTarget.value = "";
+                                        if (file) void handleUploadConsentDocument(file, "TREATMENT", treatment.id);
+                                      }}
+                                    />
+                                  </label>
+                                )}
+                              </div>
+                              {treatmentDocuments.map((document) => (
+                                <div key={document.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-slate-50 px-2.5 py-2">
+                                  <div className="min-w-0">
+                                    <div className="truncate text-[10px] font-semibold text-slate-700">{document.fileName}</div>
+                                    <div className="text-[9px] text-slate-500">
+                                      {formatDateTime(document.uploadedAt)} · {(document.sizeBytes / 1024).toFixed(0)} KB
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDownloadConsentDocument(document)}
+                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50"
+                                  >
+                                    <Download className="h-3 w-3" /> Unduh
+                                  </button>
+                                </div>
+                              ))}
+                              {treatmentDocuments.length === 0 && (
+                                <p className="text-[10px] text-amber-700">Belum ada dokumen consent yang diarsipkan untuk tindakan ini.</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      {visitTreatments.every((treatment) =>
+                        !services.some((service) => service.id === treatment.serviceId && service.requiresConsent)
+                      ) && (
+                        <p className="text-[10px] text-slate-500">
+                          Belum ada tindakan kunjungan ini yang ditandai wajib consent.
+                        </p>
+                      )}
+                    </section>
+                  )}
+
                   {/* Keluhan Utama */}
                   <div>
                     <label className="block font-bold text-slate-700 mb-1 text-xs">
@@ -1929,7 +2464,7 @@ export const PatientManagement: React.FC = () => {
                       rows={2}
                       value={mrForm.chiefComplaint}
                       onChange={(e) => setMrForm({ ...mrForm, chiefComplaint: e.target.value })}
-                      disabled={existingMR?.status === MedicalRecordStatus.FINAL}
+                      disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
                       placeholder="Contoh: Gigi geraham kiri bawah ngilu saat minum dingin..."
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
@@ -1942,7 +2477,7 @@ export const PatientManagement: React.FC = () => {
                       rows={2}
                       value={mrForm.anamnesis}
                       onChange={(e) => setMrForm({ ...mrForm, anamnesis: e.target.value })}
-                      disabled={existingMR?.status === MedicalRecordStatus.FINAL}
+                      disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
                       placeholder="Riwayat penyakit sekarang, onset keluhan, pengobatan sebelumnya..."
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
@@ -1955,11 +2490,18 @@ export const PatientManagement: React.FC = () => {
                       rows={2}
                       value={mrForm.clinicalExamination}
                       onChange={(e) => setMrForm({ ...mrForm, clinicalExamination: e.target.value })}
-                      disabled={existingMR?.status === MedicalRecordStatus.FINAL}
+                      disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
                       placeholder="Pemeriksaan ekstraoral/intraoral, palpasi, perkusi, CE, sondasi..."
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
                   </div>
+
+                  <Odontogram
+                    value={mrForm.odontogram}
+                    history={existingMR?.odontogramHistory}
+                    disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
+                    onChange={(odontogram) => setMrForm((previous) => ({ ...previous, odontogram }))}
+                  />
 
                   {/* Diagnosis */}
                   <div>
@@ -1970,11 +2512,39 @@ export const PatientManagement: React.FC = () => {
                       rows={2}
                       value={mrForm.diagnosis}
                       onChange={(e) => setMrForm({ ...mrForm, diagnosis: e.target.value })}
-                      disabled={existingMR?.status === MedicalRecordStatus.FINAL}
+                      disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
                       placeholder="Contoh: Pulpitis ireversibel gigi 36, Karies profunda gigi 46..."
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
                   </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block font-bold text-slate-700 text-xs">
+                      Kode Diagnosis ICD-10 WHO 2019 <span className="font-normal text-slate-400">(opsional, manual)</span>
+                      <input
+                        type="text"
+                        value={mrForm.diagnosisCode}
+                        onChange={(event) => setMrForm((previous) => ({ ...previous, diagnosisCode: event.target.value }))}
+                        disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
+                        placeholder="Masukkan kode terverifikasi dokter"
+                        maxLength={8}
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-xs font-normal text-slate-800 disabled:bg-slate-100"
+                      />
+                    </label>
+                    <label className="block font-bold text-slate-700 text-xs">
+                      Kode Prosedur ICD-9-CM <span className="font-normal text-slate-400">(opsional, satu kode per baris)</span>
+                      <textarea
+                        rows={2}
+                        value={mrForm.procedureCodesText}
+                        onChange={(event) => setMrForm((previous) => ({ ...previous, procedureCodesText: event.target.value }))}
+                        disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
+                        placeholder={"Masukkan kode terverifikasi dokter, satu per baris."}
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-xs font-normal text-slate-800 disabled:bg-slate-100"
+                      />
+                    </label>
+                  </div>
+                  <p className="text-[10px] leading-relaxed text-amber-800">
+                    Kode diketik manual; aplikasi hanya memeriksa format, bukan validitas klinis. Pilihan kode dan kecocokannya harus diverifikasi dokter.
+                  </p>
 
                   {/* Rencana / Tindakan */}
                   <div>
@@ -1983,7 +2553,7 @@ export const PatientManagement: React.FC = () => {
                       rows={2}
                       value={mrForm.treatmentPlan}
                       onChange={(e) => setMrForm({ ...mrForm, treatmentPlan: e.target.value })}
-                      disabled={existingMR?.status === MedicalRecordStatus.FINAL}
+                      disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
                       placeholder="Rencana perawatan & tindakan yang dilakukan pada kunjungan ini..."
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
@@ -1996,18 +2566,22 @@ export const PatientManagement: React.FC = () => {
                       rows={2}
                       value={mrForm.doctorNotes}
                       onChange={(e) => setMrForm({ ...mrForm, doctorNotes: e.target.value })}
-                      disabled={existingMR?.status === MedicalRecordStatus.FINAL}
+                      disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
                       placeholder="Catatan edukasi pasien, instruksi pasca tindakan, atau jadwal kontrol..."
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
                   </div>
 
                   {/* Status Selection */}
-                  {existingMR?.status !== MedicalRecordStatus.FINAL && (
+                  {canEditMedicalRecords && existingMR?.status !== MedicalRecordStatus.FINAL && (
                     <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex items-center justify-between">
                       <div>
                         <span className="font-bold text-slate-700 block text-xs">Status Rekam Medis</span>
-                        <span className="text-[10px] text-slate-400">Pilih FINAL jika data klinis sudah lengkap dan selesai</span>
+                        <span className="text-[10px] text-slate-400">
+                          {canFinalizeMedicalRecords
+                            ? "Pilih FINAL jika data klinis sudah lengkap; hanya dokter penanggung jawab yang dapat menandatangani."
+                            : "Super Admin dapat menyimpan draft; finalisasi tetap dilakukan dokter penanggung jawab."}
+                        </span>
                       </div>
                       <select
                         value={mrForm.status}
@@ -2015,7 +2589,7 @@ export const PatientManagement: React.FC = () => {
                         className="bg-white border border-slate-300 rounded-lg px-3 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                       >
                         <option value={MedicalRecordStatus.DRAFT}>DRAFT (Dapat Diedit)</option>
-                        <option value={MedicalRecordStatus.FINAL}>FINAL (Terkunci)</option>
+                        {canFinalizeMedicalRecords && <option value={MedicalRecordStatus.FINAL}>FINAL (Terkunci)</option>}
                       </select>
                     </div>
                   )}
@@ -2029,7 +2603,7 @@ export const PatientManagement: React.FC = () => {
                     >
                       Tutup
                     </button>
-                    {existingMR?.status !== MedicalRecordStatus.FINAL && (
+                    {canEditMedicalRecords && existingMR?.status !== MedicalRecordStatus.FINAL && (
                       <button
                         type="submit"
                         disabled={savingMR}

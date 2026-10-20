@@ -43,6 +43,9 @@ describe("Patient Excel Export & Import Utility Suite", () => {
         dateOfBirth: "1992-04-12",
         phone: "081999888771",
         email: "pasien1@test.com",
+        emergencyContactName: "Siti",
+        emergencyContactPhone: "081234567890",
+        emergencyContactRelationship: "Ibu",
         address: "Jl. Mastrip Timur No. 5",
         medicalHistoryNotes: "Tidak ada alergi",
         registeredBranchId: "branch-gebang",
@@ -87,6 +90,8 @@ describe("Patient Excel Export & Import Utility Suite", () => {
     expect(created1).toBeDefined();
     expect(created1?.name).toBe("Test Pasien Excel 1");
     expect(created1?.phone).toBe("081999888771");
+    expect(created1?.emergencyContactName).toBe("Siti");
+    expect(created1?.emergencyContactPhone).toBe("081234567890");
   });
 
   it("should handle duplicate skip strategy appropriately", async () => {
@@ -156,7 +161,7 @@ describe("Patient Excel Export & Import Utility Suite", () => {
     expect(result.updated).toBe(1);
     expect(result.imported).toBe(0);
 
-    const updated = await patientRepo.getPatientById(existingPatient.id);
+    const updated = await patientRepo.getPatientById(existingPatient.id, UserRole.SUPER_ADMIN);
     expect(updated?.address).toBe("Jl. Alamat Diperbarui dari Excel");
     expect(updated?.medicalHistoryNotes).toContain("Alergi makanan laut (Updated)");
   });

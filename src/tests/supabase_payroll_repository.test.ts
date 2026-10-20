@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SupabaseOvertimeRepository, SupabasePayrollRepository } from "../repositories/supabaseRepositories";
+import {
+  SupabaseAccountingRepository,
+  SupabaseOvertimeRepository,
+  SupabasePayrollRepository
+} from "../repositories/supabaseRepositories";
 import * as supabaseLib from "../lib/supabase";
-import { UserRole } from "../types/domain";
+import { JournalSourceType, UserRole } from "../types/domain";
 
 interface QueryCall {
   table: string;
@@ -13,7 +17,7 @@ interface QueryCall {
 function createQuery(
   table: string,
   calls: QueryCall[],
-  resolve: (call: QueryCall) => { data: any; error: null | { message: string } }
+  resolve: (call: QueryCall) => { data: any; error: null | { message: string; code?: string } }
 ) {
   const call: QueryCall = { table, action: "select", filters: [] };
   calls.push(call);
@@ -70,6 +74,139 @@ describe("Supabase payroll repository", () => {
     vi.spyOn(supabaseLib, "isSupabaseConfigured", "get").mockReturnValue(true);
     payrollRepo = new SupabasePayrollRepository();
     calls = [];
+  });
+
+  it("deletes payroll through the guarded atomic database function", async () => {
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({ data: true, error: null } as any);
+    const payrollId = "00000000-0000-4000-8000-000000000001";
+
+    await expect(payrollRepo.deletePayroll(payrollId, UserRole.SUPER_ADMIN)).resolves.toBe(true);
+
+    expect(rpc).toHaveBeenCalledWith("delete_unposted_payroll", { p_payroll_id: payrollId });
+  });
+
+  it("surfaces database rejection when a payroll cannot be safely deleted", async () => {
+    vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({
+      data: null,
+      error: { message: "Payroll memiliki riwayat jurnal" }
+    } as any);
+
+    await expect(
+      payrollRepo.deletePayroll("00000000-0000-4000-8000-000000000001", UserRole.SUPER_ADMIN)
+    ).rejects.toThrow(/Payroll memiliki riwayat jurnal/);
+  });
+
+  it("does not void or delete a POSTED journal through the repository", async () => {
+    const accountingRepo = new SupabaseAccountingRepository();
+    vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
+      createQuery(table, calls, () => ({ data: { status: "POSTED" }, error: null }))) as any);
+
+    await expect(accountingRepo.voidJournal("journal-id", "Admin", "Koreksi"))
+      .rejects.toThrow(/jurnal pembalik/i);
+    await expect(accountingRepo.deleteJournal("journal-id"))
+      .rejects.toThrow(/hanya draft jurnal/i);
+
+    expect(calls.every((call) => call.action === "select")).toBe(true);
+  });
+
+  it("persists the journal event used by payroll source-event uniqueness", async () => {
+    const accountingRepo = new SupabaseAccountingRepository();
+    const insertedJournal = {
+      id: "journal-1",
+      journal_number: "JRN-1",
+      journal_date: "2026-10-28",
+      branch_id: "branch-1",
+      description: "Payroll accrual",
+      source_type: "PAYROLL",
+      source_id: "payroll-1",
+      event: "ACCRUAL",
+      status: "DRAFT",
+      total_debit: 100_000,
+      total_credit: 100_000,
+      created_by: "Test",
+      created_at: "2026-10-28T00:00:00.000Z"
+    };
+    vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
+      createQuery(table, calls, (call) => ({
+        data: call.table === "journal_entries" ? insertedJournal : [{ id: "line-1" }],
+        error: null
+      }))) as any);
+
+    const journal = await accountingRepo.createDraftJournal({
+      journalDate: "2026-10-28",
+      branchId: "branch-1",
+      description: "Payroll accrual",
+      sourceType: JournalSourceType.PAYROLL,
+      sourceId: "payroll-1",
+      event: "ACCRUAL",
+      lines: [
+        { accountId: "account-expense", debit: 100_000, credit: 0 },
+        { accountId: "account-payable", debit: 0, credit: 100_000 }
+      ]
+    }, "Test");
+
+    expect(journal.event).toBe("ACCRUAL");
+    expect(calls.find((call) => call.table === "journal_entries" && call.action === "insert")?.payload)
+      .toMatchObject({ source_type: "PAYROLL", source_id: "payroll-1", event: "ACCRUAL" });
+  });
+
+  it("returns the existing complete journal when a concurrent insert violates source-event uniqueness", async () => {
+    const accountingRepo = new SupabaseAccountingRepository();
+    const existingJournal = {
+      id: "journal-existing",
+      journal_number: "JRN-EXISTING",
+      journal_date: "2026-10-28",
+      branch_id: "branch-1",
+      description: "Payroll accrual",
+      source_type: "PAYROLL",
+      source_id: "payroll-1",
+      event: "ACCRUAL",
+      status: "POSTED",
+      total_debit: 100_000,
+      total_credit: 100_000,
+      created_by: "Concurrent request",
+      created_at: "2026-10-28T00:00:00.000Z"
+    };
+    vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
+      createQuery(table, calls, (call) => {
+        if (call.table === "journal_entries" && call.action === "insert") {
+          return { data: null, error: { code: "23505", message: "unique violation" } };
+        }
+        if (call.table === "journal_entries") {
+          const isSingle = call.filters.some(([, column]) => column === "id");
+          return { data: isSingle ? existingJournal : [existingJournal], error: null };
+        }
+        if (call.table === "journal_lines") {
+          return {
+            data: [
+              { id: "line-1", account_id: "account-expense", debit: 100_000, credit: 0 },
+              { id: "line-2", account_id: "account-payable", debit: 0, credit: 100_000 }
+            ],
+            error: null
+          };
+        }
+        return { data: null, error: null };
+      })) as any);
+
+    const journal = await accountingRepo.createDraftJournal({
+      journalDate: "2026-10-28",
+      branchId: "branch-1",
+      description: "Payroll accrual",
+      sourceType: JournalSourceType.PAYROLL,
+      sourceId: "payroll-1",
+      event: "ACCRUAL",
+      lines: [
+        { accountId: "account-expense", debit: 100_000, credit: 0 },
+        { accountId: "account-payable", debit: 0, credit: 100_000 }
+      ]
+    }, "Test");
+
+    expect(journal).toMatchObject({
+      id: "journal-existing",
+      status: "POSTED",
+      sourceType: JournalSourceType.PAYROLL,
+      event: "ACCRUAL"
+    });
   });
 
   describe("Supabase overtime repository", () => {

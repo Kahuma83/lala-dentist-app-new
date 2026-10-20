@@ -5,23 +5,38 @@ import * as path from "path";
 describe("Global patient history RLS for doctors", () => {
   const migrationPath = path.resolve(
     process.cwd(),
-    "supabase/migrations/20261018000000_allow_doctors_global_patient_history.sql"
+    "supabase/migrations/20261206000000_standardize_clinical_record_foundation.sql"
   );
 
-  it("allows active doctors to read profiles, visits, and medical records across branches", () => {
+  it("removes cross-branch doctor access to clinical medical records", () => {
     const migration = fs.readFileSync(migrationPath, "utf-8");
-
-    for (const table of ["patient_profiles", "patient_visits", "clinical_medical_records"]) {
-      const policy = new RegExp(
-        `CREATE POLICY "[^"]+"\\s+ON public\\.${table}\\s+FOR SELECT\\s+TO authenticated\\s+USING \\(public\\.get_user_role\\(\\) = 'DOCTOR'\\)`,
-        "i"
-      );
-      expect(migration).toMatch(policy);
-    }
+    expect(migration).toMatch(/DROP POLICY IF EXISTS "Doctors read all patient medical records"/i);
+    expect(migration).toMatch(/DROP POLICY IF EXISTS "Assistants and Branch Admins can view own branch medical records"/i);
+    expect(migration).toMatch(/DROP POLICY IF EXISTS "Super Admin can manage all medical records"/i);
+    expect(migration).toMatch(/CREATE POLICY "Clinical records doctor read"[\s\S]*?FOR SELECT[\s\S]*?public\.user_can_manage_treatment_branch\(branch_id\)/i);
   });
 
-  it("does not add cross-branch write policies", () => {
+  it("limits clinical record reads and writes to doctors in authorized branches and Super Admin", () => {
     const migration = fs.readFileSync(migrationPath, "utf-8");
-    expect(migration).not.toMatch(/FOR (?:ALL|INSERT|UPDATE|DELETE)/i);
+    expect(migration).toMatch(/Clinical records doctor insert[\s\S]*?FOR INSERT/i);
+    expect(migration).toMatch(/Clinical records doctor update[\s\S]*?FOR UPDATE/i);
+    expect(migration).not.toMatch(/Clinical records doctor delete/i);
+    expect(migration).toMatch(/public\.is_super_admin\(\)/i);
+  });
+
+  it("scopes doctors to patients with an assigned visit, active booking, or treatment", () => {
+    const assignmentMigration = path.resolve(
+      process.cwd(),
+      "supabase/migrations/20261212000000_scope_doctor_patient_access.sql"
+    );
+    const migration = fs.readFileSync(assignmentMigration, "utf-8");
+    expect(migration).toContain('DROP POLICY IF EXISTS "Doctors read all global patient profiles"');
+    expect(migration).toContain('DROP POLICY IF EXISTS "Doctors read all patient visits"');
+    expect(migration).toContain("public.doctor_can_access_patient(patient_profiles.id)");
+    expect(migration).toContain("booking.status IN ('PENDING', 'CONFIRMED')");
+    expect(migration).toContain("booking.doctor_id = current_doctor_id");
+    expect(migration).toContain("COALESCE(job.assigned_doctor_id, job.doctor_id) = current_doctor_id");
+    expect(migration).toContain("public.doctor_can_manage_clinical_visit(visit_id, branch_id, doctor_id)");
+    expect(migration).toContain("public.user_can_manage_treatment_branch(branch_id)");
   });
 });

@@ -253,7 +253,7 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
       ).rejects.toThrow(/Akses ditolak: Branch Admin hanya dapat mencatat pengeluaran/i);
     });
 
-    it("should allow VOID on a POSTED expense journal with audit trail", async () => {
+    it("should block VOID on a POSTED expense journal until a reversal workflow exists", async () => {
       const accounts = await accountingRepo.getAccounts();
       const expenseAcc = accounts.find((a) => a.code === "5040")!;
       const cashAcc = accounts.find((a) => a.code === "1000")!;
@@ -274,19 +274,14 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
 
       expect(journal.status).toBe(JournalStatus.POSTED);
 
-      // Void with valid reason
-      const voidedJournal = await accountingRepo.voidJournal(
+      await expect(accountingRepo.voidJournal(
         journal.id,
         "Admin Gebang",
         "Kwitansi ganda, transaksi dibatalkan",
         UserRole.BRANCH_ADMIN,
         "branch-gebang"
-      );
-
-      expect(voidedJournal.status).toBe(JournalStatus.VOID);
-      expect(voidedJournal.voidReason).toBe("Kwitansi ganda, transaksi dibatalkan");
-      expect(voidedJournal.voidedBy).toBe("Admin Gebang");
-      expect(voidedJournal.voidedAt).toBeDefined();
+      )).rejects.toThrow(/jurnal pembalik/i);
+      expect((await accountingRepo.getJournalById(journal.id))?.status).toBe(JournalStatus.POSTED);
     });
   });
 });

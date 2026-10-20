@@ -1248,15 +1248,6 @@ export const Accounting: React.FC = () => {
                                 </>
                               )}
 
-                              {isSuper && !isDraft && (
-                                <button
-                                  onClick={() => setJournalToDelete({ id: j.id, isDraft: false, number: j.journalNumber })}
-                                  className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors cursor-pointer"
-                                  title="Hapus / Koreksi Transaksi Jurnal"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
                             </div>
                           </td>
                         </tr>
@@ -2094,23 +2085,9 @@ export const Accounting: React.FC = () => {
             <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 {selectedJournal.status === JournalStatus.POSTED && (
-                  <button
-                    onClick={() => {
-                      setVoidReasonText("");
-                      setVoidReasonModalOpen(true);
-                    }}
-                    className="px-3 py-2 text-amber-700 hover:bg-amber-50 border border-amber-300 rounded-lg text-xs font-semibold transition-colors"
-                  >
-                    Void / Batalkan Jurnal
-                  </button>
-                )}
-                {isSuper && (
-                  <button
-                    onClick={() => setJournalToDelete({ id: selectedJournal.id, isDraft: false, number: selectedJournal.journalNumber })}
-                    className="px-3 py-2 text-rose-700 hover:bg-rose-50 border border-rose-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Hapus Transaksi Jurnal
-                  </button>
+                  <span className="max-w-xs text-[11px] text-amber-800">
+                    VOID ditahan sampai proses jurnal pembalik tersedia.
+                  </span>
                 )}
               </div>
 

@@ -142,22 +142,20 @@ describe("PHASE 9D.1 — Branch Admin Financial UI & Operational Simplification 
     expect(journal.status).toBe(JournalStatus.POSTED);
   });
 
-  // 4. Compensation automatically generates accounting entries
-  it("4. Compensation accrual should automatically generate accounting journal entries", async () => {
+  // 4. Payroll is the only journal posting path for accrued compensation
+  it("4. Compensation accrual already included in payroll should not generate a second journal", async () => {
     const accruals = await compRepo.getCompensationAccruals();
     expect(accruals.length).toBeGreaterThan(0);
 
     const targetAccrual = accruals[0];
-    const postedJournal = await postingService.postCompensation(
-      targetAccrual.id,
-      UserRole.SUPER_ADMIN,
-      null,
-      "System Auto"
-    );
-
-    expect(postedJournal).toBeDefined();
-    expect(postedJournal.sourceType).toBe(JournalSourceType.COMPENSATION);
-    expect(postedJournal.status).toBe(JournalStatus.POSTED);
+    await expect(
+      postingService.postCompensation(
+        targetAccrual.id,
+        UserRole.SUPER_ADMIN,
+        null,
+        "System Auto"
+      )
+    ).rejects.toThrow(/sudah masuk payroll/);
   });
 
   // 5. Branch Expense automatically generates accounting entries

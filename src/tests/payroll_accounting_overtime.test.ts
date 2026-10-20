@@ -20,6 +20,7 @@ describe("Payroll accounting posting", () => {
     const storedPayroll = db.payrolls.find((item) => item.id === payroll.id);
     if (!storedPayroll) throw new Error("Generated payroll was not stored");
     storedPayroll.status = PayrollStatus.APPROVED;
+    storedPayroll.branchId = "branch-gebang";
     storedPayroll.netSalary += 100_000;
     db.payrollItems.push({
       id: "item-overtime-1",

@@ -75,6 +75,112 @@ describe("PHASE 10A — Supabase Foundation & Automated Google Drive Backup Test
       expect(sql).toContain("Super Admin full control on backup jobs");
       expect(sql).toContain("SUPER_ADMIN");
     });
+
+    it("should keep the optional digital medical record fields compatible with the existing table", () => {
+      const migrationPath = path.resolve(
+        process.cwd(),
+        "supabase/migrations/20261205000000_align_optional_digital_medical_records.sql"
+      );
+      expect(fs.existsSync(migrationPath)).toBe(true);
+      const sql = fs.readFileSync(migrationPath, "utf-8");
+
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS chief_complaint TEXT");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS clinical_examination TEXT");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS diagnosis TEXT");
+      expect(sql).toContain("ALTER COLUMN anamnesis SET DEFAULT ''");
+      expect(sql).toContain("ALTER COLUMN physical_examination SET DEFAULT ''");
+    });
+
+    it("should establish branch-scoped clinical access and treatment metadata without changing service prices", () => {
+      const migrationPath = path.resolve(
+        process.cwd(),
+        "supabase/migrations/20261206000000_standardize_clinical_record_foundation.sql"
+      );
+      expect(fs.existsSync(migrationPath)).toBe(true);
+      const sql = fs.readFileSync(migrationPath, "utf-8");
+
+      expect(sql).toContain("CREATE TABLE IF NOT EXISTS public.patient_medical_profiles");
+      expect(sql).toContain("CREATE TABLE IF NOT EXISTS public.clinical_medical_record_addenda");
+      expect(sql).toContain("DROP COLUMN IF EXISTS medical_history_notes");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS vital_signs JSONB");
+      expect(sql).toContain("CREATE TABLE IF NOT EXISTS public.treatment_job_clinical_details");
+      expect(sql).toContain("tooth_numbers SMALLINT[]");
+      expect(sql).toContain("master_services_clinical_target_check");
+      expect(sql).toContain("DROP POLICY IF EXISTS \"Doctors read all patient medical records\"");
+      expect(sql).toContain("user_can_manage_treatment_branch(branch_id)");
+      expect(sql).toContain("Hanya dokter penanggung jawab yang dapat menandatangani rekam medis.");
+      expect(sql).not.toMatch(/INSERT\s+INTO\s+public\.master_services/i);
+      expect(sql).not.toMatch(/SET\s+base_price\s*=/i);
+    });
+
+    it("should add append-only database history for odontogram edits", () => {
+      const migrationPath = path.resolve(
+        process.cwd(),
+        "supabase/migrations/20261207000000_add_odontogram_change_history.sql"
+      );
+      expect(fs.existsSync(migrationPath)).toBe(true);
+      const sql = fs.readFileSync(migrationPath, "utf-8");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS odontogram_history JSONB");
+      expect(sql).toContain("BEFORE UPDATE OF odontogram, odontogram_history");
+      expect(sql).toContain("'changed_by', auth.uid()");
+    });
+
+    it("should add optional patient emergency contact fields", () => {
+      const migrationPath = path.resolve(
+        process.cwd(),
+        "supabase/migrations/20261208000000_add_patient_emergency_contact.sql"
+      );
+      expect(fs.existsSync(migrationPath)).toBe(true);
+      const sql = fs.readFileSync(migrationPath, "utf-8");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS emergency_contact_name");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS emergency_contact_phone");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS emergency_contact_relationship");
+    });
+
+    it("should add manual ICD-9-CM procedure code storage for clinical records", () => {
+      const migrationPath = path.resolve(
+        process.cwd(),
+        "supabase/migrations/20261209000000_add_clinical_procedure_code_list.sql"
+      );
+      expect(fs.existsSync(migrationPath)).toBe(true);
+      const sql = fs.readFileSync(migrationPath, "utf-8");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS procedure_icd9cm_codes JSONB");
+      expect(sql).toContain("DEFAULT '[]'::jsonb");
+    });
+
+    it("should store consent uploads privately with branch-scoped doctor access and append-only metadata", () => {
+      const migrationPath = path.resolve(
+        process.cwd(),
+        "supabase/migrations/20261210000000_add_clinical_consent_document_uploads.sql"
+      );
+      expect(fs.existsSync(migrationPath)).toBe(true);
+      const sql = fs.readFileSync(migrationPath, "utf-8");
+      expect(sql).toContain("CREATE TABLE IF NOT EXISTS public.clinical_consent_documents");
+      expect(sql).toContain("public = FALSE");
+      expect(sql).toContain("10485760");
+      expect(sql).toContain("public.user_can_manage_treatment_branch(branch_id)");
+      expect(sql).toContain("service.requires_consent");
+      expect(sql).toContain("Dokumen consent bersifat permanen");
+      expect(sql).not.toMatch(/CREATE POLICY[^;]+FOR\s+UPDATE/i);
+      expect(sql).toContain("GRANT SELECT, INSERT ON TABLE public.clinical_consent_documents TO authenticated");
+      expect(sql).toContain("WHERE document.object_path = name");
+    });
+
+    it("should authorize consent uploads by visit or treatment doctor assignment", () => {
+      const migrationPath = path.resolve(
+        process.cwd(),
+        "supabase/migrations/20261211000000_authorize_consent_upload_by_visit_assignment.sql"
+      );
+      expect(fs.existsSync(migrationPath)).toBe(true);
+      const sql = fs.readFileSync(migrationPath, "utf-8");
+      expect(sql).toContain("public.can_upload_clinical_consent_document");
+      expect(sql).toContain("public.can_upload_clinical_consent_to_visit");
+      expect(sql).toContain("visit_doctor_id = current_doctor_id");
+      expect(sql).toContain("COALESCE(job.assigned_doctor_id, job.doctor_id) = current_doctor_id");
+      expect(sql).toContain("public.user_can_manage_treatment_branch(target_branch_id)");
+      expect(sql).toContain("Clinical consent documents assigned doctor insert");
+      expect(sql).toContain("Clinical consent document assigned doctor upload");
+    });
   });
 
   // ===================================================================
@@ -90,6 +196,8 @@ describe("PHASE 10A — Supabase Foundation & Automated Google Drive Backup Test
       expect(typeof patientRepo.getPatients).toBe("function");
       expect(typeof queueRepo.getLiveQueueSnapshot).toBe("function");
       expect(typeof medRepo.finalizeMedicalRecord).toBe("function");
+      expect(typeof medRepo.uploadConsentDocument).toBe("function");
+      expect(typeof medRepo.downloadConsentDocument).toBe("function");
       expect(typeof promoRepo.getActivePromotions).toBe("function");
     });
 

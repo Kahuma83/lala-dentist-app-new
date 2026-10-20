@@ -19,7 +19,9 @@ import {
   JournalSourceType,
   JournalStatus,
   UserRole,
-  AccountCategory
+  AccountCategory,
+  EmploymentStatus,
+  StaffPosition
 } from "../types/domain";
 import { MockDatabase } from "../data/mockData";
 
@@ -43,6 +45,28 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
     payrollRepo = new MockPayrollRepository();
     treatmentRepo = new MockTreatmentRepository();
     doctorRepo = new MockDoctorRepository();
+    db.doctors.push({
+      id: "doctor-record-syarif",
+      staffId: "doctor-syarif",
+      name: "drg. Syarif",
+      fullName: "drg. Syarif",
+      specialization: "Umum",
+      phone: "",
+      assignedBranchId: "branch-gebang",
+      active: true,
+      isActive: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const generatePayroll = payrollRepo.generateMonthlyPayroll.bind(payrollRepo);
+    payrollRepo.generateMonthlyPayroll = async (...args) => {
+      const payroll = await generatePayroll(...args);
+      const storedPayroll = db.payrolls.find((item) => item.id === payroll.id);
+      if (storedPayroll && !storedPayroll.branchId) {
+        storedPayroll.branchId = "branch-gebang";
+      }
+      return storedPayroll ? { ...storedPayroll } : payroll;
+    };
 
     service = new AccountingPostingService({
       accountingRepo,
@@ -678,6 +702,22 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       sourceId: data.sourceId || "treatment-job-1",
       accruedAt: data.accruedAt || "2026-09-21T10:00:00.000Z"
     };
+    if (!db.staff.some((staff) => staff.id === data.staffId) &&
+      !db.doctors.some((doctor) => doctor.id === data.staffId || doctor.staffId === data.staffId)) {
+      db.staff.push({
+        id: data.staffId,
+        employeeCode: `EMP-${data.staffId}`,
+        fullName: `Test ${data.staffId}`,
+        phone: "",
+        position: StaffPosition.ASSISTANT,
+        employmentStatus: EmploymentStatus.ACTIVE,
+        joinDate: "2026-01-01",
+        active: true,
+        branchId: "branch-gebang",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      });
+    }
     db.accruals.push(accrual);
     return accrual;
   }
@@ -744,6 +784,36 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       expect(payLine?.credit).toBe(25000);
     });
 
+    it("should resolve doctor accounts through the linked staff_id relationship", async () => {
+      db.doctors.push({
+        id: "doctor-record-linked",
+        staffId: "staff-linked-doctor",
+        name: "drg. Linked Doctor",
+        fullName: "drg. Linked Doctor",
+        specialization: "Umum",
+        phone: "",
+        assignedBranchId: "branch-doctor-specific",
+        active: true,
+        isActive: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      });
+      const accrual = createTestAccrual({
+        staffId: "staff-linked-doctor",
+        ruleId: "rule-doctor-linked",
+        sourceId: "missing-treatment-job",
+        amount: 200000
+      });
+
+      const journal = await service.postCompensation(accrual.id);
+      const doctorExpense = await accountingRepo.getAccountByCode("5010");
+      const doctorPayable = await accountingRepo.getAccountByCode("2020");
+
+      expect(journal.branchId).toBe("branch-doctor-specific");
+      expect(journal.lines.find((line) => line.accountId === doctorExpense?.id)?.debit).toBe(200000);
+      expect(journal.lines.find((line) => line.accountId === doctorPayable?.id)?.credit).toBe(200000);
+    });
+
     it("should maintain Model C integrity by preserving snapshot nominal", async () => {
       const accrual = createTestAccrual({
         staffId: "doctor-syarif",
@@ -774,6 +844,22 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       const j2 = await service.postCompensation(accrual.id);
 
       expect(j1.id).toBe(j2.id);
+    });
+
+    it("should reject direct compensation posting when the accrual is already included in payroll", async () => {
+      const staffId = "staff-compensation-payroll-guard";
+      const accrual = createTestAccrual({
+        staffId,
+        ruleId: "rule-payroll-guard",
+        sourceId: "treatment-payroll-guard",
+        amount: 150000,
+        accruedAt: "2026-09-21T10:00:00.000Z"
+      });
+      await payrollRepo.generateMonthlyPayroll(staffId, 9, 2026, 3000000);
+
+      await expect(service.postCompensation(accrual.id)).rejects.toThrow(
+        /sudah masuk payroll/
+      );
     });
 
     it("should reject compensation posting if amount is 0", async () => {
@@ -824,6 +910,41 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
   // 4. MONTHLY PAYROLL ACCRUAL POSTING TESTS
   // =========================================================================
   describe("4. Monthly Payroll Accrual Auto-Posting", () => {
+    it("should enforce source-event uniqueness in the mock journal repository", async () => {
+      const cashAccount = await accountingRepo.getAccountByCode("1000");
+      const revenueAccount = await accountingRepo.getAccountByCode("4000");
+      if (!cashAccount || !revenueAccount) throw new Error("Required test accounts were not seeded");
+      const baseInput = {
+        journalDate: "2026-09-28",
+        branchId: "branch-gebang",
+        description: "Payroll accrual",
+        sourceType: JournalSourceType.PAYROLL,
+        sourceId: "payroll-event-unique",
+        lines: [
+          { accountId: cashAccount.id, debit: 100000, credit: 0 },
+          { accountId: revenueAccount.id, debit: 0, credit: 100000 }
+        ]
+      };
+
+      await accountingRepo.createDraftJournal(
+        { ...baseInput, event: "ACCRUAL" },
+        "Test"
+      );
+      await expect(
+        accountingRepo.createDraftJournal(
+          { ...baseInput, event: "ACCRUAL" },
+          "Test"
+        )
+      ).rejects.toThrow(/sudah tercatat/);
+
+      await expect(
+        accountingRepo.createDraftJournal(
+          { ...baseInput, event: "PAYMENT" },
+          "Test"
+        )
+      ).resolves.toMatchObject({ event: "PAYMENT" });
+    });
+
     it("should post compound accrual journal for APPROVED payroll with base salary and compensation", async () => {
       const testStaffId = "staff-payroll-compound-1";
       // First create compensation accrual so payroll picks it up
@@ -870,6 +991,42 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       expect(incPayLine?.credit).toBe(1500000);
     });
 
+    it("should not expense a compensation accrual again when it already has a posted compensation journal", async () => {
+      const testStaffId = "staff-payroll-compensation-already-posted";
+      const accrual = createTestAccrual({
+        staffId: testStaffId,
+        ruleId: "rule-already-posted",
+        sourceId: "treatment-already-posted",
+        amount: 1500000,
+        accruedAt: "2026-09-20T10:00:00.000Z"
+      });
+      const compensationJournal = await service.postCompensation(accrual.id);
+      const payroll = await payrollRepo.generateMonthlyPayroll(testStaffId, 9, 2026, 5000000);
+      const storedPayroll = db.payrolls.find((item) => item.id === payroll.id);
+      if (!storedPayroll) throw new Error("Generated payroll was not stored");
+      storedPayroll.status = PayrollStatus.APPROVED;
+
+      const payrollJournal = await service.postPayroll(payroll.id);
+      const salaryExpense = await accountingRepo.getAccountByCode("5000");
+      const incentiveExpense = await accountingRepo.getAccountByCode("5020");
+      const allJournals = await accountingRepo.getJournals();
+
+      expect(payrollJournal.totalDebit).toBe(5000000);
+      expect(payrollJournal.lines.some((line) => line.accountId === incentiveExpense?.id)).toBe(false);
+      expect(
+        compensationJournal.lines
+          .filter((line) => line.accountId === incentiveExpense?.id)
+          .reduce((sum, line) => sum + line.debit, 0)
+        + payrollJournal.lines
+          .filter((line) => line.accountId === incentiveExpense?.id)
+          .reduce((sum, line) => sum + line.debit, 0)
+      ).toBe(1500000);
+      expect(payrollJournal.lines.find((line) => line.accountId === salaryExpense?.id)?.debit).toBe(5000000);
+      expect(allJournals.filter((journal) =>
+        journal.sourceType === JournalSourceType.COMPENSATION && journal.sourceId === accrual.id
+      )).toHaveLength(1);
+    });
+
     it("should post accrual journal for PAID payroll", async () => {
       const payroll = await payrollRepo.generateMonthlyPayroll(
         "doctor-syarif",
@@ -883,6 +1040,123 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       expect(journal.status).toBe(JournalStatus.POSTED);
       expect(journal.totalDebit).toBe(payroll.netSalary);
       expect(journal.totalCredit).toBe(payroll.netSalary);
+    });
+
+    it("should post a separate net-payroll payment journal and remain idempotent", async () => {
+      const payroll = await payrollRepo.generateMonthlyPayroll(
+        "staff-net-payroll-payment",
+        9,
+        2026,
+        3000000
+      );
+      const storedPayroll = db.payrolls.find((item) => item.id === payroll.id);
+      if (!storedPayroll) throw new Error("Generated payroll was not stored");
+      storedPayroll.status = PayrollStatus.APPROVED;
+
+      await service.postPayroll(payroll.id);
+      const payment = await service.postPayrollPayment(payroll.id);
+      const repeatedPayment = await service.postPayrollPayment(payroll.id);
+      const salaryPayable = await accountingRepo.getAccountByCode("2010");
+      const bank = await accountingRepo.getAccountByCode("1010");
+      const payrollJournals = await accountingRepo.getJournalsBySource(
+        JournalSourceType.PAYROLL,
+        payroll.id
+      );
+
+      expect(payment.event).toBe("PAYMENT");
+      expect(payment.id).toBe(repeatedPayment.id);
+      expect(payrollJournals.map((journal) => journal.event).sort()).toEqual(["ACCRUAL", "PAYMENT"]);
+      expect(payment.totalDebit).toBe(3000000);
+      expect(payment.totalCredit).toBe(3000000);
+      expect(payment.lines.find((line) => line.accountId === salaryPayable?.id)?.debit).toBe(3000000);
+      expect(payment.lines.find((line) => line.accountId === bank?.id)?.credit).toBe(3000000);
+    });
+
+    it("should resolve payroll branch from linked staff when payroll has no branch snapshot", async () => {
+      db.staff.push({
+        id: "staff-payroll-branch-resolution",
+        employeeCode: "EMP-BRANCH-RESOLUTION",
+        fullName: "Test Branch Staff",
+        phone: "",
+        position: StaffPosition.ASSISTANT,
+        employmentStatus: EmploymentStatus.ACTIVE,
+        joinDate: "2026-01-01",
+        active: true,
+        branchId: "branch-payroll-specific",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      });
+      const payroll = await payrollRepo.generateMonthlyPayroll(
+        "staff-payroll-branch-resolution",
+        9,
+        2026,
+        3000000
+      );
+      const storedPayroll = db.payrolls.find((item) => item.id === payroll.id);
+      if (!storedPayroll) throw new Error("Generated payroll was not stored");
+      storedPayroll.branchId = null;
+      storedPayroll.status = PayrollStatus.APPROVED;
+
+      const journal = await service.postPayroll(payroll.id);
+
+      expect(journal.branchId).toBe("branch-payroll-specific");
+      expect(journal.lines.every((line) => line.branchId === "branch-payroll-specific")).toBe(true);
+    });
+
+    it("should credit mapped deduction liability and pay only net salary", async () => {
+      const payroll = await payrollRepo.generateMonthlyPayroll(
+        "staff-tax-payroll-payment",
+        9,
+        2026,
+        3000000
+      );
+      const storedPayroll = db.payrolls.find((item) => item.id === payroll.id);
+      if (!storedPayroll) throw new Error("Generated payroll was not stored");
+      storedPayroll.status = PayrollStatus.APPROVED;
+      storedPayroll.totalDeductions = 150000;
+      storedPayroll.netSalary = 2850000;
+      db.payrollItems.push({
+        id: `item-${payroll.id}-tax`,
+        payrollId: payroll.id,
+        descriptionSnapshot: "Potongan Pajak PPh21",
+        amountSnapshot: 150000,
+        type: "DEDUCTION"
+      });
+
+      await service.postPayroll(payroll.id);
+      const payment = await service.postPayrollPayment(payroll.id);
+      const salaryPayable = await accountingRepo.getAccountByCode("2010");
+      const taxPayable = await accountingRepo.getAccountByCode("2040");
+      const bank = await accountingRepo.getAccountByCode("1010");
+
+      expect(payment.totalDebit).toBe(3000000);
+      expect(payment.totalCredit).toBe(3000000);
+      expect(payment.lines.find((line) => line.accountId === salaryPayable?.id)?.debit).toBe(3000000);
+      expect(payment.lines.find((line) => line.accountId === taxPayable?.id)?.credit).toBe(150000);
+      expect(payment.lines.find((line) => line.accountId === bank?.id)?.credit).toBe(2850000);
+    });
+
+    it("should reject payment journal posting when payroll deductions lack matching detail", async () => {
+      const payroll = await payrollRepo.generateMonthlyPayroll(
+        "staff-unmatched-payroll-deduction",
+        9,
+        2026,
+        3000000
+      );
+      const storedPayroll = db.payrolls.find((item) => item.id === payroll.id);
+      if (!storedPayroll) throw new Error("Generated payroll was not stored");
+      storedPayroll.status = PayrollStatus.APPROVED;
+      storedPayroll.totalDeductions = 100000;
+      storedPayroll.netSalary = 2900000;
+
+      await expect(service.postPayrollPayment(payroll.id)).rejects.toThrow(
+        /Rincian potongan payroll/
+      );
+      const journals = await accountingRepo.getJournalsBySource(
+        JournalSourceType.PAYROLL,
+        payroll.id
+      );
+      expect(journals.some((journal) => journal.event === "PAYMENT")).toBe(false);
     });
 
     it("should reject posting a DRAFT payroll", async () => {
@@ -1119,10 +1393,10 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
 
       await expect(
         accountingRepo.deleteDraftJournal(journal.id)
-      ).rejects.toThrow(/Immutability Violation/);
+      ).rejects.toThrow(/Jurnal POSTED atau VOID harus dipertahankan/);
     });
 
-    it("should allow voiding an automatic journal and maintaining audit trail", async () => {
+    it("should block voiding an automatic journal until a reversal workflow exists", async () => {
       const invoice = await invoiceRepo.createInvoice({
         visitId: "visit-void-test",
         patientId: "patient-1",
@@ -1138,20 +1412,14 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       });
       const journal = await service.postInvoice(invoice.id);
 
-      const voided = await accountingRepo.voidJournal(
+      await expect(accountingRepo.voidJournal(
         journal.id,
         "admin-super",
         "Koreksi billing pasien"
-      );
+      )).rejects.toThrow(/jurnal pembalik/i);
 
-      expect(voided.status).toBe(JournalStatus.VOID);
-      expect(voided.voidedBy).toBe("admin-super");
-      expect(voided.voidReason).toBe("Koreksi billing pasien");
-
-      // Voided journals are excluded from active GL queries
       const gl = await accountingRepo.getLedgerEntries({ branchId: "branch-gebang" });
-      const voidedInGL = gl.find((e) => e.journalId === journal.id);
-      expect(voidedInGL).toBeUndefined();
+      expect(gl.some((entry) => entry.journalId === journal.id)).toBe(true);
     });
   });
 });

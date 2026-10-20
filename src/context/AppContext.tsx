@@ -110,7 +110,8 @@ const accountingPostingService = new AccountingPostingService({
   compRepo: compensationRepo,
   payrollRepo,
   treatmentRepo,
-  doctorRepo
+  doctorRepo,
+  staffRepo
 });
 
 interface AppContextType {

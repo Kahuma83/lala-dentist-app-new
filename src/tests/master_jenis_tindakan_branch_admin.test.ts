@@ -18,7 +18,7 @@ describe("PHASE — MASTER JENIS TINDAKAN ADMIN CABANG", () => {
     MockDatabase.resetInstance();
   });
 
-  const EXPECTED_20_SERVICES = [
+  const EXPECTED_STANDARD_SERVICES = [
     { code: "CONSULTATION", name: "Konsultasi" },
     { code: "SCALING", name: "Scaling" },
     { code: "FILLING_PERMANENT", name: "Tambal permanen" },
@@ -38,16 +38,17 @@ describe("PHASE — MASTER JENIS TINDAKAN ADMIN CABANG", () => {
     { code: "VENEER", name: "Veneer" },
     { code: "GIPAL_SETTLEMENT", name: "Pelunasan GIPAL" },
     { code: "ABSCESS", name: "Abses" },
-    { code: "OTHER", name: "Yang lain" }
+    { code: "OTHER", name: "Yang lain" },
+    { code: "ROOT_CANAL", name: "Perawatan Saluran Akar (PSA)" }
   ];
 
-  it("1. Master Data memuat tepat 20 tindakan klinis standar dengan stable code", async () => {
+  it("1. Master Data memuat 21 tindakan klinis standar termasuk PSA dengan stable code", async () => {
     const configRepo = new MockConfigurationRepository();
     const services = await configRepo.getServices();
 
-    expect(services.length).toBeGreaterThanOrEqual(20);
+    expect(services.length).toBeGreaterThanOrEqual(21);
 
-    for (const item of EXPECTED_20_SERVICES) {
+    for (const item of EXPECTED_STANDARD_SERVICES) {
       const match = services.find((s) => s.code === item.code);
       expect(match, `Service dengan code ${item.code} wajib ada`).toBeDefined();
       expect(match?.name).toBe(item.name);

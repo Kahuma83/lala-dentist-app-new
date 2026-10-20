@@ -850,21 +850,20 @@ export const Expenses: React.FC = () => {
                             <BookOpen className="w-3.5 h-3.5" />
                           </button>
 
-                          {!isVoid && (
-                            <button
-                              onClick={() => handleOpenVoidModal(j)}
-                              className="px-2 py-1 text-[10px] font-semibold text-amber-700 hover:bg-amber-50 border border-amber-200 rounded transition-colors"
-                              title="Batalkan pengeluaran (VOID)"
+                          {j.status === JournalStatus.POSTED && (
+                            <span
+                              className="px-2 py-1 text-[10px] font-semibold text-amber-800"
+                              title="Pembatalan ditahan sampai proses jurnal pembalik tersedia"
                             >
-                              VOID
-                            </button>
+                              Koreksi via jurnal pembalik
+                            </span>
                           )}
 
-                          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
+                          {j.status === JournalStatus.DRAFT && (currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
                             <button
                               onClick={() => setExpenseToDelete(j)}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
-                              title="Hapus Transaksi Pengeluaran (Koreksi Admin)"
+                              title="Hapus draft pengeluaran"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1170,7 +1169,7 @@ export const Expenses: React.FC = () => {
                   Perhatian: Prinsip Immutable Akuntansi
                 </div>
                 <p className="text-[11px]">
-                  Jurnal yang sudah berstatus <strong>POSTED</strong> tidak dapat diedit atau dihapus secara langsung. Pembatalan dilakukan dengan merubah status transaksi menjadi <strong>VOID</strong> serta mencatat audit trail.
+                  Jurnal <strong>POSTED</strong> tidak dapat dihapus atau di-VOID sampai proses jurnal pembalik yang seimbang tersedia. Untuk saat ini, koreksi harus dicatat sebagai transaksi jurnal terpisah.
                 </p>
               </div>
 

@@ -13,6 +13,8 @@ import {
   VisitType,
   VisitStatus
 } from "../types/domain";
+import { ODONTOGRAM_TOOTH_NUMBERS } from "../components/Odontogram";
+import { normalizeIcd10WhoCode, parseIcd9CmProcedureCodes } from "../utils/clinicalCodeUtils";
 
 describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
   let mrRepo: MockMedicalRecordRepository;
@@ -28,6 +30,150 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
     visitRepo = new MockVisitRepository();
     invoiceRepo = new MockInvoiceRepository();
     accountingRepo = new MockAccountingRepository();
+  });
+
+  it("allows a visit to proceed without creating an optional digital medical record", async () => {
+    const visit = await visitRepo.createVisit(
+      {
+        bookingId: null,
+        patientId: "patient-1",
+        branchId: "branch-gebang",
+        visitType: VisitType.WALK_IN,
+        visitStatus: VisitStatus.WAITING,
+        complaint: "Kontrol rutin",
+        visitDateTime: "2026-09-23T11:00:00Z"
+      },
+      UserRole.BRANCH_ADMIN,
+      "branch-gebang"
+    );
+
+    expect(visit).toBeDefined();
+    await expect(
+      mrRepo.getMedicalRecordByVisit(visit.id, UserRole.DOCTOR, "branch-gebang")
+    ).resolves.toBeNull();
+  });
+
+  it("saves odontogram findings per visit", async () => {
+    const record = await mrRepo.createOrUpdateMedicalRecord(
+      {
+        visitId: "visit-1",
+        patientId: "patient-1",
+        branchId: "branch-gebang",
+        doctorId: "doc-syafira",
+        chiefComplaint: "Ngilu",
+        diagnosis: "Karies gigi 36",
+        diagnosisCode: "K02.1",
+        procedureCodes: ["23.09", "23.11"],
+        odontogram: {
+          schemaVersion: 1,
+          teeth: {
+            "36": {
+              surfaces: { O: "caries" },
+              updatedAt: "2026-10-20T10:00:00.000Z"
+            }
+          }
+        }
+      },
+      UserRole.DOCTOR,
+      "branch-gebang"
+    );
+
+    const saved = await mrRepo.getMedicalRecordByVisit(
+      "visit-1",
+      UserRole.DOCTOR,
+      "branch-gebang"
+    );
+    expect(record.odontogram?.teeth["36"]?.surfaces?.O).toBe("caries");
+    expect(record.diagnosisCode).toBe("K02.1");
+    expect(record.procedureCodes).toEqual(["23.09", "23.11"]);
+    expect(saved?.odontogram?.teeth["36"]?.surfaces?.O).toBe("caries");
+    expect(saved?.diagnosisCode).toBe("K02.1");
+    expect(saved?.procedureCodes).toEqual(["23.09", "23.11"]);
+  });
+
+  it("saves a private patient medical profile and visit vital-sign snapshot", async () => {
+    const profile = await mrRepo.savePatientMedicalProfile(
+      {
+        patientId: "patient-1",
+        branchId: "branch-gebang",
+        bloodType: "O+",
+        allergies: "Penisilin",
+        systemicDiseases: "Diabetes melitus",
+        routineMedications: "Metformin",
+        medicalWarnings: "Konfirmasi kadar gula darah"
+      },
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira"
+    );
+    const savedProfile = await mrRepo.getPatientMedicalProfile(
+      "patient-1",
+      UserRole.DOCTOR,
+      "branch-gebang"
+    );
+    const record = await mrRepo.createOrUpdateMedicalRecord(
+      {
+        visitId: "visit-1",
+        patientId: "patient-1",
+        branchId: "branch-gebang",
+        doctorId: "doc-syafira",
+        chiefComplaint: "Kontrol",
+        diagnosis: "Kontrol rutin",
+        vitalSigns: {
+          systolicBloodPressure: 120,
+          diastolicBloodPressure: 80,
+          pulseBpm: 72,
+          temperatureCelsius: 36.7
+        },
+        medicalHistorySnapshot: profile
+      },
+      UserRole.DOCTOR,
+      "branch-gebang"
+    );
+
+    expect(savedProfile?.allergies).toBe("Penisilin");
+    expect(record.vitalSigns?.systolicBloodPressure).toBe(120);
+    expect(record.vitalSigns?.diastolicBloodPressure).toBe(80);
+    expect(record.medicalHistorySnapshot?.systemicDiseases).toBe("Diabetes melitus");
+    await expect(
+      mrRepo.getPatientMedicalProfile("patient-1", UserRole.DOCTOR, "branch-not-assigned")
+    ).rejects.toThrow("Anda tidak memiliki akses");
+  });
+
+  it("shows all 52 permanent and primary teeth using FDI numbering without duplicates", () => {
+    expect(ODONTOGRAM_TOOTH_NUMBERS).toHaveLength(52);
+    expect(new Set(ODONTOGRAM_TOOTH_NUMBERS).size).toBe(52);
+    expect(ODONTOGRAM_TOOTH_NUMBERS).toContain(11);
+    expect(ODONTOGRAM_TOOTH_NUMBERS).toContain(48);
+    expect(ODONTOGRAM_TOOTH_NUMBERS).toContain(51);
+    expect(ODONTOGRAM_TOOTH_NUMBERS).toContain(85);
+  });
+
+  it("normalizes manually entered clinical codes and rejects malformed formats", () => {
+    expect(normalizeIcd10WhoCode(" k02.1 ")).toBe("K02.1");
+    expect(normalizeIcd10WhoCode("")).toBeUndefined();
+    expect(parseIcd9CmProcedureCodes("23.09\n23.11\n23.09")).toEqual(["23.09", "23.11"]);
+    expect(() => normalizeIcd10WhoCode("invalid")).toThrow("Format kode diagnosis ICD-10");
+    expect(() => parseIcd9CmProcedureCodes("23.09\nABC")).toThrow("kode prosedur ICD-9-CM");
+  });
+
+  it("does not expose patient medical history notes to branch staff", async () => {
+    const branchStaffPatients = await patientRepo.getPatients(
+      UserRole.BRANCH_ADMIN,
+      "branch-gebang"
+    );
+    const doctorPatients = await patientRepo.getPatients(
+      UserRole.DOCTOR,
+      "branch-gebang"
+    );
+    const otherBranchDoctorPatients = await patientRepo.getPatients(
+      UserRole.DOCTOR,
+      "branch-muktisari"
+    );
+
+    expect(branchStaffPatients.find((patient) => patient.id === "patient-1")?.medicalHistoryNotes).toBeUndefined();
+    expect(doctorPatients.find((patient) => patient.id === "patient-1")?.medicalHistoryNotes).toBeTruthy();
+    expect(otherBranchDoctorPatients.find((patient) => patient.id === "patient-1")?.medicalHistoryNotes).toBeUndefined();
   });
 
   // TEST 1: Create Medical Record untuk Visit valid
@@ -125,8 +271,8 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
     ).rejects.toThrow("Anda tidak memiliki akses ke data ini.");
   });
 
-  // TEST 5: Doctor cabang A tidak dapat membaca Visit cabang B
-  it("TEST 5: Doctor cabang A tidak dapat mengakses Visit / Record cabang B -> Expected: REJECTED", async () => {
+  // TEST 5: Doctor tidak dapat menyimpan rekam medis di luar cabang yang diizinkan
+  it("TEST 5: Doctor tidak dapat mengakses Record cabang lain -> Expected: REJECTED", async () => {
     await expect(
       mrRepo.createOrUpdateMedicalRecord(
         {
@@ -141,7 +287,7 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
         UserRole.DOCTOR,
         "branch-muktisari"
       )
-    ).rejects.toThrow("Anda tidak memiliki akses ke data ini.");
+    ).rejects.toThrow("Cabang tidak sesuai dengan kunjungan.");
   });
 
   // TEST 6: Create Medical Record tanpa Visit
@@ -321,10 +467,31 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
     expect(fetchedMR2?.diagnosis).toBe("Kalkulus visit 2");
   });
 
-  // TEST 10: DOCTOR_ASSISTANT tetap mengikuti RBAC existing
-  it("TEST 10: DOCTOR_ASSISTANT tetap mengikuti RBAC existing -> Expected: PASS", async () => {
-    // Assistant in Gebang can access Gebang visit MR
-    await mrRepo.createOrUpdateMedicalRecord(
+  // TEST 10: Isi klinis hanya dapat dibaca oleh Dokter dan Super Admin
+  it("TEST 10: DOCTOR_ASSISTANT tidak dapat membaca atau menulis rekam medis -> Expected: REJECTED", async () => {
+    await expect(
+      mrRepo.createOrUpdateMedicalRecord(
+        {
+          visitId: "visit-1",
+          patientId: "patient-1",
+          branchId: "branch-gebang",
+          doctorId: "doc-syafira",
+          chiefComplaint: "Pemeriksaan",
+          diagnosis: "Gingivitis",
+          status: MedicalRecordStatus.DRAFT
+        },
+        UserRole.DOCTOR_ASSISTANT,
+        "branch-gebang"
+      )
+    ).rejects.toThrow("Anda tidak memiliki akses ke data ini.");
+
+    await expect(
+      mrRepo.getMedicalRecordByVisit("visit-1", UserRole.DOCTOR_ASSISTANT, "branch-muktisari")
+    ).rejects.toThrow("Anda tidak memiliki akses ke data ini.");
+  });
+
+  it("allows only the responsible doctor to finalize a draft and locks it", async () => {
+    const draft = await mrRepo.createOrUpdateMedicalRecord(
       {
         visitId: "visit-1",
         patientId: "patient-1",
@@ -334,17 +501,38 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
         diagnosis: "Gingivitis",
         status: MedicalRecordStatus.DRAFT
       },
-      UserRole.DOCTOR_ASSISTANT,
+      UserRole.DOCTOR,
       "branch-gebang"
     );
 
-    const record = await mrRepo.getMedicalRecordByVisit("visit-1", UserRole.DOCTOR_ASSISTANT, "branch-gebang");
-    expect(record).toBeDefined();
-
-    // Assistant in Muktisari cannot access Gebang visit MR
     await expect(
-      mrRepo.getMedicalRecordByVisit("visit-1", UserRole.DOCTOR_ASSISTANT, "branch-muktisari")
-    ).rejects.toThrow("Anda tidak memiliki akses ke data ini.");
+      mrRepo.finalizeMedicalRecord(draft.id, "doc-syafira", UserRole.SUPER_ADMIN)
+    ).rejects.toThrow("Hanya Dokter");
+
+    const finalized = await mrRepo.finalizeMedicalRecord(
+      draft.id,
+      "doc-syafira",
+      UserRole.DOCTOR,
+      "branch-gebang"
+    );
+    expect(finalized.status).toBe(MedicalRecordStatus.FINAL);
+    expect(finalized.signedByDoctorId).toBe("doc-syafira");
+    expect(finalized.isLocked).toBe(true);
+    await expect(
+      mrRepo.createOrUpdateMedicalRecord(
+        {
+          visitId: "visit-1",
+          patientId: "patient-1",
+          branchId: "branch-gebang",
+          doctorId: "doc-syafira",
+          chiefComplaint: "Perubahan",
+          diagnosis: "Perubahan",
+          status: MedicalRecordStatus.DRAFT
+        },
+        UserRole.DOCTOR,
+        "branch-gebang"
+      )
+    ).rejects.toThrow(/rekam medis final terkunci/i);
   });
 
   // TEST 11: Medical Record tidak memberikan akses Invoice

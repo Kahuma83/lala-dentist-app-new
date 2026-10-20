@@ -153,8 +153,9 @@ describe("Financial Reporting & General Ledger UX Patch Tests", () => {
 
     expect(amountAfterPost).toBe(amountBeforePost + 50000000);
 
-    // Void the journal
-    await repo.voidJournal(draftJournal.id, "TestUser", "Voiding for test", UserRole.SUPER_ADMIN, null);
+    await expect(
+      repo.voidJournal(draftJournal.id, "TestUser", "Voiding for test", UserRole.SUPER_ADMIN, null)
+    ).rejects.toThrow(/jurnal pembalik/i);
 
     const reportAfterVoid = await repo.getIncomeStatementReport(
       { branchId: "branch-gebang", dateFrom: "2026-09-23", dateTo: "2026-09-23" },
@@ -165,8 +166,7 @@ describe("Financial Reporting & General Ledger UX Patch Tests", () => {
     const voidRevenueItem = reportAfterVoid.revenues.find((r) => r.accountId === "coa-4000");
     const amountAfterVoid = voidRevenueItem ? voidRevenueItem.amount : 0;
 
-    // Revenue after voiding should be back to amountBeforePost
-    expect(amountAfterVoid).toBe(amountBeforePost);
+    expect(amountAfterVoid).toBe(amountBeforePost + 50000000);
   });
 
   it("8. Konsistensi: Laba Rugi = Revenue - Expense strictly", async () => {

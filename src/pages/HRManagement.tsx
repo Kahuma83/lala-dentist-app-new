@@ -597,6 +597,7 @@ export const HRManagement: React.FC = () => {
   const [isCancellingOrphanStaff, setIsCancellingOrphanStaff] = useState(false);
   const [staffForm, setStaffForm] = useState({
     employeeCode: "",
+    nik: "",
     fullName: "",
     phone: "",
     position: StaffPosition.ASSISTANT,
@@ -632,6 +633,7 @@ export const HRManagement: React.FC = () => {
       setEditingStaff(s);
       setStaffForm({
         employeeCode: s.employeeCode,
+        nik: s.nik || "",
         fullName: s.fullName,
         phone: s.phone || "",
         position: s.position,
@@ -658,6 +660,7 @@ export const HRManagement: React.FC = () => {
       setEditingStaff(null);
       setStaffForm({
         employeeCode: generateUniqueStaffCode(),
+        nik: "",
         fullName: "",
         phone: "",
         position: StaffPosition.ASSISTANT,
@@ -741,6 +744,7 @@ export const HRManagement: React.FC = () => {
     try {
       const staffData = {
         employeeCode: staffForm.employeeCode,
+        nik: staffForm.nik,
         fullName: staffForm.fullName,
         phone: staffForm.phone,
         position: staffForm.position,
@@ -2624,7 +2628,7 @@ export const HRManagement: React.FC = () => {
               )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Kode Staff (NIK) *</label>
+                  <label className="block text-slate-600 font-semibold mb-1">Kode Pegawai *</label>
                   <input
                     type="text"
                     required
@@ -2633,6 +2637,25 @@ export const HRManagement: React.FC = () => {
                     placeholder="STF-010"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 font-mono"
                   />
+                </div>
+                <div>
+                  <label className="block text-slate-600 font-semibold mb-1">
+                    NIK {staffForm.position === StaffPosition.DOCTOR ? "*" : ""}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]{16}"
+                    maxLength={16}
+                    required={staffForm.position === StaffPosition.DOCTOR}
+                    value={staffForm.nik}
+                    onChange={(e) => setStaffForm({ ...staffForm, nik: e.target.value.replace(/\D/g, "") })}
+                    placeholder="16 digit NIK"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 font-mono"
+                  />
+                  {staffForm.position === StaffPosition.DOCTOR && (
+                    <p className="mt-1 text-[10px] text-slate-500">Masukkan NIK asli dokter, bukan kode pegawai.</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-slate-600 font-semibold mb-1">Status Kepegawaian</label>

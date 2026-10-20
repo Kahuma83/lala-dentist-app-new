@@ -601,7 +601,11 @@ export const BookingManagement: React.FC = () => {
     setIsPatientEditorOpen(true);
     setIsPatientLoading(true);
     try {
-      const patient = await repos.patient.getPatientById(selectedBooking.patientId);
+      const patient = await repos.patient.getPatientById(
+        selectedBooking.patientId,
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
       if (!patient) throw new Error("Profil pasien tidak ditemukan.");
       setPatientEditDraft({
         fullName: patient.fullName || patient.name || "",

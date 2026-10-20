@@ -237,6 +237,9 @@ export interface PatientProfile {
   fullName?: string; // Optional alias for name
   phone: string;
   email?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  emergencyContactRelationship?: string;
   identityDocumentType?: "NIK" | "PASSPORT";
   identityDocumentNumber?: string;
   placeOfBirth?: string;
@@ -330,6 +333,7 @@ export interface MediaStorageItem {
 export interface Staff {
   id: string;
   employeeCode: string; // Unique, e.g. "EMP-001"
+  nik?: string | null;
   fullName: string;
   phone: string;
   position: StaffPosition;
@@ -475,6 +479,12 @@ export interface MasterService {
   basePrice: number; // integer (rupiah)
   estimatedDurationMinutes: number;
   category: string;
+  clinicalCategory?: "PREVENTIVE" | "RESTORATIVE" | "SURGERY" | "ENDODONTIC" | "PROSTHODONTIC" | "ORTHODONTIC" | "OTHER";
+  clinicalTarget?: "TOOTH" | "JAW" | "TOOTH_OR_REGION" | "NONE" | "ADMIN" | "FREE_TEXT";
+  requiresConsent?: boolean;
+  isMultiStage?: boolean;
+  tracksMaterialLots?: boolean;
+  icd9cmCode?: string;
   displayOrder?: number;
   isActive: boolean;
   createdAt: string;
@@ -639,6 +649,18 @@ export interface TreatmentJob {
   picAssistantId?: string;
 }
 
+export interface TreatmentJobClinicalDetails {
+  treatmentJobId: string;
+  branchId: string;
+  toothNumbers?: number[];
+  surfaces?: string[];
+  jaw?: "RA" | "RB" | "BOTH";
+  stageNumber?: number;
+  stageTotal?: number;
+  icd9cmCode?: string;
+  sterilePackNumber?: string;
+}
+
 export interface TreatmentActivity {
   id: string;
   treatmentId: string;
@@ -684,9 +706,18 @@ export interface MedicalRecord {
   anamnesis?: string; // Anamnesis
   clinicalExamination?: string; // Pemeriksaan Klinis
   diagnosis: string; // Diagnosis
+  diagnosisCode?: string;
+  procedureCodes?: string[];
   treatmentPlan?: string; // Rencana / Tindakan
   doctorNotes?: string; // Catatan Dokter
+  odontogram?: OdontogramData;
+  odontogramHistory?: OdontogramHistoryEntry[];
+  vitalSigns?: ClinicalVitalSigns;
+  medicalHistorySnapshot?: PatientMedicalProfile;
   status: MedicalRecordStatus | "DRAFT" | "FINAL";
+  signedByDoctorId?: string;
+  signedAt?: string;
+  isLocked?: boolean;
   createdAt: string;
   updatedAt: string;
 
@@ -694,6 +725,71 @@ export interface MedicalRecord {
   patientNameSnapshot?: string;
   doctorNameSnapshot?: string;
   branchNameSnapshot?: string;
+}
+
+export type ClinicalConsentScope = "VISIT" | "TREATMENT";
+
+export interface ClinicalConsentDocument {
+  id: string;
+  visitId: string;
+  branchId: string;
+  scope: ClinicalConsentScope;
+  treatmentJobId?: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+}
+
+export interface PatientMedicalProfile {
+  patientId: string;
+  branchId?: string | null;
+  bloodType?: string;
+  allergies?: string;
+  systemicDiseases?: string;
+  routineMedications?: string;
+  medicalWarnings?: string;
+  medicalHistoryNotes?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface ClinicalVitalSigns {
+  systolicBloodPressure?: number;
+  diastolicBloodPressure?: number;
+  pulseBpm?: number;
+  temperatureCelsius?: number;
+  respiratoryRatePerMinute?: number;
+  oxygenSaturationPercent?: number;
+  weightKg?: number;
+  heightCm?: number;
+}
+
+export type OdontogramCondition =
+  | "caries"
+  | "filling"
+  | "crown"
+  | "root_canal"
+  | "missing"
+  | "extraction_indicated";
+
+export type OdontogramSurface = "O" | "M" | "D" | "B" | "L";
+
+export interface OdontogramTooth {
+  condition?: OdontogramCondition;
+  surfaces?: Partial<Record<OdontogramSurface, OdontogramCondition>>;
+  updatedAt?: string;
+}
+
+export interface OdontogramData {
+  schemaVersion: 1;
+  teeth: Record<string, OdontogramTooth>;
+}
+
+export interface OdontogramHistoryEntry {
+  odontogram: OdontogramData;
+  changedAt: string;
+  changedBy?: string;
 }
 
 export interface TreatmentIncentive {

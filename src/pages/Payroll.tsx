@@ -222,9 +222,36 @@ export const Payroll: React.FC = () => {
     }
   };
 
-  const getPayrollJournal = (payrollId: string) => {
-    return journals.find(
-      (j) => j.sourceType === JournalSourceType.PAYROLL && j.sourceId === payrollId
+  const selectPayrollJournal = (
+    payroll: MonthlyPayroll,
+    sourceJournals: JournalEntry[]
+  ) => {
+    const matchingJournals = sourceJournals.filter(
+      (journal) =>
+        journal.sourceType === JournalSourceType.PAYROLL &&
+        journal.sourceId === payroll.id &&
+        journal.status !== "VOID"
+    );
+    const desiredEvent = payroll.status === PayrollStatus.PAID ? "PAYMENT" : "ACCRUAL";
+    const eventJournal = matchingJournals.find((journal) => journal.event === desiredEvent) ||
+      matchingJournals.find((journal) =>
+        !journal.event &&
+        (desiredEvent === "PAYMENT"
+          ? /pembayaran|payment/i.test(journal.description)
+          : /akrual|accrual/i.test(journal.description) &&
+            !/pembayaran|payment/i.test(journal.description))
+      );
+    return eventJournal || (payroll.status === PayrollStatus.PAID ? null : matchingJournals[0] || null);
+  };
+
+  const getPayrollJournal = (payroll: MonthlyPayroll) => {
+    return selectPayrollJournal(
+      payroll,
+      journals.filter(
+        (journal) =>
+          journal.sourceType === JournalSourceType.PAYROLL &&
+          journal.sourceId === payroll.id
+      )
     );
   };
 
@@ -255,12 +282,12 @@ export const Payroll: React.FC = () => {
   const handleOpenSlip = async (p: MonthlyPayroll) => {
     setSelectedPayroll(p);
     try {
-      const [items, jrn] = await Promise.all([
+      const [items, sourceJournals] = await Promise.all([
         payrollRepo.getPayrollItems(p.id),
-        accountingRepo.findBySource(JournalSourceType.PAYROLL, p.id)
+        accountingRepo.getJournalsBySource(JournalSourceType.PAYROLL, p.id)
       ]);
       setPayrollItems(items);
-      setPayrollJournal(jrn);
+      setPayrollJournal(selectPayrollJournal(p, sourceJournals));
     } catch {
       setPayrollItems([]);
       setPayrollJournal(null);
@@ -273,12 +300,12 @@ export const Payroll: React.FC = () => {
     let items: PayrollItem[] = [];
     let jrn: JournalEntry | null = null;
     try {
-      const [fetchedItems, fetchedJrn] = await Promise.all([
+      const [fetchedItems, sourceJournals] = await Promise.all([
         payrollRepo.getPayrollItems(p.id),
-        accountingRepo.findBySource(JournalSourceType.PAYROLL, p.id)
+        accountingRepo.getJournalsBySource(JournalSourceType.PAYROLL, p.id)
       ]);
       items = fetchedItems;
-      jrn = fetchedJrn;
+      jrn = selectPayrollJournal(p, sourceJournals);
       setPayrollItems(items);
       setPayrollJournal(jrn);
     } catch {
@@ -338,48 +365,99 @@ export const Payroll: React.FC = () => {
   };
 
   const handleStatusTransition = async (payrollId: string, nextStatus: PayrollStatus) => {
+    setSyncingPayrollId(payrollId);
+    setLoadError(null);
+    let statusUpdated = false;
+    let approvalPostingComplete = false;
     try {
-      await payrollRepo.updatePayrollStatus(payrollId, nextStatus);
-
-      // Auto post accrual journal on approval or payment
-      if (nextStatus === PayrollStatus.APPROVED || nextStatus === PayrollStatus.PAID) {
-        try {
+      if (nextStatus === PayrollStatus.PAID) {
+        await accountingPostingService.postPayrollPayment(
+          payrollId,
+          currentUser?.role,
+          currentUser?.branchId,
+          currentUser?.name || "Admin Payroll"
+        );
+        await payrollRepo.updatePayrollStatus(payrollId, nextStatus);
+        statusUpdated = true;
+      } else {
+        await payrollRepo.updatePayrollStatus(payrollId, nextStatus);
+        statusUpdated = true;
+        if (nextStatus === PayrollStatus.APPROVED) {
           await accountingPostingService.postPayroll(
             payrollId,
             currentUser?.role,
             currentUser?.branchId,
             currentUser?.name || "Admin Payroll"
           );
-        } catch (postErr) {
-          console.warn("Auto-posting payroll journal:", postErr);
+          approvalPostingComplete = true;
         }
       }
 
       await loadData();
       if (selectedPayroll && selectedPayroll.id === payrollId) {
         setSelectedPayroll({ ...selectedPayroll, status: nextStatus });
-        const updatedJrn = await accountingRepo.findBySource(JournalSourceType.PAYROLL, payrollId);
-        setPayrollJournal(updatedJrn);
+        const sourceJournals = await accountingRepo.getJournalsBySource(
+          JournalSourceType.PAYROLL,
+          payrollId
+        );
+        setPayrollJournal(
+          selectPayrollJournal({ ...selectedPayroll, status: nextStatus }, sourceJournals)
+        );
       }
-    } catch (err: any) {
-      console.error(err.message || "Gagal mengubah status payroll");
-      setLoadError(`Gagal mengubah status payroll: ${err instanceof Error ? err.message : "Kesalahan tidak diketahui."}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Kesalahan tidak diketahui.";
+      let rollbackError: string | null = null;
+      if (nextStatus === PayrollStatus.APPROVED && statusUpdated && !approvalPostingComplete) {
+        try {
+          await payrollRepo.updatePayrollStatus(payrollId, PayrollStatus.REVIEW);
+          statusUpdated = false;
+          if (selectedPayroll?.id === payrollId) {
+            setSelectedPayroll({ ...selectedPayroll, status: PayrollStatus.REVIEW });
+          }
+        } catch (rollbackErr) {
+          rollbackError = rollbackErr instanceof Error
+            ? rollbackErr.message
+            : "Kesalahan tidak diketahui.";
+        }
+      }
+      await loadData();
+      setLoadError(
+        nextStatus === PayrollStatus.PAID
+          ? `Payroll belum dapat ditandai PAID karena jurnal pembayaran gagal atau status tidak tersimpan: ${message}`
+          : rollbackError
+            ? `Jurnal akrual gagal diposting dan status payroll gagal dikembalikan ke REVIEW. Status mungkin masih APPROVED; periksa status dan jurnal sebelum mencoba lagi. Error posting: ${message}. Error pemulihan: ${rollbackError}`
+            : statusUpdated
+              ? `Status payroll berubah, tetapi data terbaru gagal dimuat: ${message}`
+              : nextStatus === PayrollStatus.APPROVED && !approvalPostingComplete
+                ? `Persetujuan dibatalkan dan payroll dikembalikan ke REVIEW karena jurnal akrual gagal diposting: ${message}`
+                : `Gagal mengubah status payroll: ${message}`
+      );
+    } finally {
+      setSyncingPayrollId(null);
     }
   };
 
   const handleManualSyncPayroll = async (payrollId: string) => {
     setSyncingPayrollId(payrollId);
     try {
-      const jrn = await accountingPostingService.postPayroll(
-        payrollId,
-        currentUser?.role,
-        currentUser?.branchId,
-        currentUser?.name || "Admin Payroll"
-      );
+      const payroll = payrolls.find((item) => item.id === payrollId);
+      if (!payroll) throw new Error("Payroll tidak ditemukan pada daftar saat ini.");
+      const jrn = payroll.status === PayrollStatus.PAID
+        ? await accountingPostingService.postPayrollPayment(
+          payrollId,
+          currentUser?.role,
+          currentUser?.branchId,
+          currentUser?.name || "Admin Payroll"
+        )
+        : await accountingPostingService.postPayroll(
+          payrollId,
+          currentUser?.role,
+          currentUser?.branchId,
+          currentUser?.name || "Admin Payroll"
+        );
       setPayrollJournal(jrn);
       await loadData();
-    } catch (err: any) {
-      console.error(err.message || "Gagal memposting slip gaji ke akuntansi");
+    } catch (err) {
       setLoadError(`Gagal memposting slip gaji ke akuntansi: ${err instanceof Error ? err.message : "Kesalahan tidak diketahui."}`);
     } finally {
       setSyncingPayrollId(null);
@@ -553,7 +631,7 @@ export const Payroll: React.FC = () => {
                 </tr>
               ) : (
                 payrolls.map((p) => {
-                  const jrn = getPayrollJournal(p.id);
+                  const jrn = getPayrollJournal(p);
                   const info = getStaffInfo(p.staffId);
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
@@ -616,7 +694,7 @@ export const Payroll: React.FC = () => {
                             onClick={() => handleManualSyncPayroll(p.id)}
                             disabled={syncingPayrollId === p.id}
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors disabled:opacity-50"
-                            title="Post akrual ke akuntansi"
+                            title={p.status === PayrollStatus.PAID ? "Post pembayaran payroll ke akuntansi" : "Post akrual payroll ke akuntansi"}
                           >
                             <RefreshCw className={`w-3 h-3 ${syncingPayrollId === p.id ? "animate-spin" : ""}`} />
                             Sync Jurnal
@@ -650,34 +728,39 @@ export const Payroll: React.FC = () => {
                               {p.status === PayrollStatus.DRAFT && (
                                 <button
                                   onClick={() => handleStatusTransition(p.id, PayrollStatus.REVIEW)}
+                                  disabled={syncingPayrollId === p.id}
                                   className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
                                 >
-                                  Review
+                                  {syncingPayrollId === p.id ? "Memproses..." : "Review"}
                                 </button>
                               )}
                               {p.status === PayrollStatus.REVIEW && (
                                 <button
                                   onClick={() => handleStatusTransition(p.id, PayrollStatus.APPROVED)}
+                                  disabled={syncingPayrollId === p.id}
                                   className="bg-teal-600 hover:bg-teal-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
                                 >
-                                  Setujui
+                                  {syncingPayrollId === p.id ? "Memproses..." : "Setujui"}
                                 </button>
                               )}
                               {p.status === PayrollStatus.APPROVED && (
                                 <button
                                   onClick={() => handleStatusTransition(p.id, PayrollStatus.PAID)}
+                                  disabled={syncingPayrollId === p.id}
                                   className="bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
                                 >
-                                  Bayar
+                                  {syncingPayrollId === p.id ? "Memproses..." : "Bayar"}
                                 </button>
                               )}
-                              <button
-                                onClick={() => setPayrollToDelete(p)}
-                                className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors cursor-pointer"
-                                title="Hapus Slip Gaji"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              {p.status === PayrollStatus.DRAFT && (
+                                <button
+                                  onClick={() => setPayrollToDelete(p)}
+                                  className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                                  title="Hapus Slip DRAFT yang belum memiliki jurnal"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </>
                           )}
                         </div>
@@ -847,7 +930,7 @@ export const Payroll: React.FC = () => {
             <p className="text-xs text-slate-600 text-center mt-2 leading-relaxed">
               Apakah Anda yakin ingin menghapus slip gaji periode <strong>{payrollToDelete.month}/{payrollToDelete.year}</strong> untuk staf{" "}
               <strong>{getStaffAndDoctor(payrollToDelete.staffId).staff?.fullName || getStaffAndDoctor(payrollToDelete.staffId).doctor?.name || "Karyawan"}</strong>{" "}
-              (Take Home Pay: Rp {payrollToDelete.netSalary.toLocaleString("id-ID")})? Tindakan ini tidak dapat dibatalkan.
+              (Take Home Pay: Rp {payrollToDelete.netSalary.toLocaleString("id-ID")})? Hanya payroll DRAFT tanpa jurnal yang dapat dihapus.
             </p>
             <div className="mt-6 flex items-center justify-end gap-3">
               <button

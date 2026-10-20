@@ -59,6 +59,7 @@ import {
   ClinicBranding,
   MedicalRecord,
   MedicalRecordStatus,
+  PatientMedicalProfile,
   PromotionMedia
 } from "../types/domain";
 
@@ -3530,6 +3531,7 @@ export class MockDatabase {
   overtimes: OvertimeRecord[] = [];
   replacementAssignments: StaffReplacementAssignment[] = [];
   medicalRecords: MedicalRecord[] = [];
+  patientMedicalProfiles: PatientMedicalProfile[] = [];
   clinicBranding: ClinicBranding = JSON.parse(JSON.stringify(DEFAULT_CLINIC_BRANDING));
   promotions: PromotionMedia[] = JSON.parse(JSON.stringify(MOCK_PROMOTIONS));
 
@@ -3640,6 +3642,7 @@ export class MockDatabase {
         if (Array.isArray(stored.overtimes)) this.overtimes = stored.overtimes;
         if (Array.isArray(stored.replacementAssignments)) this.replacementAssignments = stored.replacementAssignments;
         if (Array.isArray(stored.medicalRecords)) this.medicalRecords = stored.medicalRecords;
+        if (Array.isArray(stored.patientMedicalProfiles)) this.patientMedicalProfiles = stored.patientMedicalProfiles;
         if (Array.isArray(stored.promotions)) this.promotions = stored.promotions;
         if (stored.clinicBranding) this.clinicBranding = stored.clinicBranding;
       }
@@ -3684,6 +3687,7 @@ export class MockDatabase {
         overtimes: this.overtimes,
         replacementAssignments: this.replacementAssignments,
         medicalRecords: this.medicalRecords,
+        patientMedicalProfiles: this.patientMedicalProfiles,
         promotions: this.promotions,
         clinicBranding: this.clinicBranding,
       };
@@ -3734,6 +3738,7 @@ export class MockDatabase {
     this.instance.overtimes = [];
     this.instance.replacementAssignments = [];
     this.instance.medicalRecords = [];
+    this.instance.patientMedicalProfiles = [];
     this.instance.clinicBranding = JSON.parse(JSON.stringify(DEFAULT_CLINIC_BRANDING));
     this.instance.promotions = JSON.parse(JSON.stringify(MOCK_PROMOTIONS));
     return this.instance;
@@ -3753,6 +3758,7 @@ export class MockDatabase {
     db.payments = [];
     db.accruals = [];
     db.medicalRecords = [];
+    db.patientMedicalProfiles = [];
     db.overtimes = [];
     db.replacementAssignments = [];
     return db;

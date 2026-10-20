@@ -18,7 +18,7 @@ describe("Lala Dentist Web Admin - Phase 1 Operational Core Tests", () => {
 
   // Test 1: Global Patient Profile (1 Patient Profile, 3 Visits across different branches)
   it("should support 1 global PatientProfile with multiple PatientVisits across Gebang, Muktisari, Ambulu", async () => {
-    const patients = await patientRepo.getPatients();
+    const patients = await patientRepo.getPatients(UserRole.SUPER_ADMIN);
     const budi = patients.find((p) => p.name === "Budi Setiawan");
     expect(budi).toBeDefined();
 
@@ -105,6 +105,24 @@ describe("Lala Dentist Web Admin - Phase 1 Operational Core Tests", () => {
 
     expect(newPatient.medicalRecordNumber).toBe("");
     expect(newPatient.id).toBeDefined();
+  });
+
+  it("should save emergency contact details on the patient profile", async () => {
+    const newPatient = await patientRepo.createPatient({
+      name: "Pasien Kontak Darurat",
+      phone: "081999888777",
+      emergencyContactName: "Siti",
+      emergencyContactPhone: "081234567890",
+      emergencyContactRelationship: "Ibu",
+      dateOfBirth: "1990-01-01",
+      gender: "L",
+      address: "Jember"
+    });
+    const savedPatient = await patientRepo.getPatientById(newPatient.id);
+
+    expect(savedPatient?.emergencyContactName).toBe("Siti");
+    expect(savedPatient?.emergencyContactPhone).toBe("081234567890");
+    expect(savedPatient?.emergencyContactRelationship).toBe("Ibu");
   });
 
   // Test 10: Create Patient - Reject Duplicate RM Number
@@ -320,7 +338,7 @@ describe("Lala Dentist Web Admin - Phase 1 Operational Core Tests", () => {
     const updated = await patientRepo.updatePatient(target.id, {
       address: "Jl. Riau No. 45, Jember Baru",
       medicalHistoryNotes: "Diperbarui: Alergi penicillin & aspirin"
-    });
+    }, UserRole.SUPER_ADMIN);
 
     expect(updated.address).toBe("Jl. Riau No. 45, Jember Baru");
     expect(updated.medicalHistoryNotes).toBe("Diperbarui: Alergi penicillin & aspirin");

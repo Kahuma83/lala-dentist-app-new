@@ -5,7 +5,8 @@ import {
   CompensationRepository,
   PayrollRepository,
   TreatmentRepository,
-  DoctorRepository
+  DoctorRepository,
+  StaffRepository
 } from "../repositories/interfaces";
 import {
   MockAccountingRepository,
@@ -14,7 +15,8 @@ import {
   MockCompensationRepository,
   MockPayrollRepository,
   MockTreatmentRepository,
-  MockDoctorRepository
+  MockDoctorRepository,
+  MockStaffRepository
 } from "../repositories/mockRepositories";
 import {
   ChartOfAccount,
@@ -140,6 +142,7 @@ export interface AccountingPostingServiceDeps {
   payrollRepo?: PayrollRepository;
   treatmentRepo?: TreatmentRepository;
   doctorRepo?: DoctorRepository;
+  staffRepo?: StaffRepository;
 }
 
 /**
@@ -154,6 +157,7 @@ export class AccountingPostingService {
   private payrollRepo: PayrollRepository;
   private treatmentRepo: TreatmentRepository;
   private doctorRepo: DoctorRepository;
+  private staffRepo: StaffRepository;
 
   constructor(deps: AccountingPostingServiceDeps = {}) {
     this.accountingRepo = deps.accountingRepo || new MockAccountingRepository();
@@ -163,6 +167,34 @@ export class AccountingPostingService {
     this.payrollRepo = deps.payrollRepo || new MockPayrollRepository();
     this.treatmentRepo = deps.treatmentRepo || new MockTreatmentRepository();
     this.doctorRepo = deps.doctorRepo || new MockDoctorRepository();
+    this.staffRepo = deps.staffRepo || new MockStaffRepository();
+  }
+
+  private async getDoctorForStaff(staffId: string) {
+    const doctorById = await this.doctorRepo.getDoctorById(staffId);
+    if (doctorById?.id === staffId) {
+      return doctorById;
+    }
+    return this.doctorRepo.getDoctorByStaffId(staffId);
+  }
+
+  private async getStaffForPayroll(staffId: string) {
+    const staff = await this.staffRepo.getStaff();
+    return staff.find((item) => item.id === staffId || item.userAccountId === staffId) || null;
+  }
+
+  private async resolveStaffBranch(
+    staffId: string,
+    preferredBranchId?: string | null
+  ): Promise<string> {
+    if (preferredBranchId) return preferredBranchId;
+    const doctor = await this.getDoctorForStaff(staffId);
+    if (doctor?.assignedBranchId) return doctor.assignedBranchId;
+    const staff = await this.getStaffForPayroll(staffId);
+    if (staff?.branchId) return staff.branchId;
+    throw new Error(
+      `Cabang untuk staff #${staffId} tidak ditemukan. Lengkapi penempatan cabang sebelum memposting jurnal.`
+    );
   }
 
   // =========================================================================
@@ -488,11 +520,14 @@ export class AccountingPostingService {
     }
 
     // Idempotency: Return existing journal if already posted
-    const existing = await this.accountingRepo.findBySource(
+    const existingJournals = await this.accountingRepo.getJournalsBySource(
       JournalSourceType.COMPENSATION,
       accrual.id
     );
-    if (existing && existing.status !== JournalStatus.VOID) {
+    const existing = existingJournals.find(
+      (journal) => journal.status !== JournalStatus.VOID
+    );
+    if (existing) {
       return existing;
     }
 
@@ -502,24 +537,42 @@ export class AccountingPostingService {
       );
     }
 
-    // Resolve Branch:
-    // Lookup source TreatmentJob if available
-    let branchId = "branch-gebang";
+    const accrualPeriod = accrual.accruedAt?.slice(0, 7).match(/^(\d{4})-(\d{2})$/);
+    const accrualYear = accrualPeriod ? Number(accrualPeriod[1]) : NaN;
+    const accrualMonth = accrualPeriod ? Number(accrualPeriod[2]) : NaN;
+    const payrolls = Number.isInteger(accrualYear) &&
+      Number.isInteger(accrualMonth) &&
+      accrualMonth >= 1 &&
+      accrualMonth <= 12
+      ? await this.payrollRepo.getPayrolls(accrualMonth, accrualYear)
+      : await this.payrollRepo.getPayrolls();
+    const payrollItems = await Promise.all(
+      payrolls.map((payroll) => this.payrollRepo.getPayrollItems(payroll.id))
+    );
+    if (payrollItems.some((items) => items.some((item) => item.sourceId === accrual.id))) {
+      throw new Error(
+        `Kompensasi akrual #${accrual.id} sudah masuk payroll dan hanya boleh dijurnal melalui payroll`
+      );
+    }
+
+    let treatmentBranchId: string | null = null;
     if (accrual.sourceId) {
       const treatment = await this.treatmentRepo.getTreatmentJobById(
         accrual.sourceId
       );
       if (treatment) {
-        branchId = treatment.branchId;
+        treatmentBranchId = treatment.branchId;
       }
     }
-
-    // If still not resolved, check doctor assigned branch
-    if (!branchId || branchId === "branch-gebang") {
-      const doctor = await this.doctorRepo.getDoctorById(accrual.staffId);
-      if (doctor?.assignedBranchId) {
-        branchId = doctor.assignedBranchId;
-      }
+    const doctor = await this.getDoctorForStaff(accrual.staffId);
+    const branchId = treatmentBranchId ||
+      doctor?.assignedBranchId ||
+      (await this.getStaffForPayroll(accrual.staffId))?.branchId ||
+      "";
+    if (!branchId) {
+      throw new Error(
+        `Cabang untuk akrual kompensasi staff #${accrual.staffId} tidak ditemukan. Lengkapi penempatan cabang sebelum memposting jurnal.`
+      );
     }
 
     if (
@@ -532,8 +585,7 @@ export class AccountingPostingService {
       );
     }
 
-    // Determine Doctor vs Assistant fee accounts
-    const isDoctor = accrual.staffId.startsWith("doctor-") || (await this.doctorRepo.getDoctorById(accrual.staffId)) !== null;
+    const isDoctor = doctor !== null;
 
     let expenseKey: StandardAccountKey = isDoctor
       ? "DOCTOR_FEE_EXPENSE"
@@ -624,21 +676,29 @@ export class AccountingPostingService {
       );
     }
 
-    // Idempotency check
-    const existing = await this.accountingRepo.findBySource(
+    // Keep the accrual and payment events independently idempotent.
+    const sourceJournals = await this.accountingRepo.getJournalsBySource(
       JournalSourceType.PAYROLL,
       payroll.id
     );
-    if (existing && existing.status !== JournalStatus.VOID) {
-      return existing;
+    const existing = sourceJournals.find((journal) =>
+      journal.status !== JournalStatus.VOID &&
+      (journal.event === "ACCRUAL" ||
+        (!journal.event && /akrual|accrual/i.test(journal.description) &&
+          !/pembayaran|payment/i.test(journal.description)))
+    );
+    if (existing) {
+      return existing.status === JournalStatus.POSTED
+        ? existing
+        : this.accountingRepo.postJournal(
+          existing.id,
+          postedBy,
+          currentUserRole,
+          userBranchId
+        );
     }
 
-    // Resolve branch
-    let branchId = "branch-gebang";
-    const doctor = await this.doctorRepo.getDoctorById(payroll.staffId);
-    if (doctor?.assignedBranchId) {
-      branchId = doctor.assignedBranchId;
-    }
+    const branchId = await this.resolveStaffBranch(payroll.staffId, payroll.branchId);
 
     if (
       currentUserRole === UserRole.BRANCH_ADMIN &&
@@ -670,7 +730,34 @@ export class AccountingPostingService {
 
     const baseSalary = Math.round(Number(payroll.baseSalary) || 0);
     const payrollItems = await this.payrollRepo.getPayrollItems(payrollId);
-    const itemCompensation = payrollItems
+    const compensationSourceIds = Array.from(
+      new Set(
+        payrollItems
+          .filter((item) => item.type === "EARNING")
+          .map((item) => item.sourceId)
+          .filter((sourceId): sourceId is string => Boolean(sourceId))
+      )
+    );
+    const linkedCompensationJournals = await Promise.all(
+      compensationSourceIds.map(async (sourceId) => {
+        const journals = await this.accountingRepo.getJournalsBySource(
+          JournalSourceType.COMPENSATION,
+          sourceId
+        );
+        return journals.some((journal) => journal.status !== JournalStatus.VOID)
+          ? sourceId
+          : null;
+      })
+    );
+    const alreadyPostedCompensationIds = new Set(
+      linkedCompensationJournals.filter((sourceId): sourceId is string => sourceId !== null)
+    );
+    const unpostedPayrollItems = payrollItems.filter(
+      (item) => item.type !== "EARNING" ||
+        !item.sourceId ||
+        !alreadyPostedCompensationIds.has(item.sourceId)
+    );
+    const itemCompensation = unpostedPayrollItems
       .filter((item) =>
         item.type === "EARNING" &&
         !/gaji pokok|base salary/i.test(item.descriptionSnapshot)
@@ -741,6 +828,7 @@ export class AccountingPostingService {
         description,
         sourceType: JournalSourceType.PAYROLL,
         sourceId: payroll.id,
+        event: "ACCRUAL",
         lines
       },
       postedBy,
@@ -756,6 +844,220 @@ export class AccountingPostingService {
     );
 
     return postedJournal;
+  }
+
+  async postPayrollPayment(
+    payrollId: string,
+    currentUserRole: UserRole = UserRole.SUPER_ADMIN,
+    userBranchId: string | null = null,
+    postedBy: string = "System Auto-Post"
+  ): Promise<JournalEntry> {
+    const payroll = await this.payrollRepo.getPayrollById(payrollId);
+    if (!payroll) {
+      throw new Error(`Payroll #${payrollId} tidak ditemukan`);
+    }
+    if (
+      payroll.status !== PayrollStatus.APPROVED &&
+      payroll.status !== PayrollStatus.PAID
+    ) {
+      throw new Error(
+        `Payroll #${payrollId} harus berstatus APPROVED sebelum pembayaran dapat dijurnal`
+      );
+    }
+
+    let sourceJournals = await this.accountingRepo.getJournalsBySource(
+      JournalSourceType.PAYROLL,
+      payroll.id
+    );
+    const existingPayment = sourceJournals.find((journal) =>
+      journal.status !== JournalStatus.VOID &&
+      (journal.event === "PAYMENT" ||
+        (!journal.event && /pembayaran|payment/i.test(journal.description)))
+    );
+    if (existingPayment) {
+      return existingPayment.status === JournalStatus.POSTED
+        ? existingPayment
+        : this.accountingRepo.postJournal(
+          existingPayment.id,
+          postedBy,
+          currentUserRole,
+          userBranchId
+        );
+    }
+
+    await this.postPayroll(payrollId, currentUserRole, userBranchId, postedBy);
+    sourceJournals = await this.accountingRepo.getJournalsBySource(
+      JournalSourceType.PAYROLL,
+      payroll.id
+    );
+
+    const payrollItems = await this.payrollRepo.getPayrollItems(payrollId);
+    const accrualJournalIds = sourceJournals
+      .filter((journal) =>
+        journal.status !== JournalStatus.VOID &&
+        (journal.event === "ACCRUAL" ||
+          (!journal.event && /akrual|accrual/i.test(journal.description) &&
+            !/pembayaran|payment/i.test(journal.description)))
+      )
+      .map((journal) => journal.id);
+    const linkedCompensationJournals = await Promise.all(
+      Array.from(new Set(
+        payrollItems
+          .filter((item) => item.type === "EARNING")
+          .map((item) => item.sourceId)
+          .filter((sourceId): sourceId is string => Boolean(sourceId))
+      )).map(async (sourceId) => {
+        const journals = await this.accountingRepo.getJournalsBySource(
+          JournalSourceType.COMPENSATION,
+          sourceId
+        );
+        return journals.filter((journal) => journal.status !== JournalStatus.VOID);
+      })
+    );
+    const settlementJournalIds = Array.from(new Set([
+      ...accrualJournalIds,
+      ...linkedCompensationJournals.flat().map((journal) => journal.id)
+    ]));
+    const settlementJournals = await Promise.all(
+      settlementJournalIds.map((journalId) => this.accountingRepo.getJournalById(journalId))
+    );
+    const liabilityTotals = new Map<string, number>();
+    let grossLiability = 0;
+    for (const journal of settlementJournals) {
+      if (!journal || journal.status !== JournalStatus.POSTED) {
+        throw new Error(
+          `Jurnal akrual payroll belum terposting sempurna; pembayaran payroll #${payrollId} ditunda`
+        );
+      }
+      for (const line of journal.lines) {
+        if (line.credit <= 0) continue;
+        liabilityTotals.set(
+          line.accountId,
+          (liabilityTotals.get(line.accountId) || 0) + line.credit
+        );
+        grossLiability += line.credit;
+      }
+    }
+
+    const deductions = payrollItems.filter((item) => item.type === "DEDUCTION");
+    const deductionTotal = Math.round(Number(payroll.totalDeductions) || 0);
+    const itemDeductionTotal = deductions.reduce(
+      (sum, item) => sum + Math.round(Number(item.amountSnapshot) || 0),
+      0
+    );
+    if (deductions.some((item) => Number(item.amountSnapshot) < 0) ||
+      itemDeductionTotal !== deductionTotal) {
+      throw new Error(
+        `Rincian potongan payroll #${payrollId} tidak sesuai dengan total potongan (rincian Rp ${itemDeductionTotal.toLocaleString("id-ID")}, total Rp ${deductionTotal.toLocaleString("id-ID")}); jurnal pembayaran tidak dibuat`
+      );
+    }
+
+    const netSalary = Math.round(Number(payroll.netSalary) || 0);
+    if (
+      grossLiability <= 0 ||
+      netSalary < 0 ||
+      deductionTotal < 0 ||
+      grossLiability !== netSalary + deductionTotal
+    ) {
+      throw new Error(
+        `Nilai akrual, potongan, dan gaji bersih payroll #${payrollId} tidak seimbang; jurnal pembayaran tidak dibuat`
+      );
+    }
+
+    const branchId = await this.resolveStaffBranch(payroll.staffId, payroll.branchId);
+    if (
+      currentUserRole === UserRole.BRANCH_ADMIN &&
+      userBranchId &&
+      branchId !== userBranchId
+    ) {
+      throw new Error(
+        "Akses ditolak: Branch Admin hanya dapat memposting pembayaran payroll di cabangnya sendiri"
+      );
+    }
+
+    const paymentLines: Array<{
+      accountId: string;
+      debit: number;
+      credit: number;
+      branchId: string;
+      description?: string;
+    }> = [];
+    for (const [accountId, amount] of liabilityTotals) {
+      if (amount <= 0) continue;
+      paymentLines.push({
+        accountId,
+        debit: amount,
+        credit: 0,
+        branchId,
+        description: `Pelunasan utang payroll #${payrollId}`
+      });
+    }
+
+    for (const item of deductions) {
+      const amount = Math.round(Number(item.amountSnapshot) || 0);
+      if (amount <= 0) continue;
+      const description = item.descriptionSnapshot.toLowerCase();
+      let accountKey: StandardAccountKey;
+      if (/pajak|tax|pph|bpjs/.test(description)) {
+        accountKey = "TAX_PAYABLE";
+      } else if (/kasbon|pinjaman|piutang|advance/.test(description)) {
+        accountKey = "AR_PATIENT";
+      } else if (/absen|ketidakhadiran|alpa|terlambat|late/.test(description)) {
+        accountKey = "SALARY_EXPENSE";
+      } else if (/lembur|overtime|insentif|komisi|bagi hasil/.test(description)) {
+        accountKey = "INCENTIVE_EXPENSE";
+      } else {
+        throw new Error(
+          `Akun untuk potongan "${item.descriptionSnapshot}" belum dapat ditentukan; jurnal pembayaran payroll tidak dibuat`
+        );
+      }
+      const deductionAccount = await AccountingAccountResolver.resolveAccount(
+        this.accountingRepo,
+        accountKey
+      );
+      paymentLines.push({
+        accountId: deductionAccount.id,
+        debit: 0,
+        credit: amount,
+        branchId,
+        description: `Potongan payroll: ${item.descriptionSnapshot}`
+      });
+    }
+
+    if (netSalary > 0) {
+      const bankAccount = await AccountingAccountResolver.resolveAccount(
+        this.accountingRepo,
+        "BANK"
+      );
+      paymentLines.push({
+        accountId: bankAccount.id,
+        debit: 0,
+        credit: netSalary,
+        branchId,
+        description: `Pembayaran bersih payroll #${payrollId}`
+      });
+    }
+
+    const draftJournal = await this.accountingRepo.createDraftJournal(
+      {
+        journalDate: AppClock.nowISO().slice(0, 10),
+        branchId,
+        description: `Pembayaran Payroll Bersih Periode ${payroll.month}/${payroll.year} - Staff #${payroll.staffId}`,
+        sourceType: JournalSourceType.PAYROLL,
+        sourceId: payroll.id,
+        event: "PAYMENT",
+        lines: paymentLines
+      },
+      postedBy,
+      currentUserRole,
+      userBranchId
+    );
+    return this.accountingRepo.postJournal(
+      draftJournal.id,
+      postedBy,
+      currentUserRole,
+      userBranchId
+    );
   }
 
   // =========================================================================
