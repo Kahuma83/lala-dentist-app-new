@@ -5,8 +5,8 @@ import {
 } from "../utils/attendanceGeofence";
 
 const gebang = {
-  latitude: -8.1654372,
-  longitude: 113.68065317,
+  latitude: -8.1654362,
+  longitude: 113.6833396,
   radiusMeters: 100
 };
 
