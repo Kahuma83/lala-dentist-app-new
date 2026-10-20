@@ -4,39 +4,13 @@ import { useApp } from "../context/AppContext";
 import { Attendance, AttendanceMethod, AttendanceStatus, ScheduleStatus, UserRole } from "../types/domain";
 import { AppClock } from "../utils/clock";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
-import { getGeofenceDistanceMeters, isWithinAttendanceGeofence } from "../utils/attendanceGeofence";
+import {
+  getCurrentAttendanceLocation,
+  getGeofenceDistanceMeters,
+  isWithinAttendanceGeofence
+} from "../utils/attendanceGeofence";
 
 type AttendanceAction = "check-in" | "check-out";
-type LocationFix = {
-  latitude: number;
-  longitude: number;
-  accuracyMeters: number;
-};
-
-function getCurrentLocation(): Promise<LocationFix> {
-  if (!navigator.geolocation) {
-    return Promise.reject(new Error("Browser ini tidak mendukung GPS. Gunakan browser ponsel yang mendukung lokasi."));
-  }
-
-  return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => resolve({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        accuracyMeters: coords.accuracy
-      }),
-      (error) => {
-        const message = error.code === error.PERMISSION_DENIED
-          ? "Izin lokasi ditolak. Aktifkan izin lokasi untuk browser lalu coba lagi."
-          : error.code === error.POSITION_UNAVAILABLE
-          ? "Lokasi belum tersedia. Aktifkan GPS dan coba di area terbuka."
-          : "Pengambilan lokasi melewati batas waktu. Coba kembali.";
-        reject(new Error(message));
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 }
-    );
-  });
-}
 
 async function compressEvidencePhoto(file: File): Promise<Blob> {
   let bitmap: ImageBitmap;
@@ -172,7 +146,7 @@ export const AttendanceSelfService: React.FC = () => {
         throw new Error("Bukti absensi harus berupa foto.");
       }
 
-      const location = await getCurrentLocation();
+      const location = await getCurrentAttendanceLocation();
       const radius = branch.geofenceRadiusMeters!;
       const geofence = {
         latitude: branch.geofenceLatitude!,

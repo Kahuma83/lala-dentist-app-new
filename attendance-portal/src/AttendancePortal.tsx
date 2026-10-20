@@ -27,7 +27,11 @@ import {
   changeAuthenticatedPassword,
   resetAuthenticatedPassword
 } from "../../src/services/passwordService";
-import { getGeofenceDistanceMeters, isWithinAttendanceGeofence } from "../../src/utils/attendanceGeofence";
+import {
+  getCurrentAttendanceLocation,
+  getGeofenceDistanceMeters,
+  isWithinAttendanceGeofence
+} from "../../src/utils/attendanceGeofence";
 import { loadOwnStaffProfilePhoto, uploadStaffProfilePhoto } from "../../src/utils/staffProfilePhoto";
 
 type StaffRole = "BRANCH_ADMIN" | "DOCTOR" | "DOCTOR_ASSISTANT" | "OB";
@@ -58,7 +62,6 @@ type StaffContext = {
   role: StaffRole;
   staffId: string;
 };
-type LocationFix = { latitude: number; longitude: number; accuracyMeters: number };
 type PortalTab = "home" | "attendance" | "schedule" | "absence" | "overtime" | "payroll" | "profile";
 type AbsenceRequestType = "SICK" | "LEAVE" | "PERMISSION";
 type PortalAbsenceRequest = {
@@ -194,30 +197,6 @@ function formatRupiah(value: number): string {
 
 function friendlyError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
-}
-
-function getCurrentLocation(): Promise<LocationFix> {
-  if (!navigator.geolocation) {
-    return Promise.reject(new Error("Browser tidak mendukung GPS. Gunakan browser ponsel yang mendukung lokasi."));
-  }
-  return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => resolve({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        accuracyMeters: coords.accuracy
-      }),
-      (error) => {
-        const message = error.code === error.PERMISSION_DENIED
-          ? "Izin lokasi ditolak. Aktifkan izin lokasi untuk browser lalu coba lagi."
-          : error.code === error.POSITION_UNAVAILABLE
-          ? "Lokasi belum tersedia. Aktifkan GPS dan coba di area terbuka."
-          : "Pengambilan lokasi melewati batas waktu. Coba kembali.";
-        reject(new Error(message));
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 }
-    );
-  });
 }
 
 async function compressPhoto(file: File): Promise<Blob> {
@@ -933,7 +912,7 @@ export function AttendancePortal() {
     try {
       if (!file.type.startsWith("image/")) throw new Error("Bukti absensi harus berupa foto.");
       if (!geofenceConfigured) throw new Error("Geofence cabang belum dikonfigurasi atau cabang belum aktif.");
-      const location = await getCurrentLocation();
+      const location = await getCurrentAttendanceLocation();
       const geofence = {
         latitude: currentBranch.geofence_latitude!,
         longitude: currentBranch.geofence_longitude!,
