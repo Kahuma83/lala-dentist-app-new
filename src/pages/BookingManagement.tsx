@@ -47,6 +47,7 @@ import { useRouter } from "../components/Router";
 import { TreatmentPicker } from "../components/TreatmentPicker";
 import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
 import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
+import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 
 const addCalendarDays = (date: string, days: number) => {
   const value = new Date(`${date}T12:00:00Z`);
@@ -74,7 +75,7 @@ const getMinutesOfDay = (time: string) => {
 
 export const BookingManagement: React.FC = () => {
   const { repos, currentUser, selectedBranchId, branches, patients, refreshData } = useApp();
-  const { navigate } = useRouter();
+  const { navigate, path } = useRouter();
 
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -270,6 +271,35 @@ export const BookingManagement: React.FC = () => {
       setFormBranchId(branches[0].id);
     }
   }, [currentUser, branches, formBranchId]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("source") !== BookingSource.WALK_IN) return;
+
+    const requestedPatientId = params.get("patientId");
+    const patient = requestedPatientId
+      ? patients.find((item) => item.id === requestedPatientId)
+      : undefined;
+    if (requestedPatientId && !patient) return;
+
+    setFormBranchId(
+      currentUser?.role === UserRole.BRANCH_ADMIN
+        ? currentUser.assignedBranchId || ""
+        : selectedBranchId || branches[0]?.id || ""
+    );
+    setFormDate(getTodayDateString());
+    setFormDoctorId("");
+    setFormTimeSlot("");
+    setSelectedPatient(patient || null);
+    setPatientSearch("");
+    setShowNewPatientForm(false);
+    setBookingSource(BookingSource.WALK_IN);
+    setFormError(null);
+    setFormSuccess(null);
+    setPlannedServices([]);
+    setIsModalOpen(true);
+    navigate(path);
+  }, [branches, currentUser, navigate, path, patients, selectedBranchId]);
 
   // Active schedules flexibly filtered by selected branch, date, and status ACTIVE
   const activeSchedulesForBranchAndDate = useMemo(() => {
@@ -725,6 +755,19 @@ export const BookingManagement: React.FC = () => {
 
     setIsSubmitting(true);
     try {
+      if (bookingSource === BookingSource.WALK_IN) {
+        const [latestBookings, latestQueue] = await Promise.all([
+          repos.booking.getBookings(currentUser?.role, currentUser?.assignedBranchId),
+          repos.queue.getQueueByBranch(formBranchId, currentUser?.role, currentUser?.assignedBranchId)
+        ]);
+        if (hasActiveBookingForPatientOnDate(latestBookings, selectedPatient.id, formBranchId, fullISOString)) {
+          throw new Error("Pasien sudah memiliki jadwal aktif pada tanggal ini. Pilih jadwal tersebut untuk check-in, jangan buat jadwal Walk-In baru.");
+        }
+        if (hasActiveQueueForPatientOnDate(latestQueue, selectedPatient.id, formBranchId, fullISOString)) {
+          throw new Error("Pasien sudah berada dalam antrean pada tanggal ini.");
+        }
+      }
+
       await repos.booking.createBooking(
         {
           patientId: selectedPatient.id,
@@ -2100,24 +2143,33 @@ export const BookingManagement: React.FC = () => {
       )}
 
       {selectedBooking && (
-        <div className="fixed inset-0 z-[150] bg-slate-900/40 flex justify-end" onClick={() => setSelectedBooking(null)}>
+        <div className="fixed inset-0 z-[150] flex justify-end bg-slate-900/35 backdrop-blur-[2px]" onClick={() => setSelectedBooking(null)}>
           <aside
-            className="h-full w-full max-w-md bg-white shadow-2xl flex flex-col"
+            className="flex h-full w-full max-w-[440px] flex-col border-l border-[#d9bf8f] bg-[#fcfbf8] shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-label="Detail jadwal pasien"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="p-5 border-b border-slate-200 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="font-extrabold text-slate-900">{patientProfileForDetail?.fullName || patientProfileForDetail?.name || selectedBooking.patientNameSnapshot || "Pasien"}</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  {formatIndonesianDate(getOperationalDateString(selectedBooking.bookingDateTime))} · {getOperationalTimeString(selectedBooking.bookingDateTime)} WIB
-                </p>
+            <div className="flex items-start justify-between gap-4 border-b border-[#d9bf8f]/70 bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c] px-5 py-4 shadow-sm">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/70 bg-white/90 text-base font-extrabold text-[#76591f] shadow-sm">
+                  {(patientProfileForDetail?.fullName || patientProfileForDetail?.name || selectedBooking.patientNameSnapshot || "P").trim().charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#604718]">Detail Jadwal</p>
+                  <h2 className="mt-0.5 truncate text-base font-extrabold text-[#35270f]">{patientProfileForDetail?.fullName || patientProfileForDetail?.name || selectedBooking.patientNameSnapshot || "Pasien"}</h2>
+                  <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-[#594725]">
+                    <Calendar className="h-3.5 w-3.5 text-[#76591f]" />
+                    {formatIndonesianDate(getOperationalDateString(selectedBooking.bookingDateTime))}
+                    <span className="text-[#76591f]">·</span>
+                    {getOperationalTimeString(selectedBooking.bookingDateTime)} WIB
+                  </p>
+                </div>
               </div>
-              <button type="button" onClick={() => setSelectedBooking(null)} aria-label="Tutup detail" className="text-slate-400 hover:text-slate-700">✕</button>
+              <button type="button" onClick={() => setSelectedBooking(null)} aria-label="Tutup detail" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/70 bg-white/85 text-slate-500 transition-colors hover:border-white hover:bg-white hover:text-[#76591f]">✕</button>
             </div>
-            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
+            <div className="flex-1 space-y-3 overflow-y-auto p-4">
               {rescheduleSuccess && (
                 <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                   {rescheduleSuccess}
@@ -2133,25 +2185,35 @@ export const BookingManagement: React.FC = () => {
                   {patientEditSuccess}
                 </div>
               )}
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${selectedBooking.status === BookingStatus.CANCELLED ? "bg-rose-100 text-rose-700" : selectedBooking.status === BookingStatus.RESCHEDULED ? "bg-violet-100 text-violet-700" : selectedBooking.status === BookingStatus.COMPLETED || completedBookingIds.has(selectedBooking.id) ? "bg-blue-100 text-blue-700" : checkedInBookingIds.has(selectedBooking.id) ? "bg-emerald-100 text-emerald-700" : selectedBooking.status === BookingStatus.CONFIRMED ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
                   {selectedBooking.status === BookingStatus.CANCELLED ? "Dibatalkan" : selectedBooking.status === BookingStatus.RESCHEDULED ? "Dijadwalkan ulang" : selectedBooking.status === BookingStatus.COMPLETED || completedBookingIds.has(selectedBooking.id) ? "Selesai" : checkedInBookingIds.has(selectedBooking.id) ? "Sudah Check-In" : selectedBooking.status === BookingStatus.CONFIRMED ? "Dikonfirmasi" : "Terjadwal"}
                 </span>
-                <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
+                <span className="px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-600 text-[10px] font-bold">
                   {(selectedBooking.source || selectedBooking.channel) === BookingSource.PATIENT_PORTAL || (selectedBooking.source || selectedBooking.channel) === BookingSource.ANDROID ? "Online" : (selectedBooking.source || selectedBooking.channel) === BookingSource.WHATSAPP ? "WhatsApp" : (selectedBooking.source || selectedBooking.channel) === BookingSource.WALK_IN ? "Walk-In" : "Front Desk"}
                 </span>
               </div>
-              <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+              {selectedBooking.enRouteConfirmedAt && (
+                <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  Pasien mengonfirmasi sedang menuju klinik pada {formatIndonesianDate(getOperationalDateString(selectedBooking.enRouteConfirmedAt))} pukul {getOperationalTimeString(selectedBooking.enRouteConfirmedAt)} WIB.
+                </div>
+              )}
+              {selectedBooking.lateCheckInRequestedAt && !checkedInBookingIds.has(selectedBooking.id) && (
+                <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-900">
+                  Pasien meminta konfirmasi check-in terlambat pada {formatIndonesianDate(getOperationalDateString(selectedBooking.lateCheckInRequestedAt))} pukul {getOperationalTimeString(selectedBooking.lateCheckInRequestedAt)} WIB. Booking tidak dibatalkan otomatis; hubungi pasien atau bantu proses check-in.
+                </div>
+              )}
+              <section className="rounded-2xl border border-amber-200/80 bg-white p-3.5 shadow-sm shadow-amber-900/[0.03]">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-xs font-extrabold text-slate-800">Data pasien</h3>
-                    <p className="mt-0.5 text-[10px] text-slate-500">Lengkapi identitas yang belum diisi pasien online.</p>
+                    <p className="mt-0.5 text-[10px] text-slate-500">Identitas dan informasi kontak pasien.</p>
                   </div>
                   {!isPatientEditorOpen && (
                     <button
                       type="button"
                       onClick={handleOpenPatientEditor}
-                      className="shrink-0 rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 text-[10px] font-bold text-emerald-800 hover:bg-emerald-50"
+                      className="shrink-0 rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 text-[10px] font-bold text-amber-800 transition-colors hover:bg-amber-100"
                     >
                       Edit data pasien
                     </button>
@@ -2331,19 +2393,30 @@ export const BookingManagement: React.FC = () => {
                   </div>
                 )}
               </section>
-              <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
-                <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Dokter</span><span className="text-xs font-semibold text-slate-800">{selectedBooking.doctorNameSnapshot || "Dokter"}</span></div>
-                <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Cabang</span><span className="text-xs font-semibold text-slate-800">{selectedBooking.branchNameSnapshot || "Klinik"}</span></div>
-                <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Pasien</span><span className="text-xs font-semibold text-slate-800">{selectedBooking.patientNameSnapshot || "Pasien"}</span><span className="block text-[10px] text-slate-500 mt-0.5">No. RM: {patients.find((patient) => patient.id === selectedBooking.patientId)?.medicalRecordNumber || "Belum ada"}</span></div>
-                <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Keluhan / Catatan</span><span className="text-xs text-slate-700">{selectedBooking.notes || selectedBooking.complaint || "Belum dicatat"}</span></div>
-                {selectedBooking.plannedTreatments && selectedBooking.plannedTreatments.length > 0 && (
-                  <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Rencana tindakan (estimasi)</span><span className="text-xs text-slate-700">{getPlannedTreatmentSummary(selectedBooking.plannedTreatments)} · {getPlannedTreatmentDurationMinutes(selectedBooking.plannedTreatments)} menit</span></div>
-                )}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-900/[0.02]">
+                  <span className="block text-[9px] font-bold uppercase tracking-wide text-slate-400">Dokter</span>
+                  <span className="mt-1 block truncate text-xs font-bold text-slate-800">{selectedBooking.doctorNameSnapshot || "Dokter"}</span>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-900/[0.02]">
+                  <span className="block text-[9px] font-bold uppercase tracking-wide text-slate-400">Cabang</span>
+                  <span className="mt-1 block truncate text-xs font-bold text-slate-800">{selectedBooking.branchNameSnapshot || "Klinik"}</span>
+                </div>
               </div>
+              <section className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm shadow-slate-900/[0.02]">
+                <h3 className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Keluhan / Catatan</h3>
+                <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-slate-700">{selectedBooking.notes || selectedBooking.complaint || "Belum dicatat"}</p>
+              </section>
+              {selectedBooking.plannedTreatments && selectedBooking.plannedTreatments.length > 0 && (
+                <section className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-3.5">
+                  <h3 className="text-[10px] font-bold uppercase tracking-wide text-amber-800">Rencana tindakan · Estimasi</h3>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-700">{getPlannedTreatmentSummary(selectedBooking.plannedTreatments)} · {getPlannedTreatmentDurationMinutes(selectedBooking.plannedTreatments)} menit</p>
+                </section>
+              )}
               {selectedBooking.rescheduledFromBookingId && (
-                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs">
-                  <p className="font-bold text-violet-800">Jadwal pengganti</p>
-                  <p className="mt-1 text-violet-700">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3.5 text-xs">
+                  <p className="font-bold text-amber-900">Jadwal pengganti</p>
+                  <p className="mt-1 text-slate-700">
                     Menggantikan jadwal {(() => {
                       const previousBooking = bookings.find((booking) => booking.id === selectedBooking.rescheduledFromBookingId);
                       return previousBooking
@@ -2351,18 +2424,18 @@ export const BookingManagement: React.FC = () => {
                         : "sebelumnya";
                     })()}.
                   </p>
-                  {selectedBooking.rescheduleReason && <p className="mt-1 text-violet-700">Alasan: {selectedBooking.rescheduleReason}</p>}
+                  {selectedBooking.rescheduleReason && <p className="mt-1 text-slate-600">Alasan: {selectedBooking.rescheduleReason}</p>}
                 </div>
               )}
               {selectedBooking.status === BookingStatus.RESCHEDULED && (() => {
                 const replacement = bookings.find((booking) => booking.rescheduledFromBookingId === selectedBooking.id);
                 return replacement ? (
-                  <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs">
-                    <p className="font-bold text-violet-800">Jadwal pengganti</p>
-                    <p className="mt-1 text-violet-700">
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3.5 text-xs">
+                    <p className="font-bold text-amber-900">Jadwal pengganti</p>
+                    <p className="mt-1 text-slate-700">
                       {formatIndonesianDate(getOperationalDateString(replacement.bookingDateTime))} pukul {getOperationalTimeString(replacement.bookingDateTime)} · {replacement.doctorNameSnapshot || "Dokter"}
                     </p>
-                    {replacement.rescheduleReason && <p className="mt-1 text-violet-700">Alasan: {replacement.rescheduleReason}</p>}
+                    {replacement.rescheduleReason && <p className="mt-1 text-slate-600">Alasan: {replacement.rescheduleReason}</p>}
                   </div>
                 ) : null;
               })()}
@@ -2370,20 +2443,20 @@ export const BookingManagement: React.FC = () => {
             {(selectedBooking.status === BookingStatus.PENDING || selectedBooking.status === BookingStatus.CONFIRMED) &&
               !checkedInBookingIds.has(selectedBooking.id) &&
               !completedBookingIds.has(selectedBooking.id) && (
-                <div className="space-y-2.5 border-t border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.45)]">
+                <div className="space-y-2.5 border-t border-[#e7d8b4] bg-white p-4 shadow-[0_-8px_24px_-20px_rgba(120,85,25,0.24)]">
                   <button
                     type="button"
                     onClick={() => handleOpenReschedule(selectedBooking)}
-                    className="group flex min-h-[58px] w-full items-center gap-3 rounded-2xl border border-violet-600 bg-gradient-to-r from-violet-600 via-violet-600 to-indigo-600 px-3.5 py-2.5 text-left shadow-md shadow-violet-900/20 transition-all hover:-translate-y-0.5 hover:from-violet-700 hover:via-violet-700 hover:to-indigo-700 hover:shadow-lg hover:shadow-violet-900/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 active:translate-y-0"
+                    className="group flex min-h-[52px] w-full items-center gap-3 rounded-xl border border-[#d8bd7d] bg-gradient-to-r from-[#fff8e8] via-[#f3e4bd] to-[#fff8e8] px-3.5 py-2.5 text-left shadow-sm shadow-amber-900/[0.06] transition-all hover:border-[#c5a059] hover:from-[#f8edcf] hover:via-[#ead39b] hover:to-[#f8edcf] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c5a059] focus-visible:ring-offset-2 active:from-[#f0dfb4] active:via-[#e4cc8e] active:to-[#f0dfb4]"
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white ring-1 ring-inset ring-white/20 transition-colors group-hover:bg-white/20">
-                      <RefreshCw className="h-[18px] w-[18px]" />
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#d8bd7d] bg-white/80 text-[#80602a] shadow-sm">
+                      <RefreshCw className="h-4 w-4" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-extrabold leading-5 text-white">Jadwal Ulang</span>
-                      <span className="block text-[10px] font-medium leading-4 text-violet-100">Pilih waktu kunjungan yang baru</span>
+                      <span className="block text-xs font-extrabold leading-5 text-[#594217]">Jadwal Ulang</span>
+                      <span className="block text-[10px] font-medium leading-4 text-[#75684f]">Pilih waktu kunjungan yang baru</span>
                     </span>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-violet-100 transition-transform group-hover:translate-x-0.5 group-hover:text-white" />
+                    <ChevronRight className="h-4 w-4 shrink-0 text-[#80602a] transition-transform group-hover:translate-x-0.5" />
                   </button>
                   <button
                     type="button"
@@ -2391,16 +2464,16 @@ export const BookingManagement: React.FC = () => {
                       setBookingToCancel(selectedBooking);
                       setSelectedBooking(null);
                     }}
-                    className="group flex min-h-[58px] w-full items-center gap-3 rounded-2xl border border-rose-600 bg-gradient-to-r from-rose-600 via-rose-600 to-red-600 px-3.5 py-2.5 text-left shadow-md shadow-rose-900/20 transition-all hover:-translate-y-0.5 hover:from-rose-700 hover:via-rose-700 hover:to-red-700 hover:shadow-lg hover:shadow-rose-900/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 active:translate-y-0"
+                    className="group flex min-h-[52px] w-full items-center gap-3 rounded-xl border border-rose-200 bg-gradient-to-r from-rose-50 via-rose-100 to-rose-50 px-3.5 py-2.5 text-left shadow-sm shadow-rose-900/[0.05] transition-all hover:border-rose-300 hover:from-rose-100 hover:via-rose-200 hover:to-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 active:from-rose-200 active:via-rose-200 active:to-rose-200"
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white ring-1 ring-inset ring-white/20 transition-colors group-hover:bg-white/20">
-                      <XCircle className="h-[18px] w-[18px]" />
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-rose-200 bg-white/75 text-rose-700 shadow-sm">
+                      <XCircle className="h-4 w-4" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-extrabold leading-5 text-white">Batalkan Jadwal</span>
-                      <span className="block text-[10px] font-medium leading-4 text-rose-100">Batalkan kunjungan pasien ini</span>
+                      <span className="block text-xs font-extrabold leading-5 text-rose-900">Batalkan Jadwal</span>
+                      <span className="block text-[10px] font-medium leading-4 text-rose-800/75">Batalkan kunjungan pasien ini</span>
                     </span>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-rose-100 transition-transform group-hover:translate-x-0.5 group-hover:text-white" />
+                    <ChevronRight className="h-4 w-4 shrink-0 text-rose-600 transition-transform group-hover:translate-x-0.5 group-hover:text-rose-800" />
                   </button>
                   <button
                     type="button"
@@ -2408,18 +2481,18 @@ export const BookingManagement: React.FC = () => {
                       handleOpenCheckInModal(selectedBooking);
                     }}
                     disabled={isCheckInSubmitting}
-                    className="flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-600 to-teal-600 px-4 py-3 text-sm font-extrabold text-white shadow-lg shadow-emerald-900/15 transition-all hover:-translate-y-0.5 hover:from-emerald-700 hover:via-emerald-700 hover:to-teal-700 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 active:translate-y-0 disabled:cursor-wait disabled:opacity-70"
+                    className="flex min-h-[76px] w-full items-center justify-center gap-3 rounded-2xl border border-[#916b1c]/40 bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c] px-4 py-5 text-base font-extrabold text-[#493610] shadow-md shadow-[#916b1c]/20 transition-all hover:brightness-105 hover:shadow-lg hover:shadow-[#916b1c]/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c5a059] focus-visible:ring-offset-2 active:brightness-95 disabled:cursor-wait disabled:opacity-70"
                   >
                     {isCheckInSubmitting
                       ? <RefreshCw className="h-5 w-5 shrink-0 animate-spin" />
-                      : <UserCheck className="h-5 w-5 shrink-0" />}
+                      : <UserCheck className="h-7 w-7 shrink-0" />}
                     <span>{isCheckInSubmitting ? "Memproses Check-In..." : "Check-In Pasien"}</span>
                   </button>
                 </div>
               )}
             {(selectedBooking.status === BookingStatus.PENDING || selectedBooking.status === BookingStatus.CONFIRMED) &&
               (checkedInBookingIds.has(selectedBooking.id) || completedBookingIds.has(selectedBooking.id)) && (
-                <div className="p-4 border-t border-slate-200">
+                <div className="border-t border-amber-100 bg-white p-4">
                   <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                     {completedBookingIds.has(selectedBooking.id)
                       ? "Jadwal ini sudah selesai dilayani, jadi tidak dapat dijadwalkan ulang."

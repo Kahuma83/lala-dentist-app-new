@@ -18,6 +18,7 @@ import {
   Lock,
   LogOut,
   MapPin,
+  Navigation,
   Receipt,
   Send,
   ShieldCheck,
@@ -40,6 +41,7 @@ import {
   PaymentMethod,
   PaymentTransaction,
   PatientVisit,
+  PatientBookingQueueEstimate,
   QueueItem,
   QueueStatus,
   ScheduleStatus,
@@ -153,6 +155,13 @@ export const PatientPortalHome: React.FC = () => {
   const [bookingSubmitError, setBookingSubmitError] = useState<string | null>(null);
   const [bookingSubmitSuccess, setBookingSubmitSuccess] = useState<string | null>(null);
   const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
+  const [arrivalConfirmingBookingId, setArrivalConfirmingBookingId] = useState<string | null>(null);
+  const [lateCheckInRequestingBookingId, setLateCheckInRequestingBookingId] = useState<string | null>(null);
+  const [arrivalConfirmationError, setArrivalConfirmationError] = useState<string | null>(null);
+  const [arrivalConfirmationSuccess, setArrivalConfirmationSuccess] = useState<string | null>(null);
+  const [bookingQueueEstimate, setBookingQueueEstimate] = useState<PatientBookingQueueEstimate | null>(null);
+  const [bookingQueueEstimateError, setBookingQueueEstimateError] = useState<string | null>(null);
+  const [portalClock, setPortalClock] = useState(Date.now());
   const [invoiceItemsById, setInvoiceItemsById] = useState<Record<string, Awaited<ReturnType<typeof repos.invoice.getInvoiceItems>>>>({});
   const [invoiceItemsError, setInvoiceItemsError] = useState<string | null>(null);
   const [activePromotionIndex, setActivePromotionIndex] = useState(0);
@@ -349,6 +358,93 @@ export const PatientPortalHome: React.FC = () => {
       .sort((a, b) => new Date(a.bookingDateTime).getTime() - new Date(b.bookingDateTime).getTime())[0]
     : undefined;
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setPortalClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const isOnlineBooking = activePatientBooking?.source === BookingSource.PATIENT_PORTAL
+      || activePatientBooking?.source === BookingSource.ANDROID;
+    const shouldLoadEstimate = Boolean(
+      activePatientBooking
+      && isOnlineBooking
+      && !activePatientQueue
+      && ["home", "appointments", "queue"].includes(section)
+      && getOperationalDateString(activePatientBooking.bookingDateTime) === getTodayDateString()
+    );
+    if (!activePatientBooking || !shouldLoadEstimate) {
+      setBookingQueueEstimate(null);
+      setBookingQueueEstimateError(null);
+      return () => {
+        active = false;
+      };
+    }
+
+    const loadEstimate = async () => {
+      try {
+        const estimate = await bookingRepo.getPatientQueueEstimate(activePatientBooking.id);
+        if (active) {
+          setBookingQueueEstimate(estimate);
+          setBookingQueueEstimateError(null);
+        }
+      } catch (estimateError) {
+        if (active) {
+          setBookingQueueEstimateError(estimateError instanceof Error ? estimateError.message : "Gagal memuat estimasi antrean.");
+        }
+      }
+    };
+
+    void loadEstimate();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadEstimate();
+    }, 5 * 60 * 1000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void loadEstimate();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [activePatientBooking?.id, activePatientBooking?.bookingDateTime, activePatientBooking?.source, activePatientQueue?.id, bookingRepo, section]);
+
+  const handleConfirmArrival = async (booking: Booking) => {
+    setArrivalConfirmationError(null);
+    setArrivalConfirmationSuccess(null);
+    setArrivalConfirmingBookingId(booking.id);
+    try {
+      const confirmedAt = await bookingRepo.confirmPatientEnRoute(booking.id);
+      setBookings((existing) => existing.map((item) =>
+        item.id === booking.id ? { ...item, enRouteConfirmedAt: confirmedAt } : item
+      ));
+      setArrivalConfirmationSuccess(`Konfirmasi menuju klinik tercatat pukul ${formatAppointmentDate(confirmedAt)}.`);
+    } catch (confirmError) {
+      setArrivalConfirmationError(confirmError instanceof Error ? confirmError.message : "Gagal mengirim konfirmasi menuju klinik.");
+    } finally {
+      setArrivalConfirmingBookingId(null);
+    }
+  };
+
+  const handleRequestLateCheckInConfirmation = async (booking: Booking) => {
+    setArrivalConfirmationError(null);
+    setArrivalConfirmationSuccess(null);
+    setLateCheckInRequestingBookingId(booking.id);
+    try {
+      const requestedAt = await bookingRepo.requestLateCheckInConfirmation(booking.id);
+      setBookings((existing) => existing.map((item) =>
+        item.id === booking.id ? { ...item, lateCheckInRequestedAt: requestedAt } : item
+      ));
+      setArrivalConfirmationSuccess("Permintaan konfirmasi check-in sudah dikirim ke klinik.");
+    } catch (requestError) {
+      setArrivalConfirmationError(requestError instanceof Error ? requestError.message : "Gagal meminta konfirmasi petugas.");
+    } finally {
+      setLateCheckInRequestingBookingId(null);
+    }
+  };
+
   const handleSignOut = async () => {
     setIsSigningOut(true);
     setError(null);
@@ -467,37 +563,122 @@ export const PatientPortalHome: React.FC = () => {
   };
 
   const renderBookingCard = (booking: Booking) => (
-    <article key={booking.id} className="patient-portal-card rounded-2xl border border-[#d8c79d] bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Janji temu</p>
-          <h3 className="mt-1 text-base font-bold text-slate-900">
-            {booking.plannedTreatments?.map((item) => item.serviceNameSnapshot).filter(Boolean).join(", ") || "Perawatan gigi"}
-          </h3>
-        </div>
-        <span className="rounded-full bg-[#f3e8c9] px-3 py-1 text-[10px] font-bold text-[#775a21]">
-          {bookingStatusLabel[booking.status]}
-        </span>
-      </div>
-      <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
-        <div className="flex items-start gap-2 text-slate-600">
-          <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+    (() => {
+      const isOnlineBooking = booking.source === BookingSource.PATIENT_PORTAL || booking.source === BookingSource.ANDROID;
+      const estimate = activePatientBooking?.id === booking.id ? bookingQueueEstimate : null;
+      const scheduledAt = new Date(booking.bookingDateTime).getTime();
+      const estimateAt = estimate ? new Date(estimate.estimatedServiceAt).getTime() : scheduledAt;
+      const checkInDeadline = Math.max(scheduledAt + 15 * 60 * 1000, estimateAt + 15 * 60 * 1000);
+      const isActiveBooking = activeBookingStatuses.has(booking.status);
+      const canConfirmArrival = isOnlineBooking
+        && isActiveBooking
+        && portalClock >= scheduledAt - 60 * 60 * 1000
+        && portalClock <= checkInDeadline;
+      const needsStaffConfirmation = isOnlineBooking && isActiveBooking && portalClock > checkInDeadline;
+      return (
+      <article key={booking.id} className="patient-portal-card rounded-2xl border border-[#d8c79d] bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <dt className="font-semibold text-slate-400">Waktu</dt>
-            <dd className="mt-0.5 font-medium text-slate-700">{formatAppointmentDate(booking.bookingDateTime)}</dd>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Janji temu</p>
+            <h3 className="mt-1 text-base font-bold text-slate-900">
+              {booking.plannedTreatments?.map((item) => item.serviceNameSnapshot).filter(Boolean).join(", ") || "Perawatan gigi"}
+            </h3>
           </div>
+          <span className="rounded-full bg-[#f3e8c9] px-3 py-1 text-[10px] font-bold text-[#775a21]">
+            {bookingStatusLabel[booking.status]}
+          </span>
         </div>
-        <div className="flex items-start gap-2 text-slate-600">
-          <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
-          <div>
-            <dt className="font-semibold text-slate-400">Dokter dan cabang</dt>
-            <dd className="mt-0.5 font-medium text-slate-700">
-              {booking.doctorNameSnapshot || "Dokter"} · {booking.branchNameSnapshot || "Cabang klinik"}
-            </dd>
+        <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
+          <div className="flex items-start gap-2 text-slate-600">
+            <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+            <div>
+              <dt className="font-semibold text-slate-400">Waktu</dt>
+              <dd className="mt-0.5 font-medium text-slate-700">{formatAppointmentDate(booking.bookingDateTime)}</dd>
+            </div>
           </div>
-        </div>
-      </dl>
-    </article>
+          <div className="flex items-start gap-2 text-slate-600">
+            <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+            <div>
+              <dt className="font-semibold text-slate-400">Dokter dan cabang</dt>
+              <dd className="mt-0.5 font-medium text-slate-700">
+                {booking.doctorNameSnapshot || "Dokter"} · {booking.branchNameSnapshot || "Cabang klinik"}
+              </dd>
+            </div>
+          </div>
+        </dl>
+        {isOnlineBooking && isActiveBooking && (
+          <div className="mt-4 rounded-xl border border-[#e8dcc2] bg-[#fcfaf5] p-3.5">
+            <div className="flex items-start gap-2">
+              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-[#493919]">
+                  {estimate
+                    ? `Perkiraan dilayani ${formatAppointmentDate(estimate.estimatedServiceAt)}`
+                    : "Perkiraan panggilan mengikuti jadwal booking"}
+                </p>
+                {estimate && (
+                  <p className="mt-1 text-[11px] text-slate-600">
+                    Sekitar {estimate.patientsAhead} pasien atau booking sebelum Anda. Diperbarui {formatAppointmentDate(estimate.refreshedAt)}.
+                  </p>
+                )}
+                {!estimate && getOperationalDateString(booking.bookingDateTime) !== getTodayDateString() && (
+                  <p className="mt-1 text-[11px] text-slate-500">Estimasi antrean diperbarui pada hari kunjungan.</p>
+                )}
+                {bookingQueueEstimateError && activePatientBooking?.id === booking.id && (
+                  <p role="alert" className="mt-1 text-[11px] text-rose-700">{bookingQueueEstimateError}</p>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-[11px] leading-5 text-slate-600">
+              Setelah tiba, minta petugas melakukan check-in resmi mulai 60 menit sebelum sampai 15 menit setelah jadwal. Jika antrean klinik mundur, ikuti estimasi terbaru. Booking tidak otomatis dibatalkan; jika melewati batas, hubungi petugas untuk konfirmasi.
+            </p>
+            {arrivalConfirmationError && (
+              <p role="alert" className="mt-2 text-[11px] text-rose-700">{arrivalConfirmationError}</p>
+            )}
+            {arrivalConfirmationSuccess && (
+              <p role="status" className="mt-2 text-[11px] text-emerald-700">{arrivalConfirmationSuccess}</p>
+            )}
+            {booking.enRouteConfirmedAt ? (
+              <p role="status" className="mt-3 flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                Konfirmasi menuju klinik tercatat {formatAppointmentDate(booking.enRouteConfirmedAt)}.
+              </p>
+            ) : canConfirmArrival ? (
+              <button
+                type="button"
+                onClick={() => void handleConfirmArrival(booking)}
+                disabled={arrivalConfirmingBookingId === booking.id}
+                className="mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#80602a] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#6f5122] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c5a059] focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70"
+              >
+                <Navigation className="h-4 w-4" />
+                {arrivalConfirmingBookingId === booking.id ? "Mengirim konfirmasi..." : "Saya sedang menuju klinik"}
+              </button>
+            ) : needsStaffConfirmation ? (
+              booking.lateCheckInRequestedAt ? (
+                <p role="status" className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-[11px] font-semibold leading-5 text-amber-900">
+                  Permintaan konfirmasi check-in telah dikirim ke klinik pada {formatAppointmentDate(booking.lateCheckInRequestedAt)}. Booking tidak dibatalkan otomatis; tunggu konfirmasi petugas.
+                </p>
+              ) : (
+                <div className="mt-3">
+                  <p className="rounded-lg bg-amber-100 px-3 py-2 text-[11px] font-semibold leading-5 text-amber-900">
+                    Batas check-in telah lewat. Booking tidak dibatalkan otomatis; minta petugas memastikan jadwal Anda.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleRequestLateCheckInConfirmation(booking)}
+                    disabled={lateCheckInRequestingBookingId === booking.id}
+                    className="mt-2 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-bold text-amber-900 transition hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70"
+                  >
+                    {lateCheckInRequestingBookingId === booking.id ? "Mengirim permintaan..." : "Minta konfirmasi petugas"}
+                  </button>
+                </div>
+              )
+            ) : null}
+          </div>
+        )}
+      </article>
+      );
+    })()
   );
 
   const renderQueueStatus = (item: QueueItem) => {
@@ -826,6 +1007,9 @@ export const PatientPortalHome: React.FC = () => {
                   <p role="alert" className="rounded-xl bg-red-50 p-4 text-xs text-red-700">Status antrean gagal dimuat. Muat ulang halaman atau coba kembali nanti.</p>
                 ) : activePatientQueue ? (
                   renderQueueStatus(activePatientQueue)
+                ) : activePatientBooking
+                  && (activePatientBooking.source === BookingSource.PATIENT_PORTAL || activePatientBooking.source === BookingSource.ANDROID) ? (
+                  renderBookingCard(activePatientBooking)
                 ) : (
                   <article className="patient-portal-queue-card rounded-3xl border p-5">
                     <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#76591f]">Antrean klinik</p>

@@ -51,6 +51,7 @@ import {
   DentalBranch,
   DentalDoctor,
   Booking,
+  PatientBookingQueueEstimate,
   PlannedTreatment,
   BookingStatus,
   BookingSource,
@@ -1210,6 +1211,7 @@ export class SupabaseQueueRepository implements QueueRepository {
         .eq("visit_id", visitId)
         .neq("status", QueueStatus.SKIPPED)
         .neq("status", QueueStatus.COMPLETED)
+        .neq("status", "CANCELLED")
         .limit(1);
 
       if (!duplicateRemoteError && duplicateRemote && duplicateRemote.length > 0) {
@@ -1253,33 +1255,23 @@ export class SupabaseQueueRepository implements QueueRepository {
       throw new Error("Dokter untuk kunjungan ini belum memiliki ID Supabase yang valid. Pilih dokter yang terdaftar sebelum check-in.");
     }
 
-    // Determine the next sequence from both the local cache and today's database rows.
-    const dayStart = new Date(`${today}T00:00:00.000+07:00`).toISOString();
-    const nextDayStart = new Date(new Date(dayStart).getTime() + 24 * 60 * 60 * 1000).toISOString();
+    // Local/test fallback sequence. Production sequence assignment is serialized in Supabase.
     const sameScope = fallbackItems.filter((q) => {
       const qDate = getOperationalDateString(q.arrivalAt || q.checkInTime || q.createdAt);
       return q.branchId === branchId && (q.doctorId === doctorId || !doctorId) && qDate === today;
     });
-    let highestSequence = sameScope.reduce((highest, item) => Math.max(highest, item.sequenceOrder || 0), 0);
-    if (isValidUUID(branchId) && isValidUUID(doctorId)) {
-      const { data: todaysQueue, error: sequenceError } = await supabase
-        .from("queue_items")
-        .select("sequence_order")
-        .eq("branch_id", branchId)
-        .eq("doctor_id", doctorId)
-        .gte("arrival_at", dayStart)
-        .lt("arrival_at", nextDayStart);
-
-      if (sequenceError) {
-        throw new Error(`Gagal menentukan nomor antrean berikutnya: ${sequenceError.message}`);
-      }
-      highestSequence = Math.max(
-        highestSequence,
-        ...(todaysQueue || []).map((item) => Number(item.sequence_order) || 0)
-      );
-    }
+    const highestSequence = sameScope.reduce((highest, item) => Math.max(highest, item.sequenceOrder || 0), 0);
     const sequenceOrder = highestSequence + 1;
-    const doctorPrefix = doctorId.toLowerCase().includes("syafira") ? "S" : doctorId.toLowerCase().includes("dimas") ? "D" : "A";
+    const doctorName = options?.doctorNameSnapshot || doctorId;
+    const cleanedDoctorName = doctorName.replace(/^drg\.?\s*/i, "").trim();
+    const normalizedDoctorId = doctorId.toLowerCase();
+    const doctorPrefix = options?.doctorNameSnapshot
+      ? cleanedDoctorName.charAt(0).toUpperCase() || "A"
+      : normalizedDoctorId.includes("syafira")
+        ? "S"
+        : normalizedDoctorId.includes("dimas")
+          ? "D"
+          : cleanedDoctorName.charAt(0).toUpperCase() || "A";
     const queueNumber = `${doctorPrefix}-${String(sequenceOrder).padStart(2, "0")}`;
 
     const newId = options?.customId || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `queue-${Date.now()}`);
@@ -1316,29 +1308,27 @@ export class SupabaseQueueRepository implements QueueRepository {
 
     // Attempt remote Supabase insert if IDs are valid UUID and remote accessible
     if (isValidUUID(branchId) && isValidUUID(visitId)) {
-      const dbPayload: any = {
-        branch_id: branchId,
-        doctor_id: doctorId,
-        visit_id: visitId,
-        queue_number: queueNumber,
-        status: QueueStatus.WAITING,
-        estimated_duration_minutes: options?.estimatedDurationMinutes ?? getPlannedTreatmentDurationMinutes(options?.plannedTreatments || visit?.plannedTreatments),
-        sequence_order: sequenceOrder,
-        arrival_at: now,
-        booking_time_snapshot: options?.bookingTimeSnapshot || null,
-        preferred_service_at: options?.preferredServiceAt || null
-      };
-      if (isValidUUID(newId)) dbPayload.id = newId;
-      if (isValidUUID(patientId)) dbPayload.patient_id = patientId;
-      if (options?.patientNameSnapshot) dbPayload.patient_name_snapshot = options.patientNameSnapshot;
-      if (options?.doctorNameSnapshot) dbPayload.doctor_name_snapshot = options.doctorNameSnapshot;
-      const queueBookingId = options?.bookingId || visit?.bookingId;
-      if (queueBookingId && isValidUUID(queueBookingId)) dbPayload.booking_id = queueBookingId;
-
       try {
-        const { data, error } = await supabase.from("queue_items").insert(dbPayload).select().single();
-        if (!error && data) {
-          const remoteItem = this.mapQueueFromDb(data);
+        const { data, error } = await supabase.rpc("check_in_visit_to_queue", {
+          p_queue_id: isValidUUID(newId) ? newId : null,
+          p_branch_id: branchId,
+          p_doctor_id: doctorId,
+          p_visit_id: visitId,
+          p_booking_id: options?.bookingId || visit?.bookingId || null,
+          p_patient_id: isValidUUID(patientId) ? patientId : null,
+          p_arrival_at: now,
+          p_preferred_service_at: options?.preferredServiceAt || null,
+          p_estimated_duration_minutes: options?.estimatedDurationMinutes ?? getPlannedTreatmentDurationMinutes(options?.plannedTreatments || visit?.plannedTreatments),
+          p_booking_time_snapshot: options?.bookingTimeSnapshot || null,
+          p_patient_name_snapshot: options?.patientNameSnapshot || null,
+          p_doctor_name_snapshot: options?.doctorNameSnapshot || null
+        });
+        if (error) {
+          throw new Error(error.message);
+        }
+        const queueRow = Array.isArray(data) ? data[0] : data;
+        if (queueRow) {
+          const remoteItem = this.mapQueueFromDb(queueRow);
           const currentList = this.getFallbackQueue();
           const idx = currentList.findIndex((q) => q.id === remoteItem.id || q.id === newId);
           if (idx >= 0) currentList[idx] = remoteItem;
@@ -1346,15 +1336,11 @@ export class SupabaseQueueRepository implements QueueRepository {
           this.saveFallbackQueue(currentList);
           const recalculated = await this.recalculateQueue(branchId, doctorId, today);
           return recalculated.find((item) => item.id === remoteItem.id) || remoteItem;
-        } else if (error) {
-          if (isSupabaseConfigured) {
-            throw new Error(`Gagal menyimpan antrean ke server Supabase: ${error.message}. Data tidak tersimpan akibat masalah koneksi server.`);
-          }
-          console.warn("[Supabase] queue_items insert restricted/failed, using local fallback:", error.message);
         }
+        throw new Error("Server tidak mengembalikan data antrean setelah check-in.");
       } catch (err: any) {
         if (isSupabaseConfigured) {
-          throw new Error(`Gagal menghubungi server Supabase saat membuat antrean: ${err?.message || "Koneksi bermasalah"}.`);
+          throw new Error(`Gagal membuat nomor antrean di Supabase: ${err?.message || "Koneksi bermasalah"}. Pastikan migrasi antrean terbaru sudah diterapkan.`);
         }
         console.warn("[Supabase] queue_items insert remote call failed, using local fallback:", err?.message);
       }
@@ -2058,6 +2044,8 @@ export class SupabaseBookingRepository implements BookingRepository {
       rescheduledFromBookingId: row.rescheduled_from_booking_id ?? undefined,
       rescheduleReason: row.reschedule_reason ?? undefined,
       status: row.status as BookingStatus,
+      enRouteConfirmedAt: row.en_route_confirmed_at ?? undefined,
+      lateCheckInRequestedAt: row.late_checkin_requested_at ?? undefined,
       scheduleVerified: row.schedule_verified ?? true,
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -2144,6 +2132,83 @@ export class SupabaseBookingRepository implements BookingRepository {
       if (targetBranch) return b.branchId === targetBranch;
       return true;
     });
+  }
+
+  async confirmPatientEnRoute(bookingId: string): Promise<string> {
+    ensureSupabaseConnected();
+    if (useRepositoryTestFallbacks()) {
+      const booking = this.getFallbackBookings().find((item) => item.id === bookingId);
+      if (!booking) throw new Error("Janji temu tidak ditemukan.");
+      const confirmedAt = AppClock.nowISO();
+      const bookings = this.getFallbackBookings().map((item) =>
+        item.id === bookingId ? { ...item, enRouteConfirmedAt: confirmedAt, updatedAt: confirmedAt } : item
+      );
+      this.saveFallbackBookings(bookings);
+      return confirmedAt;
+    }
+
+    const { data, error } = await supabase.rpc("patient_confirm_booking_en_route", {
+      p_booking_id: bookingId
+    });
+    if (error) {
+      throw new Error(`Gagal mengonfirmasi perjalanan ke klinik: ${error.message}`);
+    }
+    if (typeof data !== "string") {
+      throw new Error("Server tidak mengembalikan waktu konfirmasi perjalanan.");
+    }
+    return data;
+  }
+
+  async getPatientQueueEstimate(bookingId: string): Promise<PatientBookingQueueEstimate> {
+    ensureSupabaseConnected();
+    if (useRepositoryTestFallbacks()) {
+      const booking = this.getFallbackBookings().find((item) => item.id === bookingId);
+      if (!booking) throw new Error("Janji temu tidak ditemukan.");
+      return {
+        patientsAhead: 0,
+        estimatedServiceAt: booking.bookingDateTime,
+        refreshedAt: AppClock.nowISO()
+      };
+    }
+
+    const { data, error } = await supabase.rpc("get_patient_booking_queue_estimate", {
+      p_booking_id: bookingId
+    });
+    if (error) {
+      throw new Error(`Gagal memuat perkiraan antrean: ${error.message}`);
+    }
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result || typeof result.estimated_service_at !== "string") {
+      throw new Error("Server tidak mengembalikan perkiraan antrean yang valid.");
+    }
+    return {
+      patientsAhead: Number(result.patients_ahead) || 0,
+      estimatedServiceAt: result.estimated_service_at,
+      refreshedAt: result.refreshed_at
+    };
+  }
+
+  async requestLateCheckInConfirmation(bookingId: string): Promise<string> {
+    ensureSupabaseConnected();
+    if (useRepositoryTestFallbacks()) {
+      const requestedAt = AppClock.nowISO();
+      const bookings = this.getFallbackBookings().map((item) =>
+        item.id === bookingId ? { ...item, lateCheckInRequestedAt: requestedAt, updatedAt: requestedAt } : item
+      );
+      this.saveFallbackBookings(bookings);
+      return requestedAt;
+    }
+
+    const { data, error } = await supabase.rpc("patient_request_late_checkin_confirmation", {
+      p_booking_id: bookingId
+    });
+    if (error) {
+      throw new Error(`Gagal meminta konfirmasi petugas: ${error.message}`);
+    }
+    if (typeof data !== "string") {
+      throw new Error("Server tidak mengembalikan waktu permintaan konfirmasi petugas.");
+    }
+    return data;
   }
 
   async createBooking(
@@ -2385,13 +2450,19 @@ export class SupabaseBookingRepository implements BookingRepository {
       }
       if (updates.doctorId && isValidUUID(updates.doctorId)) dbPayload.doctor_id = updates.doctorId;
       if (updates.serviceId !== undefined && isValidUUID(updates.serviceId)) dbPayload.service_id = updates.serviceId;
-      if (updates.bookingDateTime) dbPayload.booking_date_time = updates.bookingDateTime;
+      if (updates.bookingDateTime) {
+        dbPayload.booking_date_time = updates.bookingDateTime;
+        dbPayload.en_route_confirmed_at = null;
+        dbPayload.late_checkin_requested_at = null;
+      }
       if (updates.timeSlot !== undefined) dbPayload.time_slot = updates.timeSlot;
       if (updates.complaint !== undefined) dbPayload.complaint = updates.complaint;
       if (updates.notes !== undefined) dbPayload.notes = updates.notes;
       if (updates.source !== undefined) dbPayload.source = updates.source;
       if (updates.channel !== undefined) dbPayload.channel = updates.channel;
       if (updates.status) dbPayload.status = updates.status;
+      if (updates.enRouteConfirmedAt !== undefined) dbPayload.en_route_confirmed_at = updates.enRouteConfirmedAt;
+      if (updates.lateCheckInRequestedAt !== undefined) dbPayload.late_checkin_requested_at = updates.lateCheckInRequestedAt;
       if (updates.scheduleVerified !== undefined) dbPayload.schedule_verified = updates.scheduleVerified;
       if (updates.plannedTreatments !== undefined) dbPayload.planned_treatments = updates.plannedTreatments;
       if (updates.rescheduledFromBookingId !== undefined) dbPayload.rescheduled_from_booking_id = updates.rescheduledFromBookingId;
@@ -2438,7 +2509,10 @@ export class SupabaseBookingRepository implements BookingRepository {
     const existing = this.getFallbackBookings();
     const idx = existing.findIndex((b) => b.id === id);
     if (idx >= 0) {
-      existing[idx] = { ...existing[idx], ...updates, updatedAt: new Date().toISOString() };
+      const scheduleChangeUpdates = updates.bookingDateTime
+        ? { ...updates, enRouteConfirmedAt: null, lateCheckInRequestedAt: null }
+        : updates;
+      existing[idx] = { ...existing[idx], ...scheduleChangeUpdates, updatedAt: new Date().toISOString() };
       this.saveFallbackBookings(existing);
       return existing[idx];
     }

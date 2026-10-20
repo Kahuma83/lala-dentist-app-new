@@ -511,12 +511,20 @@ export interface Booking {
   branchNameSnapshot?: string;
   source?: BookingSource;
   channel?: BookingSource;
+  enRouteConfirmedAt?: string | null;
+  lateCheckInRequestedAt?: string | null;
   rescheduledFromBookingId?: string;
   rescheduleReason?: string;
   status: BookingStatus;
   scheduleVerified?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PatientBookingQueueEstimate {
+  patientsAhead: number;
+  estimatedServiceAt: string;
+  refreshedAt: string;
 }
 
 export interface BookingConfirmationH1 {

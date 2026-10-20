@@ -2,6 +2,7 @@ import {
   PatientProfile,
   DentalBranch,
   Booking,
+  PatientBookingQueueEstimate,
   PlannedTreatment,
   BookingConfirmationH1,
   PatientVisit,
@@ -364,6 +365,9 @@ export interface BookingRepository {
   getBookingsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
   getBookingsByPatient(patientId: string): Promise<Booking[]>;
   getBookingsByDate(dateStr: string, branchId?: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
+  confirmPatientEnRoute(bookingId: string): Promise<string>;
+  getPatientQueueEstimate(bookingId: string): Promise<PatientBookingQueueEstimate>;
+  requestLateCheckInConfirmation(bookingId: string): Promise<string>;
   createBooking(
     bookingData: Omit<Booking, "id" | "status" | "createdAt" | "updatedAt"> & {
       id?: string;

@@ -1785,6 +1785,70 @@ export class MockBookingRepository implements BookingRepository {
       .map((b) => ({ ...b }));
   }
 
+  async confirmPatientEnRoute(bookingId: string): Promise<string> {
+    const booking = db.bookings.find((item) => item.id === bookingId);
+    if (!booking || ![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
+      throw new Error("Janji temu aktif tidak ditemukan.");
+    }
+    const confirmedAt = AppClock.nowISO();
+    booking.enRouteConfirmedAt = confirmedAt;
+    booking.updatedAt = confirmedAt;
+    db.saveToStorage();
+    return confirmedAt;
+  }
+
+  async requestLateCheckInConfirmation(bookingId: string): Promise<string> {
+    const booking = db.bookings.find((item) => item.id === bookingId);
+    if (!booking || ![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
+      throw new Error("Janji temu aktif tidak ditemukan.");
+    }
+    const requestedAt = AppClock.nowISO();
+    booking.lateCheckInRequestedAt = requestedAt;
+    booking.updatedAt = requestedAt;
+    db.saveToStorage();
+    return requestedAt;
+  }
+
+  async getPatientQueueEstimate(bookingId: string) {
+    const booking = db.bookings.find((item) => item.id === bookingId);
+    if (!booking) throw new Error("Janji temu tidak ditemukan.");
+    const now = AppClock.nowISO();
+    const queueBefore = db.queueItems.filter((item) =>
+      item.branchId === booking.branchId
+      && item.doctorId === booking.doctorId
+      && item.bookingId !== bookingId
+      && item.arrivalAt <= booking.bookingDateTime
+      && item.status !== QueueStatus.COMPLETED
+      && item.status !== QueueStatus.SKIPPED
+      && item.status !== "CANCELLED"
+    );
+    const bookedBefore = db.bookings.filter((item) =>
+      item.id !== bookingId
+      && item.branchId === booking.branchId
+      && item.doctorId === booking.doctorId
+      && item.bookingDateTime < booking.bookingDateTime
+      && [BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(item.status)
+      && !db.queueItems.some((queueItem) =>
+        queueItem.bookingId === item.id
+        && queueItem.status !== QueueStatus.COMPLETED
+        && queueItem.status !== QueueStatus.SKIPPED
+        && queueItem.status !== "CANCELLED"
+      )
+    );
+    const queueFinishTimes = queueBefore.map((item) => {
+      const start = new Date(item.estimatedServiceAt || item.arrivalAt).getTime();
+      return start + Math.max(0, item.estimatedDurationMinutes) * 60_000;
+    }).filter(Number.isFinite);
+    const bookedDuration = bookedBefore.reduce((sum, item) =>
+      sum + (item.plannedTreatments?.reduce((duration, treatment) => duration + treatment.estimatedDurationMinutes, 0) || 30), 0);
+    const queueFinish = Math.max(Date.parse(now), ...queueFinishTimes) + bookedDuration * 60_000;
+    return {
+      patientsAhead: queueBefore.length + bookedBefore.length,
+      estimatedServiceAt: new Date(Math.max(Date.parse(booking.bookingDateTime), queueFinish)).toISOString(),
+      refreshedAt: now
+    };
+  }
+
   async createBooking(
     bookingData: Omit<Booking, "id" | "status" | "createdAt" | "updatedAt"> & {
       id?: string;
