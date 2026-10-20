@@ -40,7 +40,11 @@ import {
   AlertTriangle,
   PhoneCall,
   BarChart3,
-  PanelsTopLeft
+  PanelsTopLeft,
+  Boxes,
+  ClipboardList,
+  Plus,
+  Clock3
 } from "lucide-react";
 
 interface AdminLayoutProps {
@@ -139,6 +143,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       ]
     },
     {
+      title: "INVENTORI STOK",
+      items: [
+        { name: "Daftar Stok", path: "/super-admin/inventory", icon: Boxes },
+        { name: "Tambah Barang", path: "/super-admin/inventory/new", icon: Plus },
+        { name: "Resep Bahan Tindakan", path: "/super-admin/inventory/recipes", icon: ClipboardList },
+        { name: "Riwayat Perubahan", path: "/super-admin/inventory/history", icon: Clock3 },
+        { name: "Stok Menipis", path: "/super-admin/inventory/low-stock", icon: AlertTriangle }
+      ]
+    },
+    {
       title: "FOLLOW UP & TINDAK LANJUT",
       items: [
         { name: "Konfirmasi Booking H-1", path: "/super-admin/h1-confirmation", icon: PhoneCall },
@@ -210,6 +224,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       ]
     },
     {
+      title: "INVENTORI STOK",
+      items: [
+        { name: "Daftar Stok", path: "/branch-admin/inventory", icon: Boxes },
+        { name: "Tambah Barang", path: "/branch-admin/inventory/new", icon: Plus },
+        { name: "Resep Bahan Tindakan", path: "/branch-admin/inventory/recipes", icon: ClipboardList },
+        { name: "Riwayat Perubahan", path: "/branch-admin/inventory/history", icon: Clock3 },
+        { name: "Stok Menipis", path: "/branch-admin/inventory/low-stock", icon: AlertTriangle }
+      ]
+    },
+    {
       title: "FOLLOW UP & TINDAK LANJUT",
       items: [
         { name: "Konfirmasi Booking H-1", path: "/branch-admin/h1-confirmation", icon: PhoneCall },
@@ -243,6 +267,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Antrean Dokter", path: "/doctor/queue", icon: ListOrdered },
         { name: "Pasien & Rekam Medis", path: "/doctor/patients", icon: FileText },
         { name: "Treatment", path: "/doctor/treatments", icon: Activity },
+        { name: "Daftar Stok", path: "/doctor/inventory", icon: Boxes },
+        { name: "Resep Bahan Tindakan", path: "/doctor/inventory/recipes", icon: ClipboardList },
+        { name: "Riwayat Perubahan Stok", path: "/doctor/inventory/history", icon: Clock3 },
+        { name: "Stok Menipis", path: "/doctor/inventory/low-stock", icon: AlertTriangle },
         { name: "Jadwal Praktik Saya", path: "/doctor/schedules", icon: CalendarRange }
       ]
     }
@@ -254,7 +282,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       items: [
         { name: "Antrean Klinik", path: "/assistant/queue", icon: ListOrdered },
         { name: "Pasien", path: "/assistant/patients", icon: Users },
-        { name: "Treatment", path: "/assistant/treatments", icon: Activity }
+        { name: "Treatment", path: "/assistant/treatments", icon: Activity },
+        { name: "Daftar Stok", path: "/assistant/inventory", icon: Boxes },
+        { name: "Usulan Resep Bahan", path: "/assistant/inventory/recipes", icon: ClipboardList },
+        { name: "Riwayat Perubahan Stok", path: "/assistant/inventory/history", icon: Clock3 },
+        { name: "Stok Menipis", path: "/assistant/inventory/low-stock", icon: AlertTriangle }
       ]
     }
   ];

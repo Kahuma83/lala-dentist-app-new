@@ -23,6 +23,7 @@ import { HRManagement } from "./pages/HRManagement";
 import { DoctorSchedules } from "./pages/DoctorSchedules";
 import { WebsiteContentManagement } from "./pages/WebsiteContentManagement";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { InventoryManagement } from "./pages/InventoryManagement";
 import { AdminLayout } from "./layouts/AdminLayout";
 import { UserRole } from "./types/domain";
 import { isSupabaseConfigured } from "./lib/supabase";
@@ -167,6 +168,8 @@ const AppContent: React.FC = () => {
       view = <LiveQueueManagement />;
     } else if (path === "/super-admin/treatments") {
       view = <TreatmentManagement />;
+    } else if (path.startsWith("/super-admin/inventory")) {
+      view = <InventoryManagement />;
     } else if (path === "/super-admin/invoices") {
       view = <Invoices />;
     } else if (path === "/super-admin/payments") {
@@ -221,6 +224,8 @@ const AppContent: React.FC = () => {
       view = <LiveQueueManagement />;
     } else if (path === "/branch-admin/treatments") {
       view = <TreatmentManagement />;
+    } else if (path.startsWith("/branch-admin/inventory")) {
+      view = <InventoryManagement />;
     } else if (path === "/branch-admin/invoices") {
       view = <Invoices />;
     } else if (path === "/branch-admin/payments") {
@@ -248,6 +253,8 @@ const AppContent: React.FC = () => {
     let view = <LiveQueueManagement />;
     if (path.includes("/schedules")) {
       view = <DoctorSchedules />;
+    } else if (path.startsWith("/doctor/inventory")) {
+      view = <InventoryManagement />;
     } else if (path.includes("/treatments")) {
       view = <TreatmentManagement />;
     } else if (path.includes("/patients")) {
@@ -264,7 +271,9 @@ const AppContent: React.FC = () => {
       return <UnauthorizedPage />;
     }
     let view = <LiveQueueManagement />;
-    if (path.includes("/treatments")) {
+    if (path.startsWith("/assistant/inventory")) {
+      view = <InventoryManagement />;
+    } else if (path.includes("/treatments")) {
       view = <TreatmentManagement />;
     } else if (path.includes("/patients")) {
       view = <PatientManagement />;

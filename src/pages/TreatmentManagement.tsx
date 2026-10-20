@@ -29,13 +29,23 @@ import {
   AlertCircle,
   X,
   Sparkles,
-  ChevronRight
+  ChevronRight,
+  Boxes,
+  PackageMinus
 } from "lucide-react";
 import { TreatmentPicker } from "../components/TreatmentPicker";
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { getActiveDoctorsForSchedule } from "../utils/doctorScheduleUtils";
 import { getOperationalDateString } from "../utils/dateUtils";
 import { isActiveQueueStatus } from "../utils/bookingQueueGuards";
+import {
+  InventoryItem,
+  listInventoryItems,
+  recordInventoryMovement,
+  recordTreatmentInventoryUsage
+} from "../services/inventoryService";
+import { InventoryRecipeLine, getInventoryTreatmentRecipe } from "../utils/inventoryTreatmentRecipes";
+import { getApprovedInventoryTreatmentRecipe } from "../services/inventoryRecipeService";
 
 export const TreatmentManagement: React.FC = () => {
   const { currentUser, repos, branches, services, patients, doctorSchedules } = useApp();
@@ -70,6 +80,13 @@ export const TreatmentManagement: React.FC = () => {
   const [activityType, setActivityType] = useState<TreatmentActivityType>(TreatmentActivityType.PROGRESS);
   const [activityNotes, setActivityNotes] = useState<string>("");
   const [addingActivity, setAddingActivity] = useState<boolean>(false);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [selectedInventoryItemId, setSelectedInventoryItemId] = useState("");
+  const [inventoryQuantity, setInventoryQuantity] = useState("1");
+  const [recordingInventory, setRecordingInventory] = useState(false);
+  const [braceMaterialCode, setBraceMaterialCode] = useState("");
+  const [completingTreatment, setCompletingTreatment] = useState(false);
+  const [approvedRecipeMaterials, setApprovedRecipeMaterials] = useState<InventoryRecipeLine[] | null>(null);
   const canManageTreatment = currentUser?.role === UserRole.DOCTOR
     || currentUser?.role === UserRole.DOCTOR_ASSISTANT;
   const canFinalizeTreatment = currentUser?.role === UserRole.DOCTOR;
@@ -153,11 +170,27 @@ export const TreatmentManagement: React.FC = () => {
 
   useEffect(() => {
     if (selectedTreatment) {
+      setApprovedRecipeMaterials(null);
       loadActivities(selectedTreatment.id);
+      void listInventoryItems(selectedTreatment.branchId)
+        .then(setInventoryItems)
+        .catch((inventoryError: unknown) => {
+          setError(inventoryError instanceof Error ? inventoryError.message : "Gagal memuat stok bahan tindakan.");
+        });
+      const treatmentServiceCode = services.find((service) => service.id === selectedTreatment.serviceId)?.code
+        || selectedTreatment.serviceNameSnapshot;
+      void getApprovedInventoryTreatmentRecipe(selectedTreatment.branchId, treatmentServiceCode)
+        .then(setApprovedRecipeMaterials)
+        .catch((recipeError: unknown) => {
+          setError(recipeError instanceof Error ? recipeError.message : "Gagal memuat resep bahan cabang.");
+        });
     } else {
       setActivities([]);
+      setInventoryItems([]);
+      setSelectedInventoryItemId("");
+      setApprovedRecipeMaterials(null);
     }
-  }, [selectedTreatment]);
+  }, [selectedTreatment, services]);
 
   const handleCreateTreatment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,15 +256,49 @@ export const TreatmentManagement: React.FC = () => {
     }
   };
 
-  const handleCompleteTreatment = async (id: string) => {
-    if (!canFinalizeTreatment) return;
+  const handleCompleteTreatment = async (treatment: TreatmentJob) => {
+    if (!canFinalizeTreatment || completingTreatment) return;
+    setCompletingTreatment(true);
     setError(null);
     let treatmentCompleted = false;
+    let inventoryRecorded = false;
     let accrualCount = 0;
     let accrualError: string | null = null;
     try {
+      const serviceCode = services.find((service) => service.id === treatment.serviceId)?.code
+        || treatment.serviceNameSnapshot;
+      const recipe = getInventoryTreatmentRecipe(serviceCode);
+      if (!recipe) {
+        throw new Error(`Resep stok untuk layanan "${treatment.serviceNameSnapshot}" belum tersedia. Tindakan tidak dapat diselesaikan otomatis.`);
+      }
+      if (recipe.lines.length > 0) {
+        const approvedMaterials = await getApprovedInventoryTreatmentRecipe(treatment.branchId, serviceCode || "");
+        const materials = [...(approvedMaterials || recipe.lines)];
+        if (!approvedMaterials && recipe.requiresBraceMaterialChoice) {
+          const selectedMaterial = inventoryItems.find((item) =>
+            item.itemCode.toUpperCase() === braceMaterialCode.toUpperCase()
+          );
+          if (!selectedMaterial || !/^OR-00[3-6]$/.test(selectedMaterial.itemCode.toUpperCase())) {
+            throw new Error("Pilih satu bahan kawat/karet kode OR-003 sampai OR-006 yang benar-benar dipakai.");
+          }
+          materials.push({ itemCode: selectedMaterial.itemCode, quantity: 1 });
+        }
+        const result = await recordTreatmentInventoryUsage({
+          treatmentJobId: treatment.id,
+          patientVisitId: treatment.visitId,
+          branchId: treatment.branchId,
+          serviceName: treatment.serviceNameSnapshot,
+          materials,
+          userName: currentUser?.name || "Dokter"
+        });
+        inventoryRecorded = true;
+        setInventoryItems(await listInventoryItems(treatment.branchId));
+        if (result.alreadyRecorded) {
+          setSuccessMsg("Pemakaian resep tindakan ini sudah pernah diproses; stok tidak dipotong ulang.");
+        }
+      }
       const completedTreatment = await treatmentRepo.completeTreatmentJob(
-        id,
+        treatment.id,
         currentUser?.role,
         currentUser?.assignedBranchId,
         currentUser?.id,
@@ -243,6 +310,7 @@ export const TreatmentManagement: React.FC = () => {
         }
       );
       treatmentCompleted = true;
+      setSelectedTreatment((previous) => previous?.id === completedTreatment.id ? completedTreatment : previous);
       try {
         const createdAccruals = await repos.compensation.calculateAndAccrueForTreatment(completedTreatment.id);
         accrualCount = createdAccruals.length;
@@ -285,7 +353,11 @@ export const TreatmentManagement: React.FC = () => {
     } catch (err: any) {
       setError(treatmentCompleted
         ? `Treatment sudah tersimpan selesai, tetapi antrean belum berhasil ditutup: ${err.message || "kesalahan tidak diketahui"}. Silakan muat ulang dan periksa status kunjungan.`
-        : err.message || "Gagal menyelesaikan tindakan medis");
+        : inventoryRecorded
+          ? `Stok bahan sudah dicatat, tetapi tindakan belum berhasil diselesaikan: ${err.message || "kesalahan tidak diketahui"}. Coba Selesaikan kembali; stok tidak akan dipotong ulang.`
+          : err.message || "Gagal menyelesaikan tindakan medis");
+    } finally {
+      setCompletingTreatment(false);
     }
   };
 
@@ -339,6 +411,44 @@ export const TreatmentManagement: React.FC = () => {
       setError(err.message || "Gagal menambahkan Activity");
     } finally {
       setAddingActivity(false);
+    }
+  };
+
+  const handleRecordInventoryUsage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedTreatment || !currentUser || !selectedInventoryItemId) {
+      setError("Pilih bahan yang digunakan pada tindakan ini.");
+      return;
+    }
+    const quantity = Number(inventoryQuantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Jumlah pemakaian harus lebih besar dari nol.");
+      return;
+    }
+    setRecordingInventory(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const item = inventoryItems.find((row) => row.id === selectedInventoryItemId);
+      if (!item) throw new Error("Barang inventori tidak ditemukan. Muat ulang detail tindakan.");
+      await recordInventoryMovement({
+        itemId: item.id,
+        movementType: "OUT",
+        quantity,
+        userName: currentUser.name,
+        note: `Pemakaian untuk tindakan ${selectedTreatment.serviceNameSnapshot}`,
+        reference: `Pasien: ${selectedTreatmentPatient?.fullName || selectedTreatment.patientId}`,
+        patientVisitId: selectedTreatment.visitId,
+        treatmentJobId: selectedTreatment.id
+      });
+      setSuccessMsg(`${quantity} ${item.unit} ${item.name} dicatat sebagai pemakaian pasien.`);
+      setInventoryQuantity("1");
+      setSelectedInventoryItemId("");
+      setInventoryItems(await listInventoryItems(selectedTreatment.branchId));
+    } catch (inventoryError: unknown) {
+      setError(inventoryError instanceof Error ? inventoryError.message : "Gagal mencatat pemakaian bahan.");
+    } finally {
+      setRecordingInventory(false);
     }
   };
 
@@ -493,6 +603,11 @@ export const TreatmentManagement: React.FC = () => {
   const selectedTreatmentBranch = selectedTreatment
     ? branches.find((branch) => isBranchMatch(branch.id, selectedTreatment.branchId, branches))
     : undefined;
+  const selectedTreatmentServiceCode = selectedTreatment
+    ? services.find((service) => service.id === selectedTreatment.serviceId)?.code || selectedTreatment.serviceNameSnapshot
+    : undefined;
+  const selectedTreatmentRecipe = getInventoryTreatmentRecipe(selectedTreatmentServiceCode);
+  const selectedTreatmentRecipeLines = approvedRecipeMaterials || selectedTreatmentRecipe?.lines || [];
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -766,11 +881,11 @@ export const TreatmentManagement: React.FC = () => {
 
                         {canFinalizeTreatment && tr.status === TreatmentJobStatus.DALAM_PROSES && (
                           <button
-                            onClick={() => handleCompleteTreatment(tr.id)}
+                            onClick={() => setSelectedTreatment(tr)}
                             className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
                           >
                             <CheckCircle2 className="w-3 h-3" />
-                            Selesaikan
+                            Detail & Selesaikan
                           </button>
                         )}
 
@@ -1070,6 +1185,105 @@ export const TreatmentManagement: React.FC = () => {
                     <div className="mt-0.5">{selectedTreatment.notes}</div>
                   </div>
                 )}
+
+                {selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && canFinalizeTreatment && (
+                  <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
+                    <div className="flex items-center gap-2 text-xs font-bold text-emerald-800">
+                      <PackageMinus className="h-4 w-4" /> Resep Bahan Otomatis
+                    </div>
+                    {!selectedTreatmentRecipe ? (
+                      <p className="text-[10px] leading-relaxed text-red-700">
+                        Kode layanan belum memiliki resep stok. Tindakan tidak dapat diselesaikan otomatis.
+                      </p>
+                    ) : selectedTreatmentRecipeLines.length === 0 ? (
+                      <p className="text-[10px] leading-relaxed text-slate-600">
+                        Tidak ada bahan yang dipotong untuk layanan ini.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedTreatmentRecipeLines.map((line) => {
+                            const item = inventoryItems.find((row) => row.itemCode.toUpperCase() === line.itemCode);
+                            return (
+                              <span key={line.itemCode} className="rounded-md bg-white px-2 py-1 text-[10px] text-slate-700">
+                                {line.itemCode}: {line.quantity} {item?.unit || ""}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {!approvedRecipeMaterials && selectedTreatmentRecipe.requiresBraceMaterialChoice && (
+                          <label className="block space-y-1 text-[10px] font-semibold text-slate-700">
+                            Pilih satu bahan kawat/karet yang benar-benar dipakai
+                            <select
+                              value={braceMaterialCode}
+                              onChange={(event) => setBraceMaterialCode(event.target.value)}
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs"
+                            >
+                              <option value="">Pilih kode OR-003 sampai OR-006</option>
+                              {inventoryItems
+                                .filter((item) => /^OR-00[3-6]$/.test(item.itemCode.toUpperCase()))
+                                .map((item) => (
+                                  <option key={item.id} value={item.itemCode}>
+                                    {item.itemCode} · {item.name} · stok {item.currentStock} {item.unit}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                        )}
+                        <p className="text-[10px] leading-relaxed text-emerald-800">
+                          Stok resep akan dipotong ketika dokter menyelesaikan tindakan. Bahan yang sudah dicatat manual untuk tindakan ini tidak dipotong dua kali.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {canManageTreatment && (
+                  <form onSubmit={(event) => void handleRecordInventoryUsage(event)} className="space-y-2 rounded-xl border border-[#eadfca] bg-[#faf6ec]/70 p-3">
+                    <div className="flex items-center gap-2 text-xs font-bold text-[#70551f]">
+                      <Boxes className="h-4 w-4" /> Catat Bahan yang Dipakai
+                    </div>
+                    <p className="text-[10px] leading-relaxed text-slate-500">
+                      Pemakaian akan mengurangi stok cabang dan terhubung ke pasien serta tindakan ini.
+                    </p>
+                    <div className="flex gap-2">
+                      <select
+                        value={selectedInventoryItemId}
+                        onChange={(event) => setSelectedInventoryItemId(event.target.value)}
+                        required
+                        className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs"
+                      >
+                        <option value="">Pilih bahan / perlengkapan</option>
+                        {inventoryItems.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} · stok {item.currentStock} {item.unit}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={inventoryQuantity}
+                        onChange={(event) => setInventoryQuantity(event.target.value)}
+                        required
+                        aria-label="Jumlah bahan yang dipakai"
+                        className="w-20 rounded-lg border border-slate-200 px-2.5 py-2 text-xs"
+                      />
+                      <button
+                        type="submit"
+                        disabled={recordingInventory || inventoryItems.length === 0}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#c5a059] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50"
+                      >
+                        <PackageMinus className="h-3.5 w-3.5" />
+                        {recordingInventory ? "Mencatat..." : "Kurangi"}
+                      </button>
+                    </div>
+                    {inventoryItems.length === 0 && (
+                      <p className="text-[10px] text-amber-700">Belum ada barang aktif di cabang ini. Tambahkan melalui menu Inventori Stok.</p>
+                    )}
+                  </form>
+                )}
               </div>
 
               {/* Activity Timeline Section */}
@@ -1146,12 +1360,24 @@ export const TreatmentManagement: React.FC = () => {
             </div>
 
             <div className="flex justify-end pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setSelectedTreatment(null)}
-                className="px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-xs font-semibold"
-              >
-                Tutup
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSelectedTreatment(null)}
+                  className="px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-xs font-semibold"
+                >
+                  Tutup
+                </button>
+                {canFinalizeTreatment && selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && (
+                  <button
+                    onClick={() => void handleCompleteTreatment(selectedTreatment)}
+                    disabled={completingTreatment || !selectedTreatmentRecipe}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    {completingTreatment ? "Menyelesaikan..." : "Selesaikan & Kurangi Stok"}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
