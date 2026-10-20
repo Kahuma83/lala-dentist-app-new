@@ -10,42 +10,84 @@ export interface Geofence {
   radiusMeters: number;
 }
 
-export function getCurrentAttendanceLocation(): Promise<AttendanceLocationFix> {
+export function getCurrentAttendanceLocation(targetAccuracyMeters = 100): Promise<AttendanceLocationFix> {
   if (!navigator.geolocation) {
     return Promise.reject(new Error("Browser tidak mendukung GPS. Gunakan browser ponsel yang mendukung lokasi."));
   }
 
   return new Promise((resolve, reject) => {
-    const onSuccess: PositionCallback = ({ coords }) => resolve({
-      latitude: coords.latitude,
-      longitude: coords.longitude,
-      accuracyMeters: coords.accuracy
-    });
-    const onFallbackError: PositionErrorCallback = (error) => {
-      const message = error.code === error.PERMISSION_DENIED
-        ? "Izin lokasi ditolak. Aktifkan izin lokasi untuk browser lalu coba lagi."
-        : error.code === error.POSITION_UNAVAILABLE
-          ? "Lokasi belum tersedia. Aktifkan layanan lokasi dan coba di area terbuka."
-          : "Lokasi GPS belum didapat setelah dua percobaan. Pastikan layanan lokasi dan izin lokasi akurat aktif, lalu coba lagi.";
+    const geolocation = navigator.geolocation;
+    let watchId: number | null = null;
+    let firstFixTimer: ReturnType<typeof setTimeout> | null = null;
+    let overallTimer: ReturnType<typeof setTimeout> | null = null;
+    let bestFix: AttendanceLocationFix | null = null;
+    let settled = false;
+
+    const cleanup = () => {
+      if (watchId !== null) geolocation.clearWatch(watchId);
+      if (firstFixTimer !== null) clearTimeout(firstFixTimer);
+      if (overallTimer !== null) clearTimeout(overallTimer);
+    };
+
+    const finish = (location: AttendanceLocationFix) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(location);
+    };
+
+    const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(new Error(message));
     };
 
-    navigator.geolocation.getCurrentPosition(
-      onSuccess,
-      (error) => {
-        if (error.code === error.PERMISSION_DENIED) {
-          onFallbackError(error);
-          return;
-        }
+    const onSuccess: PositionCallback = ({ coords }) => {
+      const location = {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        accuracyMeters: coords.accuracy
+      };
 
-        navigator.geolocation.getCurrentPosition(
-          onSuccess,
-          onFallbackError,
-          { enableHighAccuracy: false, maximumAge: 0, timeout: 20_000 }
-        );
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 30_000 }
-    );
+      if (!bestFix || location.accuracyMeters < bestFix.accuracyMeters) bestFix = location;
+      if (location.accuracyMeters <= targetAccuracyMeters) {
+        finish(location);
+        return;
+      }
+
+      if (firstFixTimer === null) {
+        firstFixTimer = setTimeout(() => {
+          if (bestFix) finish(bestFix);
+        }, 15_000);
+      }
+    };
+
+    const onError: PositionErrorCallback = (error) => {
+      if (error.code === error.PERMISSION_DENIED) {
+        fail("Izin lokasi ditolak. Izinkan akses lokasi untuk situs ini di pengaturan browser dan perangkat, lalu coba lagi.");
+      }
+    };
+
+    try {
+      watchId = geolocation.watchPosition(onSuccess, onError, {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 45_000
+      });
+      if (settled && watchId !== null) geolocation.clearWatch(watchId);
+    } catch (error) {
+      fail(`Browser gagal memulai GPS: ${error instanceof Error ? error.message : "kesalahan tidak diketahui"}.`);
+      return;
+    }
+
+    overallTimer = setTimeout(() => {
+      if (bestFix) {
+        finish(bestFix);
+      } else {
+        fail("Perangkat belum mengirim posisi GPS. Aktifkan Lokasi pada perangkat, izinkan lokasi untuk situs ini, lalu coba dari ponsel di area terbuka. Komputer tanpa layanan lokasi/GPS biasanya tidak dapat menentukan posisi klinik dengan akurat.");
+      }
+    }, 45_000);
   });
 }
 

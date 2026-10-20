@@ -146,8 +146,8 @@ export const AttendanceSelfService: React.FC = () => {
         throw new Error("Bukti absensi harus berupa foto.");
       }
 
-      const location = await getCurrentAttendanceLocation();
       const radius = branch.geofenceRadiusMeters!;
+      const location = await getCurrentAttendanceLocation(radius);
       const geofence = {
         latitude: branch.geofenceLatitude!,
         longitude: branch.geofenceLongitude!,

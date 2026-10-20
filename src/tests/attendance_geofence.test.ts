@@ -13,64 +13,108 @@ const gebang = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 describe("Attendance geofence validation", () => {
-  it("retries with standard accuracy when the high-accuracy GPS request times out", async () => {
-    const getCurrentPosition = vi.fn((
+  it("uses the first GPS fix that meets the branch accuracy threshold", async () => {
+    let onSuccess: PositionCallback | undefined;
+    const clearWatch = vi.fn();
+    const watchPosition = vi.fn((
       success: PositionCallback,
-      error: PositionErrorCallback | null | undefined,
-      options?: PositionOptions
+      _error: PositionErrorCallback | null | undefined,
+      _options?: PositionOptions
     ) => {
-      if (options?.enableHighAccuracy) {
-        error?.({
-          code: 3,
-          message: "Position timeout",
-          PERMISSION_DENIED: 1,
-          POSITION_UNAVAILABLE: 2,
-          TIMEOUT: 3
-        } as GeolocationPositionError);
-        return;
-      }
-
-      success({
-        coords: { latitude: gebang.latitude, longitude: gebang.longitude, accuracy: 12 }
-      } as GeolocationPosition);
+      onSuccess = success;
+      return 7;
     });
-    vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } });
+    vi.stubGlobal("navigator", { geolocation: { watchPosition, clearWatch } });
 
-    await expect(getCurrentAttendanceLocation()).resolves.toEqual({
+    const locationPromise = getCurrentAttendanceLocation(100);
+    onSuccess?.({
+      coords: { latitude: gebang.latitude, longitude: gebang.longitude, accuracy: 12 }
+    } as GeolocationPosition);
+
+    await expect(locationPromise).resolves.toEqual({
       latitude: gebang.latitude,
       longitude: gebang.longitude,
       accuracyMeters: 12
     });
-    expect(getCurrentPosition).toHaveBeenCalledTimes(2);
-    expect(getCurrentPosition.mock.calls[0][2]).toMatchObject({
+    expect(watchPosition).toHaveBeenCalledTimes(1);
+    expect(watchPosition.mock.calls[0][2]).toMatchObject({
       enableHighAccuracy: true,
-      timeout: 30_000
+      maximumAge: 0,
+      timeout: 45_000
     });
-    expect(getCurrentPosition.mock.calls[1][2]).toMatchObject({
-      enableHighAccuracy: false,
-      timeout: 20_000
-    });
+    expect(clearWatch).toHaveBeenCalledWith(7);
   });
 
-  it("does not retry when location permission is denied", async () => {
-    const getCurrentPosition = vi.fn((
+  it("returns the best available fix after waiting for improved accuracy", async () => {
+    vi.useFakeTimers();
+    let onSuccess: PositionCallback | undefined;
+    const watchPosition = vi.fn((success: PositionCallback) => {
+      onSuccess = success;
+      return 8;
+    });
+    vi.stubGlobal("navigator", { geolocation: { watchPosition, clearWatch: vi.fn() } });
+
+    const locationPromise = getCurrentAttendanceLocation(100);
+    onSuccess?.({
+      coords: { latitude: gebang.latitude, longitude: gebang.longitude, accuracy: 250 }
+    } as GeolocationPosition);
+    onSuccess?.({
+      coords: { latitude: gebang.latitude, longitude: gebang.longitude, accuracy: 140 }
+    } as GeolocationPosition);
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await expect(locationPromise).resolves.toMatchObject({ accuracyMeters: 140 });
+    vi.useRealTimers();
+  });
+
+  it("reports when the device never provides a GPS fix", async () => {
+    vi.useFakeTimers();
+    const watchPosition = vi.fn((
       _success: PositionCallback,
       error: PositionErrorCallback | null | undefined
-    ) => error?.({
-      code: 1,
-      message: "Permission denied",
-      PERMISSION_DENIED: 1,
-      POSITION_UNAVAILABLE: 2,
-      TIMEOUT: 3
-    } as GeolocationPositionError));
-    vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } });
+    ) => {
+      error?.({
+        code: 2,
+        message: "Position unavailable",
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3
+      } as GeolocationPositionError);
+      return 9;
+    });
+    vi.stubGlobal("navigator", { geolocation: { watchPosition, clearWatch: vi.fn() } });
+
+    const locationPromise = getCurrentAttendanceLocation();
+    const rejection = expect(locationPromise).rejects.toThrow("Perangkat belum mengirim posisi GPS");
+    await vi.advanceTimersByTimeAsync(45_000);
+    await rejection;
+    vi.useRealTimers();
+  });
+
+  it("stops watching when location permission is denied", async () => {
+    const clearWatch = vi.fn();
+    const watchPosition = vi.fn((
+      _success: PositionCallback,
+      error: PositionErrorCallback | null | undefined
+    ) => {
+      error?.({
+        code: 1,
+        message: "Permission denied",
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3
+      } as GeolocationPositionError);
+      return 10;
+    });
+    vi.stubGlobal("navigator", { geolocation: { watchPosition, clearWatch } });
 
     await expect(getCurrentAttendanceLocation()).rejects.toThrow("Izin lokasi ditolak");
-    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+    expect(clearWatch).toHaveBeenCalledWith(10);
   });
 
   it("uses the provided coordinates for each clinic branch", () => {

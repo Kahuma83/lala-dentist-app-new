@@ -912,7 +912,7 @@ export function AttendancePortal() {
     try {
       if (!file.type.startsWith("image/")) throw new Error("Bukti absensi harus berupa foto.");
       if (!geofenceConfigured) throw new Error("Geofence cabang belum dikonfigurasi atau cabang belum aktif.");
-      const location = await getCurrentAttendanceLocation();
+      const location = await getCurrentAttendanceLocation(currentBranch.geofence_radius_meters!);
       const geofence = {
         latitude: currentBranch.geofence_latitude!,
         longitude: currentBranch.geofence_longitude!,
