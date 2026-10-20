@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MOCK_BRANCHES } from "../data/mockData";
 import {
   getGeofenceDistanceMeters,
   isWithinAttendanceGeofence
@@ -11,6 +12,23 @@ const gebang = {
 };
 
 describe("Attendance geofence validation", () => {
+  it("uses the provided coordinates for each clinic branch", () => {
+    const expectedCoordinates = {
+      "Cabang Gebang": [-8.1654362, 113.6833396],
+      "Cabang Ambulu": [-8.341838671620868, 113.60715332633036],
+      "Cabang Lengkong Mumbul": [-8.234393255102521, 113.70794484805077],
+      "Cabang Kencong": [-8.284968412220492, 113.38248204927665]
+    } as const;
+
+    for (const [name, [latitude, longitude]] of Object.entries(expectedCoordinates)) {
+      expect(MOCK_BRANCHES.find(branch => branch.name === name)).toMatchObject({
+        geofenceLatitude: latitude,
+        geofenceLongitude: longitude,
+        geofenceRadiusMeters: 100
+      });
+    }
+  });
+
   it("accepts a precise fix at the configured clinic coordinates", () => {
     const location = {
       latitude: gebang.latitude,
