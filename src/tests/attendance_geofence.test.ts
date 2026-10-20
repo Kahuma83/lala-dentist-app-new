@@ -6,15 +6,15 @@ import {
 } from "../utils/attendanceGeofence";
 
 const gebang = {
-  latitude: -8.1654362,
-  longitude: 113.6833396,
+  latitude: -8.165344263852493,
+  longitude: 113.68344824639699,
   radiusMeters: 100
 };
 
 describe("Attendance geofence validation", () => {
   it("uses the provided coordinates for each clinic branch", () => {
     const expectedCoordinates = {
-      "Cabang Gebang": [-8.1654362, 113.6833396],
+      "Cabang Gebang": [-8.165344263852493, 113.68344824639699],
       "Cabang Ambulu": [-8.341838671620868, 113.60715332633036],
       "Cabang Lengkong Mumbul": [-8.234393255102521, 113.70794484805077],
       "Cabang Kencong": [-8.284968412220492, 113.38248204927665]
