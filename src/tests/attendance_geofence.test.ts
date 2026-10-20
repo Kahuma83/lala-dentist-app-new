@@ -29,7 +29,8 @@ describe("Attendance geofence validation", () => {
       onSuccess = success;
       return 7;
     });
-    vi.stubGlobal("navigator", { geolocation: { watchPosition, clearWatch } });
+    const getCurrentPosition = vi.fn();
+    vi.stubGlobal("navigator", { geolocation: { watchPosition, getCurrentPosition, clearWatch } });
 
     const locationPromise = getCurrentAttendanceLocation(100);
     onSuccess?.({
@@ -45,9 +46,35 @@ describe("Attendance geofence validation", () => {
     expect(watchPosition.mock.calls[0][2]).toMatchObject({
       enableHighAccuracy: true,
       maximumAge: 0,
-      timeout: 45_000
+      timeout: 35_000
+    });
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+    expect(getCurrentPosition.mock.calls[0][2]).toMatchObject({
+      enableHighAccuracy: false,
+      maximumAge: 30_000,
+      timeout: 15_000
     });
     expect(clearWatch).toHaveBeenCalledWith(7);
+  });
+
+  it("accepts a precise location from the standard-accuracy provider", async () => {
+    const clearWatch = vi.fn();
+    const watchPosition = vi.fn(() => 11);
+    const getCurrentPosition = vi.fn((
+      success: PositionCallback,
+      _error: PositionErrorCallback | null | undefined,
+      _options?: PositionOptions
+    ) => success({
+      coords: { latitude: gebang.latitude, longitude: gebang.longitude, accuracy: 25 }
+    } as GeolocationPosition));
+    vi.stubGlobal("navigator", { geolocation: { watchPosition, getCurrentPosition, clearWatch } });
+
+    await expect(getCurrentAttendanceLocation()).resolves.toMatchObject({
+      latitude: gebang.latitude,
+      longitude: gebang.longitude,
+      accuracyMeters: 25
+    });
+    expect(clearWatch).toHaveBeenCalledWith(11);
   });
 
   it("returns the best available fix after waiting for improved accuracy", async () => {
@@ -87,11 +114,21 @@ describe("Attendance geofence validation", () => {
       } as GeolocationPositionError);
       return 9;
     });
-    vi.stubGlobal("navigator", { geolocation: { watchPosition, clearWatch: vi.fn() } });
+    const getCurrentPosition = vi.fn((
+      _success: PositionCallback,
+      error: PositionErrorCallback | null | undefined
+    ) => error?.({
+      code: 2,
+      message: "Position unavailable",
+      PERMISSION_DENIED: 1,
+      POSITION_UNAVAILABLE: 2,
+      TIMEOUT: 3
+    } as GeolocationPositionError));
+    vi.stubGlobal("navigator", { geolocation: { watchPosition, getCurrentPosition, clearWatch: vi.fn() } });
 
     const locationPromise = getCurrentAttendanceLocation();
-    const rejection = expect(locationPromise).rejects.toThrow("Perangkat belum mengirim posisi GPS");
-    await vi.advanceTimersByTimeAsync(45_000);
+    const rejection = expect(locationPromise).rejects.toThrow("Android belum memberikan lokasi ke Chrome");
+    await vi.advanceTimersByTimeAsync(35_000);
     await rejection;
     vi.useRealTimers();
   });

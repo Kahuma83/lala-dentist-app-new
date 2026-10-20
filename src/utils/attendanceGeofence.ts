@@ -73,7 +73,7 @@ export function getCurrentAttendanceLocation(targetAccuracyMeters = 100): Promis
       watchId = geolocation.watchPosition(onSuccess, onError, {
         enableHighAccuracy: true,
         maximumAge: 0,
-        timeout: 45_000
+        timeout: 35_000
       });
       if (settled && watchId !== null) geolocation.clearWatch(watchId);
     } catch (error) {
@@ -81,13 +81,23 @@ export function getCurrentAttendanceLocation(targetAccuracyMeters = 100): Promis
       return;
     }
 
-    overallTimer = setTimeout(() => {
-      if (bestFix) {
-        finish(bestFix);
-      } else {
-        fail("Perangkat belum mengirim posisi GPS. Aktifkan Lokasi pada perangkat, izinkan lokasi untuk situs ini, lalu coba dari ponsel di area terbuka. Komputer tanpa layanan lokasi/GPS biasanya tidak dapat menentukan posisi klinik dengan akurat.");
-      }
-    }, 45_000);
+    if (!settled) {
+      overallTimer = setTimeout(() => {
+        if (bestFix) {
+          finish(bestFix);
+        } else {
+          fail("Android belum memberikan lokasi ke Chrome. Aktifkan Lokasi di perangkat, lalu buka Setelan Android > Aplikasi > Chrome > Izin > Lokasi dan pilih Izinkan saat menggunakan aplikasi serta aktifkan Lokasi akurat. Di Chrome, izinkan Lokasi untuk situs ini. Aktifkan Akurasi Lokasi Google dan coba lagi di area terbuka.");
+        }
+      }, 35_000);
+    }
+
+    if (!settled && typeof geolocation.getCurrentPosition === "function") {
+      geolocation.getCurrentPosition(
+        onSuccess,
+        onError,
+        { enableHighAccuracy: false, maximumAge: 30_000, timeout: 15_000 }
+      );
+    }
   });
 }
 
