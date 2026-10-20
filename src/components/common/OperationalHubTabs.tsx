@@ -3,10 +3,6 @@ import { useRouter } from "../Router";
 import { useApp } from "../../context/AppContext";
 import { UserRole } from "../../types/domain";
 import {
-  Users,
-  CalendarRange,
-  Clock,
-  Flame,
   ListOrdered,
   UserCheck,
   Activity,
@@ -15,7 +11,7 @@ import {
   ArrowDownRight
 } from "lucide-react";
 
-export type HubType = "patient_schedule" | "follow_up" | "queue_treatment" | "cashier";
+export type HubType = "queue_treatment" | "cashier";
 
 interface OperationalHubTabsProps {
   hub: HubType;
@@ -46,45 +42,7 @@ export const OperationalHubTabs: React.FC<OperationalHubTabsProps> = ({ hub }) =
     description?: string;
   }> = [];
 
-  if (hub === "patient_schedule") {
-    title = "Area Kerja: Pasien & Jadwal";
-    tabs = [
-      {
-        name: "Data Pasien",
-        path: `${prefix}/patients`,
-        icon: Users,
-        description: "Profil, rekam RM & riwayat kunjungan"
-      },
-      {
-        name: "Booking Pasien",
-        path: `${prefix}/bookings`,
-        icon: CalendarRange,
-        description: "Reservasi janji temu mendatang"
-      },
-      {
-        name: "Jadwal Praktik Dokter",
-        path: `${prefix}/schedules`,
-        icon: CalendarRange,
-        description: "Matriks shift jaga dokter klinik"
-      }
-    ];
-  } else if (hub === "follow_up") {
-    title = "Area Kerja: Follow Up Pasien";
-    tabs = [
-      {
-        name: "Konfirmasi H-1",
-        path: `${prefix}/h1-confirmation`,
-        icon: Clock,
-        description: "Konfirmasi booking untuk jadwal besok"
-      },
-      {
-        name: "Hot Prospect",
-        path: `${prefix}/hot-prospect`,
-        icon: Flame,
-        description: "Tindak lanjut kontrol dan perawatan lanjutan"
-      }
-    ];
-  } else if (hub === "queue_treatment") {
+  if (hub === "queue_treatment") {
     title = "Area Kerja: Antrean & Pelayanan Treatment";
     tabs = [
       {
@@ -116,10 +74,10 @@ export const OperationalHubTabs: React.FC<OperationalHubTabsProps> = ({ hub }) =
         description: "Penerbitan & pelunasan faktur tindakan"
       },
       {
-        name: "Penerimaan & Kwitansi",
+        name: "Riwayat Pembayaran & Kwitansi",
         path: `${prefix}/payments`,
         icon: CreditCard,
-        description: "Riwayat kas masuk & cetak kwitansi"
+        description: "Riwayat pembayaran yang diterima & cetak kwitansi"
       },
       {
         name: "Pengeluaran Kas Cabang",

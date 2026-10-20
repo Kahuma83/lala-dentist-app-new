@@ -121,4 +121,50 @@ describe("Patient Registration & Branch Admin Global Filter", () => {
     });
     expect(legacy.acquisitionSource).toBe("UNKNOWN");
   });
+
+  it("persists patient identity and optional social profile fields while keeping legacy profiles readable", async () => {
+    const created = await patientRepo.createPatient({
+      name: "Pasien Data Lengkap",
+      phone: "",
+      identityDocumentType: "NIK",
+      identityDocumentNumber: "3201010101010001",
+      placeOfBirth: "Jember",
+      dateOfBirth: "1995-04-12",
+      gender: "P",
+      address: "Jl. Contoh",
+      occupation: "Guru",
+      religion: "Islam",
+      maritalStatus: "Menikah",
+      education: "S1"
+    });
+
+    expect(created.identityDocumentType).toBe("NIK");
+    expect(created.identityDocumentNumber).toBe("3201010101010001");
+    expect(created.placeOfBirth).toBe("Jember");
+    expect(created.occupation).toBe("Guru");
+    expect(created.religion).toBe("Islam");
+    expect(created.maritalStatus).toBe("Menikah");
+    expect(created.education).toBe("S1");
+
+    const updated = await patientRepo.updatePatient(created.id, {
+      identityDocumentType: "PASSPORT",
+      identityDocumentNumber: "AB1234567",
+      occupation: "Dokter",
+      education: "S2"
+    });
+    expect(updated.identityDocumentType).toBe("PASSPORT");
+    expect(updated.identityDocumentNumber).toBe("AB1234567");
+    expect(updated.occupation).toBe("Dokter");
+    expect(updated.education).toBe("S2");
+
+    const legacy = await patientRepo.createPatient({
+      name: "Profil Online Lama",
+      phone: "",
+      dateOfBirth: "1990-01-01",
+      gender: "L",
+      address: ""
+    });
+    expect(legacy.identityDocumentNumber).toBe("");
+    expect((await patientRepo.getPatientById(legacy.id))?.placeOfBirth).toBe("");
+  });
 });

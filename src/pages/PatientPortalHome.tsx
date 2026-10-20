@@ -60,7 +60,7 @@ const patientNavigation: { id: PatientSection; label: string; icon: React.Compon
   { id: "profile", label: "Profil", icon: UserRound }
 ];
 
-const activeBookingStatuses = new Set([BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.RESCHEDULED]);
+const activeBookingStatuses = new Set([BookingStatus.PENDING, BookingStatus.CONFIRMED]);
 const activeQueueStatuses = new Set<string>([
   QueueStatus.WAITING,
   QueueStatus.IN_PREPARATION,

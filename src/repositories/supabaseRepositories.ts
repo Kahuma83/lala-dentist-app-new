@@ -668,9 +668,16 @@ export class SupabasePatientRepository implements PatientRepository {
       full_name: nameToUse,
       phone: patientData.phone || "",
       email: patientData.email || null,
+      identity_document_type: patientData.identityDocumentType || null,
+      identity_document_number: patientData.identityDocumentNumber?.trim() || null,
+      place_of_birth: patientData.placeOfBirth?.trim() || null,
       date_of_birth: patientData.dateOfBirth || "1990-01-01",
       gender: patientData.gender || "L",
       address: patientData.address || "-",
+      occupation: patientData.occupation?.trim() || null,
+      religion: patientData.religion?.trim() || null,
+      marital_status: patientData.maritalStatus?.trim() || null,
+      education: patientData.education?.trim() || null,
       medical_history_notes: patientData.medicalHistoryNotes || null,
       acquisition_source: patientData.acquisitionSource || "UNKNOWN",
       referral_name: patientData.acquisitionSource === "REFERRAL" ? patientData.referralName?.trim() || null : null,
@@ -745,7 +752,14 @@ export class SupabasePatientRepository implements PatientRepository {
     }
     if (updates.phone !== undefined) dbPayload.phone = updates.phone;
     if (updates.email !== undefined) dbPayload.email = updates.email;
+    if (updates.identityDocumentType !== undefined) dbPayload.identity_document_type = updates.identityDocumentType || null;
+    if (updates.identityDocumentNumber !== undefined) dbPayload.identity_document_number = updates.identityDocumentNumber?.trim() || null;
+    if (updates.placeOfBirth !== undefined) dbPayload.place_of_birth = updates.placeOfBirth?.trim() || null;
     if (updates.address !== undefined) dbPayload.address = updates.address;
+    if (updates.occupation !== undefined) dbPayload.occupation = updates.occupation?.trim() || null;
+    if (updates.religion !== undefined) dbPayload.religion = updates.religion?.trim() || null;
+    if (updates.maritalStatus !== undefined) dbPayload.marital_status = updates.maritalStatus?.trim() || null;
+    if (updates.education !== undefined) dbPayload.education = updates.education?.trim() || null;
     if (updates.gender !== undefined) dbPayload.gender = updates.gender;
     if (updates.dateOfBirth !== undefined) dbPayload.date_of_birth = updates.dateOfBirth;
     if (updates.medicalRecordNumber !== undefined) dbPayload.medical_record_number = updates.medicalRecordNumber;
@@ -896,9 +910,16 @@ export class SupabasePatientRepository implements PatientRepository {
       fullName: row.full_name || row.name || row.fullName || "Pasien",
       phone: row.phone || row.phone_number || "",
       email: row.email,
+      identityDocumentType: row.identity_document_type || row.identityDocumentType || undefined,
+      identityDocumentNumber: row.identity_document_number || row.identityDocumentNumber || undefined,
+      placeOfBirth: row.place_of_birth || row.placeOfBirth || "",
       dateOfBirth: row.date_of_birth || row.dateOfBirth || "1990-01-01",
       gender: (row.gender as "L" | "P") || "L",
       address: row.address || "",
+      occupation: row.occupation || "",
+      religion: row.religion || "",
+      maritalStatus: row.marital_status || row.maritalStatus || "",
+      education: row.education || "",
       medicalHistoryNotes: row.medical_history_notes || (Array.isArray(row.medical_history) ? row.medical_history.join(", ") : row.medical_history) || "",
       acquisitionSource: row.acquisition_source || row.acquisitionSource || "UNKNOWN",
       referralName: row.referral_name || row.referralName || undefined,
@@ -1140,6 +1161,7 @@ export class SupabaseQueueRepository implements QueueRepository {
       patientId?: string;
       patientNameSnapshot?: string;
       doctorNameSnapshot?: string;
+      bookingTimeSnapshot?: string;
     }
   ): Promise<QueueItem> {
     ensureSupabaseConnected();
@@ -1231,12 +1253,32 @@ export class SupabaseQueueRepository implements QueueRepository {
       throw new Error("Dokter untuk kunjungan ini belum memiliki ID Supabase yang valid. Pilih dokter yang terdaftar sebelum check-in.");
     }
 
-    // Determine deterministic sequence order and queue number
+    // Determine the next sequence from both the local cache and today's database rows.
+    const dayStart = new Date(`${today}T00:00:00.000+07:00`).toISOString();
+    const nextDayStart = new Date(new Date(dayStart).getTime() + 24 * 60 * 60 * 1000).toISOString();
     const sameScope = fallbackItems.filter((q) => {
       const qDate = getOperationalDateString(q.arrivalAt || q.checkInTime || q.createdAt);
       return q.branchId === branchId && (q.doctorId === doctorId || !doctorId) && qDate === today;
     });
-    const sequenceOrder = sameScope.length + 1;
+    let highestSequence = sameScope.reduce((highest, item) => Math.max(highest, item.sequenceOrder || 0), 0);
+    if (isValidUUID(branchId) && isValidUUID(doctorId)) {
+      const { data: todaysQueue, error: sequenceError } = await supabase
+        .from("queue_items")
+        .select("sequence_order")
+        .eq("branch_id", branchId)
+        .eq("doctor_id", doctorId)
+        .gte("arrival_at", dayStart)
+        .lt("arrival_at", nextDayStart);
+
+      if (sequenceError) {
+        throw new Error(`Gagal menentukan nomor antrean berikutnya: ${sequenceError.message}`);
+      }
+      highestSequence = Math.max(
+        highestSequence,
+        ...(todaysQueue || []).map((item) => Number(item.sequence_order) || 0)
+      );
+    }
+    const sequenceOrder = highestSequence + 1;
     const doctorPrefix = doctorId.toLowerCase().includes("syafira") ? "S" : doctorId.toLowerCase().includes("dimas") ? "D" : "A";
     const queueNumber = `${doctorPrefix}-${String(sequenceOrder).padStart(2, "0")}`;
 
@@ -1257,6 +1299,7 @@ export class SupabaseQueueRepository implements QueueRepository {
       patientNameSnapshot: options?.patientNameSnapshot,
       doctorNameSnapshot: options?.doctorNameSnapshot,
       checkInTime: now,
+      bookingTimeSnapshot: options?.bookingTimeSnapshot,
       estimatedDurationMinutes: options?.estimatedDurationMinutes ?? getPlannedTreatmentDurationMinutes(options?.plannedTreatments || visit?.plannedTreatments),
       createdAt: now,
       updatedAt: now
@@ -1282,6 +1325,7 @@ export class SupabaseQueueRepository implements QueueRepository {
         estimated_duration_minutes: options?.estimatedDurationMinutes ?? getPlannedTreatmentDurationMinutes(options?.plannedTreatments || visit?.plannedTreatments),
         sequence_order: sequenceOrder,
         arrival_at: now,
+        booking_time_snapshot: options?.bookingTimeSnapshot || null,
         preferred_service_at: options?.preferredServiceAt || null
       };
       if (isValidUUID(newId)) dbPayload.id = newId;
@@ -1544,6 +1588,7 @@ export class SupabaseQueueRepository implements QueueRepository {
       sequenceOrder: row.sequence_order || 1,
       arrivalAt: row.arrival_at || row.created_at || AppClock.nowISO(),
       bookingId: row.booking_id || row.bookingId || null,
+      bookingTimeSnapshot: row.booking_time_snapshot || row.bookingTimeSnapshot || undefined,
       estimatedServiceAt: row.estimated_service_at,
       preferredServiceAt: row.preferred_service_at,
       actualServiceStartAt: row.actual_start || row.actual_service_start_at,
@@ -2010,6 +2055,8 @@ export class SupabaseBookingRepository implements BookingRepository {
       branchNameSnapshot: row.branch_name_snapshot ?? undefined,
       source,
       channel: source,
+      rescheduledFromBookingId: row.rescheduled_from_booking_id ?? undefined,
+      rescheduleReason: row.reschedule_reason ?? undefined,
       status: row.status as BookingStatus,
       scheduleVerified: row.schedule_verified ?? true,
       createdAt: row.created_at,
@@ -2127,7 +2174,6 @@ export class SupabaseBookingRepository implements BookingRepository {
       throw new Error("Tanggal dan jam booking tidak valid");
     }
     requestedSlotStart.setUTCSeconds(0, 0);
-    const requestedSlotEnd = new Date(requestedSlotStart.getTime() + 60_000);
     const nextDayStart = new Date(dayStart);
     nextDayStart.setTime(nextDayStart.getTime() + 24 * 60 * 60 * 1000);
 
@@ -2138,7 +2184,7 @@ export class SupabaseBookingRepository implements BookingRepository {
         .eq("patient_id", bookingData.patientId);
       const { data: activeBookings, error: duplicateCheckError } = currentUserRole === UserRole.PATIENT
         ? await activePatientBookingsQuery
-          .in("status", [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.RESCHEDULED])
+          .in("status", [BookingStatus.PENDING, BookingStatus.CONFIRMED])
           .limit(1)
         : await activePatientBookingsQuery
           .eq("branch_id", bookingData.branchId)
@@ -2158,19 +2204,26 @@ export class SupabaseBookingRepository implements BookingRepository {
 
       const { data: doctorSlotBookings, error: doctorSlotError } = await supabase
         .from("bookings")
-        .select("id")
+        .select("booking_date_time, planned_treatments")
         .eq("doctor_id", bookingData.doctorId)
         .eq("branch_id", bookingData.branchId)
-        .gte("booking_date_time", requestedSlotStart.toISOString())
-        .lt("booking_date_time", requestedSlotEnd.toISOString())
-        .in("status", [BookingStatus.PENDING, BookingStatus.CONFIRMED])
-        .limit(1);
+        .gte("booking_date_time", dayStart.toISOString())
+        .lt("booking_date_time", nextDayStart.toISOString())
+        .in("status", [BookingStatus.PENDING, BookingStatus.CONFIRMED]);
 
       if (doctorSlotError) {
         throw new Error(`Gagal memeriksa slot dokter: ${doctorSlotError.message}`);
       }
-      if (doctorSlotBookings && doctorSlotBookings.length > 0) {
-        throw new Error("Dokter sudah memiliki booking aktif pada slot waktu tersebut di cabang ini");
+      const requestedDuration = getPlannedTreatmentDurationMinutes(bookingData.plannedTreatments || [], 30);
+      const requestedEnd = requestedSlotStart.getTime() + requestedDuration * 60_000;
+      const hasDoctorConflict = (doctorSlotBookings || []).some((booking) => {
+        const bookedStart = new Date(booking.booking_date_time).getTime();
+        const bookedDuration = getPlannedTreatmentDurationMinutes(booking.planned_treatments || [], 30);
+        return requestedSlotStart.getTime() < bookedStart + bookedDuration * 60_000 &&
+          bookedStart < requestedEnd;
+      });
+      if (hasDoctorConflict) {
+        throw new Error("Dokter sudah memiliki booking aktif yang bertabrakan dengan durasi tindakan ini di cabang tersebut");
       }
     }
 
@@ -2193,6 +2246,8 @@ export class SupabaseBookingRepository implements BookingRepository {
       branchNameSnapshot: bookingData.branchNameSnapshot || "",
       source,
       channel: source,
+      rescheduledFromBookingId: bookingData.rescheduledFromBookingId,
+      rescheduleReason: bookingData.rescheduleReason,
       status: bookingData.status || BookingStatus.PENDING,
       scheduleVerified: bookingData.scheduleVerified !== undefined ? bookingData.scheduleVerified : true,
       plannedTreatments: bookingData.plannedTreatments || [],
@@ -2215,7 +2270,9 @@ export class SupabaseBookingRepository implements BookingRepository {
         branch_name_snapshot: bookingData.branchNameSnapshot || null,
         status: bookingData.status || BookingStatus.PENDING,
         schedule_verified: bookingData.scheduleVerified !== undefined ? bookingData.scheduleVerified : true,
-        planned_treatments: bookingData.plannedTreatments || []
+        planned_treatments: bookingData.plannedTreatments || [],
+        ...(bookingData.rescheduledFromBookingId ? { rescheduled_from_booking_id: bookingData.rescheduledFromBookingId } : {}),
+        ...(bookingData.rescheduleReason ? { reschedule_reason: bookingData.rescheduleReason } : {})
       };
       if (isValidUUID(bookingData.doctorId)) payload.doctor_id = bookingData.doctorId;
       if (bookingData.serviceId && isValidUUID(bookingData.serviceId)) payload.service_id = bookingData.serviceId;
@@ -2337,6 +2394,8 @@ export class SupabaseBookingRepository implements BookingRepository {
       if (updates.status) dbPayload.status = updates.status;
       if (updates.scheduleVerified !== undefined) dbPayload.schedule_verified = updates.scheduleVerified;
       if (updates.plannedTreatments !== undefined) dbPayload.planned_treatments = updates.plannedTreatments;
+      if (updates.rescheduledFromBookingId !== undefined) dbPayload.rescheduled_from_booking_id = updates.rescheduledFromBookingId;
+      if (updates.rescheduleReason !== undefined) dbPayload.reschedule_reason = updates.rescheduleReason;
 
       try {
         const executeUpdate = async (requestPayload: any) => {

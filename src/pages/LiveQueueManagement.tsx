@@ -43,6 +43,7 @@ export const LiveQueueManagement: React.FC = () => {
   const isAssistant = currentUser?.role === UserRole.DOCTOR_ASSISTANT;
   const isPatient = currentUser?.role === UserRole.PATIENT;
   const checkInParams = new URLSearchParams(window.location.search);
+  const requestedBookingId = isCheckInPage ? checkInParams.get("bookingId") : null;
 
   // Selected filters
   const [selectedBranchId, setSelectedBranchId] = useState<string>(
@@ -74,6 +75,9 @@ export const LiveQueueManagement: React.FC = () => {
   const [walkInPreferredServiceAt, setWalkInPreferredServiceAt] = useState<string>("");
   const [walkInPlannedServices, setWalkInPlannedServices] = useState<MasterService[]>([]);
   const [allBookingsList, setAllBookingsList] = useState<Booking[]>([]);
+  const requestedBooking = requestedBookingId
+    ? allBookingsList.find((booking) => booking.id === requestedBookingId)
+    : undefined;
   const [customDuration, setCustomDuration] = useState<number>(30);
   const [isCheckInSubmitting, setIsCheckInSubmitting] = useState<boolean>(false);
   const [queueActionLoadingId, setQueueActionLoadingId] = useState<string | null>(null);
@@ -262,6 +266,21 @@ export const LiveQueueManagement: React.FC = () => {
     loadQueueData();
   }, [selectedBranchId, selectedDoctorId, selectedDate, currentUser]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const successMessage = params.get("checkInSuccess");
+    if (!successMessage) return;
+
+    setActionSuccess(successMessage);
+    params.delete("checkInSuccess");
+    const remainingQuery = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${remainingQuery ? `?${remainingQuery}` : ""}${window.location.hash}`
+    );
+  }, []);
+
   const loadQueueData = async () => {
     try {
       setLoading(true);
@@ -396,6 +415,7 @@ export const LiveQueueManagement: React.FC = () => {
   };
 
   const handlePrepare = async (queueId: string) => {
+    if (!isDoctor && !isAssistant) return;
     if (queueActionLoadingId) return;
     try {
       setActionError(null);
@@ -515,12 +535,11 @@ export const LiveQueueManagement: React.FC = () => {
       if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.COMPLETED) return false;
       return true;
     });
-    const checkInParams = new URLSearchParams(window.location.search);
-    const requestedBookingId = isCheckInPage ? checkInParams.get("bookingId") : null;
     const requestedPatientId = isCheckInPage ? checkInParams.get("patientId") : null;
     const requestedMode = isCheckInPage ? checkInParams.get("mode") : null;
-    const selectedBooking = activeBookings.find((booking) => booking.id === requestedBookingId)
-      || activeBookings[0];
+    const selectedBooking = requestedBookingId
+      ? activeBookings.find((booking) => booking.id === requestedBookingId)
+      : activeBookings[0];
 
     setCheckInMode(requestedMode === "walkin" ? "walkin" : "booking");
     setSelectedBookingIdForCheckIn(selectedBooking?.id || requestedBookingId || "");
@@ -649,13 +668,14 @@ export const LiveQueueManagement: React.FC = () => {
       let targetDoctorId = selectedDoctorId !== "ALL" ? selectedDoctorId : undefined;
 
       if (checkInMode === "booking") {
-        if (!selectedBookingIdForCheckIn) {
+        const bookingIdToCheckIn = requestedBookingId || selectedBookingIdForCheckIn;
+        if (!bookingIdToCheckIn) {
           setActionError("Pilih booking pasien terlebih dahulu");
           return;
         }
 
-        const booking = allBookingsList.find((item) => item.id === selectedBookingIdForCheckIn)
-          || await repos.booking.getBookingById(selectedBookingIdForCheckIn, currentUser?.role, currentUser?.assignedBranchId);
+        const booking = allBookingsList.find((item) => item.id === bookingIdToCheckIn)
+          || await repos.booking.getBookingById(bookingIdToCheckIn, currentUser?.role, currentUser?.assignedBranchId);
 
         if (!booking) {
           setActionError("Booking yang dipilih tidak ditemukan");
@@ -734,7 +754,8 @@ export const LiveQueueManagement: React.FC = () => {
           branchId: visitForQueue?.branchId,
           patientId: visitForQueue?.patientId,
           patientNameSnapshot: patientsList.find((patient) => patient.id === visitForQueue?.patientId)?.fullName,
-          doctorNameSnapshot: doctors.find((doctor) => doctor.id === targetDoctorId)?.name
+          doctorNameSnapshot: doctors.find((doctor) => doctor.id === targetDoctorId)?.name,
+          bookingTimeSnapshot: allBookingsList.find((booking) => booking.id === visitForQueue?.bookingId)?.bookingDateTime
         }
       );
       setActionSuccess("Pasien berhasil di-checkin dan masuk antrean live!");
@@ -1051,7 +1072,11 @@ export const LiveQueueManagement: React.FC = () => {
                       </div>
                       {q.bookingId ? (
                         <span className="inline-block text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded mt-0.5">
-                          Booking ({formatTime(q.bookingTimeSnapshot)})
+                          {(() => {
+                            const bookingTime = q.bookingTimeSnapshot
+                              || allBookingsList.find((booking) => booking.id === q.bookingId)?.bookingDateTime;
+                            return bookingTime ? `Booking (${formatTime(bookingTime)})` : "Booking";
+                          })()}
                         </span>
                       ) : (
                         <span className="inline-block text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded mt-0.5">
@@ -1109,7 +1134,7 @@ export const LiveQueueManagement: React.FC = () => {
                     {!isPatient && (
                       <td className="p-3.5 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {(isSuper || isBranchAdmin || isDoctor || isAssistant) &&
+                          {(isDoctor || isAssistant) &&
                             q.status === QueueStatus.WAITING && (
                               <button
                                 onClick={() => handlePrepare(q.id)}
@@ -1213,37 +1238,39 @@ export const LiveQueueManagement: React.FC = () => {
             </div>
 
             {/* TAB SELECTOR */}
-            <div className="flex bg-slate-100 p-1 rounded-lg">
-              <button
-                type="button"
-                onClick={() => {
-                  setCheckInMode("booking");
-                  const selectedBooking = allBookingsList.find((booking) => booking.id === selectedBookingIdForCheckIn);
-                  setCustomDuration(getPlannedTreatmentDurationMinutes(selectedBooking?.plannedTreatments));
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${
-                  checkInMode === "booking"
-                    ? "bg-white text-emerald-700 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Dari Booking / Visit ({visits.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCheckInMode("walkin");
-                  setCustomDuration(getPlannedTreatmentDurationMinutes(snapshotPlannedTreatments(walkInPlannedServices)));
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${
-                  checkInMode === "walkin"
-                    ? "bg-white text-emerald-700 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                + Walk-In Langsung
-              </button>
-            </div>
+            {!requestedBookingId && (
+              <div className="flex bg-slate-100 p-1 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCheckInMode("booking");
+                    const selectedBooking = allBookingsList.find((booking) => booking.id === selectedBookingIdForCheckIn);
+                    setCustomDuration(getPlannedTreatmentDurationMinutes(selectedBooking?.plannedTreatments));
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${
+                    checkInMode === "booking"
+                      ? "bg-white text-emerald-700 shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Dari Booking / Visit ({visits.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCheckInMode("walkin");
+                    setCustomDuration(getPlannedTreatmentDurationMinutes(snapshotPlannedTreatments(walkInPlannedServices)));
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${
+                    checkInMode === "walkin"
+                      ? "bg-white text-emerald-700 shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  + Walk-In Langsung
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleCheckInVisit} className="space-y-4 text-xs">
               {actionError && (
@@ -1253,6 +1280,33 @@ export const LiveQueueManagement: React.FC = () => {
               )}
               {checkInMode === "booking" ? (
                 <div>
+                  {requestedBookingId ? (
+                    (() => {
+                      const booking = requestedBooking;
+                      if (!booking && loading) {
+                        return <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">Memuat jadwal pasien...</div>;
+                      }
+                      if (!booking) {
+                        return <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700">Jadwal pasien tidak ditemukan atau tidak dapat diakses. Silakan kembali ke Jadwal Pasien dan buka Check-In dari jadwal yang aktif.</div>;
+                      }
+                      const patient = patientsList.find((item) => item.id === booking.patientId);
+                      const doctor = doctors.find((item) => item.id === booking.doctorId);
+                      return (
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Check-In untuk jadwal terpilih</p>
+                          <p className="mt-1 text-sm font-extrabold text-slate-900">{patient?.fullName || patient?.name || booking.patientNameSnapshot || "Pasien"}</p>
+                          <p className="mt-1 text-xs text-slate-600">
+                            {formatIndonesianDate(getOperationalDateString(booking.bookingDateTime))} · {getOperationalTimeString(booking.bookingDateTime)} WIB
+                          </p>
+                          <p className="text-xs text-slate-600">{doctor?.name || booking.doctorNameSnapshot || "Dokter"}</p>
+                          <p className="mt-2 border-t border-emerald-200 pt-2 text-[11px] font-medium text-emerald-800">
+                            Rencana: {getPlannedTreatmentSummary(booking.plannedTreatments, booking.notes || booking.complaint || "Konsultasi")} · {getPlannedTreatmentDurationMinutes(booking.plannedTreatments)} menit
+                          </p>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <>
                   <label className="block font-semibold text-slate-700 mb-1">
                     Pilih Booking Pasien
                   </label>
@@ -1317,6 +1371,8 @@ export const LiveQueueManagement: React.FC = () => {
                       </p>
                     ) : null;
                   })()}
+                    </>
+                  )}
                 </div>
               ) : (
                 /* WALK-IN MODE */
@@ -1454,7 +1510,7 @@ export const LiveQueueManagement: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={isCheckInSubmitting || (checkInMode === "booking" && visits.length === 0) || (checkInMode === "walkin" && (!walkInAvailableDoctors.length || !walkInDoctorId || !walkInPreferredServiceAt || !walkInAvailableServiceTimes.length))}
+                  disabled={isCheckInSubmitting || (checkInMode === "booking" && (requestedBookingId ? !requestedBooking || requestedBooking.status === BookingStatus.CANCELLED || requestedBooking.status === BookingStatus.COMPLETED : visits.length === 0)) || (checkInMode === "walkin" && (!walkInAvailableDoctors.length || !walkInDoctorId || !walkInPreferredServiceAt || !walkInAvailableServiceTimes.length))}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-semibold transition-colors shadow-xs"
                 >
                   {isCheckInSubmitting ? "Memproses..." : "Check-In Sekarang"}

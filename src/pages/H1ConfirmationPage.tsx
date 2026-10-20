@@ -38,7 +38,6 @@ import {
   ArrowRight,
   Download
 } from "lucide-react";
-import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 export const H1ConfirmationPage: React.FC = () => {
   const { repos, currentUser, selectedBranchId, branches, patients, doctorSchedules } = useApp();
@@ -120,7 +119,7 @@ export const H1ConfirmationPage: React.FC = () => {
   const filteredItems = useMemo(() => {
     return bookings.filter((b) => {
       // Exclude cancelled bookings from H-1 task list if desired or show them clearly
-      if (b.status === BookingStatus.CANCELLED) return false;
+      if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.RESCHEDULED) return false;
 
       const conf = confirmations[b.id];
       const confStatus = conf?.status || conf?.confirmationStatus || ConfirmationStatusH1.BELUM_DIHUBUNGI;
@@ -360,8 +359,6 @@ export const H1ConfirmationPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12" id="h1-confirmation-page">
-      <OperationalHubTabs hub="follow_up" />
-
       {/* Header Banner */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>

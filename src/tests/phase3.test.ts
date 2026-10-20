@@ -233,6 +233,33 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
     expect(item2.queueNumber).toBe("S-02");
   });
 
+  it("continues from the highest existing sequence number instead of counting cached queue rows", async () => {
+    const visit1 = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const firstQueueItem = await queueRepo.checkInVisitToQueue(visit1.id);
+    const storedQueueItem = MockDatabase.getInstance().queueItems.find((item) => item.id === firstQueueItem.id);
+    if (!storedQueueItem) throw new Error("Expected the first queue item to be stored");
+    storedQueueItem.sequenceOrder = 4;
+    storedQueueItem.queueNumber = "S-04";
+
+    const visit2 = await visitRepo.createVisit({
+      patientId: "patient-2",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const nextQueueItem = await queueRepo.checkInVisitToQueue(visit2.id);
+
+    expect(nextQueueItem.sequenceOrder).toBe(5);
+    expect(nextQueueItem.queueNumber).toBe("S-05");
+  });
+
   it("12. should maintain separate fields for bookingDateTime, estimatedServiceAt, actualServiceStartAt, actualServiceEndAt", async () => {
     AppClock.setFixedTime("2026-09-21T09:00:00Z");
 

@@ -49,7 +49,6 @@ import {
 import { formatRupiah, formatDate, formatDateTime } from "../utils/formatter";
 import { PatientExcelModal } from "../components/PatientExcelModal";
 import { ImportPatientExecutionResult } from "../utils/excelPatientUtils";
-import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { useRouter } from "../components/Router";
 import { TreatmentPicker } from "../components/TreatmentPicker";
 import { getPlannedTreatmentDurationMinutes, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
@@ -123,9 +122,16 @@ export const PatientManagement: React.FC = () => {
     medicalRecordNumber: "",
     phone: "",
     email: "",
-    dateOfBirth: "1995-01-01",
-    gender: "L" as "L" | "P",
+    identityDocumentType: "NIK" as "NIK" | "PASSPORT",
+    identityDocumentNumber: "",
+    placeOfBirth: "",
+    dateOfBirth: "",
+    gender: "" as "L" | "P" | "",
     address: "",
+    occupation: "",
+    religion: "",
+    maritalStatus: "",
+    education: "",
     medicalHistoryNotes: "",
     acquisitionSource: "UNKNOWN" as PatientProfile["acquisitionSource"],
     referralName: "",
@@ -302,9 +308,16 @@ export const PatientManagement: React.FC = () => {
       medicalRecordNumber: "",
       phone: "",
       email: "",
-      dateOfBirth: "1990-01-01",
-      gender: "L",
+      identityDocumentType: "NIK",
+      identityDocumentNumber: "",
+      placeOfBirth: "",
+      dateOfBirth: "",
+      gender: "",
       address: "",
+      occupation: "",
+      religion: "",
+      maritalStatus: "",
+      education: "",
       medicalHistoryNotes: "",
       acquisitionSource: "UNKNOWN",
       referralName: "",
@@ -332,9 +345,16 @@ export const PatientManagement: React.FC = () => {
       medicalRecordNumber: p.medicalRecordNumber || "",
       phone: p.phone,
       email: p.email || "",
+      identityDocumentType: p.identityDocumentType || "NIK",
+      identityDocumentNumber: p.identityDocumentNumber || "",
+      placeOfBirth: p.placeOfBirth || "",
       dateOfBirth: p.dateOfBirth,
       gender: p.gender,
       address: p.address,
+      occupation: p.occupation || "",
+      religion: p.religion || "",
+      maritalStatus: p.maritalStatus || "",
+      education: p.education || "",
       medicalHistoryNotes: p.medicalHistoryNotes || "",
       acquisitionSource: p.acquisitionSource || "UNKNOWN",
       referralName: p.referralName || "",
@@ -353,6 +373,26 @@ export const PatientManagement: React.FC = () => {
     try {
       if (!patientForm.name.trim()) {
         throw new Error("Nama pasien wajib diisi");
+      }
+
+      const identityNumber = patientForm.identityDocumentNumber.trim().replace(/\s/g, "");
+      if (!patientForm.gender) {
+        throw new Error("Jenis kelamin wajib dipilih.");
+      }
+      if (!patientForm.id && (!identityNumber || !patientForm.placeOfBirth.trim() || !patientForm.dateOfBirth)) {
+        throw new Error("Identitas (NIK/paspor), tempat dan tanggal lahir wajib diisi untuk pasien baru.");
+      }
+      if (identityNumber && patientForm.identityDocumentType === "NIK" && !/^\d{16}$/.test(identityNumber)) {
+        throw new Error("NIK harus terdiri dari 16 digit angka.");
+      }
+      if (identityNumber && patientForm.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(identityNumber)) {
+        throw new Error("Nomor paspor harus terdiri dari 6–20 huruf atau angka.");
+      }
+      if (!patientForm.id && patients.some((patient) =>
+        patient.identityDocumentType === patientForm.identityDocumentType &&
+        patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === identityNumber.toLowerCase()
+      )) {
+        throw new Error("Nomor identitas ini sudah terdaftar pada pasien lain.");
       }
 
       const patientEmail = patientForm.email.trim().toLowerCase();
@@ -397,9 +437,16 @@ export const PatientManagement: React.FC = () => {
             ...(rmToSubmit ? { medicalRecordNumber: rmToSubmit } : {}),
             phone: patientForm.phone,
             email: patientEmail,
+            identityDocumentType: patientForm.identityDocumentType,
+            identityDocumentNumber: identityNumber,
+            placeOfBirth: patientForm.placeOfBirth.trim(),
             dateOfBirth: patientForm.dateOfBirth,
             gender: patientForm.gender,
             address: patientForm.address,
+            occupation: patientForm.occupation,
+            religion: patientForm.religion,
+            maritalStatus: patientForm.maritalStatus,
+            education: patientForm.education,
             medicalHistoryNotes: patientForm.medicalHistoryNotes,
             acquisitionSource: patientForm.acquisitionSource,
             referralName: patientForm.referralName,
@@ -422,9 +469,16 @@ export const PatientManagement: React.FC = () => {
             medicalRecordNumber: rmToSubmit || undefined,
             phone: patientForm.phone,
             email: patientEmail,
+            identityDocumentType: patientForm.identityDocumentType,
+            identityDocumentNumber: identityNumber,
+            placeOfBirth: patientForm.placeOfBirth.trim(),
             dateOfBirth: patientForm.dateOfBirth,
             gender: patientForm.gender,
             address: patientForm.address,
+            occupation: patientForm.occupation,
+            religion: patientForm.religion,
+            maritalStatus: patientForm.maritalStatus,
+            education: patientForm.education,
             medicalHistoryNotes: patientForm.medicalHistoryNotes,
             acquisitionSource: patientForm.acquisitionSource,
             referralName: patientForm.referralName,
@@ -804,8 +858,6 @@ export const PatientManagement: React.FC = () => {
 
   return (
     <div className="space-y-6" id="patient-management-root">
-      <OperationalHubTabs hub="patient_schedule" />
-
       {/* Toast Feedback */}
       {formSuccess && (
         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl flex items-center justify-between shadow-sm animate-fade-in">
@@ -1280,7 +1332,7 @@ export const PatientManagement: React.FC = () => {
       {/* ========================================== */}
       {(isAddPatientOpen || isEditPatientOpen) && (
         <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-md w-full p-6 space-y-4 animate-scale-in">
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 animate-scale-in">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                 <UserPlus className="w-4 h-4 text-emerald-600" />
@@ -1379,6 +1431,66 @@ export const PatientManagement: React.FC = () => {
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                     id="input-patient-name"
                   />
+                </div>
+
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 space-y-3">
+                  <div>
+                    <h3 className="font-bold text-slate-800">Identitas utama</h3>
+                    <p className="mt-0.5 text-[10px] text-slate-500">Wajib diisi untuk pasien baru. Nomor RM tetap diterbitkan saat check-in pertama.</p>
+                  </div>
+                  <div className="grid grid-cols-[120px_1fr] gap-2">
+                    <select
+                      value={patientForm.identityDocumentType}
+                      onChange={(e) => setPatientForm({ ...patientForm, identityDocumentType: e.target.value as "NIK" | "PASSPORT", identityDocumentNumber: "" })}
+                      aria-label="Jenis identitas pasien"
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    >
+                      <option value="NIK">NIK</option>
+                      <option value="PASSPORT">Paspor</option>
+                    </select>
+                    <input
+                      type="text"
+                      inputMode={patientForm.identityDocumentType === "NIK" ? "numeric" : "text"}
+                      maxLength={patientForm.identityDocumentType === "NIK" ? 16 : 20}
+                      value={patientForm.identityDocumentNumber}
+                      onChange={(e) => setPatientForm({ ...patientForm, identityDocumentNumber: e.target.value.replace(/\s/g, "") })}
+                      placeholder={patientForm.identityDocumentType === "NIK" ? "NIK 16 digit" : "Nomor paspor"}
+                      required={!patientForm.id}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={patientForm.placeOfBirth}
+                      onChange={(e) => setPatientForm({ ...patientForm, placeOfBirth: e.target.value })}
+                      placeholder="Tempat lahir"
+                      required={!patientForm.id}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    />
+                    <input
+                      type="date"
+                      value={patientForm.dateOfBirth}
+                      onChange={(e) => setPatientForm({ ...patientForm, dateOfBirth: e.target.value })}
+                      max={getOperationalDateString(new Date().toISOString())}
+                      required={!patientForm.id}
+                      aria-label="Tanggal lahir pasien"
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Jenis Kelamin <span className="text-rose-500">*</span></label>
+                    <select
+                      value={patientForm.gender}
+                      onChange={(e) => setPatientForm({ ...patientForm, gender: e.target.value as "L" | "P" | "" })}
+                      required
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    >
+                      <option value="">Pilih jenis kelamin</option>
+                      <option value="L">Laki-laki (L)</option>
+                      <option value="P">Perempuan (P)</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Field Dropdown Pilihan Cabang (assigned_branch_id / branch_id) */}
@@ -1514,7 +1626,7 @@ export const PatientManagement: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">WhatsApp / No. HP</label>
+                  <label className="block font-semibold text-slate-700 mb-1">WhatsApp / No. HP <span className="font-normal text-slate-400">(opsional)</span></label>
                   <input
                     type="text"
                     value={patientForm.phone}
@@ -1614,32 +1726,8 @@ export const PatientManagement: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Jenis Kelamin</label>
-                    <select
-                      value={patientForm.gender}
-                      onChange={(e) => setPatientForm({ ...patientForm, gender: e.target.value as "L" | "P" })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    >
-                      <option value="L">Laki-laki (L)</option>
-                      <option value="P">Perempuan (P)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Tanggal Lahir</label>
-                    <input
-                      type="date"
-                      value={patientForm.dateOfBirth}
-                      onChange={(e) => setPatientForm({ ...patientForm, dateOfBirth: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    />
-                  </div>
-                </div>
-
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Alamat Lengkap</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Alamat Lengkap <span className="font-normal text-slate-400">(opsional)</span></label>
                   <textarea
                     rows={2}
                     value={patientForm.address}
@@ -1647,6 +1735,69 @@ export const PatientManagement: React.FC = () => {
                     placeholder="Alamat tempat tinggal pasien..."
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                   />
+                </div>
+
+                <div className="rounded-xl border border-slate-200 p-3 space-y-3">
+                  <div>
+                    <h3 className="font-bold text-slate-800">Data kontak & sosial <span className="font-normal text-slate-400">(opsional)</span></h3>
+                    <p className="mt-0.5 text-[10px] text-slate-500">Dapat dilengkapi atau diperbarui kemudian.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={patientForm.occupation}
+                      onChange={(e) => setPatientForm({ ...patientForm, occupation: e.target.value })}
+                      placeholder="Pekerjaan"
+                      aria-label="Pekerjaan pasien"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    />
+                    <select
+                      value={patientForm.religion}
+                      onChange={(e) => setPatientForm({ ...patientForm, religion: e.target.value })}
+                      aria-label="Agama atau kepercayaan pasien"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    >
+                      <option value="">Agama / kepercayaan</option>
+                      <option value="Islam">Islam</option>
+                      <option value="Kristen">Kristen</option>
+                      <option value="Katolik">Katolik</option>
+                      <option value="Hindu">Hindu</option>
+                      <option value="Buddha">Buddha</option>
+                      <option value="Konghucu">Konghucu</option>
+                      <option value="Kepercayaan lainnya">Kepercayaan lainnya</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={patientForm.maritalStatus}
+                      onChange={(e) => setPatientForm({ ...patientForm, maritalStatus: e.target.value })}
+                      aria-label="Status pernikahan pasien"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    >
+                      <option value="">Status pernikahan</option>
+                      <option value="Belum menikah">Belum menikah</option>
+                      <option value="Menikah">Menikah</option>
+                      <option value="Cerai hidup">Cerai hidup</option>
+                      <option value="Cerai mati">Cerai mati</option>
+                    </select>
+                    <select
+                      value={patientForm.education}
+                      onChange={(e) => setPatientForm({ ...patientForm, education: e.target.value })}
+                      aria-label="Pendidikan terakhir pasien"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800"
+                    >
+                      <option value="">Pendidikan terakhir</option>
+                      <option value="Tidak sekolah">Tidak sekolah</option>
+                      <option value="SD/sederajat">SD/sederajat</option>
+                      <option value="SMP/sederajat">SMP/sederajat</option>
+                      <option value="SMA/sederajat">SMA/sederajat</option>
+                      <option value="Diploma">Diploma</option>
+                      <option value="S1">S1</option>
+                      <option value="S2">S2</option>
+                      <option value="S3">S3</option>
+                      <option value="Lainnya">Lainnya</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div>

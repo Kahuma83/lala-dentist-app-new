@@ -235,9 +235,16 @@ export interface PatientProfile {
   fullName?: string; // Optional alias for name
   phone: string;
   email?: string;
+  identityDocumentType?: "NIK" | "PASSPORT";
+  identityDocumentNumber?: string;
+  placeOfBirth?: string;
   dateOfBirth: string; // ISO format (YYYY-MM-DD)
   gender: "L" | "P";
   address: string;
+  occupation?: string;
+  religion?: string;
+  maritalStatus?: string;
+  education?: string;
   medicalHistoryNotes?: string;
   acquisitionSource?: PatientAcquisitionSource;
   referralName?: string;
@@ -504,6 +511,8 @@ export interface Booking {
   branchNameSnapshot?: string;
   source?: BookingSource;
   channel?: BookingSource;
+  rescheduledFromBookingId?: string;
+  rescheduleReason?: string;
   status: BookingStatus;
   scheduleVerified?: boolean;
   createdAt: string;

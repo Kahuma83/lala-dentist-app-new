@@ -115,31 +115,34 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const displayClinicName = branding?.name || "Lala Dentist";
   const displayTagline = branding?.tagline || "Senyum Indah dimulai di Laladentist";
 
-  // Super Admin Menu categorized by daily workflow and responsibility.
+  // Super Admin sees the patient workflow first, followed by administration.
   const superAdminMenu = [
     {
       title: "DASHBOARD",
       items: [{ name: "Dashboard", path: "/super-admin/dashboard", icon: LayoutDashboard }]
     },
     {
-      title: "OPERASIONAL",
+      title: "ALUR PASIEN",
       items: [
-        { name: "Pasien", path: "/super-admin/patients", icon: Users },
-        { name: "Booking", path: "/super-admin/bookings", icon: CalendarRange },
+        { name: "Jadwal Pasien", path: "/super-admin/bookings", icon: CalendarRange },
         { name: "Check-In Pasien", path: "/super-admin/check-in", icon: UserCheck },
         { name: "Antrean Klinik", path: "/super-admin/queue", icon: ListOrdered },
-        { name: "Daftar Treatment", path: "/super-admin/treatments", icon: Activity },
-        { name: "Jadwal Dokter", path: "/super-admin/schedules", icon: CalendarRange },
-        { name: "Follow Up Pasien", path: "/super-admin/h1-confirmation", icon: PhoneCall }
+        { name: "Daftar Treatment", path: "/super-admin/treatments", icon: Activity }
       ]
     },
     {
-      title: "MASTER DATA",
+      title: "KASIR",
       items: [
-        { name: "Cabang Klinik", path: "/super-admin/configuration?tab=branches", icon: Building2 },
-        { name: "Dokter", path: "/super-admin/configuration?tab=doctors", icon: UserCheck },
-        { name: "Layanan & Tindakan", path: "/super-admin/configuration?tab=services", icon: Briefcase },
-        { name: "Tarif Cabang", path: "/super-admin/configuration?tab=tariffs", icon: Tag }
+        { name: "Invoice & Tagihan", path: "/super-admin/invoices", icon: Receipt },
+        { name: "Riwayat Pembayaran & Kwitansi", path: "/super-admin/payments", icon: CreditCard },
+        { name: "Pengeluaran", path: "/super-admin/expenses", icon: ArrowDownRight }
+      ]
+    },
+    {
+      title: "FOLLOW UP & TINDAK LANJUT",
+      items: [
+        { name: "Konfirmasi Booking H-1", path: "/super-admin/h1-confirmation", icon: PhoneCall },
+        { name: "Kontrol & Perawatan Lanjutan", path: "/super-admin/hot-prospect", icon: PhoneCall }
       ]
     },
     {
@@ -147,14 +150,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       items: [
         { name: "Media Promosi", path: "/super-admin/configuration?tab=promotions", icon: Sparkles },
         { name: "Kelola Website", path: "/super-admin/website", icon: PanelsTopLeft }
-      ]
-    },
-    {
-      title: "KEUANGAN",
-      items: [
-        { name: "Invoice", path: "/super-admin/invoices", icon: Receipt },
-        { name: "Pembayaran", path: "/super-admin/payments", icon: CreditCard },
-        { name: "Pengeluaran", path: "/super-admin/expenses", icon: ArrowDownRight }
       ]
     },
     {
@@ -177,26 +172,30 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       items: [
         { name: "Identitas Dokumen", path: "/super-admin/configuration?tab=branding", icon: FileText }
       ]
+    },
+    {
+      title: "MASTER DATA",
+      items: [
+        { name: "Data Pasien", path: "/super-admin/patients", icon: Users },
+        { name: "Jadwal Dokter", path: "/super-admin/schedules", icon: CalendarRange },
+        { name: "Cabang Klinik", path: "/super-admin/configuration?tab=branches", icon: Building2 },
+        { name: "Dokter", path: "/super-admin/configuration?tab=doctors", icon: UserCheck },
+        { name: "Layanan & Tindakan", path: "/super-admin/configuration?tab=services", icon: Briefcase },
+        { name: "Tarif Cabang", path: "/super-admin/configuration?tab=tariffs", icon: Tag }
+      ]
     }
   ];
 
-  // Branch Admin Menu: Beranda, Pasien & Jadwal, Antrean & Treatment, Kasir, Laporan, Pengaturan Cabang
+  // Branch Admin is ordered around a patient's visit and checkout.
   const branchAdminMenu = [
     {
       title: "BERANDA",
       items: [{ name: "Dashboard", path: "/branch-admin/dashboard", icon: LayoutDashboard }]
     },
     {
-      title: "PASIEN & JADWAL",
+      title: "ALUR PASIEN",
       items: [
-        { name: "Pasien", path: "/branch-admin/patients", icon: Users },
-        { name: "Booking", path: "/branch-admin/bookings", icon: CalendarRange },
-        { name: "Jadwal Dokter", path: "/branch-admin/schedules", icon: CalendarRange }
-      ]
-    },
-    {
-      title: "ANTREAN & TREATMENT",
-      items: [
+        { name: "Jadwal Pasien", path: "/branch-admin/bookings", icon: CalendarRange },
         { name: "Check-In Pasien", path: "/branch-admin/check-in", icon: UserCheck },
         { name: "Antrean Klinik", path: "/branch-admin/queue", icon: ListOrdered },
         { name: "Daftar Treatment", path: "/branch-admin/treatments", icon: Activity }
@@ -205,14 +204,17 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "KASIR",
       items: [
-        { name: "Invoice", path: "/branch-admin/invoices", icon: Receipt },
-        { name: "Pembayaran & Kwitansi", path: "/branch-admin/payments", icon: CreditCard },
+        { name: "Invoice & Tagihan", path: "/branch-admin/invoices", icon: Receipt },
+        { name: "Riwayat Pembayaran & Kwitansi", path: "/branch-admin/payments", icon: CreditCard },
         { name: "Pengeluaran", path: "/branch-admin/expenses", icon: ArrowDownRight }
       ]
     },
     {
-      title: "FOLLOW UP PASIEN",
-      items: [{ name: "Follow Up Pasien", path: "/branch-admin/h1-confirmation", icon: PhoneCall }]
+      title: "FOLLOW UP & TINDAK LANJUT",
+      items: [
+        { name: "Konfirmasi Booking H-1", path: "/branch-admin/h1-confirmation", icon: PhoneCall },
+        { name: "Kontrol & Perawatan Lanjutan", path: "/branch-admin/hot-prospect", icon: PhoneCall }
+      ]
     },
     {
       title: "LAPORAN",
@@ -225,6 +227,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       items: [
         { name: "Profil Cabang", path: "/branch-admin/configuration?tab=branches", icon: Building2 }
       ]
+    },
+    {
+      title: "MASTER DATA",
+      items: [
+        { name: "Data Pasien", path: "/branch-admin/patients", icon: Users }
+      ]
     }
   ];
 
@@ -235,7 +243,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Antrean Dokter", path: "/doctor/queue", icon: ListOrdered },
         { name: "Pasien & Rekam Medis", path: "/doctor/patients", icon: FileText },
         { name: "Treatment", path: "/doctor/treatments", icon: Activity },
-        { name: "Jadwal Praktik", path: "/doctor/schedules", icon: CalendarRange }
+        { name: "Jadwal Praktik Saya", path: "/doctor/schedules", icon: CalendarRange }
       ]
     }
   ];
@@ -246,8 +254,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       items: [
         { name: "Antrean Klinik", path: "/assistant/queue", icon: ListOrdered },
         { name: "Pasien", path: "/assistant/patients", icon: Users },
-        { name: "Treatment", path: "/assistant/treatments", icon: Activity },
-        { name: "Insentif Saya", path: "/assistant/incentives", icon: Percent }
+        { name: "Treatment", path: "/assistant/treatments", icon: Activity }
       ]
     }
   ];

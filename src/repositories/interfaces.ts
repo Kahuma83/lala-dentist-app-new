@@ -370,6 +370,8 @@ export interface BookingRepository {
       status?: BookingStatus;
       source?: BookingSource;
       channel?: BookingSource;
+      rescheduledFromBookingId?: string;
+      rescheduleReason?: string;
     },
     currentUserRole?: UserRole,
     userBranchId?: string | null
@@ -462,6 +464,7 @@ export interface QueueRepository {
       patientId?: string;
       patientNameSnapshot?: string;
       doctorNameSnapshot?: string;
+      bookingTimeSnapshot?: string;
     }
   ): Promise<QueueItem>;
   callQueuePatient(

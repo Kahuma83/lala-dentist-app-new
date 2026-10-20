@@ -232,7 +232,6 @@ export const onRequestPost = async ({ request, env }) => {
     const dayStart = new Date(`${operationalDate}T00:00:00.000+07:00`);
     const requestedSlotStart = new Date(canonicalBookingDateTime);
     requestedSlotStart.setUTCSeconds(0, 0);
-    const requestedSlotEnd = new Date(requestedSlotStart.getTime() + 60_000);
     const nextDayStart = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
     if (isPatient) {
@@ -242,7 +241,7 @@ export const onRequestPost = async ({ request, env }) => {
         path: `/rest/v1/bookings?${toQueryString({
           select: "id",
           patient_id: `eq.${payload.patient_id}`,
-          status: "in.(PENDING,CONFIRMED,RESCHEDULED)",
+          status: "in.(PENDING,CONFIRMED)",
           limit: "1"
         })}`
       });
@@ -274,17 +273,26 @@ export const onRequestPost = async ({ request, env }) => {
       url: supabaseUrl,
       apiKey: serviceKey,
       path: `/rest/v1/bookings?${toQueryString({
-        select: "id",
+        select: "booking_date_time,planned_treatments",
         doctor_id: `eq.${payload.doctor_id}`,
         branch_id: `eq.${payload.branch_id}`,
-        booking_date_time: `gte.${requestedSlotStart.toISOString()}`,
-        and: `(booking_date_time.lt.${requestedSlotEnd.toISOString()})`,
+        booking_date_time: `gte.${dayStart.toISOString()}`,
+        and: `(booking_date_time.lt.${nextDayStart.toISOString()})`,
         status: "in.(PENDING,CONFIRMED)",
-        limit: "1"
       })}`
     });
-    if (Array.isArray(doctorBookings) && doctorBookings.length) {
-      return jsonResponse({ message: "Dokter sudah memiliki booking aktif pada slot waktu tersebut di cabang ini." }, 409);
+    const requestedDuration = (Array.isArray(payload.planned_treatments) ? payload.planned_treatments : [])
+      .reduce((total, treatment) => total + Math.max(0, Number(treatment?.estimatedDurationMinutes) || 0), 0) || 30;
+    const requestedEnd = requestedSlotStart.getTime() + requestedDuration * 60_000;
+    const hasDoctorConflict = (Array.isArray(doctorBookings) ? doctorBookings : []).some((booking) => {
+      const bookedStart = new Date(booking.booking_date_time).getTime();
+      const bookedDuration = (Array.isArray(booking.planned_treatments) ? booking.planned_treatments : [])
+        .reduce((total, treatment) => total + Math.max(0, Number(treatment?.estimatedDurationMinutes) || 0), 0) || 30;
+      return requestedSlotStart.getTime() < bookedStart + bookedDuration * 60_000 &&
+        bookedStart < requestedEnd;
+    });
+    if (hasDoctorConflict) {
+      return jsonResponse({ message: "Dokter sudah memiliki booking aktif yang bertabrakan dengan durasi tindakan ini di cabang tersebut." }, 409);
     }
 
     const insert = (booking) => requestSupabase({

@@ -201,6 +201,9 @@ const AppContent: React.FC = () => {
     if (currentUser.role !== UserRole.BRANCH_ADMIN) {
       return <UnauthorizedPage />;
     }
+    if (path.startsWith("/branch-admin/schedules")) {
+      return <UnauthorizedPage />;
+    }
 
     let view = <Dashboard />;
 
@@ -226,8 +229,6 @@ const AppContent: React.FC = () => {
       view = <Expenses />;
     } else if (path === "/branch-admin/accounting") {
       view = <Accounting />;
-    } else if (path.startsWith("/branch-admin/schedules")) {
-      view = <DoctorSchedules />;
     } else if (path.startsWith("/branch-admin/hr")) {
       view = <HRManagement />;
     } else if (path.startsWith("/branch-admin/configuration")) {
@@ -259,13 +260,14 @@ const AppContent: React.FC = () => {
     if (currentUser.role !== UserRole.DOCTOR_ASSISTANT) {
       return <UnauthorizedPage />;
     }
+    if (path.includes("/incentives")) {
+      return <UnauthorizedPage />;
+    }
     let view = <LiveQueueManagement />;
     if (path.includes("/treatments")) {
       view = <TreatmentManagement />;
     } else if (path.includes("/patients")) {
       view = <PatientManagement />;
-    } else if (path.includes("/incentives")) {
-      view = <Compensation />;
     }
     return <AdminLayout>{view}</AdminLayout>;
   }

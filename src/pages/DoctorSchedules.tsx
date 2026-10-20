@@ -3,7 +3,6 @@ import { useApp } from "../context/AppContext";
 import { DoctorExcelScheduleGrid } from "../components/DoctorExcelScheduleGrid";
 import type { ScheduleCopyOperation, ScheduleCopySummary } from "../components/DoctorExcelScheduleGrid";
 import { DoctorSchedulePosterModal } from "../components/poster/DoctorSchedulePosterModal";
-import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { isBranchMatch } from "../utils/branchUtils";
 import {
   CalendarRange,
@@ -338,8 +337,6 @@ export const DoctorSchedules: React.FC = () => {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
-      <OperationalHubTabs hub="patient_schedule" />
-
       {/* Toast Notification */}
       {toastMessage && (
         <div

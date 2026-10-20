@@ -30,7 +30,6 @@ import {
   X
 } from "lucide-react";
 import { formatRupiah, formatDate } from "../utils/formatter";
-import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
 interface HotProspectItem {
   id: string;
@@ -277,8 +276,6 @@ export const HotProspectPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12" id="hot-prospect-page">
-      <OperationalHubTabs hub="follow_up" />
-
       {/* Header Banner */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

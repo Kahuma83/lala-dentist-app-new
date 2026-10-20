@@ -43,14 +43,37 @@ import {
   FileText,
   ChevronRight
 } from "lucide-react";
-import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { useRouter } from "../components/Router";
 import { TreatmentPicker } from "../components/TreatmentPicker";
 import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
 import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
 
+const addCalendarDays = (date: string, days: number) => {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+};
+
+const getWeekStart = (date: string) => {
+  const value = new Date(`${date}T12:00:00Z`);
+  const offsetFromMonday = (value.getUTCDay() + 6) % 7;
+  value.setUTCDate(value.getUTCDate() - offsetFromMonday);
+  return value.toISOString().slice(0, 10);
+};
+
+const formatCalendarDate = (date: string, options: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat("id-ID", { ...options, timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
+
+const getMinutesOfDay = (time: string) => {
+  const match = time.match(/^(\d{1,2}):([0-5]\d)/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  if (hours > 23) return null;
+  return hours * 60 + Number(match[2]);
+};
+
 export const BookingManagement: React.FC = () => {
-  const { repos, currentUser, selectedBranchId, branches, patients } = useApp();
+  const { repos, currentUser, selectedBranchId, branches, patients, refreshData } = useApp();
   const { navigate } = useRouter();
 
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -58,8 +81,20 @@ export const BookingManagement: React.FC = () => {
   const [visits, setVisits] = useState<PatientVisit[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<string>("ACTIVE");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [branchFilter, setBranchFilter] = useState<string>("ALL");
+  const [calendarWeekStart, setCalendarWeekStart] = useState(() => getWeekStart(getTodayDateString()));
+  const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
+  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleDoctorId, setRescheduleDoctorId] = useState("");
+  const [rescheduleTimeSlot, setRescheduleTimeSlot] = useState("");
+  const [rescheduleReason, setRescheduleReason] = useState("");
+  const [rescheduleSchedules, setRescheduleSchedules] = useState<DoctorSchedule[]>([]);
+  const [rescheduleError, setRescheduleError] = useState<string | null>(null);
+  const [rescheduleSuccess, setRescheduleSuccess] = useState<string | null>(null);
+  const [isRescheduling, setIsRescheduling] = useState(false);
 
   // Create Booking Modal State
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -71,21 +106,57 @@ export const BookingManagement: React.FC = () => {
   const [formTimeSlot, setFormTimeSlot] = useState<string>("");
   const [formNotes, setFormNotes] = useState<string>("");
   const [plannedServices, setPlannedServices] = useState<MasterService[]>([]);
+  const [bookingSource, setBookingSource] = useState<BookingSource>(BookingSource.FRONT_DESK);
+  const [showNewPatientForm, setShowNewPatientForm] = useState(false);
+  const [newPatientForm, setNewPatientForm] = useState({
+    fullName: "",
+    phone: "",
+    identityDocumentType: "NIK" as "NIK" | "PASSPORT",
+    identityDocumentNumber: "",
+    placeOfBirth: "",
+    dateOfBirth: "",
+    gender: "" as "L" | "P" | "",
+    address: "",
+    occupation: "",
+    religion: "",
+    maritalStatus: "",
+    education: ""
+  });
+  const [isCreatingPatient, setIsCreatingPatient] = useState(false);
+  const [isPatientEditorOpen, setIsPatientEditorOpen] = useState(false);
+  const [isPatientLoading, setIsPatientLoading] = useState(false);
+  const [isPatientSaving, setIsPatientSaving] = useState(false);
+  const [patientEditError, setPatientEditError] = useState<string | null>(null);
+  const [patientEditSuccess, setPatientEditSuccess] = useState<string | null>(null);
+  const [patientEditDraft, setPatientEditDraft] = useState({
+    fullName: "",
+    phone: "",
+    identityDocumentType: "NIK" as "NIK" | "PASSPORT",
+    identityDocumentNumber: "",
+    placeOfBirth: "",
+    dateOfBirth: "",
+    gender: "L" as "L" | "P",
+    address: "",
+    occupation: "",
+    religion: "",
+    maritalStatus: "",
+    education: ""
+  });
   const [doctorsList, setDoctorsList] = useState<DentalDoctor[]>([]);
   const [schedulesList, setSchedulesList] = useState<DoctorSchedule[]>([]);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [bookingCheckInError, setBookingCheckInError] = useState<string | null>(null);
+  const [isCheckInSubmitting, setIsCheckInSubmitting] = useState(false);
 
-  // Check-in Modal State (creating Visit from Booking)
-  const [checkInBooking, setCheckInBooking] = useState<Booking | null>(null);
-  const [checkInComplaint, setCheckInComplaint] = useState<string>("");
-  const [isCheckInModalOpen, setIsCheckInModalOpen] = useState<boolean>(false);
-  const [isCheckInSubmitting, setIsCheckInSubmitting] = useState<boolean>(false);
   const [bookingToCancel, setBookingToCancel] = useState<Booking | null>(null);
   const [isCancellingBooking, setIsCancellingBooking] = useState<boolean>(false);
 
   const effectiveBranchId = currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId : (branchFilter !== "ALL" ? branchFilter : selectedBranchId);
+  const patientProfileForDetail = selectedBooking
+    ? patients.find((patient) => patient.id === selectedBooking.patientId)
+    : undefined;
 
   const loadData = async () => {
     setLoading(true);
@@ -154,6 +225,42 @@ export const BookingManagement: React.FC = () => {
     currentUser?.doctorId
   ]);
 
+  useEffect(() => {
+    let active = true;
+    if (!isRescheduleOpen || !selectedBooking || !rescheduleDate) {
+      setRescheduleSchedules([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    setRescheduleSchedules([]);
+    repos.doctorSchedule.getSchedules(
+      { branchId: selectedBooking.branchId, date: rescheduleDate, status: ScheduleStatus.ACTIVE },
+      currentUser?.role,
+      currentUser?.assignedBranchId,
+      currentUser?.doctorId
+    ).then((schedules) => {
+      if (active) setRescheduleSchedules(schedules);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      console.error("Gagal memuat jadwal dokter untuk jadwal ulang:", error);
+      setRescheduleError(error instanceof Error ? error.message : "Gagal memuat jadwal dokter.");
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    isRescheduleOpen,
+    selectedBooking,
+    rescheduleDate,
+    repos.doctorSchedule,
+    currentUser?.role,
+    currentUser?.assignedBranchId,
+    currentUser?.doctorId
+  ]);
+
   // Set default form branch with flexible branch matching for Branch Admin
   useEffect(() => {
     if (currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.assignedBranchId) {
@@ -202,10 +309,77 @@ export const BookingManagement: React.FC = () => {
   const availableTimeSlots = useMemo(() => {
     if (hasScheduleForBranchAndDate && formDoctorId) {
       const docSchedule = activeSchedulesForBranchAndDate.find((s) => s.doctorId === formDoctorId);
-      if (docSchedule) return getScheduledBookingTimeSlots(docSchedule);
+      if (docSchedule) {
+        const requestedDuration = getPlannedTreatmentDurationMinutes(snapshotPlannedTreatments(plannedServices), 30);
+        const scheduleEnd = getMinutesOfDay(docSchedule.endTime);
+        return getScheduledBookingTimeSlots(docSchedule).filter((slot) => {
+          const candidateStart = getMinutesOfDay(slot);
+          if (candidateStart === null || (scheduleEnd !== null && candidateStart + requestedDuration > scheduleEnd)) return false;
+          return !bookings.some((booking) => {
+            if (
+              (booking.status !== BookingStatus.PENDING && booking.status !== BookingStatus.CONFIRMED) ||
+              booking.doctorId !== formDoctorId ||
+              !isBranchMatch(booking.branchId, formBranchId, branches) ||
+              getOperationalDateString(booking.bookingDateTime) !== formDate
+            ) return false;
+            const bookedStart = getMinutesOfDay(booking.timeSlot || getOperationalTimeString(booking.bookingDateTime));
+            if (bookedStart === null) return false;
+            const bookedDuration = getPlannedTreatmentDurationMinutes(booking.plannedTreatments || [], 30);
+            return candidateStart < bookedStart + bookedDuration && bookedStart < candidateStart + requestedDuration;
+          });
+        });
+      }
     }
     return DEFAULT_BOOKING_TIME_SLOTS;
-  }, [hasScheduleForBranchAndDate, formDoctorId, activeSchedulesForBranchAndDate]);
+  }, [hasScheduleForBranchAndDate, formDoctorId, activeSchedulesForBranchAndDate, bookings, formBranchId, formDate, branches, plannedServices]);
+
+  const rescheduleDoctors = useMemo(() => {
+    return doctorsList.filter((doctor) => doctor.active && rescheduleSchedules.some((schedule) => {
+      const doctorId = doctor.id.toLowerCase().replace(/^doc-/, "");
+      const scheduleId = schedule.doctorId.toLowerCase().replace(/^doc-/, "");
+      return doctorId === scheduleId || (!!doctor.doctorCode && doctor.doctorCode.toLowerCase() === schedule.doctorId.toLowerCase());
+    }));
+  }, [doctorsList, rescheduleSchedules]);
+
+  const rescheduleTimeSlots = useMemo(() => {
+    if (!selectedBooking || !rescheduleDoctorId || !rescheduleDate) return [];
+    const selectedDoctor = doctorsList.find((doctor) => doctor.id === rescheduleDoctorId);
+    const schedule = rescheduleSchedules.find((item) => {
+      const doctorId = (selectedDoctor?.id || "").toLowerCase().replace(/^doc-/, "");
+      const scheduleId = item.doctorId.toLowerCase().replace(/^doc-/, "");
+      return item.doctorId === rescheduleDoctorId || doctorId === scheduleId ||
+        (!!selectedDoctor?.doctorCode && selectedDoctor.doctorCode.toLowerCase() === item.doctorId.toLowerCase());
+    });
+    if (!schedule) return [];
+    const duration = getPlannedTreatmentDurationMinutes(selectedBooking.plannedTreatments || [], 30);
+    const scheduleEnd = getMinutesOfDay(schedule.endTime);
+
+    return getScheduledBookingTimeSlots(schedule).filter((slot) => {
+      const candidateStart = getMinutesOfDay(slot);
+      if (candidateStart === null || (scheduleEnd !== null && candidateStart + duration > scheduleEnd)) return false;
+      return !bookings.some((booking) => {
+        if (
+          booking.id === selectedBooking.id ||
+          (booking.status !== BookingStatus.PENDING && booking.status !== BookingStatus.CONFIRMED) ||
+          booking.doctorId !== rescheduleDoctorId ||
+          !isBranchMatch(booking.branchId, selectedBooking.branchId, branches) ||
+          getOperationalDateString(booking.bookingDateTime) !== rescheduleDate
+        ) return false;
+        const bookedStart = getMinutesOfDay(booking.timeSlot || getOperationalTimeString(booking.bookingDateTime));
+        if (bookedStart === null) return false;
+        const bookedDuration = getPlannedTreatmentDurationMinutes(booking.plannedTreatments || [], 30);
+        return candidateStart < bookedStart + bookedDuration && bookedStart < candidateStart + duration;
+      });
+    });
+  }, [selectedBooking, rescheduleDoctorId, rescheduleDate, rescheduleSchedules, doctorsList, bookings, branches]);
+
+  useEffect(() => {
+    if (rescheduleTimeSlot && !rescheduleTimeSlots.includes(rescheduleTimeSlot)) {
+      setRescheduleTimeSlot(rescheduleTimeSlots[0] || "");
+    } else if (!rescheduleTimeSlot && rescheduleTimeSlots.length > 0) {
+      setRescheduleTimeSlot(rescheduleTimeSlots[0]);
+    }
+  }, [rescheduleTimeSlots, rescheduleTimeSlot]);
 
   // Sync formTimeSlot when availableTimeSlots changes
   useEffect(() => {
@@ -236,6 +410,21 @@ export const BookingManagement: React.FC = () => {
     return ids;
   }, [queueItems, visits]);
 
+  const checkedInBookingIds = useMemo(() => {
+    const ids = new Set<string>();
+    visits.forEach((visit) => {
+      if (visit.bookingId) ids.add(visit.bookingId);
+    });
+    queueItems.forEach((queueItem) => {
+      if (queueItem.bookingId) ids.add(queueItem.bookingId);
+      if (queueItem.visitId) {
+        const visit = visits.find((item) => item.id === queueItem.visitId);
+        if (visit?.bookingId) ids.add(visit.bookingId);
+      }
+    });
+    return ids;
+  }, [queueItems, visits]);
+
   // Calculate statistics for active, completed, cancelled
   const bookingStats = useMemo(() => {
     let active = 0;
@@ -246,7 +435,7 @@ export const BookingManagement: React.FC = () => {
         cancelled++;
       } else if (b.status === BookingStatus.COMPLETED || completedBookingIds.has(b.id)) {
         completed++;
-      } else {
+      } else if (b.status !== BookingStatus.RESCHEDULED) {
         active++;
       }
     });
@@ -265,6 +454,170 @@ export const BookingManagement: React.FC = () => {
     ).slice(0, 5);
   }, [patientSearch, patients]);
 
+  const handleCreatePatientForSchedule = async () => {
+    const fullName = newPatientForm.fullName.trim();
+    const phone = newPatientForm.phone.trim();
+    const documentNumber = newPatientForm.identityDocumentNumber.trim().replace(/\s/g, "");
+    if (!fullName || !documentNumber || !newPatientForm.placeOfBirth.trim() || !newPatientForm.dateOfBirth || !newPatientForm.gender) {
+      setFormError("Nama, identitas (NIK/paspor), tempat/tanggal lahir, dan jenis kelamin wajib diisi.");
+      return;
+    }
+    if (newPatientForm.identityDocumentType === "NIK" && !/^\d{16}$/.test(documentNumber)) {
+      setFormError("NIK harus terdiri dari 16 digit angka.");
+      return;
+    }
+    if (newPatientForm.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(documentNumber)) {
+      setFormError("Nomor paspor harus terdiri dari 6–20 huruf atau angka.");
+      return;
+    }
+
+    try {
+      const duplicates = await repos.patient.checkDuplicates(phone || undefined, undefined, fullName);
+      const matchingPatients = duplicates.byPhone
+        .filter((patient, index, all) => all.findIndex((item) => item.id === patient.id) === index);
+      const existingIdentity = patients.find((patient) =>
+        patient.identityDocumentType === newPatientForm.identityDocumentType &&
+        patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === documentNumber.toLowerCase()
+      );
+      if (matchingPatients.length > 0 || existingIdentity) {
+        if (existingIdentity) {
+          setFormError("Nomor identitas ini sudah terdaftar. Pilih profil pasien yang sudah ada agar tidak membuat data ganda.");
+          setPatientSearch(existingIdentity.phone || existingIdentity.fullName || existingIdentity.name);
+        } else {
+          setFormError("Nomor HP ini sudah terdaftar. Pilih profil pasien yang sudah ada agar tidak membuat data ganda.");
+          setPatientSearch(phone);
+        }
+        setShowNewPatientForm(false);
+        return;
+      }
+
+      setIsCreatingPatient(true);
+      const branchId = formBranchId || currentUser?.assignedBranchId || "";
+      const patient = await repos.patient.createPatient(
+        {
+          name: fullName,
+          fullName,
+          phone,
+          email: "",
+          identityDocumentType: newPatientForm.identityDocumentType,
+          identityDocumentNumber: documentNumber,
+          placeOfBirth: newPatientForm.placeOfBirth.trim(),
+          dateOfBirth: newPatientForm.dateOfBirth,
+          gender: newPatientForm.gender,
+          address: newPatientForm.address.trim(),
+          occupation: newPatientForm.occupation.trim(),
+          religion: newPatientForm.religion.trim(),
+          maritalStatus: newPatientForm.maritalStatus,
+          education: newPatientForm.education,
+          medicalHistoryNotes: "",
+          acquisitionSource: "UNKNOWN",
+          referralName: "",
+          referringStaffId: null,
+          registeredBranchId: branchId || undefined
+        },
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
+      await refreshData();
+      setSelectedPatient(patient);
+      setPatientSearch("");
+      setShowNewPatientForm(false);
+      setNewPatientForm({
+        fullName: "", phone: "", identityDocumentType: "NIK", identityDocumentNumber: "",
+        placeOfBirth: "", dateOfBirth: "", gender: "", address: "", occupation: "",
+        religion: "", maritalStatus: "", education: ""
+      });
+      setFormError(null);
+    } catch (error) {
+      console.error("Gagal menambahkan pasien dari formulir jadwal:", error);
+      setFormError(error instanceof Error ? error.message : "Gagal menambahkan pasien baru.");
+    } finally {
+      setIsCreatingPatient(false);
+    }
+  };
+
+  const handleOpenPatientEditor = async () => {
+    if (!selectedBooking) return;
+    setPatientEditError(null);
+    setPatientEditSuccess(null);
+    setIsPatientEditorOpen(true);
+    setIsPatientLoading(true);
+    try {
+      const patient = await repos.patient.getPatientById(selectedBooking.patientId);
+      if (!patient) throw new Error("Profil pasien tidak ditemukan.");
+      setPatientEditDraft({
+        fullName: patient.fullName || patient.name || "",
+        phone: patient.phone || "",
+        identityDocumentType: patient.identityDocumentType || "NIK",
+        identityDocumentNumber: patient.identityDocumentNumber || "",
+        placeOfBirth: patient.placeOfBirth || "",
+        dateOfBirth: patient.dateOfBirth || "",
+        gender: patient.gender || "L",
+        address: patient.address || "",
+        occupation: patient.occupation || "",
+        religion: patient.religion || "",
+        maritalStatus: patient.maritalStatus || "",
+        education: patient.education || ""
+      });
+    } catch (error) {
+      console.error("Gagal memuat profil untuk dilengkapi:", error);
+      setPatientEditError(error instanceof Error ? error.message : "Gagal memuat data pasien.");
+    } finally {
+      setIsPatientLoading(false);
+    }
+  };
+
+  const handleSavePatientProfile = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPatientEditError(null);
+    if (!selectedBooking) return;
+    const documentNumber = patientEditDraft.identityDocumentNumber.trim().replace(/\s/g, "");
+    if (!patientEditDraft.fullName.trim() || !documentNumber || !patientEditDraft.placeOfBirth.trim() || !patientEditDraft.dateOfBirth) {
+      setPatientEditError("Nama, identitas (NIK/paspor), tempat dan tanggal lahir wajib diisi.");
+      return;
+    }
+    if (patientEditDraft.identityDocumentType === "NIK" && !/^\d{16}$/.test(documentNumber)) {
+      setPatientEditError("NIK harus terdiri dari 16 digit angka.");
+      return;
+    }
+    if (patientEditDraft.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(documentNumber)) {
+      setPatientEditError("Nomor paspor harus terdiri dari 6–20 huruf atau angka.");
+      return;
+    }
+
+    setIsPatientSaving(true);
+    try {
+      await repos.patient.updatePatient(
+        selectedBooking.patientId,
+        {
+          name: patientEditDraft.fullName.trim(),
+          fullName: patientEditDraft.fullName.trim(),
+          phone: patientEditDraft.phone.trim(),
+          identityDocumentType: patientEditDraft.identityDocumentType,
+          identityDocumentNumber: documentNumber,
+          placeOfBirth: patientEditDraft.placeOfBirth.trim(),
+          dateOfBirth: patientEditDraft.dateOfBirth,
+          gender: patientEditDraft.gender,
+          address: patientEditDraft.address.trim(),
+          occupation: patientEditDraft.occupation.trim(),
+          religion: patientEditDraft.religion.trim(),
+          maritalStatus: patientEditDraft.maritalStatus,
+          education: patientEditDraft.education
+        },
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
+      await refreshData();
+      setIsPatientEditorOpen(false);
+      setPatientEditSuccess("Data pasien berhasil diperbarui.");
+    } catch (error) {
+      console.error("Gagal menyimpan kelengkapan profil pasien:", error);
+      setPatientEditError(error instanceof Error ? error.message : "Gagal menyimpan data pasien.");
+    } finally {
+      setIsPatientSaving(false);
+    }
+  };
+
   // Filtered booking list for main table
   const filteredBookings = useMemo(() => {
     return bookings.filter((b) => {
@@ -279,7 +632,7 @@ export const BookingManagement: React.FC = () => {
       const isCompleted = b.status === BookingStatus.COMPLETED || completedBookingIds.has(b.id);
       if (statusFilter === "ACTIVE") {
         // By default: Hide cancelled and hide completed bookings so the table stays clean!
-        if (b.status === BookingStatus.CANCELLED) return false;
+        if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.RESCHEDULED) return false;
         if (isCompleted) return false;
       } else if (statusFilter === BookingStatus.COMPLETED) {
         if (!isCompleted) return false;
@@ -302,13 +655,47 @@ export const BookingManagement: React.FC = () => {
     });
   }, [bookings, branchFilter, statusFilter, searchQuery, currentUser, completedBookingIds]);
 
+  const calendarDates = useMemo(
+    () => Array.from({ length: 5 }, (_, index) => addCalendarDays(calendarWeekStart, index)),
+    [calendarWeekStart]
+  );
+
+  const calendarBookingsByDate = useMemo(() => {
+    const grouped = new Map<string, Booking[]>();
+    calendarDates.forEach((date) => grouped.set(date, []));
+    filteredBookings.forEach((booking) => {
+      const date = getOperationalDateString(booking.bookingDateTime);
+      grouped.get(date)?.push(booking);
+    });
+    grouped.forEach((dayBookings) => dayBookings.sort((a, b) =>
+      getOperationalTimeString(a.bookingDateTime).localeCompare(getOperationalTimeString(b.bookingDateTime))
+    ));
+    return grouped;
+  }, [calendarDates, filteredBookings]);
+
+  const calendarWeekStats = useMemo(() => {
+    const weekBookings = filteredBookings.filter((booking) => {
+      const date = getOperationalDateString(booking.bookingDateTime);
+      return date >= calendarWeekStart && date <= calendarDates[4];
+    });
+    return {
+      total: weekBookings.length,
+      confirmed: weekBookings.filter((booking) => booking.status === BookingStatus.CONFIRMED && !completedBookingIds.has(booking.id) && !checkedInBookingIds.has(booking.id)).length,
+      pending: weekBookings.filter((booking) => booking.status === BookingStatus.PENDING && !completedBookingIds.has(booking.id)).length,
+      checkedIn: weekBookings.filter((booking) => checkedInBookingIds.has(booking.id) && !completedBookingIds.has(booking.id)).length,
+      completed: weekBookings.filter((booking) => booking.status === BookingStatus.COMPLETED || completedBookingIds.has(booking.id)).length,
+      cancelled: weekBookings.filter((booking) => booking.status === BookingStatus.CANCELLED).length,
+      rescheduled: weekBookings.filter((booking) => booking.status === BookingStatus.RESCHEDULED).length
+    };
+  }, [filteredBookings, calendarWeekStart, calendarDates, completedBookingIds, checkedInBookingIds]);
+
   const handleCreateBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
     setFormSuccess(null);
 
     if (!selectedPatient) {
-      setFormError("Pilih pasien terlebih dahulu dari Master Patients Profile");
+      setFormError("Pilih pasien terdaftar atau tambahkan pasien baru terlebih dahulu.");
       return;
     }
 
@@ -347,8 +734,8 @@ export const BookingManagement: React.FC = () => {
           timeSlot: formTimeSlot,
           notes: formNotes,
           plannedTreatments: snapshotPlannedTreatments(plannedServices),
-          source: BookingSource.FRONT_DESK,
-          channel: BookingSource.FRONT_DESK,
+          source: bookingSource,
+          channel: bookingSource,
           status: BookingStatus.PENDING,
           patientNameSnapshot: selectedPatient.fullName || selectedPatient.name || "Pasien",
           doctorNameSnapshot: selectedDoc?.name || "Dokter",
@@ -368,6 +755,7 @@ export const BookingManagement: React.FC = () => {
         setPatientSearch("");
         setFormNotes("");
         setPlannedServices([]);
+        setBookingSource(BookingSource.FRONT_DESK);
         setFormSuccess(null);
       }, 800);
     } catch (err: any) {
@@ -391,7 +779,7 @@ export const BookingManagement: React.FC = () => {
     }
   };
 
-  const handleOpenCheckInModal = (b: Booking) => {
+  const handleOpenCheckInModal = async (b: Booking) => {
     const routePrefix = currentUser?.role === UserRole.SUPER_ADMIN
       ? "/super-admin"
       : currentUser?.role === UserRole.BRANCH_ADMIN
@@ -400,63 +788,217 @@ export const BookingManagement: React.FC = () => {
 
     if (!routePrefix) return;
 
-    const params = new URLSearchParams({ bookingId: b.id });
-    if (currentUser?.role === UserRole.SUPER_ADMIN) {
-      params.set("branchId", b.branchId);
-    }
-    navigate(`${routePrefix}/check-in?${params.toString()}`);
-  };
-
-  const handleConfirmCheckIn = async () => {
-    if (!checkInBooking || isCheckInSubmitting) return;
-
+    setBookingCheckInError(null);
     setIsCheckInSubmitting(true);
     try {
-      const newVisit = await repos.visit.createVisit({
-        patientId: checkInBooking.patientId,
-        branchId: checkInBooking.branchId,
+      if (checkedInBookingIds.has(b.id)) {
+        setBookingCheckInError("Jadwal ini sudah masuk antrean. Buka menu Antrean Klinik untuk melihat status pasien.");
+        return;
+      }
+      if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.RESCHEDULED || b.status === BookingStatus.COMPLETED) {
+        throw new Error("Jadwal ini sudah tidak aktif dan tidak dapat di-check-in.");
+      }
+
+      const existingVisit = visits.find((visit) =>
+        visit.bookingId === b.id &&
+        visit.patientId === b.patientId &&
+        visit.visitStatus !== VisitStatus.CANCELLED &&
+        visit.visitStatus !== VisitStatus.COMPLETED
+      );
+      const visit = existingVisit || await repos.visit.createVisit({
+        patientId: b.patientId,
+        branchId: b.branchId,
         visitType: VisitType.BOOKING,
-        bookingId: checkInBooking.id,
-        doctorId: checkInBooking.doctorId,
-          complaint: checkInComplaint,
-          plannedTreatments: checkInBooking.plannedTreatments || []
+        bookingId: b.id,
+        doctorId: b.doctorId,
+        complaint: b.notes || b.complaint || "Konsultasi Booking",
+        plannedTreatments: b.plannedTreatments || []
       });
 
       await repos.booking.updateBooking(
-        checkInBooking.id,
+        b.id,
         { status: BookingStatus.CONFIRMED },
         currentUser?.role,
         currentUser?.assignedBranchId
       );
-
       await repos.queue.checkInVisitToQueue(
-        newVisit.id,
+        visit.id,
         currentUser?.role,
         currentUser?.assignedBranchId,
         {
-          estimatedDurationMinutes: getPlannedTreatmentDurationMinutes(checkInBooking.plannedTreatments),
-          plannedTreatments: checkInBooking.plannedTreatments || [],
-          doctorId: checkInBooking.doctorId
+          estimatedDurationMinutes: getPlannedTreatmentDurationMinutes(b.plannedTreatments),
+          plannedTreatments: b.plannedTreatments || [],
+          doctorId: b.doctorId,
+          bookingTimeSnapshot: b.bookingDateTime
         }
       );
 
-      setFormSuccess(`Pasien ${checkInBooking.patientNameSnapshot} berhasil di-checkin dan langsung masuk antrean live dokter!`);
-      setIsCheckInModalOpen(false);
-      setCheckInBooking(null);
-      setCheckInComplaint("");
-      loadData();
-    } catch (err: any) {
-      setFormError(err.message || "Gagal memproses kedatangan pasien");
-      console.error("handleConfirmCheckIn failed:", err);
+      const successMessage = `Pasien ${b.patientNameSnapshot || "pasien"} berhasil di-check-in dan masuk antrean live!`;
+      const queuePath = currentUser?.role === UserRole.SUPER_ADMIN ? "/super-admin/queue" : "/branch-admin/queue";
+      const params = new URLSearchParams({ checkInSuccess: successMessage });
+      if (currentUser?.role === UserRole.SUPER_ADMIN) params.set("branchId", b.branchId);
+      navigate(`${queuePath}?${params.toString()}`);
+    } catch (error) {
+      console.error("Gagal check-in pasien dari jadwal:", error);
+      setBookingCheckInError(error instanceof Error ? error.message : "Gagal memproses check-in pasien.");
     } finally {
       setIsCheckInSubmitting(false);
     }
   };
 
+  const handleOpenNewBooking = (date = getTomorrowDateString()) => {
+    setFormDate(date);
+    setSelectedPatient(null);
+    setPatientSearch("");
+    setShowNewPatientForm(false);
+    setBookingSource(BookingSource.FRONT_DESK);
+    setFormError(null);
+    setFormSuccess(null);
+    setPlannedServices([]);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenReschedule = (booking: Booking) => {
+    if (
+      (booking.status !== BookingStatus.PENDING && booking.status !== BookingStatus.CONFIRMED) ||
+      checkedInBookingIds.has(booking.id) ||
+      completedBookingIds.has(booking.id)
+    ) return;
+
+    setRescheduleDate(getOperationalDateString(booking.bookingDateTime));
+    setRescheduleDoctorId(booking.doctorId);
+    setRescheduleTimeSlot("");
+    setRescheduleReason("");
+    setRescheduleError(null);
+    setRescheduleSuccess(null);
+    setIsRescheduleOpen(true);
+  };
+
+  useEffect(() => {
+    if (!isRescheduleOpen || rescheduleSchedules.length === 0) return;
+    if (!rescheduleDoctors.some((doctor) => doctor.id === rescheduleDoctorId)) {
+      setRescheduleDoctorId(rescheduleDoctors[0]?.id || "");
+    }
+  }, [isRescheduleOpen, rescheduleSchedules, rescheduleDoctors, rescheduleDoctorId]);
+
+  const handleSaveReschedule = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setRescheduleError(null);
+    if (!selectedBooking || isRescheduling) return;
+    if (
+      (selectedBooking.status !== BookingStatus.PENDING && selectedBooking.status !== BookingStatus.CONFIRMED) ||
+      checkedInBookingIds.has(selectedBooking.id) ||
+      completedBookingIds.has(selectedBooking.id)
+    ) {
+      setRescheduleError("Jadwal ini sudah tidak dapat dijadwalkan ulang.");
+      return;
+    }
+    if (!rescheduleDoctorId || !rescheduleDate || !rescheduleTimeSlot || !rescheduleTimeSlots.includes(rescheduleTimeSlot)) {
+      setRescheduleError("Pilih dokter, tanggal, dan slot yang masih tersedia.");
+      return;
+    }
+
+    const nextDoctor = doctorsList.find((doctor) => doctor.id === rescheduleDoctorId);
+    if (!nextDoctor) {
+      setRescheduleError("Dokter yang dipilih tidak tersedia.");
+      return;
+    }
+    const nextDateTime = toOperationalDateTime(`${rescheduleDate}T00:00:00+07:00`, rescheduleTimeSlot);
+    let originalStatus = selectedBooking.status;
+    setIsRescheduling(true);
+
+    try {
+      const latestBooking = await repos.booking.getBookingById(
+        selectedBooking.id,
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
+      if (
+        !latestBooking ||
+        (latestBooking.status !== BookingStatus.PENDING && latestBooking.status !== BookingStatus.CONFIRMED)
+      ) {
+        throw new Error("Jadwal ini sudah berubah atau tidak lagi dapat dijadwalkan ulang.");
+      }
+      const latestVisits = await repos.visit.getVisits();
+      if (latestVisits.some((visit) => visit.bookingId === latestBooking.id)) {
+        throw new Error("Pasien sudah check-in. Jadwal ini tidak dapat dijadwalkan ulang.");
+      }
+      originalStatus = latestBooking.status;
+
+      await repos.booking.updateBooking(
+        selectedBooking.id,
+        { status: BookingStatus.RESCHEDULED },
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
+
+      let newBooking: Booking;
+      try {
+        newBooking =         newBooking = await repos.booking.createBooking(
+          {
+            patientId: selectedBooking.patientId,
+            branchId: selectedBooking.branchId,
+            doctorId: rescheduleDoctorId,
+            bookingDateTime: nextDateTime,
+            timeSlot: rescheduleTimeSlot,
+            notes: selectedBooking.notes || selectedBooking.complaint || "",
+            complaint: selectedBooking.complaint,
+            plannedTreatments: selectedBooking.plannedTreatments || [],
+            source: selectedBooking.source || selectedBooking.channel || BookingSource.FRONT_DESK,
+            channel: selectedBooking.source || selectedBooking.channel || BookingSource.FRONT_DESK,
+            status: originalStatus,
+            patientNameSnapshot: selectedBooking.patientNameSnapshot || "Pasien",
+            doctorNameSnapshot: nextDoctor.name || "Dokter",
+            branchNameSnapshot: selectedBooking.branchNameSnapshot || "Cabang",
+            scheduleVerified: true,
+            rescheduledFromBookingId: selectedBooking.id,
+            rescheduleReason: rescheduleReason.trim() || undefined
+          },
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      } catch (createError) {
+        try {
+          await repos.booking.updateBooking(
+            selectedBooking.id,
+            { status: originalStatus },
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+        } catch (restoreError) {
+          console.error("Gagal memulihkan status jadwal setelah pembuatan jadwal ulang gagal:", restoreError);
+          throw new Error(
+            `Jadwal baru gagal dibuat dan status jadwal lama gagal dipulihkan. Perlu pemeriksaan admin. ` +
+            `${createError instanceof Error ? createError.message : "Kesalahan pembuatan jadwal."}`
+          );
+        }
+        throw createError;
+      }
+
+      const rescheduledBooking = { ...selectedBooking, status: BookingStatus.RESCHEDULED };
+      setBookings((current) => [newBooking, ...current.map((booking) => booking.id === selectedBooking.id ? rescheduledBooking : booking)]);
+      setSelectedBooking(rescheduledBooking);
+      setIsRescheduleOpen(false);
+      let confirmationWarning = "";
+      try {
+        await repos.h1.createOrInitializeH1Confirmation(newBooking.id, currentUser?.id);
+      } catch (confirmationError) {
+        console.error("Jadwal tersimpan tetapi konfirmasi H-1 gagal dibuat:", confirmationError);
+        confirmationWarning = " Konfirmasi H-1 belum berhasil dibuat; hubungi admin untuk menindaklanjuti.";
+      }
+      setRescheduleSuccess(`Jadwal berhasil dipindahkan. Riwayat jadwal lama tetap tersimpan.${confirmationWarning}`);
+      void refreshData();
+      loadData();
+    } catch (error) {
+      console.error("Gagal menjadwalkan ulang booking:", error);
+      setRescheduleError(error instanceof Error ? error.message : "Gagal menyimpan jadwal ulang.");
+    } finally {
+      setIsRescheduling(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12" id="booking-management-page">
-      <OperationalHubTabs hub="patient_schedule" />
-
       {/* SUPABASE PROFILE NOTICE */}
       {currentUser?.isMockFallback && (
         <div className="p-5 bg-amber-50 border border-amber-200 rounded-2xl shadow-sm text-slate-800 space-y-3">
@@ -475,37 +1017,65 @@ export const BookingManagement: React.FC = () => {
         </div>
       )}
       {/* Header Banner */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="relative overflow-hidden bg-white rounded-2xl p-5 sm:p-6 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-emerald-500 to-amber-400" />
         <div>
-          <div className="flex items-center gap-2 text-emerald-600 font-semibold text-xs tracking-wider uppercase mb-1">
-            <Calendar className="w-4 h-4" />
-            Manajemen Booking & Reservasi
+          <div className="flex items-center gap-2 text-emerald-700 font-bold text-[10px] tracking-[0.16em] uppercase mb-2">
+            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-100">
+              <Calendar className="w-4 h-4" />
+            </span>
+            Pengelolaan kunjungan
           </div>
-          <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-            Jadwal Booking Pasien Klinik
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+            Jadwal Pasien
           </h1>
-          <p className="text-slate-500 text-xs mt-1">
-            Kelola pendaftaran janji periksa, periksa ketersediaan slot dokter, dan proses kedatangan pasien.
+          <p className="text-slate-500 text-sm mt-1 max-w-2xl">
+            Atur jadwal dari Online, WhatsApp, front desk, atau Walk-In. Walk-In menempati slot dokter yang kosong; Check-In dilakukan saat pasien siap.
           </p>
         </div>
 
         <button
-          onClick={() => {
-            setIsModalOpen(true);
-            setFormError(null);
-            setFormSuccess(null);
-            setPlannedServices([]);
-          }}
-          className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-colors shadow-sm"
+          onClick={() => handleOpenNewBooking()}
+          className="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 px-5 rounded-xl text-sm transition-all shadow-sm hover:shadow-md active:scale-[0.98]"
           id="btn-create-booking-modal"
         >
           <Plus className="w-4 h-4" />
-          Buat Booking Baru
+          Jadwal Baru
         </button>
       </div>
 
+      {/* Weekly overview */}
+      <section aria-label="Ringkasan jadwal mingguan" className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        {[
+          { label: "Total jadwal", value: calendarWeekStats.total, hint: "Minggu terpilih", icon: Calendar, tone: "slate" },
+          { label: "Menunggu", value: calendarWeekStats.pending, hint: "Belum dikonfirmasi", icon: Clock, tone: "amber" },
+          { label: "Sudah check-in", value: calendarWeekStats.checkedIn, hint: "Sedang dalam alur layanan", icon: UserCheck, tone: "violet" },
+          { label: "Selesai dilayani", value: calendarWeekStats.completed, hint: `${calendarWeekStats.cancelled} batal · ${calendarWeekStats.rescheduled} dijadwalkan ulang`, icon: CheckCircle2, tone: "emerald" }
+        ].map(({ label, value, hint, icon: Icon, tone }) => {
+          const color = tone === "amber"
+            ? "text-amber-700 bg-amber-50 border-amber-100"
+            : tone === "violet"
+              ? "text-violet-700 bg-violet-50 border-violet-100"
+              : tone === "emerald"
+                ? "text-emerald-700 bg-emerald-50 border-emerald-100"
+                : "text-slate-700 bg-slate-50 border-slate-200";
+          return (
+            <div key={label} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-slate-500">{label}</p>
+                <p className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">{value}</p>
+                <p className="mt-1 text-[10px] text-slate-400">{hint}</p>
+              </div>
+              <span className={`inline-flex w-9 h-9 items-center justify-center rounded-xl border ${color}`}>
+                <Icon className="w-4 h-4" />
+              </span>
+            </div>
+          );
+        })}
+      </section>
+
       {/* Filter & Controls */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-3">
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4">
         {/* Quick Filter Status Tabs */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
@@ -580,13 +1150,17 @@ export const BookingManagement: React.FC = () => {
           <div className="text-[11px] text-slate-500 font-medium">
             {statusFilter === "ACTIVE" ? (
               <span className="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                Tampilan Bersih: Pasien selesai & cancel disembunyikan
+                Tampilan aktif: jadwal selesai, batal, dan dijadwalkan ulang disembunyikan
               </span>
             ) : statusFilter === "ALL" ? (
               <span>Menampilkan seluruh riwayat</span>
             ) : statusFilter === BookingStatus.COMPLETED ? (
               <span className="text-blue-700 font-semibold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
                 Riwayat pasien yang sudah selesai diperiksa
+              </span>
+            ) : statusFilter === BookingStatus.RESCHEDULED ? (
+              <span className="text-violet-700 font-semibold bg-violet-50 px-2 py-0.5 rounded border border-violet-200">
+                Riwayat jadwal lama yang sudah dipindahkan
               </span>
             ) : (
               <span className="text-rose-700 font-semibold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
@@ -624,6 +1198,7 @@ export const BookingManagement: React.FC = () => {
               <option value={BookingStatus.CONFIRMED}>Confirmed (Dikonfirmasi)</option>
               <option value={BookingStatus.COMPLETED}>Selesai Dilayani ({bookingStats.completed})</option>
               <option value={BookingStatus.CANCELLED}>Cancelled / Dibatalkan ({bookingStats.cancelled})</option>
+              <option value={BookingStatus.RESCHEDULED}>Jadwal lama yang dijadwalkan ulang</option>
             </select>
 
             {/* Super Admin Branch filter */}
@@ -655,7 +1230,241 @@ export const BookingManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Bookings Table */}
+      <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCalendarWeekStart(addCalendarDays(calendarWeekStart, -7))}
+            aria-label="Tampilkan minggu sebelumnya"
+            className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:border-emerald-200 hover:bg-emerald-50"
+          >
+            Minggu lalu
+          </button>
+          <button
+            type="button"
+            onClick={() => setCalendarWeekStart(getWeekStart(getTodayDateString()))}
+            className="px-3 py-2 rounded-lg bg-slate-900 text-xs font-bold text-white hover:bg-slate-800"
+          >
+            Hari ini
+          </button>
+          <button
+            type="button"
+            onClick={() => setCalendarWeekStart(addCalendarDays(calendarWeekStart, 7))}
+            aria-label="Tampilkan minggu berikutnya"
+            className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:border-emerald-200 hover:bg-emerald-50"
+          >
+            Minggu depan
+          </button>
+          <span className="ml-2 text-sm font-extrabold text-slate-800">
+            {formatCalendarDate(calendarWeekStart, { day: "numeric", month: "short" })} – {formatCalendarDate(calendarDates[4], { day: "numeric", month: "long", year: "numeric" })}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-[11px] text-slate-500">
+            <span><strong className="text-slate-800">{calendarWeekStats.total}</strong> jadwal</span>
+            <span className="text-amber-700">{calendarWeekStats.pending} menunggu</span>
+            <span className="text-emerald-700">{calendarWeekStats.confirmed} dikonfirmasi</span>
+            <span className="text-blue-700">{calendarWeekStats.completed} selesai</span>
+            <span className="text-rose-700">{calendarWeekStats.cancelled} batal</span>
+          </div>
+          <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("calendar")}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-bold ${viewMode === "calendar" ? "bg-white text-emerald-800 shadow-sm" : "text-slate-600 hover:bg-white"}`}
+            >
+              Mingguan
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-bold ${viewMode === "list" ? "bg-white text-emerald-800 shadow-sm" : "text-slate-600 hover:bg-white"}`}
+            >
+              Daftar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {viewMode === "calendar" && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1" aria-label="Legenda status jadwal">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Status</span>
+          {[
+            ["Terjadwal", "bg-amber-100 text-amber-800"],
+            ["Dikonfirmasi", "bg-sky-100 text-sky-800"],
+            ["Check-In", "bg-violet-100 text-violet-800"],
+            ["Selesai", "bg-emerald-100 text-emerald-800"],
+            ["Dibatalkan", "bg-rose-100 text-rose-800"],
+            ["Jadwal ulang", "bg-slate-100 text-slate-600"]
+          ].map(([label, style]) => (
+            <span key={label} className="inline-flex items-center gap-1.5 text-[10px] font-medium text-slate-600">
+              <span className={`w-2 h-2 rounded-full ${style.split(" ")[0]}`} />
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {viewMode === "calendar" ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3" id="patient-week-calendar">
+          {calendarDates.map((date) => {
+            const dayBookings = calendarBookingsByDate.get(date) || [];
+            const isToday = date === getTodayDateString();
+            return (
+              <section key={date} className={`min-h-[360px] bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col transition-all hover:-translate-y-0.5 hover:shadow-md ${isToday ? "border-slate-200 ring-1 ring-slate-100" : "border-slate-200"}`}>
+                <header
+                  className="relative overflow-hidden border-b border-slate-200 px-3.5 py-2"
+                  style={{
+                    backgroundImage: "linear-gradient(90deg, #916b1c 0%, #ebd4a8 34%, #e1b951 68%, #916b1c 100%)"
+                  }}
+                >
+                  <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+                    <div className="absolute inset-0 opacity-40">
+                      <svg className="h-full w-full" viewBox="0 0 1000 80" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+                        <path d="M-100,60 C150,-10 350,90 550,20 C750,-50 850,100 1150,40" stroke={`url(#silkWhiteGradient-${date})`} strokeWidth="2.5" fill="none" />
+                        <path d="M-50,70 C200,10 400,100 600,30 C800,-40 900,110 1200,50" stroke={`url(#silkWhiteGradient-${date})`} strokeWidth="1" fill="none" />
+                        <defs>
+                          <linearGradient id={`silkWhiteGradient-${date}`} x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.1" />
+                            <stop offset="50%" stopColor="#ffffff" stopOpacity="0.6" />
+                            <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
+                          </linearGradient>
+                        </defs>
+                      </svg>
+                    </div>
+                    <div className="absolute left-1/3 top-0 bottom-0 w-1/4 -skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+                  </div>
+                  <div className="relative z-10 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`relative flex h-10 w-10 shrink-0 flex-col items-center justify-center overflow-hidden rounded-xl border border-white/60 shadow-sm ${isToday ? "bg-white/25 text-white" : "bg-white/50 text-[#5d451d]"}`}
+                      >
+                        <span className="text-[9px] font-extrabold uppercase leading-none tracking-wide">{formatCalendarDate(date, { weekday: "short" })}</span>
+                        <span className="mt-0.5 text-sm font-extrabold leading-none">{formatCalendarDate(date, { day: "numeric" })}</span>
+                      </div>
+                      <div>
+                        <div className="text-xs font-extrabold leading-tight tracking-tight text-white drop-shadow-sm">{formatCalendarDate(date, { weekday: "long" })}</div>
+                        <div className="mt-0 text-[10px] font-semibold leading-tight text-white/90 drop-shadow-sm">{formatCalendarDate(date, { month: "long", year: "numeric" })}</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenNewBooking(date)}
+                      aria-label={`Tambah jadwal ${formatCalendarDate(date, { weekday: "long", day: "numeric", month: "long" })}`}
+                      title="Tambah jadwal"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/70 bg-white/80 text-[#76551a] shadow-sm transition-all hover:border-white hover:bg-white hover:text-[#4f3811]"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="relative z-10 mt-1.5 flex items-center justify-between">
+                    <span className="text-[10px] font-bold leading-tight text-white drop-shadow-sm">
+                      {dayBookings.length === 1 ? "1 jadwal" : `${dayBookings.length} jadwal`}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${dayBookings.length ? "border border-white/70 bg-white/75 text-[#5d451d]" : "text-white/85"}`}>
+                      {dayBookings.length ? "Terisi" : "Kosong"}
+                    </span>
+                  </div>
+                </header>
+                <div className="flex-1 space-y-2 p-2.5 max-h-[520px] overflow-y-auto">
+                  {dayBookings.length === 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenNewBooking(date)}
+                      className="group flex min-h-44 w-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-3 text-center transition-colors hover:border-emerald-300 hover:bg-emerald-50/50"
+                    >
+                      <span className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 group-hover:border-emerald-200 group-hover:text-emerald-700">
+                        <Plus className="h-4 w-4" />
+                      </span>
+                      <span className="text-[11px] font-semibold text-slate-500 group-hover:text-emerald-800">Belum ada jadwal</span>
+                      <span className="mt-1 text-[10px] text-slate-400">Tambah kunjungan pasien</span>
+                    </button>
+                  ) : dayBookings.map((booking) => {
+                    const isCompleted = booking.status === BookingStatus.COMPLETED || completedBookingIds.has(booking.id);
+                    const isCheckedIn = checkedInBookingIds.has(booking.id);
+                    const source = booking.source || booking.channel;
+                    const sourceLabel = source === BookingSource.PATIENT_PORTAL || source === BookingSource.ANDROID
+                      ? "Online"
+                      : source === BookingSource.WHATSAPP
+                        ? "WhatsApp"
+                        : source === BookingSource.WALK_IN
+                          ? "Walk-In"
+                          : "Meja resepsionis";
+                    const statusLabel = booking.status === BookingStatus.RESCHEDULED
+                      ? "Jadwal ulang"
+                      : booking.status === BookingStatus.CANCELLED
+                        ? "Dibatalkan"
+                        : isCompleted
+                          ? "Selesai"
+                          : isCheckedIn
+                            ? "Check-In"
+                            : booking.status === BookingStatus.CONFIRMED
+                              ? "Dikonfirmasi"
+                              : "Terjadwal";
+                    const statusStyle = booking.status === BookingStatus.CANCELLED
+                      ? "bg-rose-50 text-rose-700 border-rose-100"
+                      : booking.status === BookingStatus.RESCHEDULED
+                        ? "bg-slate-100 text-slate-600 border-slate-200"
+                        : isCompleted
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                          : isCheckedIn
+                            ? "bg-violet-50 text-violet-700 border-violet-100"
+                            : booking.status === BookingStatus.CONFIRMED
+                              ? "bg-sky-50 text-sky-700 border-sky-100"
+                              : "bg-amber-50 text-amber-800 border-amber-100";
+                    const cardAccent = booking.status === BookingStatus.CANCELLED
+                      ? "before:bg-rose-400"
+                      : booking.status === BookingStatus.RESCHEDULED
+                        ? "before:bg-slate-300"
+                        : isCompleted
+                          ? "before:bg-emerald-500"
+                          : isCheckedIn
+                            ? "before:bg-violet-500"
+                            : booking.status === BookingStatus.CONFIRMED
+                              ? "before:bg-sky-500"
+                              : "before:bg-amber-400";
+                    return (
+                      <button
+                        key={booking.id}
+                        type="button"
+                        onClick={() => setSelectedBooking(booking)}
+                        className={`group relative w-full overflow-hidden rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all before:absolute before:inset-y-0 before:left-0 before:w-[3px] ${cardAccent} hover:border-emerald-200 hover:bg-slate-50/50 hover:shadow-sm`}
+                      >
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-extrabold leading-4 text-slate-900">
+                            <Clock className="h-3 w-3 text-slate-400" aria-hidden="true" />
+                            {getOperationalTimeString(booking.bookingDateTime)}
+                          </span>
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                          <span className="min-w-0 flex-1 truncate text-xs font-bold leading-4 text-slate-800">
+                            {booking.patientNameSnapshot || "Pasien"}
+                          </span>
+                          <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-bold leading-none ${statusStyle}`}>{statusLabel}</span>
+                        </div>
+                        <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-[18px] text-[10px] leading-3.5 text-slate-500">
+                          <Stethoscope className="h-3 w-3 shrink-0 text-slate-400" aria-hidden="true" />
+                          <span className="truncate">{booking.doctorNameSnapshot || "Dokter"}</span>
+                          {booking.plannedTreatments && booking.plannedTreatments.length > 0 && (
+                            <>
+                              <span className="shrink-0 text-slate-300">·</span>
+                              <span className="min-w-0 truncate text-slate-400">{getPlannedTreatmentSummary(booking.plannedTreatments)}</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="mt-1 flex min-w-0 items-center justify-between gap-2 pl-[18px] text-[9px] leading-3 text-slate-400">
+                          <span className="truncate">{sourceLabel}</span>
+                          <span className="shrink-0 truncate">{booking.branchNameSnapshot || ""}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      ) : (
+      /* Bookings List */
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {loading ? (
           <div className="p-12 text-center text-slate-500">
@@ -688,6 +1497,7 @@ export const BookingManagement: React.FC = () => {
                   const dateStr = getOperationalDateString(b.bookingDateTime);
                   const timeSlot = getOperationalTimeString(b.bookingDateTime);
                   const isCompleted = b.status === BookingStatus.COMPLETED || completedBookingIds.has(b.id);
+                  const isRescheduled = b.status === BookingStatus.RESCHEDULED;
 
                   return (
                     <tr key={b.id} className="hover:bg-slate-50/80 transition-colors">
@@ -786,9 +1596,15 @@ export const BookingManagement: React.FC = () => {
                             Cancelled
                           </span>
                         )}
+                        {isRescheduled && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-200">
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            Dijadwalkan ulang
+                          </span>
+                        )}
                         <div className="mt-2">
                           <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold border bg-slate-100 text-slate-700 border-slate-200">
-                            {b.source === BookingSource.WHATSAPP ? "WA" : b.source === BookingSource.ANDROID ? "Android" : b.source === BookingSource.WALK_IN ? "Walk-In" : "Front Desk"}
+                            {(b.source || b.channel) === BookingSource.PATIENT_PORTAL || (b.source || b.channel) === BookingSource.ANDROID ? "Online" : (b.source || b.channel) === BookingSource.WHATSAPP ? "WhatsApp" : (b.source || b.channel) === BookingSource.WALK_IN ? "Walk-In" : "Front Desk"}
                           </span>
                         </div>
                       </td>
@@ -800,9 +1616,9 @@ export const BookingManagement: React.FC = () => {
                               <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
                               Sudah Selesai
                             </span>
-                          ) : b.status === BookingStatus.CANCELLED ? (
+                          ) : b.status === BookingStatus.CANCELLED || isRescheduled ? (
                             <span className="text-[11px] font-medium text-rose-400 bg-rose-50/50 px-2.5 py-1 rounded-lg border border-rose-100">
-                              Dibatalkan
+                              {isRescheduled ? "Jadwal lama" : "Dibatalkan"}
                             </span>
                           ) : (
                             <>
@@ -836,6 +1652,7 @@ export const BookingManagement: React.FC = () => {
           </div>
         )}
       </div>
+      )}
 
       {/* Create Booking Modal */}
       {isModalOpen && (
@@ -844,7 +1661,7 @@ export const BookingManagement: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-emerald-600" />
-                Buat Booking Reservasi Baru
+                Buat Jadwal Pasien
               </h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                 ✕
@@ -869,7 +1686,7 @@ export const BookingManagement: React.FC = () => {
               {/* Step 1: Patient Selection */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  1. Cari Pasien dari Master Patient Profile:
+                  1. Cari Pasien
                 </label>
                 {selectedPatient ? (
                   <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
@@ -915,8 +1732,189 @@ export const BookingManagement: React.FC = () => {
                           </span>
                         </div>
                       ))}
+                      {searchedPatients.length === 0 && patientSearch.trim() && (
+                        <p className="p-3 text-[11px] text-slate-500">Pasien tidak ditemukan. Tambahkan pasien baru untuk melanjutkan.</p>
+                      )}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowNewPatientForm((open) => !open);
+                        setFormError(null);
+                      }}
+                      className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800"
+                    >
+                      {showNewPatientForm ? "− Tutup form pasien baru" : "+ Pasien Baru"}
+                    </button>
+                    {showNewPatientForm && (
+                      <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/60 space-y-3">
+                        <div>
+                          <p className="text-[11px] font-bold text-emerald-900">Identitas utama pasien</p>
+                          <p className="mt-0.5 text-[10px] text-slate-500">Data kontak dan sosial bersifat opsional.</p>
+                        </div>
+                        <input
+                          type="text"
+                          value={newPatientForm.fullName}
+                          onChange={(event) => setNewPatientForm((form) => ({ ...form, fullName: event.target.value }))}
+                          placeholder="Nama lengkap sesuai KTP/KK *"
+                          className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                          required
+                        />
+                        <div className="grid grid-cols-[110px_1fr] gap-2">
+                          <select
+                            value={newPatientForm.identityDocumentType}
+                            onChange={(event) => setNewPatientForm((form) => ({
+                              ...form,
+                              identityDocumentType: event.target.value as "NIK" | "PASSPORT",
+                              identityDocumentNumber: ""
+                            }))}
+                            aria-label="Jenis identitas pasien"
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                          >
+                            <option value="NIK">NIK</option>
+                            <option value="PASSPORT">Paspor</option>
+                          </select>
+                          <input
+                            type="text"
+                            inputMode={newPatientForm.identityDocumentType === "NIK" ? "numeric" : "text"}
+                            maxLength={newPatientForm.identityDocumentType === "NIK" ? 16 : 20}
+                            value={newPatientForm.identityDocumentNumber}
+                            onChange={(event) => setNewPatientForm((form) => ({ ...form, identityDocumentNumber: event.target.value.replace(/\s/g, "") }))}
+                            placeholder={newPatientForm.identityDocumentType === "NIK" ? "16 digit NIK *" : "Nomor paspor *"}
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                            required
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={newPatientForm.placeOfBirth}
+                            onChange={(event) => setNewPatientForm((form) => ({ ...form, placeOfBirth: event.target.value }))}
+                            placeholder="Tempat lahir *"
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                            required
+                          />
+                          <input
+                            type="date"
+                            value={newPatientForm.dateOfBirth}
+                            onChange={(event) => setNewPatientForm((form) => ({ ...form, dateOfBirth: event.target.value }))}
+                            aria-label="Tanggal lahir pasien"
+                            max={getTodayDateString()}
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                            required
+                          />
+                        </div>
+                        <select
+                          value={newPatientForm.gender}
+                          onChange={(event) => setNewPatientForm((form) => ({ ...form, gender: event.target.value as "L" | "P" | "" }))}
+                          aria-label="Jenis kelamin pasien"
+                          required
+                          className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                        >
+                          <option value="">Pilih jenis kelamin *</option>
+                          <option value="L">Laki-laki</option>
+                          <option value="P">Perempuan</option>
+                        </select>
+                        <div className="border-t border-emerald-200 pt-2">
+                          <p className="text-[11px] font-bold text-slate-700">Data kontak & sosial <span className="font-normal text-slate-500">(opsional)</span></p>
+                        </div>
+                        <input
+                          type="tel"
+                          value={newPatientForm.phone}
+                          onChange={(event) => setNewPatientForm((form) => ({ ...form, phone: event.target.value }))}
+                          placeholder="Nomor HP/WhatsApp"
+                          className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                        />
+                        <input
+                          type="text"
+                          value={newPatientForm.address}
+                          onChange={(event) => setNewPatientForm((form) => ({ ...form, address: event.target.value }))}
+                          placeholder="Alamat lengkap"
+                          className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={newPatientForm.occupation}
+                            onChange={(event) => setNewPatientForm((form) => ({ ...form, occupation: event.target.value }))}
+                            placeholder="Pekerjaan"
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                          />
+                          <select
+                            value={newPatientForm.religion}
+                            onChange={(event) => setNewPatientForm((form) => ({ ...form, religion: event.target.value }))}
+                            aria-label="Agama atau kepercayaan pasien"
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                          >
+                            <option value="">Agama / kepercayaan</option>
+                            <option value="Islam">Islam</option>
+                            <option value="Kristen">Kristen</option>
+                            <option value="Katolik">Katolik</option>
+                            <option value="Hindu">Hindu</option>
+                            <option value="Buddha">Buddha</option>
+                            <option value="Konghucu">Konghucu</option>
+                            <option value="Kepercayaan lainnya">Kepercayaan lainnya</option>
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={newPatientForm.maritalStatus}
+                            onChange={(event) => setNewPatientForm((form) => ({ ...form, maritalStatus: event.target.value }))}
+                            aria-label="Status pernikahan pasien"
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                          >
+                            <option value="">Status pernikahan</option>
+                            <option value="Belum menikah">Belum menikah</option>
+                            <option value="Menikah">Menikah</option>
+                            <option value="Cerai hidup">Cerai hidup</option>
+                            <option value="Cerai mati">Cerai mati</option>
+                          </select>
+                          <select
+                            value={newPatientForm.education}
+                            onChange={(event) => setNewPatientForm((form) => ({ ...form, education: event.target.value }))}
+                            aria-label="Pendidikan terakhir pasien"
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                          >
+                            <option value="">Pendidikan terakhir</option>
+                            <option value="Tidak sekolah">Tidak sekolah</option>
+                            <option value="SD/sederajat">SD/sederajat</option>
+                            <option value="SMP/sederajat">SMP/sederajat</option>
+                            <option value="SMA/sederajat">SMA/sederajat</option>
+                            <option value="Diploma">Diploma</option>
+                            <option value="S1">S1</option>
+                            <option value="S2">S2</option>
+                            <option value="S3">S3</option>
+                            <option value="Lainnya">Lainnya</option>
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCreatePatientForSchedule}
+                          disabled={isCreatingPatient || !newPatientForm.fullName.trim() || !newPatientForm.identityDocumentNumber.trim() || !newPatientForm.placeOfBirth.trim() || !newPatientForm.dateOfBirth || !newPatientForm.gender}
+                          className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-[11px] font-bold disabled:opacity-50"
+                        >
+                          {isCreatingPatient ? "Menyimpan pasien..." : "Simpan & Pilih Pasien"}
+                        </button>
+                      </div>
+                    )}
                   </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Sumber Jadwal</label>
+                <select
+                  value={bookingSource}
+                  onChange={(event) => setBookingSource(event.target.value as BookingSource)}
+                  className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium"
+                >
+                  <option value={BookingSource.PATIENT_PORTAL}>Online</option>
+                  <option value={BookingSource.WHATSAPP}>WhatsApp</option>
+                  <option value={BookingSource.FRONT_DESK}>Front Desk</option>
+                  <option value={BookingSource.WALK_IN}>Walk-In</option>
+                </select>
+                {bookingSource === BookingSource.WALK_IN && (
+                  <p className="mt-1 text-[10px] text-slate-500">Walk-In tetap dijadwalkan pada slot dokter yang tersedia. Check-In dilakukan saat pasien siap atau waktunya mendekat.</p>
                 )}
               </div>
 
@@ -1035,7 +2033,13 @@ export const BookingManagement: React.FC = () => {
                         {slot} WIB
                       </option>
                     ))}
+                    {availableTimeSlots.length === 0 && (
+                      <option value="" disabled>Tidak ada slot kosong pada jadwal dokter ini</option>
+                    )}
                   </select>
+                  {formDoctorId && availableTimeSlots.length === 0 && (
+                    <p className="mt-1 text-[10px] text-amber-700">Semua slot dokter ini sudah terisi. Pilih tanggal atau dokter lain untuk melihat slot yang tersedia.</p>
+                  )}
                 </div>
               </div>
 
@@ -1083,11 +2087,11 @@ export const BookingManagement: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCreatingPatient || !selectedPatient || !formTimeSlot || availableTimeSlots.length === 0}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-colors shadow-sm disabled:opacity-50"
                   id="btn-submit-booking"
                 >
-                  {isSubmitting ? "Menyimpan..." : "Simpan Booking"}
+                  {isSubmitting ? "Menyimpan..." : "Simpan Jadwal"}
                 </button>
               </div>
             </form>
@@ -1095,75 +2099,456 @@ export const BookingManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Check-in Modal */}
-      {isCheckInModalOpen && checkInBooking && (
+      {selectedBooking && (
+        <div className="fixed inset-0 z-[150] bg-slate-900/40 flex justify-end" onClick={() => setSelectedBooking(null)}>
+          <aside
+            className="h-full w-full max-w-md bg-white shadow-2xl flex flex-col"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Detail jadwal pasien"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="p-5 border-b border-slate-200 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="font-extrabold text-slate-900">{patientProfileForDetail?.fullName || patientProfileForDetail?.name || selectedBooking.patientNameSnapshot || "Pasien"}</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  {formatIndonesianDate(getOperationalDateString(selectedBooking.bookingDateTime))} · {getOperationalTimeString(selectedBooking.bookingDateTime)} WIB
+                </p>
+              </div>
+              <button type="button" onClick={() => setSelectedBooking(null)} aria-label="Tutup detail" className="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
+              {rescheduleSuccess && (
+                <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  {rescheduleSuccess}
+                </div>
+              )}
+              {bookingCheckInError && (
+                <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {bookingCheckInError}
+                </div>
+              )}
+              {patientEditSuccess && (
+                <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  {patientEditSuccess}
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${selectedBooking.status === BookingStatus.CANCELLED ? "bg-rose-100 text-rose-700" : selectedBooking.status === BookingStatus.RESCHEDULED ? "bg-violet-100 text-violet-700" : selectedBooking.status === BookingStatus.COMPLETED || completedBookingIds.has(selectedBooking.id) ? "bg-blue-100 text-blue-700" : checkedInBookingIds.has(selectedBooking.id) ? "bg-emerald-100 text-emerald-700" : selectedBooking.status === BookingStatus.CONFIRMED ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                  {selectedBooking.status === BookingStatus.CANCELLED ? "Dibatalkan" : selectedBooking.status === BookingStatus.RESCHEDULED ? "Dijadwalkan ulang" : selectedBooking.status === BookingStatus.COMPLETED || completedBookingIds.has(selectedBooking.id) ? "Selesai" : checkedInBookingIds.has(selectedBooking.id) ? "Sudah Check-In" : selectedBooking.status === BookingStatus.CONFIRMED ? "Dikonfirmasi" : "Terjadwal"}
+                </span>
+                <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
+                  {(selectedBooking.source || selectedBooking.channel) === BookingSource.PATIENT_PORTAL || (selectedBooking.source || selectedBooking.channel) === BookingSource.ANDROID ? "Online" : (selectedBooking.source || selectedBooking.channel) === BookingSource.WHATSAPP ? "WhatsApp" : (selectedBooking.source || selectedBooking.channel) === BookingSource.WALK_IN ? "Walk-In" : "Front Desk"}
+                </span>
+              </div>
+              <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-extrabold text-slate-800">Data pasien</h3>
+                    <p className="mt-0.5 text-[10px] text-slate-500">Lengkapi identitas yang belum diisi pasien online.</p>
+                  </div>
+                  {!isPatientEditorOpen && (
+                    <button
+                      type="button"
+                      onClick={handleOpenPatientEditor}
+                      className="shrink-0 rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 text-[10px] font-bold text-emerald-800 hover:bg-emerald-50"
+                    >
+                      Edit data pasien
+                    </button>
+                  )}
+                </div>
+                {isPatientEditorOpen ? (
+                  <form onSubmit={handleSavePatientProfile} className="mt-3 space-y-2.5">
+                    {patientEditError && (
+                      <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-700">{patientEditError}</div>
+                    )}
+                    {isPatientLoading ? (
+                      <p className="py-3 text-center text-xs text-slate-500">Memuat data pasien...</p>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          value={patientEditDraft.fullName}
+                          onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, fullName: event.target.value }))}
+                          placeholder="Nama lengkap *"
+                          aria-label="Nama lengkap pasien"
+                          required
+                          className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                        />
+                        <div className="grid grid-cols-[90px_1fr] gap-2">
+                          <select
+                            value={patientEditDraft.identityDocumentType}
+                            onChange={(event) => setPatientEditDraft((draft) => ({
+                              ...draft,
+                              identityDocumentType: event.target.value as "NIK" | "PASSPORT",
+                              identityDocumentNumber: ""
+                            }))}
+                            aria-label="Jenis identitas pasien"
+                            className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                          >
+                            <option value="NIK">NIK</option>
+                            <option value="PASSPORT">Paspor</option>
+                          </select>
+                          <input
+                            type="text"
+                            inputMode={patientEditDraft.identityDocumentType === "NIK" ? "numeric" : "text"}
+                            maxLength={patientEditDraft.identityDocumentType === "NIK" ? 16 : 20}
+                            value={patientEditDraft.identityDocumentNumber}
+                            onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, identityDocumentNumber: event.target.value.replace(/\s/g, "") }))}
+                            placeholder={patientEditDraft.identityDocumentType === "NIK" ? "NIK 16 digit *" : "Nomor paspor *"}
+                            aria-label="Nomor identitas pasien"
+                            required
+                            className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={patientEditDraft.placeOfBirth}
+                            onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, placeOfBirth: event.target.value }))}
+                            placeholder="Tempat lahir *"
+                            aria-label="Tempat lahir pasien"
+                            required
+                            className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                          />
+                          <input
+                            type="date"
+                            value={patientEditDraft.dateOfBirth}
+                            onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, dateOfBirth: event.target.value }))}
+                            max={getTodayDateString()}
+                            aria-label="Tanggal lahir pasien"
+                            required
+                            className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                          />
+                        </div>
+                        <select
+                          value={patientEditDraft.gender}
+                          onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, gender: event.target.value as "L" | "P" }))}
+                          aria-label="Jenis kelamin pasien"
+                          className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                        >
+                          <option value="L">Laki-laki</option>
+                          <option value="P">Perempuan</option>
+                        </select>
+                        <div className="border-t border-emerald-200 pt-2">
+                          <p className="text-[10px] font-bold text-slate-700">Data kontak & sosial (opsional)</p>
+                        </div>
+                        <input
+                          type="tel"
+                          value={patientEditDraft.phone}
+                          onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, phone: event.target.value }))}
+                          placeholder="Nomor HP/WhatsApp"
+                          aria-label="Nomor telepon pasien"
+                          className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                        />
+                        <input
+                          type="text"
+                          value={patientEditDraft.address}
+                          onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, address: event.target.value }))}
+                          placeholder="Alamat lengkap"
+                          aria-label="Alamat pasien"
+                          className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={patientEditDraft.occupation}
+                            onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, occupation: event.target.value }))}
+                            placeholder="Pekerjaan"
+                            aria-label="Pekerjaan pasien"
+                            className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                          />
+                          <select
+                            value={patientEditDraft.religion}
+                            onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, religion: event.target.value }))}
+                            aria-label="Agama atau kepercayaan pasien"
+                            className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                          >
+                            <option value="">Agama / kepercayaan</option>
+                            <option value="Islam">Islam</option>
+                            <option value="Kristen">Kristen</option>
+                            <option value="Katolik">Katolik</option>
+                            <option value="Hindu">Hindu</option>
+                            <option value="Buddha">Buddha</option>
+                            <option value="Konghucu">Konghucu</option>
+                            <option value="Kepercayaan lainnya">Kepercayaan lainnya</option>
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={patientEditDraft.maritalStatus}
+                            onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, maritalStatus: event.target.value }))}
+                            aria-label="Status pernikahan pasien"
+                            className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                          >
+                            <option value="">Status pernikahan</option>
+                            <option value="Belum menikah">Belum menikah</option>
+                            <option value="Menikah">Menikah</option>
+                            <option value="Cerai hidup">Cerai hidup</option>
+                            <option value="Cerai mati">Cerai mati</option>
+                          </select>
+                          <select
+                            value={patientEditDraft.education}
+                            onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, education: event.target.value }))}
+                            aria-label="Pendidikan terakhir pasien"
+                            className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                          >
+                            <option value="">Pendidikan terakhir</option>
+                            <option value="Tidak sekolah">Tidak sekolah</option>
+                            <option value="SD/sederajat">SD/sederajat</option>
+                            <option value="SMP/sederajat">SMP/sederajat</option>
+                            <option value="SMA/sederajat">SMA/sederajat</option>
+                            <option value="Diploma">Diploma</option>
+                            <option value="S1">S1</option>
+                            <option value="S2">S2</option>
+                            <option value="S3">S3</option>
+                            <option value="Lainnya">Lainnya</option>
+                          </select>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <button type="button" onClick={() => { setIsPatientEditorOpen(false); setPatientEditError(null); }} className="rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-200">
+                            Batal
+                          </button>
+                          <button type="submit" disabled={isPatientSaving} className="rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                            {isPatientSaving ? "Menyimpan..." : "Simpan data pasien"}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </form>
+                ) : (
+                  <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">No. RM</span><span className="text-slate-700">{patientProfileForDetail?.medicalRecordNumber || "Belum ada"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Identitas</span><span className="text-slate-700">{patientProfileForDetail?.identityDocumentType || "Belum diisi"}{patientProfileForDetail?.identityDocumentNumber ? ` ••••${patientProfileForDetail.identityDocumentNumber.slice(-4)}` : ""}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Tempat, tanggal lahir</span><span className="text-slate-700">{patientProfileForDetail?.placeOfBirth || "Belum diisi"}{patientProfileForDetail?.dateOfBirth ? `, ${patientProfileForDetail.dateOfBirth}` : ""}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Jenis kelamin</span><span className="text-slate-700">{patientProfileForDetail?.gender === "P" ? "Perempuan" : patientProfileForDetail?.gender === "L" ? "Laki-laki" : "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Telepon</span><span className="text-slate-700">{patientProfileForDetail?.phone || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Alamat</span><span className="text-slate-700">{patientProfileForDetail?.address || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Pekerjaan</span><span className="text-slate-700">{patientProfileForDetail?.occupation || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Agama / kepercayaan</span><span className="text-slate-700">{patientProfileForDetail?.religion || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Status pernikahan</span><span className="text-slate-700">{patientProfileForDetail?.maritalStatus || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Pendidikan</span><span className="text-slate-700">{patientProfileForDetail?.education || "Belum diisi"}</span></div>
+                  </div>
+                )}
+              </section>
+              <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
+                <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Dokter</span><span className="text-xs font-semibold text-slate-800">{selectedBooking.doctorNameSnapshot || "Dokter"}</span></div>
+                <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Cabang</span><span className="text-xs font-semibold text-slate-800">{selectedBooking.branchNameSnapshot || "Klinik"}</span></div>
+                <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Pasien</span><span className="text-xs font-semibold text-slate-800">{selectedBooking.patientNameSnapshot || "Pasien"}</span><span className="block text-[10px] text-slate-500 mt-0.5">No. RM: {patients.find((patient) => patient.id === selectedBooking.patientId)?.medicalRecordNumber || "Belum ada"}</span></div>
+                <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Keluhan / Catatan</span><span className="text-xs text-slate-700">{selectedBooking.notes || selectedBooking.complaint || "Belum dicatat"}</span></div>
+                {selectedBooking.plannedTreatments && selectedBooking.plannedTreatments.length > 0 && (
+                  <div className="p-3"><span className="block text-[10px] uppercase font-bold text-slate-400">Rencana tindakan (estimasi)</span><span className="text-xs text-slate-700">{getPlannedTreatmentSummary(selectedBooking.plannedTreatments)} · {getPlannedTreatmentDurationMinutes(selectedBooking.plannedTreatments)} menit</span></div>
+                )}
+              </div>
+              {selectedBooking.rescheduledFromBookingId && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs">
+                  <p className="font-bold text-violet-800">Jadwal pengganti</p>
+                  <p className="mt-1 text-violet-700">
+                    Menggantikan jadwal {(() => {
+                      const previousBooking = bookings.find((booking) => booking.id === selectedBooking.rescheduledFromBookingId);
+                      return previousBooking
+                        ? `${formatIndonesianDate(getOperationalDateString(previousBooking.bookingDateTime))} pukul ${getOperationalTimeString(previousBooking.bookingDateTime)}`
+                        : "sebelumnya";
+                    })()}.
+                  </p>
+                  {selectedBooking.rescheduleReason && <p className="mt-1 text-violet-700">Alasan: {selectedBooking.rescheduleReason}</p>}
+                </div>
+              )}
+              {selectedBooking.status === BookingStatus.RESCHEDULED && (() => {
+                const replacement = bookings.find((booking) => booking.rescheduledFromBookingId === selectedBooking.id);
+                return replacement ? (
+                  <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs">
+                    <p className="font-bold text-violet-800">Jadwal pengganti</p>
+                    <p className="mt-1 text-violet-700">
+                      {formatIndonesianDate(getOperationalDateString(replacement.bookingDateTime))} pukul {getOperationalTimeString(replacement.bookingDateTime)} · {replacement.doctorNameSnapshot || "Dokter"}
+                    </p>
+                    {replacement.rescheduleReason && <p className="mt-1 text-violet-700">Alasan: {replacement.rescheduleReason}</p>}
+                  </div>
+                ) : null;
+              })()}
+            </div>
+            {(selectedBooking.status === BookingStatus.PENDING || selectedBooking.status === BookingStatus.CONFIRMED) &&
+              !checkedInBookingIds.has(selectedBooking.id) &&
+              !completedBookingIds.has(selectedBooking.id) && (
+                <div className="space-y-2.5 border-t border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.45)]">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenReschedule(selectedBooking)}
+                    className="group flex min-h-[58px] w-full items-center gap-3 rounded-2xl border border-violet-600 bg-gradient-to-r from-violet-600 via-violet-600 to-indigo-600 px-3.5 py-2.5 text-left shadow-md shadow-violet-900/20 transition-all hover:-translate-y-0.5 hover:from-violet-700 hover:via-violet-700 hover:to-indigo-700 hover:shadow-lg hover:shadow-violet-900/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 active:translate-y-0"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white ring-1 ring-inset ring-white/20 transition-colors group-hover:bg-white/20">
+                      <RefreshCw className="h-[18px] w-[18px]" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-extrabold leading-5 text-white">Jadwal Ulang</span>
+                      <span className="block text-[10px] font-medium leading-4 text-violet-100">Pilih waktu kunjungan yang baru</span>
+                    </span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-violet-100 transition-transform group-hover:translate-x-0.5 group-hover:text-white" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBookingToCancel(selectedBooking);
+                      setSelectedBooking(null);
+                    }}
+                    className="group flex min-h-[58px] w-full items-center gap-3 rounded-2xl border border-rose-600 bg-gradient-to-r from-rose-600 via-rose-600 to-red-600 px-3.5 py-2.5 text-left shadow-md shadow-rose-900/20 transition-all hover:-translate-y-0.5 hover:from-rose-700 hover:via-rose-700 hover:to-red-700 hover:shadow-lg hover:shadow-rose-900/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 active:translate-y-0"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white ring-1 ring-inset ring-white/20 transition-colors group-hover:bg-white/20">
+                      <XCircle className="h-[18px] w-[18px]" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-extrabold leading-5 text-white">Batalkan Jadwal</span>
+                      <span className="block text-[10px] font-medium leading-4 text-rose-100">Batalkan kunjungan pasien ini</span>
+                    </span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-rose-100 transition-transform group-hover:translate-x-0.5 group-hover:text-white" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleOpenCheckInModal(selectedBooking);
+                    }}
+                    disabled={isCheckInSubmitting}
+                    className="flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-600 to-teal-600 px-4 py-3 text-sm font-extrabold text-white shadow-lg shadow-emerald-900/15 transition-all hover:-translate-y-0.5 hover:from-emerald-700 hover:via-emerald-700 hover:to-teal-700 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 active:translate-y-0 disabled:cursor-wait disabled:opacity-70"
+                  >
+                    {isCheckInSubmitting
+                      ? <RefreshCw className="h-5 w-5 shrink-0 animate-spin" />
+                      : <UserCheck className="h-5 w-5 shrink-0" />}
+                    <span>{isCheckInSubmitting ? "Memproses Check-In..." : "Check-In Pasien"}</span>
+                  </button>
+                </div>
+              )}
+            {(selectedBooking.status === BookingStatus.PENDING || selectedBooking.status === BookingStatus.CONFIRMED) &&
+              (checkedInBookingIds.has(selectedBooking.id) || completedBookingIds.has(selectedBooking.id)) && (
+                <div className="p-4 border-t border-slate-200">
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {completedBookingIds.has(selectedBooking.id)
+                      ? "Jadwal ini sudah selesai dilayani, jadi tidak dapat dijadwalkan ulang."
+                      : "Pasien sudah Check-In, jadi jadwal ini tidak dapat dijadwalkan ulang."}
+                  </p>
+                </div>
+              )}
+          </aside>
+        </div>
+      )}
+
+      {isRescheduleOpen && selectedBooking && (
         <div
-          className="fixed inset-0 z-[200] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in modal-safe-layer"
-          id="modal-checkin"
+          className="fixed inset-0 z-[190] bg-slate-900/50 flex items-center justify-center p-4"
           role="dialog"
           aria-modal="true"
-          aria-label="Check-in kedatangan pasien"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
+          aria-label="Jadwalkan ulang pasien"
+          onClick={() => !isRescheduling && setIsRescheduleOpen(false)}
         >
-          <div
-            className="relative z-[201] bg-white rounded-2xl max-w-md w-full p-6 border border-slate-100 shadow-xl space-y-4 pointer-events-auto modal-safe-panel"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
+          <form
+            onSubmit={handleSaveReschedule}
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-emerald-600" />
-                Check-in Kedatangan Pasien
-              </h3>
-              <button onClick={() => setIsCheckInModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                ✕
-              </button>
-            </div>
-
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1">
-              <div className="font-bold text-emerald-900 text-sm">
-                {checkInBooking.patientNameSnapshot}
+            <header className="p-5 border-b border-slate-200">
+              <h2 className="text-lg font-extrabold text-slate-900">Jadwal Ulang</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Jadwal lama pasien {selectedBooking.patientNameSnapshot || "Pasien"} akan disimpan sebagai riwayat.
+              </p>
+            </header>
+            <div className="p-5 space-y-4">
+              {rescheduleError && (
+                <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {rescheduleError}
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Cabang</label>
+                <div className="w-full rounded-lg bg-slate-100 border border-slate-200 px-3 py-2.5 text-sm text-slate-600">
+                  {selectedBooking.branchNameSnapshot || "Cabang pasien (tetap)"}
+                </div>
               </div>
-              <div className="text-xs text-emerald-700">
-                Jadwal Booking: {getOperationalTimeString(checkInBooking.bookingDateTime)} WIB ({checkInBooking.doctorNameSnapshot})
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="reschedule-date" className="block text-xs font-bold text-slate-700 mb-1">Tanggal baru</label>
+                  <input
+                    id="reschedule-date"
+                    type="date"
+                    required
+                    value={rescheduleDate}
+                    onChange={(event) => {
+                      setRescheduleDate(event.target.value);
+                      setRescheduleDoctorId("");
+                      setRescheduleTimeSlot("");
+                    }}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reschedule-doctor" className="block text-xs font-bold text-slate-700 mb-1">Dokter</label>
+                  <select
+                    id="reschedule-doctor"
+                    required
+                    value={rescheduleDoctorId}
+                    onChange={(event) => {
+                      setRescheduleDoctorId(event.target.value);
+                      setRescheduleTimeSlot("");
+                    }}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                  >
+                    <option value="">Pilih dokter</option>
+                    {rescheduleDoctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label htmlFor="reschedule-slot" className="block text-xs font-bold text-slate-700 mb-1">Slot waktu tersedia</label>
+                <select
+                  id="reschedule-slot"
+                  required
+                  value={rescheduleTimeSlot}
+                  onChange={(event) => setRescheduleTimeSlot(event.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                >
+                  <option value="">Pilih slot waktu</option>
+                  {rescheduleTimeSlots.map((slot) => <option key={slot} value={slot}>{slot} WIB</option>)}
+                </select>
+                {rescheduleDate && rescheduleSchedules.length === 0 && (
+                  <p className="mt-1 text-[11px] text-amber-700">Tidak ada jadwal dokter aktif di cabang ini pada tanggal tersebut.</p>
+                )}
+                {rescheduleDoctorId && rescheduleTimeSlots.length === 0 && rescheduleSchedules.length > 0 && (
+                  <p className="mt-1 text-[11px] text-amber-700">Tidak ada slot kosong untuk durasi tindakan ini. Pilih tanggal atau dokter lain.</p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="reschedule-reason" className="block text-xs font-bold text-slate-700 mb-1">Alasan (opsional)</label>
+                <textarea
+                  id="reschedule-reason"
+                  rows={2}
+                  maxLength={500}
+                  value={rescheduleReason}
+                  onChange={(event) => setRescheduleReason(event.target.value)}
+                  placeholder="Contoh: pasien meminta perubahan jadwal"
+                  className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                />
               </div>
             </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Keluhan Utama Kedatangan Aktual:
-              </label>
-              <textarea
-                rows={3}
-                value={checkInComplaint}
-                onChange={(e) => setCheckInComplaint(e.target.value)}
-                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <footer className="flex justify-end gap-2 p-4 bg-slate-50 border-t border-slate-200">
               <button
                 type="button"
-                onClick={() => setIsCheckInModalOpen(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors"
+                disabled={isRescheduling}
+                onClick={() => setIsRescheduleOpen(false)}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50"
               >
                 Batal
               </button>
               <button
-                type="button"
-                onClick={handleConfirmCheckIn}
-                disabled={isCheckInSubmitting}
-                className="relative z-[202] px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-colors shadow-sm disabled:opacity-50 pointer-events-auto"
-                id="btn-confirm-checkin"
+                type="submit"
+                disabled={isRescheduling || !rescheduleTimeSlot || rescheduleTimeSlots.length === 0}
+                className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isCheckInSubmitting ? "Memproses..." : "Konfirmasi Kedatangan"}
+                {isRescheduling ? "Menyimpan..." : "Simpan Jadwal Baru"}
               </button>
-            </div>
-          </div>
+            </footer>
+          </form>
         </div>
       )}
 
+      {/* Check-in Modal */}
       {/* Modal Konfirmasi Batalkan Booking */}
       {bookingToCancel && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">

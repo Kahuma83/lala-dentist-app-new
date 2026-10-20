@@ -247,9 +247,16 @@ export class MockPatientRepository implements PatientRepository {
       fullName: nameToUse,
       phone: patientData.phone || "",
       email: patientData.email || "",
+      identityDocumentType: patientData.identityDocumentType,
+      identityDocumentNumber: patientData.identityDocumentNumber?.trim() || "",
+      placeOfBirth: patientData.placeOfBirth?.trim() || "",
       dateOfBirth: patientData.dateOfBirth || "1990-01-01",
       gender: patientData.gender || "L",
       address: patientData.address || "",
+      occupation: patientData.occupation?.trim() || "",
+      religion: patientData.religion?.trim() || "",
+      maritalStatus: patientData.maritalStatus?.trim() || "",
+      education: patientData.education?.trim() || "",
       medicalHistoryNotes: patientData.medicalHistoryNotes || "",
       acquisitionSource: patientData.acquisitionSource || "UNKNOWN",
       referralName: patientData.acquisitionSource === "REFERRAL" ? patientData.referralName?.trim() || undefined : undefined,
@@ -1838,17 +1845,20 @@ export class MockBookingRepository implements BookingRepository {
     }
 
     // 6. Slot conflict validation (Section 22)
+    const requestedStart = new Date(bookingData.bookingDateTime).getTime();
+    const requestedDuration = getPlannedTreatmentDurationMinutes(bookingData.plannedTreatments || [], 30);
+    const requestedEnd = requestedStart + requestedDuration * 60_000;
     const existingConflict = db.bookings.find((b) => {
-      if (b.status === BookingStatus.CANCELLED) return false;
-      return (
-        b.doctorId === bookingData.doctorId &&
-        b.branchId === bookingData.branchId &&
-        b.bookingDateTime === bookingData.bookingDateTime
-      );
+      if (b.status !== BookingStatus.PENDING && b.status !== BookingStatus.CONFIRMED) return false;
+      if (b.doctorId !== bookingData.doctorId || b.branchId !== bookingData.branchId) return false;
+      const bookedStart = new Date(b.bookingDateTime).getTime();
+      if (!Number.isFinite(bookedStart) || !Number.isFinite(requestedStart)) return false;
+      const bookedDuration = getPlannedTreatmentDurationMinutes(b.plannedTreatments || [], 30);
+      return requestedStart < bookedStart + bookedDuration * 60_000 && bookedStart < requestedEnd;
     });
 
     if (existingConflict) {
-      throw new Error("Dokter sudah memiliki jadwal booking aktif pada slot waktu tersebut di cabang ini");
+      throw new Error("Jadwal dokter bertabrakan dengan booking aktif lain di cabang ini");
     }
 
     const now = new Date().toISOString();
@@ -1868,6 +1878,8 @@ export class MockBookingRepository implements BookingRepository {
       branchNameSnapshot: branch.name,
       source,
       channel: source,
+      rescheduledFromBookingId: bookingData.rescheduledFromBookingId,
+      rescheduleReason: bookingData.rescheduleReason,
       status: bookingData.status || BookingStatus.PENDING,
       scheduleVerified: bookingData.scheduleVerified !== undefined ? bookingData.scheduleVerified : true,
       plannedTreatments: bookingData.plannedTreatments || [],
@@ -2323,6 +2335,7 @@ export class MockQueueRepository implements QueueRepository {
       patientId?: string;
       patientNameSnapshot?: string;
       doctorNameSnapshot?: string;
+      bookingTimeSnapshot?: string;
     }
   ): Promise<QueueItem> {
     // 1. Visit validation
@@ -2404,16 +2417,16 @@ export class MockQueueRepository implements QueueRepository {
       return q.branchId === visit.branchId && q.doctorId === doctorId && qDate === operationalDate;
     });
 
-    const sequenceOrder = sameScope.length + 1;
+    const sequenceOrder = sameScope.reduce((highest, item) => Math.max(highest, item.sequenceOrder || 0), 0) + 1;
     const doctorPrefix = doctor.name ? doctor.name.replace(/^drg\.\s*/i, "").charAt(0).toUpperCase() : "A";
     const queueNumber = `${doctorPrefix}-${String(sequenceOrder).padStart(2, "0")}`;
 
     const estimatedDurationMinutes = options?.estimatedDurationMinutes ?? getPlannedTreatmentDurationMinutes(options?.plannedTreatments || visit.plannedTreatments);
 
-    let bookingTimeSnapshot: string | undefined = undefined;
+    let bookingTimeSnapshot: string | undefined = options?.bookingTimeSnapshot;
     if (visit.bookingId) {
       const bk = db.bookings.find((b) => b.id === visit.bookingId);
-      if (bk) {
+      if (bk && !bookingTimeSnapshot) {
         bookingTimeSnapshot = bk.bookingDateTime;
       }
     }
