@@ -354,7 +354,10 @@ export const PatientPortalHome: React.FC = () => {
   const activePromotion = visiblePromotions[activePromotionIndex];
   const activePatientBooking = currentUser?.patientId
     ? bookings
-      .filter((booking) => activeBookingStatuses.has(booking.status))
+      .filter((booking) =>
+        booking.patientId === currentUser.patientId
+        && activeBookingStatuses.has(booking.status)
+      )
       .sort((a, b) => new Date(a.bookingDateTime).getTime() - new Date(b.bookingDateTime).getTime())[0]
     : undefined;
 

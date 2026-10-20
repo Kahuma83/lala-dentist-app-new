@@ -79,19 +79,19 @@ describe("patient portal booking time slots", () => {
   it("allows only one unfinished patient-portal booking across dates and branches", () => {
     const migration = fs.readFileSync(path.resolve(
       process.cwd(),
-      "supabase/migrations/20261109000000_prevent_multiple_active_patient_portal_bookings.sql"
+      "supabase/migrations/20261020000003_enforce_one_active_patient_booking.sql"
     ), "utf8");
     const portal = fs.readFileSync(path.resolve(process.cwd(), "src/pages/PatientPortalHome.tsx"), "utf8");
     const server = fs.readFileSync(path.resolve(process.cwd(), "server.js"), "utf8");
 
-    expect(migration).toContain("NEW.source IS DISTINCT FROM 'PATIENT_PORTAL'");
+    expect(migration).toContain("COALESCE(NEW.source, '') NOT IN ('PATIENT_PORTAL', 'ANDROID')");
     expect(migration).toContain("hashtextextended(NEW.patient_id::TEXT, 0)");
-    expect(migration).toContain("b.status IN ('PENDING', 'CONFIRMED', 'RESCHEDULED')");
-    expect(migration).not.toContain("b.branch_id = NEW.branch_id");
-    expect(migration).not.toContain("booking_day");
+    expect(migration).toContain("existing.status IN ('PENDING', 'CONFIRMED')");
+    expect(migration).toContain("existing.id IS DISTINCT FROM NEW.id");
+    expect(migration).not.toContain("existing.branch_id = NEW.branch_id");
     expect(portal).toContain("const activePatientBooking = currentUser?.patientId");
     expect(portal).toContain("|| !!activePatientBooking");
-    expect(server).toContain(".in('status', ['PENDING', 'CONFIRMED', 'RESCHEDULED'])");
+    expect(server).toContain(".in('status', ['PENDING', 'CONFIRMED'])");
     expect(server).toContain("Anda masih memiliki janji temu yang belum selesai.");
   });
 

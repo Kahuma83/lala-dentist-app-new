@@ -499,7 +499,7 @@ app.post('/api/bookings', async (req, res) => {
         .from('bookings')
         .select('id')
         .eq('patient_id', payload.patient_id)
-        .in('status', ['PENDING', 'CONFIRMED', 'RESCHEDULED'])
+        .in('status', ['PENDING', 'CONFIRMED'])
         .limit(1);
 
       if (activePatientBookingError) {
