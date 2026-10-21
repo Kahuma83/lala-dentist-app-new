@@ -71,7 +71,7 @@ function createSuccessfulDoctorFetch(options: {
     if (url.includes("/storage/v1/object/sign/staff-profile-photos")) {
       return new Response(JSON.stringify((JSON.parse(String(init?.body || "{}")).paths || []).map((path: string) => ({
         path,
-        signedURL: `/storage/v1/object/sign/staff-profile-photos/${path}?token=test-token`
+        signedURL: `/object/sign/staff-profile-photos/${path}?token=test-token`
       }))), { status: 200 });
     }
     if (url.includes("/rest/v1/chat_groups?") && init?.method === "PATCH") {

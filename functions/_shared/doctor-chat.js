@@ -235,7 +235,15 @@ async function createStaffPhotoUrls(config, paths) {
   for (const row of signedRows) {
     if (!row?.path || !row?.signedURL) continue;
     const signedUrl = String(row.signedURL);
-    urls.set(row.path, signedUrl.startsWith("/") ? `${config.clinicUrl}${signedUrl}` : signedUrl);
+    if (signedUrl.startsWith("https://")) {
+      urls.set(row.path, signedUrl);
+    } else if (signedUrl.startsWith("/storage/v1/")) {
+      urls.set(row.path, `${config.clinicUrl}${signedUrl}`);
+    } else if (signedUrl.startsWith("/object/")) {
+      urls.set(row.path, `${config.clinicUrl}/storage/v1${signedUrl}`);
+    } else {
+      console.warn("[pages-function] Supabase returned an unsupported staff avatar URL.");
+    }
   }
   return urls;
 }
