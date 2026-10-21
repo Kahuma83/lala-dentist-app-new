@@ -124,6 +124,11 @@
 
 .patient-portal-shell {
   font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  width: 100%;
+  min-width: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: clip;
   background-color: #faf8f2 !important;
   background-image:
     radial-gradient(ellipse at 8% 12%, rgba(195, 164, 98, 0.1), transparent 30%),
@@ -134,6 +139,7 @@
 }
 
 .patient-portal-header {
+  padding-top: env(safe-area-inset-top);
   box-shadow: 0 4px 12px rgba(73, 57, 29, 0.2);
 }
 
@@ -149,6 +155,31 @@
     radial-gradient(circle at 30% 23%, rgba(255, 255, 255, 0.82), transparent 32%),
     linear-gradient(140deg, #f0dfb0 0%, #c7a658 58%, #a98237 100%);
   box-shadow: 0 0 0 2px rgba(173, 137, 62, 0.48), 0 4px 11px rgba(92, 66, 23, 0.2);
+}
+
+.patient-portal-digital-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: min(100%, 420px);
+  aspect-ratio: 85.6 / 54;
+  background: #fffefa;
+  box-shadow: 0 16px 36px rgba(91, 68, 27, 0.2);
+}
+
+.patient-portal-digital-card-header {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255, 255, 255, 0.45), transparent 38%),
+    radial-gradient(rgba(255, 255, 255, 0.2) 0.8px, transparent 0.8px),
+    linear-gradient(120deg, #916b1c 0%, #c5a059 34%, #e1b951 68%, #aa853a 100%);
+  background-size: auto, 16px 16px, auto;
+}
+
+.patient-portal-digital-card-body {
+  background:
+    radial-gradient(rgba(171, 145, 88, 0.1) 0.7px, transparent 0.7px),
+    linear-gradient(145deg, #fffefa 0%, #ffffff 58%, #f7f0e1 100%);
+  background-size: 15px 15px, auto;
 }
 
 .patient-portal-signout {
@@ -330,6 +361,7 @@
 }
 
 .patient-portal-mobile-nav {
+  box-sizing: border-box;
   border-color: rgba(145, 107, 42, 0.35);
   background:
     radial-gradient(rgba(132, 96, 35, 0.14) 0.75px, transparent 0.75px),

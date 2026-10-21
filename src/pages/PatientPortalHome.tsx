@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import QRCode from "qrcode";
 import {
   AlertCircle,
   Building2,
@@ -10,6 +11,7 @@ import {
   ChevronRight,
   CircleHelp,
   Clock,
+  CreditCard,
   FileText,
   History,
   Home,
@@ -50,6 +52,15 @@ import { getTodayDateString, getTomorrowDateString, getOperationalDateString, to
 import { getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
 import { getVisitStatusForQueueStatus } from "../utils/bookingQueueGuards";
 import { getVisiblePromotions } from "../utils/promotionUtils";
+import { supabase } from "../lib/supabase";
+
+interface PatientCardDetails {
+  name: string;
+  fullName: string;
+  medicalRecordNumber: string;
+  address: string;
+  phone: string;
+}
 
 type PatientSection = "home" | "appointments" | "queue" | "history" | "profile";
 
@@ -172,6 +183,12 @@ export const PatientPortalHome: React.FC = () => {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [patientCardProfile, setPatientCardProfile] = useState<PatientCardDetails | null>(null);
+  const [patientCardProfileError, setPatientCardProfileError] = useState<string | null>(null);
+  const [isLoadingPatientCardProfile, setIsLoadingPatientCardProfile] = useState(false);
+  const [patientCardQrCode, setPatientCardQrCode] = useState<string | null>(null);
+  const [patientCardTokenExpiresAt, setPatientCardTokenExpiresAt] = useState<number | null>(null);
+  const [patientCardRefreshKey, setPatientCardRefreshKey] = useState(0);
   const isLoadingBookings = loading;
   const bookingError = loadWarnings.includes("bookings")
     ? "Gagal memuat janji temu pasien. Silakan coba muat ulang."
@@ -180,6 +197,86 @@ export const PatientPortalHome: React.FC = () => {
   const patientName = currentUser?.name || "Pasien";
   const initials = patientName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "P";
   const activeBranches = branches.filter((branch) => branch.isActive && branch.active !== false);
+
+  useEffect(() => {
+    const patientId = currentUser?.patientId;
+    if (!patientId) {
+      setPatientCardProfile(null);
+      setPatientCardQrCode(null);
+      setPatientCardTokenExpiresAt(null);
+      setPatientCardProfileError(null);
+      setIsLoadingPatientCardProfile(false);
+      return;
+    }
+
+    let active = true;
+    let requestInFlight = false;
+    const loadPatientCard = async () => {
+      if (!active || requestInFlight) return;
+      requestInFlight = true;
+      setIsLoadingPatientCardProfile(!patientCardProfile);
+      setPatientCardProfileError(null);
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw new Error(`Gagal memeriksa sesi pasien: ${sessionError.message}`);
+        const accessToken = data.session?.access_token;
+        if (!accessToken) throw new Error("Sesi login tidak ditemukan. Silakan masuk kembali.");
+
+        const response = await fetch("/api/patient-card/token", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const result = await response.json().catch(() => null) as {
+          message?: string;
+          token?: string;
+          expiresInSeconds?: number;
+          patient?: PatientCardDetails;
+        } | null;
+        if (!response.ok) throw new Error(result?.message || "Gagal membuat QR verifikasi pasien.");
+        if (
+          !result?.token ||
+          !result.patient ||
+          typeof result.patient.fullName !== "string" ||
+          typeof result.patient.medicalRecordNumber !== "string"
+        ) {
+          throw new Error("Respons kartu pasien dari server tidak lengkap.");
+        }
+
+        const qrCode = await QRCode.toDataURL(result.token, {
+          errorCorrectionLevel: "M",
+          margin: 1,
+          width: 220,
+          color: { dark: "#17233c", light: "#ffffff" }
+        });
+        if (!active) return;
+        setPatientCardProfile(result.patient);
+        setPatientCardQrCode(qrCode);
+        setPatientCardTokenExpiresAt(Date.now() + (result.expiresInSeconds || 90) * 1000);
+      } catch (loadError: unknown) {
+        if (!active) return;
+        setPatientCardProfile(null);
+        setPatientCardQrCode(null);
+        setPatientCardTokenExpiresAt(null);
+        setPatientCardProfileError(
+          loadError instanceof Error
+            ? `Kartu pasien gagal dimuat: ${loadError.message}`
+            : "Kartu pasien gagal dimuat. Silakan coba lagi."
+        );
+      } finally {
+        requestInFlight = false;
+        if (active) setIsLoadingPatientCardProfile(false);
+      }
+    };
+
+    void loadPatientCard();
+    const refreshTimer = window.setInterval(() => void loadPatientCard(), 60_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, [currentUser?.patientId, patientCardRefreshKey]);
+
   const patientVisits = useMemo(
     () => visits.filter((visit) => visit.patientId === currentUser?.patientId),
     [visits, currentUser?.patientId]
@@ -930,7 +1027,7 @@ export const PatientPortalHome: React.FC = () => {
   );
 
   return (
-    <main className="patient-portal-shell min-h-screen pb-28 text-slate-900 md:pb-0">
+    <main className="patient-portal-shell min-h-screen w-full min-w-0 pb-28 text-slate-900 md:pb-0">
       <header className="patient-portal-header sticky top-0 z-10 min-h-20 border-b border-[#916b1c]/40 bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c]">
         <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
           <div className="absolute inset-0 opacity-40">
@@ -995,7 +1092,7 @@ export const PatientPortalHome: React.FC = () => {
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-9">
+      <div className="mx-auto w-full min-w-0 max-w-6xl px-3 py-6 sm:px-6 sm:py-9">
         {error && <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{error}</div>}
         {bookingError && <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{bookingError}</div>}
         {section === "home" && loadWarnings.includes("promotion_media") && (
@@ -1007,7 +1104,7 @@ export const PatientPortalHome: React.FC = () => {
         {section === "home" && (
           <>
             <section
-              className={`patient-portal-hero relative flex flex-col justify-end overflow-hidden rounded-[1.5rem] text-white shadow-lg ${
+              className={`patient-portal-hero relative flex w-full min-w-0 flex-col justify-end overflow-hidden rounded-[1.5rem] text-white shadow-lg ${
                 activePromotion ? "aspect-[16/8] min-h-[180px] px-4 py-4 sm:aspect-[16/5] sm:min-h-[220px] sm:px-8 sm:py-6" : "min-h-[120px] px-4 py-4 sm:px-8 sm:py-5"
               }`}
               aria-label={activePromotion?.title ? `Promosi: ${activePromotion.title}` : "Informasi portal pasien"}
@@ -1471,7 +1568,91 @@ export const PatientPortalHome: React.FC = () => {
               <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">Profil</h1>
               <p className="mt-2 text-sm text-slate-500">Informasi akun yang digunakan untuk masuk ke portal pasien.</p>
             </div>
-            <article className="max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+            <section className="mb-5 max-w-2xl" aria-labelledby="patient-card-heading">
+              <div className="mb-3 flex items-center gap-2">
+                <CreditCard className="h-5 w-5 text-[#987b3b]" />
+                <h2 id="patient-card-heading" className="text-base font-bold text-slate-900">Kartu Pasien Digital</h2>
+              </div>
+              {isLoadingPatientCardProfile && !patientCardProfile ? (
+                <div role="status" className="rounded-2xl border border-[#e8dcc2] bg-white p-5 text-xs text-slate-500">
+                  Memuat kartu pasien...
+                </div>
+              ) : patientCardProfileError ? (
+                <div role="alert" className="rounded-xl bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+                  <p>{patientCardProfileError}</p>
+                  <button
+                    type="button"
+                    onClick={() => setPatientCardRefreshKey((key) => key + 1)}
+                    className="mt-2 font-bold underline underline-offset-2"
+                  >
+                    Coba muat ulang
+                  </button>
+                </div>
+              ) : patientCardProfile && patientCardQrCode ? (
+                <>
+                  <article className="patient-portal-digital-card mx-auto rounded-2xl" aria-label="Kartu identitas pasien digital">
+                    <div className="patient-portal-digital-card-header relative flex h-[31%] items-center gap-2.5 overflow-hidden px-3.5 sm:gap-3 sm:px-5">
+                      <div className="pointer-events-none absolute -right-7 -top-14 h-32 w-32 rounded-full bg-white/10 blur-2xl" aria-hidden="true" />
+                      <span className="relative flex h-8 w-8 shrink-0 items-center justify-center sm:h-10 sm:w-10">
+                        <LalaLogo src={branding?.logoUrl || "/logo-lala.svg"} className="h-full w-full" />
+                      </span>
+                      <div className="relative min-w-0">
+                        <p className="truncate text-xs font-extrabold tracking-wide text-white drop-shadow sm:text-sm">{clinicName}</p>
+                        <p className="mt-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-white/90 sm:text-[9px]">Kartu Pasien Digital</p>
+                      </div>
+                    </div>
+                    <div className="patient-portal-digital-card-body flex h-[69%] min-h-0 items-center gap-2.5 px-3 py-2 sm:gap-4 sm:px-5 sm:py-3">
+                      <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 sm:gap-2">
+                        <div className="min-w-0">
+                          <p className="text-[7px] font-bold uppercase tracking-[0.12em] text-[#a1844d] sm:text-[8px]">Nama</p>
+                          <p className="line-clamp-2 break-words text-[11px] font-extrabold leading-tight text-[#17233c] sm:text-sm">
+                            {patientCardProfile.fullName || patientCardProfile.name || patientName}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[7px] font-bold uppercase tracking-[0.12em] text-[#a1844d] sm:text-[8px]">Nomor rekam medis</p>
+                          <p className="break-all font-mono text-[10px] font-extrabold leading-tight text-[#684b16] sm:text-xs">
+                            {patientCardProfile.medicalRecordNumber.trim() || "Belum tersedia"}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[7px] font-bold uppercase tracking-[0.12em] text-[#a1844d] sm:text-[8px]">Alamat</p>
+                          <p className="line-clamp-2 break-words text-[8px] leading-tight text-slate-700 sm:text-[10px]">
+                            {patientCardProfile.address.trim() || "Belum tersedia"}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[7px] font-bold uppercase tracking-[0.12em] text-[#a1844d] sm:text-[8px]">HP</p>
+                          <p className="truncate text-[8px] leading-tight text-slate-700 sm:text-[10px]">
+                            {patientCardProfile.phone.trim() || "Belum tersedia"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-center gap-1">
+                        <img
+                          src={patientCardQrCode}
+                          alt="QR verifikasi kartu pasien"
+                          className="h-[clamp(4.5rem,24vw,7rem)] w-[clamp(4.5rem,24vw,7rem)] rounded-sm bg-white p-1"
+                        />
+                        <span className="text-[7px] font-bold uppercase tracking-wide text-[#684b16] sm:text-[8px]">QR verifikasi</span>
+                      </div>
+                    </div>
+                  </article>
+                  <p className="mt-2 flex items-start gap-1.5 text-[10px] leading-4 text-slate-500">
+                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#987b3b]" />
+                    <span>
+                      QR aktif sampai {patientCardTokenExpiresAt ? new Date(patientCardTokenExpiresAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"} dan diperbarui otomatis. Tunjukkan kepada petugas untuk verifikasi; bukan pengganti identitas resmi.
+                    </span>
+                  </p>
+                  {isLoadingPatientCardProfile && (
+                    <p role="status" className="mt-1 text-[10px] text-slate-400">Memperbarui QR...</p>
+                  )}
+                </>
+              ) : (
+                renderLinkNotice("Kartu pasien digital")
+              )}
+            </section>
+            <article className="mt-5 max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
               <div className="flex items-center gap-3 border-b border-slate-100 pb-5">
                 <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f2e6c8] text-sm font-bold text-[#775a21]">{initials}</span>
                 <div>
@@ -1575,14 +1756,14 @@ export const PatientPortalHome: React.FC = () => {
       </div>
 
       <nav aria-label="Navigasi portal pasien" className="patient-portal-mobile-nav fixed inset-x-0 bottom-0 z-20 border-t px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 backdrop-blur md:hidden">
-        <div className="mx-auto flex max-w-lg items-center justify-around">
+        <div className="mx-auto flex w-full max-w-lg items-center justify-around">
           {patientNavigation.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
               aria-current={section === id ? "page" : undefined}
               onClick={() => setSection(id)}
-              className={`patient-portal-nav-item flex min-w-16 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[10px] font-semibold transition ${
+              className={`patient-portal-nav-item flex min-w-0 flex-1 flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[10px] font-semibold transition ${
                 section === id ? "patient-portal-nav-active text-[#493919]" : "text-[#69552f] hover:bg-white/45 hover:text-[#493919]"
               }`}
             >
