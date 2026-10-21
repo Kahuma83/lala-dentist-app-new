@@ -1104,8 +1104,8 @@ export function AttendancePortal() {
   }
 
   return (
-    <main className="portal-shell">
-      <header className="topbar">
+    <main className={`portal-shell${activeTab === "chat" && staffContext.role === "DOCTOR" ? " portal-shell-chat" : ""}`}>
+      {!(activeTab === "chat" && staffContext.role === "DOCTOR") && <header className="topbar">
         <div className="brand-lockup">
           <img src="/portal-brand.png" alt="" />
           <div><strong>Lala Dentist</strong><span>Portal Pegawai</span></div>
@@ -1137,9 +1137,9 @@ export function AttendancePortal() {
             </button>
           </div>
         </details>
-      </header>
+      </header>}
 
-      <section className="welcome-card">
+      {!(activeTab === "chat" && staffContext.role === "DOCTOR") && <section className="welcome-card">
         <div className="welcome-profile">
           <div className="profile-photo-wrap">
             {profilePhotoUrl
@@ -1174,12 +1174,12 @@ export function AttendancePortal() {
           <Clock3 />
           <span>{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit" }).format(new Date())} WIB</span>
         </div>
-      </section>
+      </section>}
 
-      {errorMessage && <div className="notice error" role="alert"><AlertCircle />{errorMessage}</div>}
-      {successMessage && <div className="notice success" role="status"><CheckCircle2 />{successMessage}</div>}
+      {!(activeTab === "chat" && staffContext.role === "DOCTOR") && errorMessage && <div className="notice error" role="alert"><AlertCircle />{errorMessage}</div>}
+      {!(activeTab === "chat" && staffContext.role === "DOCTOR") && successMessage && <div className="notice success" role="status"><CheckCircle2 />{successMessage}</div>}
 
-      <nav className="portal-nav" aria-label="Menu portal pegawai">
+      {!(activeTab === "chat" && staffContext.role === "DOCTOR") && <nav className="portal-nav" aria-label="Menu portal pegawai">
         {portalTabs
           .filter(({ id }) => id !== "chat" || staffContext.role === "DOCTOR")
           .map(({ id, label, icon: Icon }) => (
@@ -1197,7 +1197,7 @@ export function AttendancePortal() {
             <span>{label}</span>
           </button>
           ))}
-      </nav>
+      </nav>}
 
       {activeTab === "home" && (
         <section className="portal-panel">
@@ -1223,7 +1223,10 @@ export function AttendancePortal() {
       )}
 
       {activeTab === "chat" && staffContext.role === "DOCTOR" && (
-        <DoctorGroupChat currentUserId={staffContext.userAccountId} />
+        <DoctorGroupChat
+          currentUserId={staffContext.userAccountId}
+          onBack={() => setActiveTab("home")}
+        />
       )}
 
       {activeTab === "attendance" && (
@@ -1570,7 +1573,7 @@ export function AttendancePortal() {
         </section>
       )}
 
-      {activeTab !== "schedule" && activeTab !== "overtime" && activeTab !== "payroll" && activeTab !== "profile" && isPanelLoading && (
+      {activeTab !== "schedule" && activeTab !== "overtime" && activeTab !== "payroll" && activeTab !== "profile" && activeTab !== "chat" && isPanelLoading && (
         <div className="notice warning compact"><RefreshCw className="spin" /> Memuat data portal...</div>
       )}
 
@@ -1583,7 +1586,7 @@ export function AttendancePortal() {
         aria-label="Ambil foto bukti absensi"
         onChange={(event) => void handlePhotoSelected(event)}
       />
-      <footer>Portal Pegawai Lala Dentist · Waktu dan lokasi absensi diverifikasi oleh server.</footer>
+      {activeTab !== "chat" && <footer>Portal Pegawai Lala Dentist · Waktu dan lokasi absensi diverifikasi oleh server.</footer>}
     </main>
   );
 }

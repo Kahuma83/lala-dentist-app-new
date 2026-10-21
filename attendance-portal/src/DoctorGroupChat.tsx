@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertCircle, Camera, Download, FileText, Image, LoaderCircle, MessageCircle, Paperclip, Send, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Camera, Download, FileText, Image, LoaderCircle, MessageCircle, Paperclip, Send, X } from "lucide-react";
 import {
   DoctorChatMessage,
   DoctorChatRealtimeStatus,
@@ -88,7 +88,7 @@ async function compressChatImage(file: File): Promise<File> {
   }
 }
 
-export function DoctorGroupChat({ currentUserId }: { currentUserId: string }) {
+export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: string; onBack: () => void }) {
   const [messages, setMessages] = useState<DoctorChatMessage[]>([]);
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [groupName, setGroupName] = useState("Grup Dokter");
@@ -272,6 +272,9 @@ export function DoctorGroupChat({ currentUserId }: { currentUserId: string }) {
   return (
     <section className="chat-panel" aria-label="Chat grup dokter">
       <header className="chat-header">
+        <button type="button" className="chat-back-button" onClick={onBack} aria-label="Kembali ke portal">
+          <ArrowLeft />
+        </button>
         <span className="chat-title-icon"><MessageCircle /></span>
         <div className="chat-title">
           <strong>{groupName}</strong>
