@@ -1,8 +1,10 @@
 const CHAT_GROUP_SLUG = "all-doctors";
 const CHAT_BUCKET = "doctor-group-chat-files";
+const STAFF_PHOTO_BUCKET = "staff-profile-photos";
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 400_000;
 const MAX_MESSAGE_LENGTH = 5000;
+const MAX_SEARCH_LENGTH = 100;
 
 const ALLOWED_ATTACHMENTS = new Map([
   [".jpg", ["image/jpeg"]],
@@ -118,7 +120,7 @@ export async function authenticateDoctor(request, env) {
   if (!authUser?.id) throw new ChatApiError("Sesi login tidak valid.", 401);
 
   const accountQuery = new URLSearchParams({
-    select: "id,name,role,active,doctor_id,auth_user_id",
+    select: "id,name,role,active,doctor_id,staff_id,auth_user_id",
     auth_user_id: `eq.${authUser.id}`,
     limit: "2"
   });
@@ -138,7 +140,7 @@ export async function authenticateDoctor(request, env) {
   }
 
   const doctorQuery = new URLSearchParams({
-    select: "id,name,active",
+    select: "id,name,active,staff_id,avatar_url,photo_url",
     id: `eq.${account.doctor_id}`,
     limit: "2"
   });
@@ -171,14 +173,115 @@ export async function authenticateDoctor(request, env) {
     actor: {
       clinicUserId: account.id,
       doctorId: account.doctor_id,
+      staffId: account.staff_id || doctors[0].staff_id || null,
+      avatarUrl: doctors[0].avatar_url || doctors[0].photo_url || null,
       name: String(doctors[0].name || account.name || "Dokter").slice(0, 150)
     }
   };
 }
 
+async function createStaffPhotoUrls(config, paths) {
+  const uniquePaths = Array.from(new Set(paths.filter((path) =>
+    typeof path === "string" &&
+    path.startsWith("staff-profile/") &&
+    !path.includes("..") &&
+    path.length <= 500
+  )));
+  if (!uniquePaths.length) return new Map();
+
+  const signedRows = await supabaseRequest({
+    url: config.clinicUrl,
+    apiKey: config.clinicSecret,
+    path: `/storage/v1/object/sign/${STAFF_PHOTO_BUCKET}`,
+    method: "POST",
+    body: { expiresIn: 3600, paths: uniquePaths }
+  });
+  const urls = new Map();
+  if (!Array.isArray(signedRows)) return urls;
+  for (const row of signedRows) {
+    if (!row?.path || !row?.signedURL) continue;
+    const signedUrl = String(row.signedURL);
+    urls.set(row.path, signedUrl.startsWith("/") ? `${config.clinicUrl}${signedUrl}` : signedUrl);
+  }
+  return urls;
+}
+
+async function getSenderAvatars(config, senderClinicUserIds) {
+  const userIds = Array.from(new Set(senderClinicUserIds.filter((id) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id || "")
+  )));
+  if (!userIds.length) return new Map();
+
+  const accounts = await supabaseRequest({
+    url: config.clinicUrl,
+    apiKey: config.clinicSecret,
+    path: `/rest/v1/user_accounts?${new URLSearchParams({
+      select: "id,doctor_id,staff_id",
+      id: `in.(${userIds.join(",")})`
+    })}`
+  });
+  const accountRows = Array.isArray(accounts) ? accounts : [];
+  const doctorIds = Array.from(new Set(accountRows.map((account) => account.doctor_id).filter(Boolean)));
+  const doctors = doctorIds.length
+    ? await supabaseRequest({
+        url: config.clinicUrl,
+        apiKey: config.clinicSecret,
+        path: `/rest/v1/dental_doctors?${new URLSearchParams({
+          select: "id,staff_id,avatar_url,photo_url",
+          id: `in.(${doctorIds.join(",")})`
+        })}`
+      })
+    : [];
+  const doctorRows = Array.isArray(doctors) ? doctors : [];
+  const staffIds = Array.from(new Set([
+    ...accountRows.map((account) => account.staff_id),
+    ...doctorRows.map((doctor) => doctor.staff_id)
+  ].filter(Boolean)));
+  const staff = staffIds.length
+    ? await supabaseRequest({
+        url: config.clinicUrl,
+        apiKey: config.clinicSecret,
+        path: `/rest/v1/staff?${new URLSearchParams({
+          select: "id,profile_photo_path",
+          id: `in.(${staffIds.join(",")})`
+        })}`
+      })
+    : [];
+  const staffRows = Array.isArray(staff) ? staff : [];
+  const doctorById = new Map(doctorRows.map((doctor) => [doctor.id, doctor]));
+  const staffById = new Map(staffRows.map((row) => [row.id, row]));
+  const photoPaths = accountRows.map((account) =>
+    staffById.get(account.staff_id || doctorById.get(account.doctor_id)?.staff_id)?.profile_photo_path
+  );
+  const signedPhotoUrls = await createStaffPhotoUrls(config, photoPaths);
+  const avatars = new Map();
+  for (const account of accountRows) {
+    const doctor = doctorById.get(account.doctor_id);
+    const staffId = account.staff_id || doctor?.staff_id;
+    const photoPath = staffById.get(staffId)?.profile_photo_path;
+    const publicAvatar = doctor?.avatar_url || doctor?.photo_url;
+    const safePublicAvatar = typeof publicAvatar === "string" &&
+      publicAvatar.length <= 2048 &&
+      publicAvatar.startsWith("https://")
+      ? publicAvatar
+      : null;
+    avatars.set(
+      account.id,
+      (photoPath && signedPhotoUrls.get(photoPath)) || safePublicAvatar
+    );
+  }
+  return avatars;
+}
+
 export async function listMessages(context) {
   const { config, group } = await authenticateDoctor(context.request, context.env);
   const requestUrl = new URL(context.request.url);
+  const searchTerm = (requestUrl.searchParams.get("search") || "")
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_SEARCH_LENGTH);
   const beforeCreatedAt = requestUrl.searchParams.get("before") || "";
   const beforeId = requestUrl.searchParams.get("beforeId") || "";
   if (beforeCreatedAt || beforeId) {
@@ -191,17 +294,21 @@ export async function listMessages(context) {
     }
   }
   const query = new URLSearchParams({
-    select: "id,group_id,sender_clinic_user_id,sender_name_snapshot,message_text,attachment_path,attachment_file_name,attachment_content_type,attachment_size_bytes,created_at",
+    select: "id,group_id,sender_clinic_user_id,sender_name_snapshot,message_text,reply_to_message_id,reply_to:group_chat_messages!reply_to_message_id(id,sender_name_snapshot,message_text,attachment_file_name,attachment_content_type),attachment_path,attachment_file_name,attachment_content_type,attachment_size_bytes,pinned_at,created_at",
     group_id: `eq.${group.id}`,
     order: "created_at.desc,id.desc",
     limit: "101"
   });
+  const disjunctions = [];
   if (beforeCreatedAt) {
-    query.set(
-      "or",
-      `(created_at.lt.${beforeCreatedAt},and(created_at.eq.${beforeCreatedAt},id.lt.${beforeId}))`
-    );
+    disjunctions.push(`(created_at.lt.${beforeCreatedAt},and(created_at.eq.${beforeCreatedAt},id.lt.${beforeId}))`);
   }
+  if (searchTerm) {
+    const pattern = `*${searchTerm}*`;
+    disjunctions.push(`(message_text.ilike.${pattern},sender_name_snapshot.ilike.${pattern},attachment_file_name.ilike.${pattern})`);
+  }
+  if (disjunctions.length === 1) query.set("or", disjunctions[0]);
+  if (disjunctions.length > 1) query.set("and", `(${disjunctions.join(",")})`);
   const rows = await supabaseRequest({
     url: config.chatUrl,
     apiKey: config.chatSecret,
@@ -210,21 +317,81 @@ export async function listMessages(context) {
   const page = Array.isArray(rows) ? rows : [];
   const hasMore = page.length > 100;
   if (hasMore) page.pop();
+  const pinnedRows = searchTerm
+    ? []
+    : await supabaseRequest({
+        url: config.chatUrl,
+        apiKey: config.chatSecret,
+        path: `/rest/v1/group_chat_messages?${new URLSearchParams({
+          select: "id,sender_clinic_user_id,sender_name_snapshot,message_text,attachment_file_name,attachment_content_type,created_at,pinned_at",
+          group_id: `eq.${group.id}`,
+          pinned_at: "not.is.null",
+          limit: "1"
+        })}`
+      });
+  const pinnedMessage = Array.isArray(pinnedRows) ? pinnedRows[0] : null;
+  const avatars = await getSenderAvatars(config, [
+    ...page.map((row) => row.sender_clinic_user_id),
+    ...(pinnedMessage ? [pinnedMessage.sender_clinic_user_id] : [])
+  ]);
 
   return jsonResponse({
     group: { id: group.id, name: group.name },
     hasMore,
+    pinnedMessage: pinnedMessage ? {
+      id: pinnedMessage.id,
+      senderClinicUserId: pinnedMessage.sender_clinic_user_id,
+      senderName: pinnedMessage.sender_name_snapshot,
+      messageText: pinnedMessage.message_text,
+      attachmentFileName: pinnedMessage.attachment_file_name || undefined,
+      attachmentContentType: pinnedMessage.attachment_content_type || undefined,
+      createdAt: pinnedMessage.created_at,
+      pinnedAt: pinnedMessage.pinned_at,
+      avatarUrl: avatars.get(pinnedMessage.sender_clinic_user_id) || undefined
+    } : null,
+    searchTerm: searchTerm || undefined,
     messages: page.reverse().map((row) => ({
       id: row.id,
       senderClinicUserId: row.sender_clinic_user_id,
       senderName: row.sender_name_snapshot,
+      avatarUrl: avatars.get(row.sender_clinic_user_id) || undefined,
       messageText: row.message_text,
+      replyToMessageId: row.reply_to_message_id || undefined,
+      replyTo: row.reply_to ? {
+        id: row.reply_to.id,
+        senderName: row.reply_to.sender_name_snapshot,
+        messageText: row.reply_to.message_text,
+        attachmentFileName: row.reply_to.attachment_file_name || undefined,
+        attachmentContentType: row.reply_to.attachment_content_type || undefined
+      } : undefined,
       attachmentFileName: row.attachment_file_name || undefined,
       attachmentContentType: row.attachment_content_type || undefined,
       attachmentSizeBytes: row.attachment_size_bytes ? Number(row.attachment_size_bytes) : undefined,
+      pinnedAt: row.pinned_at || undefined,
       createdAt: row.created_at
     }))
   });
+}
+
+export async function setPinnedMessage(context) {
+  const { config, group } = await authenticateDoctor(context.request, context.env);
+  const messageId = String(context.params?.id || "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(messageId)) {
+    throw new ChatApiError("ID pesan tidak valid.", 400);
+  }
+  const pinMessageId = context.request.method === "DELETE" ? null : messageId;
+  await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: "/rest/v1/rpc/set_pinned_doctor_chat_message",
+    method: "POST",
+    body: {
+      p_group_id: group.id,
+      p_message_id: pinMessageId,
+      p_expected_message_id: context.request.method === "DELETE" ? messageId : null
+    }
+  });
+  return jsonResponse({ pinnedMessageId: pinMessageId });
 }
 
 function validateAttachment(file) {
@@ -281,7 +448,28 @@ export async function sendMessage(context) {
 
   const fileEntry = form.get("file");
   const file = fileEntry instanceof File && fileEntry.size > 0 ? fileEntry : null;
+  const replyToMessageId = String(form.get("replyToMessageId") || "").trim();
   if (!messageText && !file) throw new ChatApiError("Isi pesan atau lampiran wajib diisi.", 400);
+  if (replyToMessageId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(replyToMessageId)) {
+    throw new ChatApiError("Pesan yang dibalas tidak valid.", 400);
+  }
+
+  if (replyToMessageId) {
+    const replyQuery = new URLSearchParams({
+      select: "id",
+      id: `eq.${replyToMessageId}`,
+      group_id: `eq.${group.id}`,
+      limit: "1"
+    });
+    const replyRows = await supabaseRequest({
+      url: config.chatUrl,
+      apiKey: config.chatSecret,
+      path: `/rest/v1/group_chat_messages?${replyQuery}`
+    });
+    if (!Array.isArray(replyRows) || replyRows.length !== 1) {
+      throw new ChatApiError("Pesan yang akan dibalas tidak ditemukan di grup ini.", 404);
+    }
+  }
 
   let attachment;
   if (file) {
@@ -314,7 +502,7 @@ export async function sendMessage(context) {
   }
 
   const insertQuery = new URLSearchParams({
-    select: "id,sender_clinic_user_id,sender_name_snapshot,message_text,attachment_file_name,attachment_content_type,attachment_size_bytes,created_at"
+    select: "id,sender_clinic_user_id,sender_name_snapshot,message_text,reply_to_message_id,reply_to:group_chat_messages!reply_to_message_id(id,sender_name_snapshot,message_text,attachment_file_name,attachment_content_type),attachment_file_name,attachment_content_type,attachment_size_bytes,created_at"
   });
   let inserted;
   try {
@@ -329,6 +517,7 @@ export async function sendMessage(context) {
         sender_clinic_user_id: actor.clinicUserId,
         sender_name_snapshot: actor.name,
         message_text: messageText,
+        reply_to_message_id: replyToMessageId || null,
         attachment_path: attachment?.objectPath || null,
         attachment_file_name: attachment?.fileName || null,
         attachment_content_type: attachment?.contentType || null,
@@ -352,6 +541,14 @@ export async function sendMessage(context) {
       senderClinicUserId: row.sender_clinic_user_id,
       senderName: row.sender_name_snapshot,
       messageText: row.message_text,
+      replyToMessageId: row.reply_to_message_id || undefined,
+      replyTo: row.reply_to ? {
+        id: row.reply_to.id,
+        senderName: row.reply_to.sender_name_snapshot,
+        messageText: row.reply_to.message_text,
+        attachmentFileName: row.reply_to.attachment_file_name || undefined,
+        attachmentContentType: row.reply_to.attachment_content_type || undefined
+      } : undefined,
       attachmentFileName: row.attachment_file_name || undefined,
       attachmentContentType: row.attachment_content_type || undefined,
       attachmentSizeBytes: row.attachment_size_bytes ? Number(row.attachment_size_bytes) : undefined,

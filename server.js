@@ -5,6 +5,7 @@ import {
   downloadAttachment as downloadDoctorChatAttachment,
   handleChatError,
   listMessages as listDoctorChatMessages,
+  setPinnedMessage as setDoctorChatPinnedMessage,
   sendMessage as sendDoctorChatMessage
 } from './functions/_shared/doctor-chat.js';
 
@@ -58,6 +59,8 @@ app.post(
   express.raw({ type: 'multipart/form-data', limit: '11mb' }),
   handleDoctorChatFunction(sendDoctorChatMessage)
 );
+app.put('/api/chat/messages/:id/pin', handleDoctorChatFunction(setDoctorChatPinnedMessage));
+app.delete('/api/chat/messages/:id/pin', handleDoctorChatFunction(setDoctorChatPinnedMessage));
 app.get('/api/chat/files/:id', handleDoctorChatFunction(downloadDoctorChatAttachment));
 
 app.get('/api/health', (req, res) => {

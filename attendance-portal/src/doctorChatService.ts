@@ -5,16 +5,28 @@ export interface DoctorChatMessage {
   id: string;
   senderClinicUserId: string;
   senderName: string;
+  avatarUrl?: string;
   messageText: string;
+  replyToMessageId?: string;
+  replyTo?: {
+    id: string;
+    senderName: string;
+    messageText: string;
+    attachmentFileName?: string;
+    attachmentContentType?: string;
+  };
   attachmentFileName?: string;
   attachmentContentType?: string;
   attachmentSizeBytes?: number;
+  pinnedAt?: string;
   createdAt: string;
 }
 
 export interface DoctorChatPage {
   group: { id: string; name: string };
   messages: DoctorChatMessage[];
+  pinnedMessage: DoctorChatMessage | null;
+  searchTerm?: string;
   hasMore: boolean;
 }
 
@@ -82,22 +94,45 @@ async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Re
   return response;
 }
 
-export async function getDoctorChatMessages(beforeMessage?: DoctorChatMessage): Promise<DoctorChatPage> {
-  const query = beforeMessage
-    ? `?${new URLSearchParams({ before: beforeMessage.createdAt, beforeId: beforeMessage.id })}`
-    : "";
+export async function getDoctorChatMessages(
+  beforeMessage?: DoctorChatMessage,
+  searchTerm = ""
+): Promise<DoctorChatPage> {
+  const params = new URLSearchParams();
+  if (beforeMessage) {
+    params.set("before", beforeMessage.createdAt);
+    params.set("beforeId", beforeMessage.id);
+  }
+  if (searchTerm.trim()) params.set("search", searchTerm.trim());
+  const queryString = params.toString();
+  const query = queryString ? `?${queryString}` : "";
   const response = await authorizedFetch(`/api/chat/messages${query}`);
   const result = await response.json();
-  if (!result?.group || !Array.isArray(result.messages) || typeof result.hasMore !== "boolean") {
+  if (!result?.group || !Array.isArray(result.messages) || typeof result.hasMore !== "boolean" ||
+    (result.pinnedMessage != null && (
+      typeof result.pinnedMessage !== "object" ||
+      Array.isArray(result.pinnedMessage)
+    ))) {
     throw new Error("Respons daftar pesan chat tidak valid.");
   }
-  return result as DoctorChatPage;
+  return { ...result, pinnedMessage: result.pinnedMessage ?? null } as DoctorChatPage;
 }
 
-export async function sendDoctorChatMessage(messageText: string, file?: File | null): Promise<DoctorChatMessage> {
+export async function setDoctorChatMessagePinned(messageId: string, pinned: boolean): Promise<void> {
+  await authorizedFetch(`/api/chat/messages/${encodeURIComponent(messageId)}/pin`, {
+    method: pinned ? "PUT" : "DELETE"
+  });
+}
+
+export async function sendDoctorChatMessage(
+  messageText: string,
+  file?: File | null,
+  replyToMessageId?: string
+): Promise<DoctorChatMessage> {
   const body = new FormData();
   body.set("messageText", messageText);
   if (file) body.set("file", file);
+  if (replyToMessageId) body.set("replyToMessageId", replyToMessageId);
   const response = await authorizedFetch("/api/chat/messages", { method: "POST", body });
   const result = await response.json();
   if (!result?.message?.id) throw new Error("Respons pesan chat tidak valid.");

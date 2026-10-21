@@ -3,6 +3,10 @@ import {
   onRequestGet,
   onRequestPost
 } from "../../functions/api/chat/messages.js";
+import {
+  onRequestDelete as onRequestUnpin,
+  onRequestPut as onRequestPin
+} from "../../functions/api/chat/messages/[id]/pin.js";
 
 const environment = {
   SUPABASE_URL: "https://clinic-project.supabase.co",
@@ -23,7 +27,11 @@ const createAuthorizedRequest = (url: string, init?: RequestInit) => new Request
   }
 );
 
-function createSuccessfulDoctorFetch() {
+function createSuccessfulDoctorFetch(options: {
+  accountId?: string;
+  messages?: Array<Record<string, unknown>>;
+} = {}) {
+  const accountId = options.accountId || "clinic-account-id";
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/auth/v1/user")) {
@@ -31,11 +39,12 @@ function createSuccessfulDoctorFetch() {
     }
     if (url.includes("/rest/v1/user_accounts?")) {
       return new Response(JSON.stringify([{
-        id: "clinic-account-id",
+        id: accountId,
         name: "Dokter",
         role: "DOCTOR",
         active: true,
         doctor_id: "clinic-doctor-id",
+        staff_id: null,
         auth_user_id: "auth-user-id"
       }]), { status: 200 });
     }
@@ -43,7 +52,8 @@ function createSuccessfulDoctorFetch() {
       return new Response(JSON.stringify([{
         id: "clinic-doctor-id",
         name: "drg. Dokter",
-        active: true
+        active: true,
+        avatar_url: "https://images.example/dokter.png"
       }]), { status: 200 });
     }
     if (url.includes("/rest/v1/chat_groups?")) {
@@ -56,17 +66,37 @@ function createSuccessfulDoctorFetch() {
     if (url.includes("/rest/v1/group_chat_messages?") && init?.method === "POST") {
       return new Response(JSON.stringify([{
         id: "20000000-0000-4000-8000-000000000002",
-        sender_clinic_user_id: "clinic-account-id",
+        sender_clinic_user_id: accountId,
         sender_name_snapshot: "drg. Dokter",
         message_text: "Halo",
+        reply_to_message_id: "30000000-0000-4000-8000-000000000003",
+        reply_to: {
+          id: "30000000-0000-4000-8000-000000000003",
+          sender_name_snapshot: "drg. Rekan",
+          message_text: "Pesan asal",
+          attachment_file_name: null,
+          attachment_content_type: null
+        },
         attachment_file_name: "foto.png",
         attachment_content_type: "image/png",
         attachment_size_bytes: 16,
         created_at: "2026-10-21T10:00:00.000Z"
       }]), { status: 201 });
     }
+    if (url.includes("/rest/v1/group_chat_messages?") && url.includes("id=eq.30000000-0000-4000-8000-000000000003")) {
+      return new Response(JSON.stringify([{ id: "30000000-0000-4000-8000-000000000003" }]), { status: 200 });
+    }
     if (url.includes("/rest/v1/group_chat_messages?")) {
-      return new Response(JSON.stringify([]), { status: 200 });
+      if (url.includes("pinned_at=not.is.null")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("id=eq.30000000-0000-4000-8000-000000000003")) {
+        return new Response(JSON.stringify([{ id: "30000000-0000-4000-8000-000000000003" }]), { status: 200 });
+      }
+      return new Response(JSON.stringify(options.messages || []), { status: 200 });
+    }
+    if (url.includes("/rest/v1/rpc/set_pinned_doctor_chat_message")) {
+      return new Response(null, { status: 204 });
     }
     if (url.includes("/storage/v1/object/doctor-group-chat-files/")) {
       return new Response(JSON.stringify({ Key: "uploaded" }), { status: 200 });
@@ -207,5 +237,143 @@ describe("Cloudflare doctor group chat API", () => {
       expect.stringContaining("/storage/v1/object/doctor-group-chat-files/"),
       expect.anything()
     );
+  });
+
+  it("stores a reply relationship to a message in the same doctor group", async () => {
+    const fetchMock = createSuccessfulDoctorFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const formData = new FormData();
+    formData.set("messageText", "Saya balas");
+    formData.set("replyToMessageId", "30000000-0000-4000-8000-000000000003");
+
+    const response = await onRequestPost({
+      request: createAuthorizedRequest("/api/chat/messages", {
+        method: "POST",
+        body: formData
+      }),
+      env: environment
+    });
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.message.replyToMessageId).toBe("30000000-0000-4000-8000-000000000003");
+    expect(body.message.replyTo.senderName).toBe("drg. Rekan");
+    const insertRequest = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).includes("/rest/v1/group_chat_messages?") && init?.method === "POST"
+    );
+    expect(JSON.parse(String(insertRequest?.[1]?.body))).toMatchObject({
+      reply_to_message_id: "30000000-0000-4000-8000-000000000003"
+    });
+  });
+
+  it("stores sticker messages as a small text marker without uploading an image", async () => {
+    const fetchMock = createSuccessfulDoctorFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const formData = new FormData();
+    formData.set("messageText", "sticker:siap");
+
+    const response = await onRequestPost({
+      request: createAuthorizedRequest("/api/chat/messages", {
+        method: "POST",
+        body: formData
+      }),
+      env: environment
+    });
+
+    expect(response.status).toBe(201);
+    const insertRequest = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).includes("/rest/v1/group_chat_messages?") && init?.method === "POST"
+    );
+    expect(JSON.parse(String(insertRequest?.[1]?.body))).toMatchObject({
+      message_text: "sticker:siap",
+      attachment_path: null,
+      attachment_file_name: null,
+      attachment_size_bytes: null
+    });
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes("/storage/v1/object/doctor-group-chat-files/")
+    )).toBe(false);
+  });
+
+  it("keeps search and cursor pagination filters in the same PostgREST query", async () => {
+    const fetchMock = createSuccessfulDoctorFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const beforeId = "30000000-0000-4000-8000-000000000003";
+
+    const response = await onRequestGet({
+      request: createAuthorizedRequest(
+        `/api/chat/messages?search=karies%2C.*&before=2026-10-21T10%3A00%3A00.000Z&beforeId=${beforeId}`
+      ),
+      env: environment
+    });
+
+    expect(response.status).toBe(200);
+    const listRequest = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/rest/v1/group_chat_messages?") &&
+      !String(url).includes("pinned_at=not.is.null")
+    );
+    const query = new URL(String(listRequest?.[0])).searchParams;
+    const combinedFilter = query.get("and") || "";
+    expect(query.has("or")).toBe(false);
+    expect(combinedFilter).toContain("created_at.lt.2026-10-21T10:00:00.000Z");
+    expect(combinedFilter).toContain("message_text.ilike.*karies*");
+    expect(combinedFilter).not.toContain("*.*");
+  });
+
+  it("maps a doctor's HTTPS profile image onto messages", async () => {
+    const accountId = "40000000-0000-4000-8000-000000000004";
+    const fetchMock = createSuccessfulDoctorFetch({
+      accountId,
+      messages: [{
+        id: "20000000-0000-4000-8000-000000000002",
+        group_id: "10000000-0000-4000-8000-000000000001",
+        sender_clinic_user_id: accountId,
+        sender_name_snapshot: "drg. Dokter",
+        message_text: "Siap",
+        created_at: "2026-10-21T10:00:00.000Z",
+        pinned_at: null
+      }]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestGet({
+      request: createAuthorizedRequest("/api/chat/messages"),
+      env: environment
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.messages[0].avatarUrl).toBe("https://images.example/dokter.png");
+  });
+
+  it("pins and unpins only through the server-side group RPC", async () => {
+    const fetchMock = createSuccessfulDoctorFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const messageId = "30000000-0000-4000-8000-000000000003";
+    const context = (method: "PUT" | "DELETE") => ({
+      request: createAuthorizedRequest(`/api/chat/messages/${messageId}/pin`, { method }),
+      env: environment,
+      params: { id: messageId }
+    });
+
+    const pinResponse = await onRequestPin(context("PUT"));
+    const unpinResponse = await onRequestUnpin(context("DELETE"));
+    expect(pinResponse.status).toBe(200);
+    expect(unpinResponse.status).toBe(200);
+
+    const rpcCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/rpc/set_pinned_doctor_chat_message")
+    );
+    expect(rpcCalls).toHaveLength(2);
+    expect(JSON.parse(String(rpcCalls[0][1]?.body))).toEqual({
+      p_group_id: "10000000-0000-4000-8000-000000000001",
+      p_message_id: messageId,
+      p_expected_message_id: null
+    });
+    expect(JSON.parse(String(rpcCalls[1][1]?.body))).toEqual({
+      p_group_id: "10000000-0000-4000-8000-000000000001",
+      p_message_id: null,
+      p_expected_message_id: messageId
+    });
   });
 });
