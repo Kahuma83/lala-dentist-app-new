@@ -13,6 +13,7 @@ import {
   KeyRound,
   LogOut,
   MapPin,
+  MessagesSquare,
   RefreshCw,
   Settings,
   ShieldCheck,
@@ -33,6 +34,7 @@ import {
   isWithinAttendanceGeofence
 } from "../../src/utils/attendanceGeofence";
 import { loadOwnStaffProfilePhoto, uploadStaffProfilePhoto } from "../../src/utils/staffProfilePhoto";
+import { DoctorGroupChat } from "./DoctorGroupChat";
 
 type StaffRole = "BRANCH_ADMIN" | "DOCTOR" | "DOCTOR_ASSISTANT" | "OB";
 type AttendanceAction = "check-in" | "check-out";
@@ -61,8 +63,9 @@ type StaffContext = {
   name: string;
   role: StaffRole;
   staffId: string;
+  userAccountId: string;
 };
-type PortalTab = "home" | "attendance" | "schedule" | "absence" | "overtime" | "payroll" | "profile";
+type PortalTab = "home" | "attendance" | "schedule" | "absence" | "overtime" | "payroll" | "chat" | "profile";
 type AbsenceRequestType = "SICK" | "LEAVE" | "PERMISSION";
 type PortalAbsenceRequest = {
   id: string;
@@ -142,7 +145,8 @@ const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
   { id: "schedule", label: "Jadwal Saya", icon: CalendarDays },
   { id: "absence", label: "Cuti & Izin", icon: CalendarDays },
   { id: "overtime", label: "Lembur Saya", icon: Timer },
-  { id: "payroll", label: "Gaji Saya", icon: WalletCards }
+  { id: "payroll", label: "Gaji Saya", icon: WalletCards },
+  { id: "chat", label: "Chat Grup", icon: MessagesSquare }
 ];
 
 function todayWib(): string {
@@ -370,7 +374,8 @@ export function AttendancePortal() {
       doctorId: account.doctor_id || null,
       name: account.name || user.user_metadata?.name || user.email || "Staf",
       role: account.role as StaffRole,
-      staffId: resolvedStaffId
+      staffId: resolvedStaffId,
+      userAccountId: account.id
     };
     let branchIds: string[] = [];
 
@@ -680,7 +685,7 @@ export function AttendancePortal() {
   const handleTabChange = async (tab: PortalTab, requestedWeekStart = scheduleWeekStart) => {
     setActiveTab(tab);
     setPanelError(null);
-    if (tab === "home" || tab === "attendance" || tab === "profile") return;
+    if (tab === "home" || tab === "attendance" || tab === "chat" || tab === "profile") return;
 
     setIsPanelLoading(true);
     try {
@@ -1175,7 +1180,9 @@ export function AttendancePortal() {
       {successMessage && <div className="notice success" role="status"><CheckCircle2 />{successMessage}</div>}
 
       <nav className="portal-nav" aria-label="Menu portal pegawai">
-        {portalTabs.map(({ id, label, icon: Icon }) => (
+        {portalTabs
+          .filter(({ id }) => id !== "chat" || staffContext.role === "DOCTOR")
+          .map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
@@ -1189,7 +1196,7 @@ export function AttendancePortal() {
             <Icon />
             <span>{label}</span>
           </button>
-        ))}
+          ))}
       </nav>
 
       {activeTab === "home" && (
@@ -1213,6 +1220,10 @@ export function AttendancePortal() {
           </div>
           <p className="portal-footnote">Menu pegawai menampilkan data dari sistem klinik dan hanya untuk akun Anda.</p>
         </section>
+      )}
+
+      {activeTab === "chat" && staffContext.role === "DOCTOR" && (
+        <DoctorGroupChat currentUserId={staffContext.userAccountId} />
       )}
 
       {activeTab === "attendance" && (

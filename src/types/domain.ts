@@ -712,6 +712,7 @@ export interface MedicalRecord {
   doctorNotes?: string; // Catatan Dokter
   odontogram?: OdontogramData;
   odontogramHistory?: OdontogramHistoryEntry[];
+  clinicFormData?: ClinicFormData;
   vitalSigns?: ClinicalVitalSigns;
   medicalHistorySnapshot?: PatientMedicalProfile;
   status: MedicalRecordStatus | "DRAFT" | "FINAL";
@@ -746,6 +747,9 @@ export interface PatientMedicalProfile {
   branchId?: string | null;
   bloodType?: string;
   allergies?: string;
+  medicationAllergies?: string;
+  foodAllergies?: string;
+  congenitalDiseases?: string;
   systemicDiseases?: string;
   routineMedications?: string;
   medicalWarnings?: string;
@@ -763,6 +767,27 @@ export interface ClinicalVitalSigns {
   oxygenSaturationPercent?: number;
   weightKg?: number;
   heightCm?: number;
+}
+
+export interface ClinicDentalAssessment {
+  occlusion?: "NORMAL" | "CROSS_BITE" | "DEEP_BITE";
+  torusPalatinus?: "NONE" | "SMALL" | "MEDIUM" | "LARGE" | "MULTIPLE";
+  torusMandibularis?: "NONE" | "LEFT" | "RIGHT" | "BOTH";
+  palate?: "DALAM" | "SEDANG" | "RENDAH";
+  diastemaPresent?: boolean;
+  diastemaNotes?: string;
+  gingivalAnomalyPresent?: boolean;
+  gingivalAnomalyNotes?: string;
+  otherNotes?: string;
+  d?: number;
+  m?: number;
+  f?: number;
+}
+
+export interface ClinicFormData {
+  dentalAssessment?: ClinicDentalAssessment;
+  noteB?: string;
+  noteL?: string;
 }
 
 export type OdontogramCondition =

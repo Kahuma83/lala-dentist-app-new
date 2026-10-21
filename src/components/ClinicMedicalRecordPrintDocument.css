@@ -1,0 +1,322 @@
+.clinic-medical-print {
+  display: none;
+}
+
+@page clinic-medical-record {
+  size: A4 portrait;
+  margin: 9mm;
+}
+
+@media print {
+  body[data-print-document="clinic-medical-record"] {
+    width: 210mm !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #111 !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  body[data-print-document="clinic-medical-record"] * {
+    visibility: hidden !important;
+  }
+
+  body[data-print-document="clinic-medical-record"] .clinic-medical-print,
+  body[data-print-document="clinic-medical-record"] .clinic-medical-print * {
+    visibility: visible !important;
+  }
+
+  body[data-print-document="clinic-medical-record"] .clinic-medical-print {
+    display: block !important;
+    page: clinic-medical-record;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 192mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    color: #111 !important;
+    background: #fff !important;
+    font-family: "Times New Roman", Times, serif !important;
+    font-size: 9pt !important;
+  }
+
+  .clinic-print-page {
+    position: relative;
+    box-sizing: border-box;
+    width: 192mm;
+    height: 277mm;
+    overflow: hidden;
+    page-break-after: always;
+    break-after: page;
+    background: #fff;
+  }
+
+  .clinic-print-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .clinic-print-header {
+    display: grid;
+    grid-template-columns: 18mm 1fr 63mm;
+    align-items: center;
+    column-gap: 3mm;
+    min-height: 23mm;
+    border-bottom: 1.2mm solid #111;
+    padding: 0 1mm 2mm;
+  }
+
+  .clinic-print-logo {
+    width: 17mm;
+    height: 17mm;
+    object-fit: contain;
+  }
+
+  .clinic-print-brand {
+    text-align: center;
+    line-height: 1.1;
+  }
+
+  .clinic-print-brand h1 {
+    margin: 0 0 1mm;
+    font-size: 13pt;
+    line-height: 1.05;
+    text-transform: uppercase;
+  }
+
+  .clinic-print-brand h1 strong {
+    font-size: 15pt;
+    letter-spacing: 0.5mm;
+  }
+
+  .clinic-print-brand p {
+    margin: 0.5mm 0;
+    font-size: 7.5pt;
+  }
+
+  .clinic-print-doctors {
+    font-size: 7.5pt;
+    line-height: 1.45;
+    white-space: nowrap;
+  }
+
+  .clinic-print-patient-fields {
+    padding: 4mm 1mm 2mm;
+  }
+
+  .clinic-print-patient-line {
+    display: grid;
+    grid-template-columns: 41mm 4mm 1fr;
+    align-items: end;
+    min-height: 5.7mm;
+    font-size: 9pt;
+  }
+
+  .clinic-print-patient-line strong {
+    font-weight: 400;
+  }
+
+  .clinic-print-dotted-value {
+    min-height: 4.5mm;
+    padding-left: 1.5mm;
+    overflow: hidden;
+    white-space: nowrap;
+    border-bottom: 1px dotted #222;
+  }
+
+  .clinic-print-title {
+    margin: 2mm 0 2mm;
+    text-align: center;
+    font-size: 14pt;
+    font-weight: 700;
+  }
+
+  .clinic-print-visit-table {
+    width: 100%;
+    height: 158mm;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 8pt;
+  }
+
+  .clinic-print-visit-table th,
+  .clinic-print-visit-table td {
+    border: 0.25mm solid #222;
+    padding: 1mm;
+    text-align: center;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+
+  .clinic-print-visit-table th {
+    height: 9mm;
+    vertical-align: middle;
+    font-weight: 400;
+    font-size: 7.7pt;
+    line-height: 1.1;
+  }
+
+  .clinic-print-visit-table tbody tr {
+    height: 100%;
+  }
+
+  .clinic-print-visit-table td {
+    height: 100%;
+  }
+
+  .clinic-print-date-col { width: 8%; }
+  .clinic-print-history-col { width: 25%; }
+  .clinic-print-diagnosis-col { width: 15%; }
+  .clinic-print-treatment-col { width: 28%; }
+  .clinic-print-b-col { width: 6%; }
+  .clinic-print-l-col { width: 6%; }
+  .clinic-print-sign-col { width: 12%; }
+
+  .clinic-print-pre-wrap {
+    white-space: pre-wrap;
+    text-align: left !important;
+  }
+
+  .clinic-print-doctor-sign {
+    padding-top: 20mm !important;
+    font-size: 7pt;
+  }
+
+  .clinic-print-page-number {
+    position: absolute;
+    right: 1mm;
+    bottom: 0;
+    color: #555;
+    font-size: 6pt;
+  }
+
+  .clinic-print-odontogram-page {
+    padding: 6mm 8mm 1mm;
+  }
+
+  .clinic-print-odontogram-title {
+    margin: 3mm 0 4mm;
+    text-align: center;
+    font-size: 15pt;
+    font-weight: 700;
+  }
+
+  .clinic-print-odontogram-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3mm 8mm;
+    border-bottom: 0.4mm solid #222;
+    padding: 0 2mm 3mm;
+    font-size: 8.5pt;
+  }
+
+  .clinic-print-odontogram-meta > div {
+    display: grid;
+    grid-template-columns: 29mm 4mm 1fr;
+    align-items: end;
+    min-height: 6mm;
+  }
+
+  .clinic-print-tooth-chart {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7mm;
+    margin: 12mm auto 13mm;
+  }
+
+  .clinic-print-tooth-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .clinic-print-permanent {
+    gap: 0.8mm;
+  }
+
+  .clinic-print-primary {
+    gap: 1.3mm;
+  }
+
+  .clinic-print-tooth {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 9.2mm;
+    font-size: 7pt;
+  }
+
+  .clinic-print-primary .clinic-print-tooth {
+    width: 11mm;
+  }
+
+  .clinic-print-tooth svg {
+    width: 8.3mm;
+    height: 8.3mm;
+    margin-top: 0.7mm;
+  }
+
+  .clinic-print-primary .clinic-print-tooth svg {
+    width: 9.5mm;
+    height: 9.5mm;
+  }
+
+  .clinic-print-assessment-lines {
+    margin: 0 auto;
+    width: 155mm;
+    font-size: 8pt;
+    line-height: 1.8;
+  }
+
+  .clinic-print-assessment-lines > div:not(.clinic-print-dmf) {
+    display: grid;
+    grid-template-columns: 39mm 4mm 1fr;
+    min-height: 6mm;
+    border-bottom: 0.2mm dotted #777;
+  }
+
+  .clinic-print-assessment-lines strong {
+    font-weight: 400;
+  }
+
+  .clinic-print-dmf {
+    display: flex;
+    gap: 12mm;
+    margin-top: 3mm;
+  }
+
+  .clinic-print-signatures {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 1fr;
+    margin-top: 13mm;
+    border: 0.3mm solid #222;
+    min-height: 22mm;
+    text-align: center;
+    font-size: 8pt;
+  }
+
+  .clinic-print-signatures > div {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 2mm;
+    border-right: 0.25mm solid #222;
+  }
+
+  .clinic-print-signatures > div:last-child {
+    border-right: 0;
+  }
+
+  .clinic-print-signatures strong {
+    font-size: 7.5pt;
+  }
+
+  .clinic-print-signatures span {
+    min-height: 7mm;
+    border-bottom: 0.2mm dotted #333;
+  }
+}

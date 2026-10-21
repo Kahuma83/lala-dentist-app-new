@@ -6801,6 +6801,7 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
       treatmentPlan?: string;
       doctorNotes?: string;
       odontogram?: MedicalRecord["odontogram"];
+      clinicFormData?: MedicalRecord["clinicFormData"];
       vitalSigns?: MedicalRecord["vitalSigns"];
       medicalHistorySnapshot?: MedicalRecord["medicalHistorySnapshot"];
       status?: MedicalRecordStatus | "DRAFT" | "FINAL";
@@ -6856,6 +6857,7 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
       existing.treatmentPlan = data.treatmentPlan || existing.treatmentPlan || "";
       existing.doctorNotes = data.doctorNotes || existing.doctorNotes || "";
       existing.odontogram = data.odontogram || existing.odontogram || { schemaVersion: 1, teeth: {} };
+      existing.clinicFormData = data.clinicFormData || existing.clinicFormData;
       existing.vitalSigns = data.vitalSigns || {};
       existing.medicalHistorySnapshot = data.medicalHistorySnapshot || existing.medicalHistorySnapshot;
       existing.status = targetStatus;
@@ -6886,6 +6888,7 @@ export class MockMedicalRecordRepository implements MedicalRecordRepository {
         doctorNotes: data.doctorNotes || "",
         odontogram: data.odontogram || { schemaVersion: 1, teeth: {} },
         odontogramHistory: [],
+        clinicFormData: data.clinicFormData,
         vitalSigns: data.vitalSigns || {},
         medicalHistorySnapshot: data.medicalHistorySnapshot,
         status: targetStatus,

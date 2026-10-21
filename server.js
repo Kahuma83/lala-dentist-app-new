@@ -1,6 +1,12 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import {
+  downloadAttachment as downloadDoctorChatAttachment,
+  handleChatError,
+  listMessages as listDoctorChatMessages,
+  sendMessage as sendDoctorChatMessage
+} from './functions/_shared/doctor-chat.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -16,6 +22,43 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
 }
 
 app.use(express.json({ limit: '2mb' }));
+
+const handleDoctorChatFunction = (handler) => async (req, res) => {
+  try {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (Array.isArray(value)) headers.set(name, value.join(', '));
+      else if (value) headers.set(name, value);
+    }
+
+    const requestOptions = {
+      method: req.method,
+      headers,
+      ...(req.method !== 'GET' && req.method !== 'HEAD' && Buffer.isBuffer(req.body)
+        ? { body: req.body, duplex: 'half' }
+        : {})
+    };
+    const request = new Request(new URL(req.originalUrl, `http://localhost:${PORT}`), requestOptions);
+    const response = await handler({ request, env: process.env, params: req.params });
+    res.status(response.status);
+    response.headers.forEach((value, name) => {
+      if (name.toLowerCase() !== 'content-length' || value) res.setHeader(name, value);
+    });
+    res.send(Buffer.from(await response.arrayBuffer()));
+  } catch (error) {
+    console.error('[server] doctor chat route failed:', error);
+    const response = handleChatError(error);
+    res.status(response.status).send(Buffer.from(await response.arrayBuffer()));
+  }
+};
+
+app.get('/api/chat/messages', handleDoctorChatFunction(listDoctorChatMessages));
+app.post(
+  '/api/chat/messages',
+  express.raw({ type: 'multipart/form-data', limit: '11mb' }),
+  handleDoctorChatFunction(sendDoctorChatMessage)
+);
+app.get('/api/chat/files/:id', handleDoctorChatFunction(downloadDoctorChatAttachment));
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'lala-dentist-booking-api' });

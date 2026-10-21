@@ -65,6 +65,7 @@ import {
   OdontogramData,
   PatientMedicalProfile,
   ClinicalVitalSigns,
+  ClinicFormData,
   ClinicalConsentDocument,
   ClinicalConsentScope,
   PromotionMedia,
@@ -720,6 +721,7 @@ export interface MedicalRecordRepository {
       treatmentPlan?: string;
       doctorNotes?: string;
       odontogram?: OdontogramData;
+      clinicFormData?: ClinicFormData;
       vitalSigns?: ClinicalVitalSigns;
       medicalHistorySnapshot?: PatientMedicalProfile;
       status?: MedicalRecordStatus | "DRAFT" | "FINAL";

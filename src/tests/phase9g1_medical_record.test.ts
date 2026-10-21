@@ -72,6 +72,17 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
               updatedAt: "2026-10-20T10:00:00.000Z"
             }
           }
+        },
+        clinicFormData: {
+          dentalAssessment: {
+            occlusion: "CROSS_BITE",
+            diastemaPresent: true,
+            diastemaNotes: "Diastema anterior",
+            d: 1,
+            m: 2,
+            f: 3
+          },
+          noteB: "Keterangan B"
         }
       },
       UserRole.DOCTOR,
@@ -86,9 +97,14 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
     expect(record.odontogram?.teeth["36"]?.surfaces?.O).toBe("caries");
     expect(record.diagnosisCode).toBe("K02.1");
     expect(record.procedureCodes).toEqual(["23.09", "23.11"]);
+    expect(record.clinicFormData?.dentalAssessment?.occlusion).toBe("CROSS_BITE");
+    expect(record.clinicFormData?.dentalAssessment?.d).toBe(1);
+    expect(record.clinicFormData?.noteB).toBe("Keterangan B");
     expect(saved?.odontogram?.teeth["36"]?.surfaces?.O).toBe("caries");
     expect(saved?.diagnosisCode).toBe("K02.1");
     expect(saved?.procedureCodes).toEqual(["23.09", "23.11"]);
+    expect(saved?.clinicFormData?.dentalAssessment?.diastemaNotes).toBe("Diastema anterior");
+    expect(saved?.clinicFormData?.dentalAssessment?.f).toBe(3);
   });
 
   it("saves a private patient medical profile and visit vital-sign snapshot", async () => {
@@ -98,6 +114,9 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
         branchId: "branch-gebang",
         bloodType: "O+",
         allergies: "Penisilin",
+        medicationAllergies: "Amoksisilin",
+        foodAllergies: "Udang",
+        congenitalDiseases: "Tidak ada",
         systemicDiseases: "Diabetes melitus",
         routineMedications: "Metformin",
         medicalWarnings: "Konfirmasi kadar gula darah"
@@ -132,6 +151,9 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
     );
 
     expect(savedProfile?.allergies).toBe("Penisilin");
+    expect(savedProfile?.medicationAllergies).toBe("Amoksisilin");
+    expect(savedProfile?.foodAllergies).toBe("Udang");
+    expect(savedProfile?.congenitalDiseases).toBe("Tidak ada");
     expect(record.vitalSigns?.systolicBloodPressure).toBe(120);
     expect(record.vitalSigns?.diastolicBloodPressure).toBe(80);
     expect(record.medicalHistorySnapshot?.systemicDiseases).toBe("Diabetes melitus");

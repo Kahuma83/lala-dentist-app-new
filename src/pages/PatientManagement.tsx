@@ -14,6 +14,7 @@ import {
   MedicalRecordStatus,
   TreatmentJob,
   OdontogramData,
+  ClinicFormData,
   PatientMedicalProfile,
   ClinicalVitalSigns,
   ClinicalConsentDocument,
@@ -48,11 +49,14 @@ import {
   Sparkles,
   Hash,
   Sliders,
-  Mail
+  Mail,
+  Printer
 } from "lucide-react";
 import { formatRupiah, formatDate, formatDateTime } from "../utils/formatter";
 import { PatientExcelModal } from "../components/PatientExcelModal";
 import { Odontogram } from "../components/Odontogram";
+import { ClinicDentalAssessmentFields } from "../components/ClinicDentalAssessmentFields";
+import { ClinicMedicalRecordPrintDocument } from "../components/ClinicMedicalRecordPrintDocument";
 import { ImportPatientExecutionResult } from "../utils/excelPatientUtils";
 import { useRouter } from "../components/Router";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
@@ -184,6 +188,9 @@ export const PatientManagement: React.FC = () => {
   const [medicalProfile, setMedicalProfile] = useState<PatientMedicalProfile>({
     patientId: "",
     allergies: "",
+    medicationAllergies: "",
+    foodAllergies: "",
+    congenitalDiseases: "",
     systemicDiseases: "",
     routineMedications: "",
     medicalWarnings: "",
@@ -201,6 +208,7 @@ export const PatientManagement: React.FC = () => {
     treatmentPlan: "",
     doctorNotes: "",
     odontogram: { schemaVersion: 1, teeth: {} } as OdontogramData,
+    clinicFormData: { dentalAssessment: {} } as ClinicFormData,
     vitalSigns: {} as ClinicalVitalSigns,
     status: MedicalRecordStatus.DRAFT as MedicalRecordStatus | "DRAFT" | "FINAL"
   });
@@ -730,6 +738,9 @@ export const PatientManagement: React.FC = () => {
         branchId: profile?.branchId || v.branchId,
         bloodType: profile?.bloodType || "",
         allergies: profile?.allergies || "",
+        medicationAllergies: profile?.medicationAllergies || "",
+        foodAllergies: profile?.foodAllergies || "",
+        congenitalDiseases: profile?.congenitalDiseases || "",
         systemicDiseases: profile?.systemicDiseases || "",
         routineMedications: profile?.routineMedications || "",
         medicalWarnings: profile?.medicalWarnings || "",
@@ -747,6 +758,7 @@ export const PatientManagement: React.FC = () => {
           treatmentPlan: mr.treatmentPlan || "",
           doctorNotes: mr.doctorNotes || "",
           odontogram: mr.odontogram || { schemaVersion: 1, teeth: {} },
+          clinicFormData: mr.clinicFormData || { dentalAssessment: {} },
           vitalSigns: mr.vitalSigns || {},
           status: mr.status
         });
@@ -761,6 +773,7 @@ export const PatientManagement: React.FC = () => {
           treatmentPlan: "",
           doctorNotes: "",
           odontogram: { schemaVersion: 1, teeth: {} },
+          clinicFormData: { dentalAssessment: {} },
           vitalSigns: {},
           status: MedicalRecordStatus.DRAFT
         });
@@ -934,6 +947,7 @@ export const PatientManagement: React.FC = () => {
           treatmentPlan: mrForm.treatmentPlan,
           doctorNotes: mrForm.doctorNotes,
           odontogram: mrForm.odontogram,
+          clinicFormData: mrForm.clinicFormData,
           vitalSigns: mrForm.vitalSigns,
           medicalHistorySnapshot: savedProfile,
           status: MedicalRecordStatus.DRAFT
@@ -960,6 +974,19 @@ export const PatientManagement: React.FC = () => {
     } finally {
       setSavingMR(false);
     }
+  };
+
+  const handlePrintMedicalRecord = () => {
+    if (!canReadMedicalRecords) return;
+    document.body.dataset.printDocument = "clinic-medical-record";
+    window.addEventListener(
+      "afterprint",
+      () => {
+        delete document.body.dataset.printDocument;
+      },
+      { once: true }
+    );
+    window.print();
   };
 
   return (
@@ -2112,6 +2139,25 @@ export const PatientManagement: React.FC = () => {
       {/* ========================================== */}
       {mrModalOpen && selectedVisitForMR && selectedPatient && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          {canReadMedicalRecords && (
+            <ClinicMedicalRecordPrintDocument
+              patient={selectedPatient}
+              visit={selectedVisitForMR}
+              profile={medicalProfile}
+              doctorName={existingMR?.doctorNameSnapshot || currentUser?.name || "Dokter"}
+              record={{
+                chiefComplaint: mrForm.chiefComplaint,
+                anamnesis: mrForm.anamnesis,
+                clinicalExamination: mrForm.clinicalExamination,
+                diagnosis: mrForm.diagnosis,
+                diagnosisCode: mrForm.diagnosisCode,
+                treatmentPlan: mrForm.treatmentPlan,
+                doctorNotes: mrForm.doctorNotes,
+                odontogram: mrForm.odontogram,
+                clinicFormData: mrForm.clinicFormData
+              }}
+            />
+          )}
           <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col animate-scale-in">
             {/* Header */}
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
@@ -2140,12 +2186,24 @@ export const PatientManagement: React.FC = () => {
                   <span>{branches.find((b) => b.id === selectedVisitForMR.branchId)?.name || selectedVisitForMR.branchId}</span>
                 </div>
               </div>
-              <button
-                onClick={() => setMrModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {canReadMedicalRecords && (
+                  <button
+                    type="button"
+                    onClick={handlePrintMedicalRecord}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-200"
+                    title="Cetak atau simpan sebagai PDF, format formulir klinik A4"
+                  >
+                    <Printer className="h-4 w-4" /> Cetak / PDF
+                  </button>
+                )}
+                <button
+                  onClick={() => setMrModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Body */}
@@ -2209,6 +2267,32 @@ export const PatientManagement: React.FC = () => {
                   }}
                   className="space-y-4"
                 >
+                  <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-3.5">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-800">Identitas Pasien</h3>
+                      <p className="mt-0.5 text-[10px] text-slate-500">Data diambil dari profil pasien dan tidak diubah dari formulir kunjungan ini.</p>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {[
+                        ["No. Rekam Medis", selectedPatient.medicalRecordNumber || "Belum tersedia"],
+                        ["Nama", selectedPatient.fullName || selectedPatient.name],
+                        [
+                          "Tempat / Tanggal Lahir",
+                          [selectedPatient.placeOfBirth, selectedPatient.dateOfBirth].filter(Boolean).join(" / ") || "-"
+                        ],
+                        ["Jenis Kelamin", selectedPatient.gender === "L" ? "Laki-laki" : "Perempuan"],
+                        ["Pekerjaan", selectedPatient.occupation || "-"],
+                        ["Telepon", selectedPatient.phone || "-"],
+                        ["Alamat", selectedPatient.address || "-"]
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-lg bg-slate-50 px-3 py-2">
+                          <div className="text-[10px] font-semibold text-slate-500">{label}</div>
+                          <div className="mt-0.5 whitespace-pre-wrap text-xs text-slate-800">{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
                   <section className="space-y-3 rounded-xl border border-rose-100 bg-rose-50/60 p-3.5">
                     <div>
                       <h3 className="text-xs font-bold text-rose-900">Medical Alert & Riwayat Medis</h3>
@@ -2232,7 +2316,10 @@ export const PatientManagement: React.FC = () => {
                         </select>
                       </label>
                       {[
-                        ["Alergi", "allergies", "Contoh: penisilin, lateks, anestesi lokal"],
+                        ["Alergi obat-obatan", "medicationAllergies", "Contoh: penisilin, lateks, anestesi lokal"],
+                        ["Alergi makanan", "foodAllergies", "Tuliskan jenis makanan pemicu alergi"],
+                        ["Penyakit bawaan", "congenitalDiseases", "Tuliskan penyakit bawaan pasien"],
+                        ["Alergi lainnya", "allergies", "Alergi lain yang belum tercatat di atas"],
                         ["Penyakit sistemik", "systemicDiseases", "Contoh: diabetes, hipertensi, penyakit jantung"],
                         ["Obat rutin", "routineMedications", "Nama obat, dosis, dan frekuensi bila diketahui"],
                         ["Peringatan medis", "medicalWarnings", "Contoh: penggunaan pengencer darah atau riwayat perdarahan"],
@@ -2503,6 +2590,17 @@ export const PatientManagement: React.FC = () => {
                     onChange={(odontogram) => setMrForm((previous) => ({ ...previous, odontogram }))}
                   />
 
+                  <ClinicDentalAssessmentFields
+                    value={mrForm.clinicFormData.dentalAssessment || {}}
+                    disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
+                    onChange={(dentalAssessment) =>
+                      setMrForm((previous) => ({
+                        ...previous,
+                        clinicFormData: { ...previous.clinicFormData, dentalAssessment }
+                      }))
+                    }
+                  />
+
                   {/* Diagnosis */}
                   <div>
                     <label className="block font-bold text-slate-700 mb-1 text-xs">
@@ -2558,6 +2656,35 @@ export const PatientManagement: React.FC = () => {
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
                   </div>
+
+                  <section className="space-y-2 rounded-xl border border-slate-200 bg-white p-3.5">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-800">Keterangan Formulir Klinik</h3>
+                      <p className="mt-0.5 text-[10px] text-slate-500">Kolom B dan L dipertahankan sesuai label pada formulir asli.</p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {([
+                        ["B", mrForm.clinicFormData.noteB, "noteB"],
+                        ["L", mrForm.clinicFormData.noteL, "noteL"]
+                      ] as const).map(([label, note, key]) => (
+                        <label key={key} className="text-[11px] font-semibold text-slate-700">
+                          Keterangan {label}
+                          <textarea
+                            rows={2}
+                            value={note || ""}
+                            disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
+                            onChange={(event) =>
+                              setMrForm((previous) => ({
+                                ...previous,
+                                clinicFormData: { ...previous.clinicFormData, [key]: event.target.value }
+                              }))
+                            }
+                            className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs font-normal disabled:bg-slate-100"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </section>
 
                   {/* Catatan Dokter */}
                   <div>

@@ -1995,6 +1995,9 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
           branch_id: existing?.branchId ?? profile.branchId ?? userBranchId ?? null,
           blood_type: profile.bloodType || null,
           allergies: profile.allergies || null,
+          medication_allergies: profile.medicationAllergies || null,
+          food_allergies: profile.foodAllergies || null,
+          congenital_diseases: profile.congenitalDiseases || null,
           systemic_diseases: profile.systemicDiseases || null,
           routine_medications: profile.routineMedications || null,
           medical_warnings: profile.medicalWarnings || null,
@@ -2053,6 +2056,7 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
       treatmentPlan?: string;
       doctorNotes?: string;
       odontogram?: OdontogramData;
+      clinicFormData?: MedicalRecord["clinicFormData"];
       vitalSigns?: MedicalRecord["vitalSigns"];
       medicalHistorySnapshot?: PatientMedicalProfile;
       status?: MedicalRecordStatus | "DRAFT" | "FINAL";
@@ -2082,6 +2086,7 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
           treatment_plan: data.treatmentPlan || null,
           doctor_notes: data.doctorNotes || null,
           odontogram: data.odontogram || { schemaVersion: 1, teeth: {} },
+          clinic_form_data: data.clinicFormData || {},
           vital_signs: data.vitalSigns || {},
           medical_history_snapshot: data.medicalHistorySnapshot || {},
           status: MedicalRecordStatus.DRAFT,
@@ -2115,6 +2120,7 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
         treatment_plan: data.treatmentPlan || null,
         doctor_notes: data.doctorNotes || null,
         odontogram: data.odontogram || { schemaVersion: 1, teeth: {} },
+        clinic_form_data: data.clinicFormData || {},
         vital_signs: data.vitalSigns || {},
         medical_history_snapshot: data.medicalHistorySnapshot || {},
         status: MedicalRecordStatus.DRAFT
@@ -2176,6 +2182,7 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
       treatmentPlan: row.treatment_plan || row.treatment_notes,
       doctorNotes: row.doctor_notes || row.treatment_notes,
       odontogram: this.mapOdontogram(row.odontogram),
+      clinicFormData: row.clinic_form_data || {},
       odontogramHistory: Array.isArray(row.odontogram_history)
         ? row.odontogram_history.map((entry: any) => ({
             odontogram: this.mapOdontogram(entry.odontogram),
@@ -2218,6 +2225,9 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
       branchId: row?.branch_id || undefined,
       bloodType: row?.blood_type || undefined,
       allergies: row?.allergies || "",
+      medicationAllergies: row?.medication_allergies || "",
+      foodAllergies: row?.food_allergies || "",
+      congenitalDiseases: row?.congenital_diseases || "",
       systemicDiseases: row?.systemic_diseases || "",
       routineMedications: row?.routine_medications || "",
       medicalWarnings: row?.medical_warnings || "",
