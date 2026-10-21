@@ -184,7 +184,7 @@ export const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 md:p-8" id="login-screen">
+    <div className="min-h-screen flex items-center justify-center p-4 md:p-8" id="login-screen">
       <div className="max-w-md w-full bg-white rounded-2xl border border-slate-200/80 shadow-lg p-8">
         
         {/* Header Branding */}

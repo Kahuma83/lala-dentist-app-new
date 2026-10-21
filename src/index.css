@@ -16,6 +16,14 @@
   background-size: 18px 18px !important;
 }
 
+#login-screen {
+  background-color: #ebd4a8 !important;
+  background-image:
+    radial-gradient(rgba(145, 107, 28, 0.13) 0.8px, transparent 0.8px),
+    linear-gradient(110deg, #d9bf8f 0%, #ebd4a8 28%, #e1b951 52%, #ebd4a8 76%, #d9bf8f 100%) !important;
+  background-size: 20px 20px, cover !important;
+}
+
 /* Premium Textured Gold Gradients */
 .bg-gold-metallic {
   background: linear-gradient(135deg, #fbf9f4 0%, #ebd4a8 50%, #faf6ec 100%) !important;
