@@ -384,16 +384,9 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
     setSending(true);
     setError(null);
     try {
-      const replySnapshot = replyTo ? {
-        id: replyTo.id,
-        senderName: replyTo.senderName,
-        messageText: replyTo.messageText,
-        attachmentFileName: replyTo.attachmentFileName,
-        attachmentContentType: replyTo.attachmentContentType
-      } : undefined;
-      const message = await sendDoctorChatMessage(`sticker:${sticker.id}`, null, replyTo?.id);
+      const message = await sendDoctorChatMessage(`sticker:${sticker.id}`);
       scrollToBottomRef.current = true;
-      setMessages((previous) => mergeMessages(previous, [{ ...message, replyTo: message.replyTo || replySnapshot }]));
+      setMessages((previous) => mergeMessages(previous, [message]));
       setReplyTo(null);
       setStickerPickerOpen(false);
       await loadMessages();
@@ -506,7 +499,7 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
                   <strong>{ownMessage ? "Anda" : message.senderName}</strong>
                   <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
                 </div>
-                {message.replyTo && (
+                {message.replyTo && !sticker && (
                   <div className="chat-reply-quote">
                     <strong>{message.replyTo.senderName}</strong>
                     <span>

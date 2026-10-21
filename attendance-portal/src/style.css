@@ -1331,10 +1331,10 @@ h1,
   color: var(--portal-ink);
 }
 .chat-message.own { border-color: #164da8; border-radius: 15px 15px 5px 15px; background: linear-gradient(145deg, #1764d3, #1247a8); color: #fff; }
-.chat-message.sticker-only { width: min(220px, 58vw); max-width: 58vw; padding: 4px; border-color: transparent; border-radius: 12px; background: transparent; box-shadow: none; }
+.chat-message.sticker-only { width: min(160px, 44vw); max-width: 44vw; padding: 4px; border-color: transparent; border-radius: 12px; background: transparent; box-shadow: none; }
 .chat-message.sticker-only.own { background: transparent; }
 .chat-message.sticker-only .chat-message-meta { padding: 4px 6px 0; }
-.chat-sticker-message { display: block; width: 100%; max-height: 230px; object-fit: contain; }
+.chat-sticker-message { display: block; width: 100%; max-height: 165px; object-fit: contain; }
 .chat-message-meta { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 5px; }
 .chat-message-meta strong { color: #1a579f; font-size: 10px; }
 .chat-message.own .chat-message-meta strong { color: #fff; }
