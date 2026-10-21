@@ -346,6 +346,25 @@ describe("Cloudflare doctor group chat API", () => {
     expect(body.messages[0].avatarUrl).toBe("https://images.example/dokter.png");
   });
 
+  it("does not request the optional dental doctor photo_url column", async () => {
+    const fetchMock = createSuccessfulDoctorFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestGet({
+      request: createAuthorizedRequest("/api/chat/messages"),
+      env: environment
+    });
+
+    expect(response.status).toBe(200);
+    const doctorRequests = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/rest/v1/dental_doctors?")
+    );
+    expect(doctorRequests.length).toBeGreaterThan(0);
+    expect(doctorRequests.every(([url]) =>
+      !new URL(String(url)).searchParams.get("select")?.split(",").includes("photo_url")
+    )).toBe(true);
+  });
+
   it("pins and unpins only through the server-side group RPC", async () => {
     const fetchMock = createSuccessfulDoctorFetch();
     vi.stubGlobal("fetch", fetchMock);

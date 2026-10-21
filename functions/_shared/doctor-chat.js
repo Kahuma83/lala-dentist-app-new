@@ -140,7 +140,7 @@ export async function authenticateDoctor(request, env) {
   }
 
   const doctorQuery = new URLSearchParams({
-    select: "id,name,active,staff_id,avatar_url,photo_url",
+    select: "id,name,active,staff_id,avatar_url",
     id: `eq.${account.doctor_id}`,
     limit: "2"
   });
@@ -174,7 +174,7 @@ export async function authenticateDoctor(request, env) {
       clinicUserId: account.id,
       doctorId: account.doctor_id,
       staffId: account.staff_id || doctors[0].staff_id || null,
-      avatarUrl: doctors[0].avatar_url || doctors[0].photo_url || null,
+      avatarUrl: doctors[0].avatar_url || null,
       name: String(doctors[0].name || account.name || "Dokter").slice(0, 150)
     }
   };
@@ -227,7 +227,7 @@ async function getSenderAvatars(config, senderClinicUserIds) {
         url: config.clinicUrl,
         apiKey: config.clinicSecret,
         path: `/rest/v1/dental_doctors?${new URLSearchParams({
-          select: "id,staff_id,avatar_url,photo_url",
+          select: "id,staff_id,avatar_url",
           id: `in.(${doctorIds.join(",")})`
         })}`
       })
@@ -259,7 +259,7 @@ async function getSenderAvatars(config, senderClinicUserIds) {
     const doctor = doctorById.get(account.doctor_id);
     const staffId = account.staff_id || doctor?.staff_id;
     const photoPath = staffById.get(staffId)?.profile_photo_path;
-    const publicAvatar = doctor?.avatar_url || doctor?.photo_url;
+    const publicAvatar = doctor?.avatar_url;
     const safePublicAvatar = typeof publicAvatar === "string" &&
       publicAvatar.length <= 2048 &&
       publicAvatar.startsWith("https://")
