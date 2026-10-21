@@ -157,7 +157,7 @@ export async function authenticateDoctor(request, env) {
     url: config.chatUrl,
     apiKey: config.chatSecret,
     path: `/rest/v1/chat_groups?${new URLSearchParams({
-      select: "id,slug,name",
+      select: "id,slug,name,subtitle",
       slug: `eq.${CHAT_GROUP_SLUG}`,
       limit: "2"
     })}`
@@ -178,6 +178,40 @@ export async function authenticateDoctor(request, env) {
       name: String(doctors[0].name || account.name || "Dokter").slice(0, 150)
     }
   };
+}
+
+export async function updateGroupSubtitle({ request, env }) {
+  const { config, group } = await authenticateDoctor(request, env);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    throw new ChatApiError("Isi subjudul tidak valid.", 400);
+  }
+
+  if (typeof body?.subtitle !== "string") {
+    throw new ChatApiError("Subjudul wajib berupa teks.", 400);
+  }
+  const subtitle = body.subtitle.trim();
+  if (subtitle.length > 120) {
+    throw new ChatApiError("Subjudul maksimal 120 karakter.", 400);
+  }
+
+  const rows = await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/chat_groups?${new URLSearchParams({
+      id: `eq.${group.id}`,
+      select: "subtitle"
+    })}`,
+    method: "PATCH",
+    body: { subtitle },
+    headers: { Prefer: "return=representation" }
+  });
+  if (!Array.isArray(rows) || rows.length !== 1) {
+    throw new ChatApiError("Subjudul grup chat gagal disimpan.", 500);
+  }
+  return jsonResponse({ subtitle: rows[0].subtitle });
 }
 
 async function createStaffPhotoUrls(config, paths) {
@@ -237,28 +271,43 @@ async function getSenderAvatars(config, senderClinicUserIds) {
     ...accountRows.map((account) => account.staff_id),
     ...doctorRows.map((doctor) => doctor.staff_id)
   ].filter(Boolean)));
-  const staff = staffIds.length
+  const staffFilters = [
+    staffIds.length ? `id.in.(${staffIds.join(",")})` : "",
+    userIds.length ? `user_account_id.in.(${userIds.join(",")})` : ""
+  ].filter(Boolean);
+  const staff = staffFilters.length
     ? await supabaseRequest({
         url: config.clinicUrl,
         apiKey: config.clinicSecret,
         path: `/rest/v1/staff?${new URLSearchParams({
-          select: "id,profile_photo_path",
-          id: `in.(${staffIds.join(",")})`
+          select: "id,user_account_id,profile_photo_path",
+          or: `(${staffFilters.join(",")})`
         })}`
       })
     : [];
   const staffRows = Array.isArray(staff) ? staff : [];
   const doctorById = new Map(doctorRows.map((doctor) => [doctor.id, doctor]));
   const staffById = new Map(staffRows.map((row) => [row.id, row]));
+  const staffByAccountId = new Map(staffRows
+    .filter((row) => row.user_account_id)
+    .map((row) => [row.user_account_id, row]));
+  const staffBySenderAccount = new Map(accountRows.map((account) => {
+    const doctorStaffId = doctorById.get(account.doctor_id)?.staff_id;
+    const candidates = [
+      staffByAccountId.get(account.id),
+      staffById.get(account.staff_id),
+      staffById.get(doctorStaffId)
+    ].filter(Boolean);
+    return [account.id, candidates.find((row) => row.profile_photo_path) || candidates[0]];
+  }));
   const photoPaths = accountRows.map((account) =>
-    staffById.get(account.staff_id || doctorById.get(account.doctor_id)?.staff_id)?.profile_photo_path
+    staffBySenderAccount.get(account.id)?.profile_photo_path
   );
   const signedPhotoUrls = await createStaffPhotoUrls(config, photoPaths);
   const avatars = new Map();
   for (const account of accountRows) {
     const doctor = doctorById.get(account.doctor_id);
-    const staffId = account.staff_id || doctor?.staff_id;
-    const photoPath = staffById.get(staffId)?.profile_photo_path;
+    const photoPath = staffBySenderAccount.get(account.id)?.profile_photo_path;
     const publicAvatar = doctor?.avatar_url;
     const safePublicAvatar = typeof publicAvatar === "string" &&
       publicAvatar.length <= 2048 &&
@@ -336,7 +385,7 @@ export async function listMessages(context) {
   ]);
 
   return jsonResponse({
-    group: { id: group.id, name: group.name },
+    group: { id: group.id, name: group.name, subtitle: group.subtitle || "" },
     hasMore,
     pinnedMessage: pinnedMessage ? {
       id: pinnedMessage.id,
@@ -392,6 +441,74 @@ export async function setPinnedMessage(context) {
     }
   });
   return jsonResponse({ pinnedMessageId: pinMessageId });
+}
+
+export async function deleteMessage(context) {
+  const { request, env, params } = context;
+  const { config, group, actor } = await authenticateDoctor(request, env);
+  const messageId = String(params?.id || "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(messageId)) {
+    throw new ChatApiError("ID pesan tidak valid.", 400);
+  }
+
+  const messageQuery = new URLSearchParams({
+    select: "id,attachment_path",
+    id: `eq.${messageId}`,
+    group_id: `eq.${group.id}`,
+    sender_clinic_user_id: `eq.${actor.clinicUserId}`,
+    limit: "1"
+  });
+  const messages = await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/group_chat_messages?${messageQuery}`
+  });
+  const message = Array.isArray(messages) ? messages[0] : null;
+  if (!message) throw new ChatApiError("Pesan tidak ditemukan atau bukan milik Anda.", 404);
+
+  const deleteQuery = new URLSearchParams({
+    id: `eq.${messageId}`,
+    group_id: `eq.${group.id}`,
+    sender_clinic_user_id: `eq.${actor.clinicUserId}`
+  });
+  const deletedMessages = await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/group_chat_messages?${deleteQuery}`,
+    method: "DELETE",
+    headers: { Prefer: "return=representation" }
+  });
+  if (!Array.isArray(deletedMessages) || deletedMessages.length !== 1) {
+    throw new ChatApiError("Pesan tidak ditemukan atau sudah dihapus.", 404);
+  }
+
+  let attachmentDeleted = true;
+  if (message.attachment_path) {
+    try {
+      const response = await fetch(
+        `${config.chatUrl}/storage/v1/object/${CHAT_BUCKET}/${message.attachment_path}`,
+        {
+          method: "DELETE",
+          headers: getSupabaseHeaders(config.chatSecret, null)
+        }
+      );
+      attachmentDeleted = response.ok;
+      if (!response.ok) {
+        console.error("[pages-function] Failed to delete doctor chat attachment. HTTP", response.status);
+      }
+    } catch (error) {
+      attachmentDeleted = false;
+      console.error("[pages-function] Failed to delete doctor chat attachment:", error);
+    }
+  }
+
+  return jsonResponse({
+    deleted: true,
+    attachmentDeleted,
+    ...(attachmentDeleted ? {} : {
+      warning: "Pesan terhapus, tetapi lampirannya gagal dihapus dari penyimpanan."
+    })
+  });
 }
 
 function validateAttachment(file) {

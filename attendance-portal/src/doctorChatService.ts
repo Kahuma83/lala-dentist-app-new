@@ -23,7 +23,7 @@ export interface DoctorChatMessage {
 }
 
 export interface DoctorChatPage {
-  group: { id: string; name: string };
+  group: { id: string; name: string; subtitle?: string };
   messages: DoctorChatMessage[];
   pinnedMessage: DoctorChatMessage | null;
   searchTerm?: string;
@@ -122,6 +122,32 @@ export async function setDoctorChatMessagePinned(messageId: string, pinned: bool
   await authorizedFetch(`/api/chat/messages/${encodeURIComponent(messageId)}/pin`, {
     method: pinned ? "PUT" : "DELETE"
   });
+}
+
+export async function updateDoctorChatGroupSubtitle(subtitle: string): Promise<string> {
+  const response = await authorizedFetch("/api/chat/group", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subtitle })
+  });
+  const result = await response.json();
+  if (typeof result?.subtitle !== "string") {
+    throw new Error("Respons subjudul grup chat tidak valid.");
+  }
+  return result.subtitle;
+}
+
+export async function deleteDoctorChatMessage(
+  messageId: string
+): Promise<{ attachmentDeleted: boolean; warning?: string }> {
+  const response = await authorizedFetch(`/api/chat/messages/${encodeURIComponent(messageId)}`, {
+    method: "DELETE"
+  });
+  const result = await response.json();
+  if (result?.deleted !== true || typeof result.attachmentDeleted !== "boolean") {
+    throw new Error("Respons penghapusan pesan chat tidak valid.");
+  }
+  return result;
 }
 
 export async function sendDoctorChatMessage(

@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, Camera, Download, FileText, Image, Images, LoaderCircle, MessageCircle, Paperclip, Pin, PinOff, Reply, Search, Send, Smile, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Camera, Check, Download, FileText, Image, Images, LoaderCircle, MessageCircle, Paperclip, Pencil, Pin, PinOff, Reply, Search, Send, Smile, Trash2, X } from "lucide-react";
 import {
   doctorChatStickers,
   getDoctorChatMessagePreview,
@@ -9,11 +9,13 @@ import {
 import {
   DoctorChatMessage,
   DoctorChatRealtimeStatus,
+  deleteDoctorChatMessage,
   downloadDoctorChatAttachment,
   getDoctorChatMessages,
   setDoctorChatMessagePinned,
   sendDoctorChatMessage,
-  subscribeToDoctorChat
+  subscribeToDoctorChat,
+  updateDoctorChatGroupSubtitle
 } from "./doctorChatService";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -166,10 +168,15 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
   const [messages, setMessages] = useState<DoctorChatMessage[]>([]);
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [groupName, setGroupName] = useState("Grup Dokter");
+  const [groupSubtitle, setGroupSubtitle] = useState("Percakapan bersama dokter · pesan diterima langsung");
+  const [editingGroupSubtitle, setEditingGroupSubtitle] = useState(false);
+  const [groupSubtitleDraft, setGroupSubtitleDraft] = useState("");
+  const [savingGroupSubtitle, setSavingGroupSubtitle] = useState(false);
   const [pinnedMessage, setPinnedMessage] = useState<DoctorChatMessage | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [messageText, setMessageText] = useState("");
   const [replyTo, setReplyTo] = useState<DoctorChatMessage | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [stickerPickerOpen, setStickerPickerOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,6 +184,7 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
   const [sending, setSending] = useState(false);
   const [preparingFile, setPreparingFile] = useState(false);
   const [pinningId, setPinningId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -192,6 +200,14 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
   const loadRequestIdRef = useRef(0);
   const scrollToBottomRef = useRef(true);
   const restoreScrollRef = useRef<{ height: number; top: number } | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
 
   const loadMessages = useCallback(async (showSpinner = false, requestedSearch = searchRef.current) => {
     const requestId = ++loadRequestIdRef.current;
@@ -204,6 +220,7 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
       const page = await getDoctorChatMessages(undefined, requestedSearch);
       if (!mountedRef.current || requestId !== loadRequestIdRef.current) return;
       setGroupName(page.group.name);
+      setGroupSubtitle(page.group.subtitle || "");
       setHasOlderMessages(page.hasMore);
       if (!requestedSearch) setPinnedMessage(page.pinnedMessage);
       setMessages((previous) => mergeMessages(previous, page.messages));
@@ -244,6 +261,7 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
     window.addEventListener("offline", offline);
     return () => {
       mountedRef.current = false;
+      clearLongPressTimer();
       unsubscribe();
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
@@ -310,10 +328,47 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
       setMessages([]);
       setHasOlderMessages(false);
       await loadMessages(true, "");
+      setSelectedMessageId(null);
     } catch (pinError) {
       setError(pinError instanceof Error ? pinError.message : "Gagal mengubah pesan yang disematkan.");
     } finally {
       setPinningId(null);
+    }
+  };
+
+  const handleDeleteMessage = async (message: DoctorChatMessage) => {
+    setSelectedMessageId(null);
+    if (!window.confirm("Hapus pesan ini untuk semua anggota grup? Pesan yang dihapus tidak dapat dipulihkan.")) return;
+
+    setDeletingId(message.id);
+    setError(null);
+    try {
+      const result = await deleteDoctorChatMessage(message.id);
+      setMessages((previous) => previous.filter((item) => item.id !== message.id));
+      if (pinnedMessage?.id === message.id) setPinnedMessage(null);
+      if (replyTo?.id === message.id) setReplyTo(null);
+      if (!result.attachmentDeleted) {
+        setError(result.warning || "Pesan terhapus, tetapi lampirannya gagal dihapus dari penyimpanan.");
+      }
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Gagal menghapus pesan.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleSaveGroupSubtitle = async (event: FormEvent) => {
+    event.preventDefault();
+    setSavingGroupSubtitle(true);
+    setError(null);
+    try {
+      const subtitle = await updateDoctorChatGroupSubtitle(groupSubtitleDraft);
+      setGroupSubtitle(subtitle);
+      setEditingGroupSubtitle(false);
+    } catch (subtitleError) {
+      setError(subtitleError instanceof Error ? subtitleError.message : "Gagal menyimpan subjudul grup.");
+    } finally {
+      setSavingGroupSubtitle(false);
     }
   };
 
@@ -417,6 +472,10 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
     }
   };
 
+  const selectedMessage = messages.find((message) => message.id === selectedMessageId);
+  const selectedMessageIsOwn = selectedMessage?.senderClinicUserId === currentUserId;
+  const selectedMessageIsPinned = selectedMessage ? pinnedMessage?.id === selectedMessage.id : false;
+
   return (
     <section className="chat-panel" aria-label="Chat grup dokter">
       <header className="chat-header">
@@ -426,7 +485,44 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
         <span className="chat-title-icon"><MessageCircle /></span>
         <div className="chat-title">
           <strong>{groupName}</strong>
-          <span>Percakapan bersama dokter · pesan diterima langsung</span>
+          {editingGroupSubtitle ? (
+            <form className="chat-subtitle-editor" onSubmit={(event) => void handleSaveGroupSubtitle(event)}>
+              <input
+                autoFocus
+                value={groupSubtitleDraft}
+                onChange={(event) => setGroupSubtitleDraft(event.target.value)}
+                maxLength={120}
+                aria-label="Subjudul grup chat"
+                placeholder="Tulis subjudul grup"
+              />
+              <button type="submit" disabled={savingGroupSubtitle} aria-label="Simpan subjudul">
+                {savingGroupSubtitle ? <LoaderCircle className="spin" /> : <Check />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingGroupSubtitle(false)}
+                disabled={savingGroupSubtitle}
+                aria-label="Batalkan perubahan subjudul"
+              >
+                <X />
+              </button>
+            </form>
+          ) : (
+            <div className="chat-subtitle-line">
+              <span>{groupSubtitle || " "}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setGroupSubtitleDraft(groupSubtitle);
+                  setEditingGroupSubtitle(true);
+                }}
+                aria-label="Edit subjudul grup untuk semua dokter"
+                title="Edit subjudul grup"
+              >
+                <Pencil />
+              </button>
+            </div>
+          )}
         </div>
         <span className={`chat-online${isOnline && realtimeStatus === "connected" ? " online" : ""}`}>
           {!isOnline ? "Offline" : realtimeStatus === "connected" ? "Realtime" : realtimeStatus === "connecting" ? "Menghubungkan" : "Terputus"}
@@ -452,6 +548,53 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
           <span className="chat-search-count">{messages.length} pesan</span>
         )}
       </div>
+
+      {selectedMessage && (
+        <div className="chat-selection-toolbar" role="toolbar" aria-label="Aksi pesan terpilih">
+          <span className="chat-selection-summary">Pesan dipilih</span>
+          <button
+            type="button"
+            onClick={() => {
+              setReplyTo(selectedMessage);
+              setSelectedMessageId(null);
+              document.querySelector<HTMLTextAreaElement>(".chat-compose-row textarea")?.focus();
+            }}
+            aria-label="Balas pesan"
+          >
+            <Reply />
+            <span>Balas</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void handlePinMessage(selectedMessage)}
+            disabled={pinningId === selectedMessage.id}
+            aria-label={selectedMessageIsPinned ? "Lepas sematan pesan" : "Sematkan pesan"}
+          >
+            {pinningId === selectedMessage.id ? <LoaderCircle className="spin" /> : selectedMessageIsPinned ? <PinOff /> : <Pin />}
+            <span>{selectedMessageIsPinned ? "Lepas sematan" : "Sematkan"}</span>
+          </button>
+          {selectedMessageIsOwn && (
+            <button
+              type="button"
+              className="chat-selection-delete"
+              onClick={() => void handleDeleteMessage(selectedMessage)}
+              disabled={deletingId === selectedMessage.id}
+              aria-label="Hapus pesan"
+            >
+              {deletingId === selectedMessage.id ? <LoaderCircle className="spin" /> : <Trash2 />}
+              <span>Hapus</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="chat-selection-close"
+            onClick={() => setSelectedMessageId(null)}
+            aria-label="Tutup aksi pesan"
+          >
+            <X />
+          </button>
+        </div>
+      )}
 
       {pinnedMessage && (
         <div className="chat-pinned-banner">
@@ -491,23 +634,53 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
           const ownMessage = message.senderClinicUserId === currentUserId;
           const imageAttachment = message.attachmentContentType?.startsWith("image/");
           const sticker = getDoctorChatSticker(message.messageText);
+          const replyPreview = message.replyTo
+            ? getDoctorChatMessagePreview(message.replyTo.messageText) ||
+              (message.replyTo.attachmentFileName ? `Lampiran: ${message.replyTo.attachmentFileName}` : "")
+            : "";
           return (
-            <article key={message.id} data-message-id={message.id} className={`chat-message-row${ownMessage ? " own" : ""}`}>
+            <article
+              key={message.id}
+              data-message-id={message.id}
+              className={`chat-message-row${ownMessage ? " own" : ""}${selectedMessageId === message.id ? " selected" : ""}`}
+              onPointerDown={(event) => {
+                if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
+                clearLongPressTimer();
+                longPressTimerRef.current = window.setTimeout(() => {
+                  setSelectedMessageId(message.id);
+                  longPressTimerRef.current = null;
+                }, 550);
+              }}
+              onPointerUp={clearLongPressTimer}
+              onPointerLeave={clearLongPressTimer}
+              onPointerCancel={clearLongPressTimer}
+              onClick={(event) => {
+                if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+                setSelectedMessageId(message.id);
+              }}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setSelectedMessageId(message.id);
+                }
+              }}
+              tabIndex={0}
+              aria-label={`Pesan dari ${ownMessage ? "Anda" : message.senderName}. Ketuk untuk memilih aksi.`}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setSelectedMessageId(message.id);
+              }}
+            >
               <ChatAvatar name={message.senderName} imageUrl={message.avatarUrl} />
               <div className={`chat-message${ownMessage ? " own" : ""}${sticker && !message.attachmentFileName ? " sticker-only" : ""}`}>
                 <div className="chat-message-meta">
                   <strong>{ownMessage ? "Anda" : message.senderName}</strong>
-                  <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
                 </div>
-                {message.replyTo && !sticker && (
+                {message.replyTo && !sticker && replyPreview && (
                   <div className="chat-reply-quote">
                     <strong>{message.replyTo.senderName}</strong>
-                    <span>
-                      {getDoctorChatMessagePreview(message.replyTo.messageText) ||
-                        (message.replyTo.attachmentFileName
-                          ? `Lampiran: ${message.replyTo.attachmentFileName}`
-                          : "Pesan")}
-                    </span>
+                    <span>{replyPreview}</span>
                   </div>
                 )}
                 {sticker && !message.attachmentFileName ? (
@@ -517,6 +690,9 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
                     alt={sticker.label}
                     loading="lazy"
                     decoding="async"
+                    draggable={false}
+                    onContextMenu={(event) => event.preventDefault()}
+                    onDragStart={(event) => event.preventDefault()}
                   />
                 ) : message.messageText && <p>{message.messageText}</p>}
                 {message.attachmentFileName && (
@@ -537,32 +713,9 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
                     </button>
                   </>
                 )}
-                <div className="chat-message-actions">
-                  <button
-                    type="button"
-                    className="chat-reply-button"
-                    onClick={() => {
-                      setReplyTo(message);
-                      document.querySelector<HTMLTextAreaElement>(".chat-compose-row textarea")?.focus();
-                    }}
-                    aria-label={`Balas pesan dari ${ownMessage ? "Anda" : message.senderName}`}
-                    title="Balas pesan"
-                  >
-                    <Reply />
-                    <span>Balas</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="chat-reply-button"
-                    onClick={() => void handlePinMessage(message)}
-                    disabled={pinningId === message.id}
-                    aria-label={pinnedMessage?.id === message.id ? "Lepas sematan pesan" : "Sematkan pesan"}
-                    title={pinnedMessage?.id === message.id ? "Lepas sematan" : "Sematkan"}
-                  >
-                    {pinningId === message.id ? <LoaderCircle className="spin" /> : pinnedMessage?.id === message.id ? <PinOff /> : <Pin />}
-                    <span>{pinnedMessage?.id === message.id ? "Lepas pin" : "Sematkan"}</span>
-                  </button>
-                </div>
+                <time className="chat-message-time" dateTime={message.createdAt}>
+                  {formatMessageTime(message.createdAt)}
+                </time>
               </div>
             </article>
           );

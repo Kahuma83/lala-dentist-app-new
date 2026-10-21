@@ -7,6 +7,12 @@ import {
   onRequestDelete as onRequestUnpin,
   onRequestPut as onRequestPin
 } from "../../functions/api/chat/messages/[id]/pin.js";
+import {
+  onRequestDelete as onRequestDeleteMessage
+} from "../../functions/api/chat/messages/[id].js";
+import {
+  onRequestPut as onRequestUpdateGroupSubtitle
+} from "../../functions/api/chat/group.js";
 
 const environment = {
   SUPABASE_URL: "https://clinic-project.supabase.co",
@@ -30,6 +36,8 @@ const createAuthorizedRequest = (url: string, init?: RequestInit) => new Request
 function createSuccessfulDoctorFetch(options: {
   accountId?: string;
   messages?: Array<Record<string, unknown>>;
+  messageToDelete?: Record<string, unknown>;
+  staffRows?: Array<Record<string, unknown>>;
 } = {}) {
   const accountId = options.accountId || "clinic-account-id";
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -53,15 +61,51 @@ function createSuccessfulDoctorFetch(options: {
         id: "clinic-doctor-id",
         name: "drg. Dokter",
         active: true,
+        staff_id: null,
         avatar_url: "https://images.example/dokter.png"
       }]), { status: 200 });
+    }
+    if (url.includes("/rest/v1/staff?")) {
+      return new Response(JSON.stringify(options.staffRows || []), { status: 200 });
+    }
+    if (url.includes("/storage/v1/object/sign/staff-profile-photos")) {
+      return new Response(JSON.stringify((JSON.parse(String(init?.body || "{}")).paths || []).map((path: string) => ({
+        path,
+        signedURL: `/storage/v1/object/sign/staff-profile-photos/${path}?token=test-token`
+      }))), { status: 200 });
+    }
+    if (url.includes("/rest/v1/chat_groups?") && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body || "{}"));
+      return new Response(JSON.stringify([{ subtitle: body.subtitle }]), { status: 200 });
     }
     if (url.includes("/rest/v1/chat_groups?")) {
       return new Response(JSON.stringify([{
         id: "10000000-0000-4000-8000-000000000001",
         slug: "all-doctors",
-        name: "Grup Dokter Lala Dentist"
+        name: "Grup Dokter Lala Dentist",
+        subtitle: "Percakapan bersama dokter"
       }]), { status: 200 });
+    }
+    if (url.includes("/rest/v1/group_chat_messages?") && init?.method === "DELETE") {
+      return new Response(JSON.stringify([options.messageToDelete || {
+        id: "20000000-0000-4000-8000-000000000002"
+      }]), { status: 200 });
+    }
+    if (
+      url.includes("/rest/v1/group_chat_messages?") &&
+      new URL(url).searchParams.get("select") === "id,attachment_path"
+    ) {
+      const message = options.messageToDelete || {
+        id: "20000000-0000-4000-8000-000000000002",
+        sender_clinic_user_id: accountId,
+        attachment_path: "group-id/clinic-account-id/attachment-id"
+      };
+      const senderFilter = new URL(url).searchParams.get("sender_clinic_user_id") || "";
+      const requestedSender = senderFilter.startsWith("eq.") ? senderFilter.slice(3) : "";
+      const visibleMessages = requestedSender && message.sender_clinic_user_id !== requestedSender
+        ? []
+        : [message];
+      return new Response(JSON.stringify(visibleMessages), { status: 200 });
     }
     if (url.includes("/rest/v1/group_chat_messages?") && init?.method === "POST") {
       return new Response(JSON.stringify([{
@@ -124,6 +168,47 @@ describe("Cloudflare doctor group chat API", () => {
       message: "Sesi login tidak ditemukan. Silakan masuk kembali."
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows an authenticated doctor to update the shared group subtitle", async () => {
+    const fetchMock = createSuccessfulDoctorFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestUpdateGroupSubtitle({
+      request: createAuthorizedRequest("/api/chat/group", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subtitle: "Info jadwal dokter" })
+      }),
+      env: environment
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ subtitle: "Info jadwal dokter" });
+    const updateCall = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).includes("/rest/v1/chat_groups?") && init?.method === "PATCH"
+    );
+    expect(updateCall).toBeDefined();
+    expect(JSON.parse(String(updateCall?.[1]?.body))).toEqual({ subtitle: "Info jadwal dokter" });
+  });
+
+  it("rejects a shared group subtitle over 120 characters", async () => {
+    const fetchMock = createSuccessfulDoctorFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestUpdateGroupSubtitle({
+      request: createAuthorizedRequest("/api/chat/group", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subtitle: "x".repeat(121) })
+      }),
+      env: environment
+    });
+
+    expect(response.status).toBe(400);
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).includes("/rest/v1/chat_groups?") && init?.method === "PATCH"
+    )).toBe(false);
   });
 
   it("rejects non-doctor accounts before accessing the chat project", async () => {
@@ -346,6 +431,44 @@ describe("Cloudflare doctor group chat API", () => {
     expect(body.messages[0].avatarUrl).toBe("https://images.example/dokter.png");
   });
 
+  it("prefers the employee portal photo linked through staff.user_account_id", async () => {
+    const accountId = "40000000-0000-4000-8000-000000000004";
+    const staffId = "50000000-0000-4000-8000-000000000005";
+    const profilePhotoPath = `staff-profile/${staffId}/60000000-0000-4000-8000-000000000006.jpg`;
+    const fetchMock = createSuccessfulDoctorFetch({
+      accountId,
+      staffRows: [{
+        id: staffId,
+        user_account_id: accountId,
+        profile_photo_path: profilePhotoPath
+      }],
+      messages: [{
+        id: "20000000-0000-4000-8000-000000000002",
+        group_id: "10000000-0000-4000-8000-000000000001",
+        sender_clinic_user_id: accountId,
+        sender_name_snapshot: "drg. Dokter",
+        message_text: "Siap",
+        created_at: "2026-10-21T10:00:00.000Z",
+        pinned_at: null
+      }]
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestGet({
+      request: createAuthorizedRequest("/api/chat/messages"),
+      env: environment
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.messages[0].avatarUrl).toBe(
+      `https://clinic-project.supabase.co/storage/v1/object/sign/staff-profile-photos/${profilePhotoPath}?token=test-token`
+    );
+    expect(body.messages[0].avatarUrl).not.toBe("https://images.example/dokter.png");
+    const staffRequest = fetchMock.mock.calls.find(([url]) => String(url).includes("/rest/v1/staff?"));
+    expect(new URL(String(staffRequest?.[0])).searchParams.get("or")).toContain(`user_account_id.in.(${accountId})`);
+  });
+
   it("does not request the optional dental doctor photo_url column", async () => {
     const fetchMock = createSuccessfulDoctorFetch();
     vi.stubGlobal("fetch", fetchMock);
@@ -394,5 +517,56 @@ describe("Cloudflare doctor group chat API", () => {
       p_message_id: null,
       p_expected_message_id: messageId
     });
+  });
+
+  it("deletes an owned message and its attachment for all group members", async () => {
+    const fetchMock = createSuccessfulDoctorFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const messageId = "20000000-0000-4000-8000-000000000002";
+
+    const response = await onRequestDeleteMessage({
+      request: createAuthorizedRequest(`/api/chat/messages/${messageId}`, { method: "DELETE" }),
+      env: environment,
+      params: { id: messageId }
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      deleted: true,
+      attachmentDeleted: true
+    });
+    const deleteRequest = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).includes("/rest/v1/group_chat_messages?") && init?.method === "DELETE"
+    );
+    const deleteQuery = new URL(String(deleteRequest?.[0])).searchParams;
+    expect(deleteQuery.get("sender_clinic_user_id")).toBe("eq.clinic-account-id");
+    expect(deleteQuery.get("group_id")).toBe("eq.10000000-0000-4000-8000-000000000001");
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).includes("/storage/v1/object/doctor-group-chat-files/group-id/clinic-account-id/attachment-id") &&
+      init?.method === "DELETE"
+    )).toBe(true);
+  });
+
+  it("does not delete another doctor's message or attachment", async () => {
+    const fetchMock = createSuccessfulDoctorFetch({
+      messageToDelete: {
+        id: "20000000-0000-4000-8000-000000000002",
+        sender_clinic_user_id: "another-doctor-account",
+        attachment_path: "group-id/another-doctor-account/attachment-id"
+      }
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestDeleteMessage({
+      request: createAuthorizedRequest("/api/chat/messages/20000000-0000-4000-8000-000000000002", { method: "DELETE" }),
+      env: environment,
+      params: { id: "20000000-0000-4000-8000-000000000002" }
+    });
+
+    expect(response.status).toBe(404);
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      (String(url).includes("/rest/v1/group_chat_messages?") && init?.method === "DELETE") ||
+      (String(url).includes("/storage/v1/object/doctor-group-chat-files/") && init?.method === "DELETE")
+    )).toBe(false);
   });
 });

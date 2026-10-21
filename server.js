@@ -6,7 +6,8 @@ import {
   handleChatError,
   listMessages as listDoctorChatMessages,
   setPinnedMessage as setDoctorChatPinnedMessage,
-  sendMessage as sendDoctorChatMessage
+  sendMessage as sendDoctorChatMessage,
+  updateGroupSubtitle as updateDoctorChatGroupSubtitle
 } from './functions/_shared/doctor-chat.js';
 
 dotenv.config({ path: '.env.local' });
@@ -54,6 +55,7 @@ const handleDoctorChatFunction = (handler) => async (req, res) => {
 };
 
 app.get('/api/chat/messages', handleDoctorChatFunction(listDoctorChatMessages));
+app.put('/api/chat/group', handleDoctorChatFunction(updateDoctorChatGroupSubtitle));
 app.post(
   '/api/chat/messages',
   express.raw({ type: 'multipart/form-data', limit: '11mb' }),
