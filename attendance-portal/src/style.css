@@ -1231,13 +1231,11 @@ h1,
 .chat-title strong { color: #fff; font-size: 13px; }
 .chat-title > span,
 .chat-subtitle-line > span { color: #e1eaff; font-size: 10px; }
-.chat-subtitle-line { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.chat-subtitle-line { min-width: 0; display: flex; align-items: center; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
 .chat-subtitle-line > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-subtitle-line > button,
 .chat-subtitle-editor button { width: 23px; height: 23px; display: grid; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid #ffffff42; border-radius: 7px; background: #ffffff1c; color: #fff; }
-.chat-subtitle-line > button:hover,
+.chat-subtitle-line:focus-visible { outline: 2px solid #fff; outline-offset: 3px; border-radius: 3px; }
 .chat-subtitle-editor button:hover:not(:disabled) { background: #ffffff38; }
-.chat-subtitle-line > button svg,
 .chat-subtitle-editor button svg { width: 12px; height: 12px; }
 .chat-subtitle-editor { min-width: 0; display: flex; align-items: center; gap: 4px; }
 .chat-subtitle-editor input { min-width: 0; width: min(270px, 48vw); padding: 5px 7px; border: 1px solid #ffffff70; border-radius: 7px; outline: 0; background: #ffffff1c; color: #fff; font: inherit; font-size: 10px; }
@@ -1380,6 +1378,11 @@ h1,
 .chat-message.own .chat-reply-quote strong { color: #405675; }
 
 .chat-icon-button.active { border-color: #8eb3e8; background: #eaf2ff; color: #194895; }
+.chat-attachment-menu { position: absolute; z-index: 5; bottom: calc(100% + 8px); left: 12px; display: grid; gap: 3px; min-width: 205px; padding: 6px; border: 1px solid #e1e9f4; border-radius: 12px; background: #fff; box-shadow: 0 10px 28px #18345b26; }
+.chat-attachment-menu button { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #29456d; font: inherit; font-size: 11px; text-align: left; }
+.chat-attachment-menu button:hover,
+.chat-attachment-menu button:focus-visible { outline: 0; background: #f1f6fd; }
+.chat-attachment-menu svg { width: 16px; height: 16px; flex: 0 0 auto; color: #365f98; }
 .chat-sticker-picker {
   max-height: min(290px, 42vh);
   overflow-y: auto;
@@ -1440,7 +1443,7 @@ h1,
 .chat-attachment-details small { color: #7d8ca4; font-size: 9px; }
 .chat-message.own .chat-attachment-details small { color: #d4e4ff; }
 
-.chat-compose { padding: 11px 13px 9px; border-top: 1px solid #e1e9f4; background: #fff; }
+.chat-compose { position: relative; padding: 11px 13px 9px; border-top: 1px solid #e1e9f4; background: #fff; }
 .chat-reply-composer { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; padding: 8px 10px; border-left: 3px solid #2871d0; border-radius: 9px; background: #eff5ff; }
 .chat-reply-composer-icon { width: 30px; height: 30px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 8px; background: #fff; color: #2871d0; }
 .chat-reply-composer-icon svg { width: 15px; height: 15px; }
@@ -1457,7 +1460,6 @@ h1,
 .chat-selected-file button { display: grid; place-items: center; border: 0; background: transparent; color: #7686a0; }
 .chat-selected-file button svg { width: 14px; height: 14px; }
 .chat-compose-row { display: flex; align-items: flex-end; gap: 7px; }
-.chat-actions { display: flex; flex: 0 0 auto; gap: 5px; }
 .chat-icon-button { width: 40px; height: 40px; display: grid; flex: 0 0 auto; place-items: center; border: 1px solid #d6e1f0; border-radius: 12px; background: #fff; color: #365680; }
 .chat-icon-button:hover:not(:disabled) { background: #f2f6fc; }
 .chat-icon-button svg { width: 17px; height: 17px; }
@@ -1489,7 +1491,6 @@ h1,
   .chat-message p { font-size: 15px; }
   .chat-compose { padding: 9px; }
   .chat-compose-row { gap: 5px; }
-  .chat-actions { gap: 4px; }
   .chat-icon-button { width: 36px; height: 40px; }
   .chat-sticker-picker { max-height: min(260px, 38vh); margin-bottom: 7px; padding: 7px; }
   .chat-sticker-picker-heading { align-items: flex-start; flex-direction: column; gap: 3px; }

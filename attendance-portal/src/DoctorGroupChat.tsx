@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, Camera, Check, Download, FileText, Image, Images, LoaderCircle, MessageCircle, Paperclip, Pencil, Pin, PinOff, Reply, Search, Send, Smile, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Camera, Check, Download, FileText, Image, Images, LoaderCircle, MessageCircle, Paperclip, Pin, PinOff, Plus, Reply, Search, Send, Smile, Trash2, X } from "lucide-react";
 import {
   doctorChatStickers,
   getDoctorChatMessagePreview,
@@ -177,6 +177,7 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
   const [messageText, setMessageText] = useState("");
   const [replyTo, setReplyTo] = useState<DoctorChatMessage | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [stickerPickerOpen, setStickerPickerOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
@@ -192,7 +193,6 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
   const [realtimeStatus, setRealtimeStatus] = useState<DoctorChatRealtimeStatus>("connecting");
   const listRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const mountedRef = useRef(false);
   const searchRef = useRef("");
@@ -201,12 +201,27 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
   const scrollToBottomRef = useRef(true);
   const restoreScrollRef = useRef<{ height: number; top: number } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
+  const subtitleLongPressTimerRef = useRef<number | null>(null);
+  const subtitlePointerTypeRef = useRef("");
 
   const clearLongPressTimer = () => {
     if (longPressTimerRef.current !== null) {
       window.clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
+  };
+
+  const clearSubtitleLongPressTimer = () => {
+    if (subtitleLongPressTimerRef.current !== null) {
+      window.clearTimeout(subtitleLongPressTimerRef.current);
+      subtitleLongPressTimerRef.current = null;
+    }
+  };
+
+  const startGroupSubtitleEditing = () => {
+    clearSubtitleLongPressTimer();
+    setGroupSubtitleDraft(groupSubtitle);
+    setEditingGroupSubtitle(true);
   };
 
   const loadMessages = useCallback(async (showSpinner = false, requestedSearch = searchRef.current) => {
@@ -248,7 +263,7 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
             setError(null);
             void loadMessages();
           } else if (status === "configuration_error") {
-            setError("Realtime belum dikonfigurasi. Tambahkan URL dan publishable key project chat pada variabel VITE_CHAT_SUPABASE_URL dan VITE_CHAT_SUPABASE_ANON_KEY.");
+            setError("Server chat belum dikonfigurasi. Silakan hubungi administrator.");
           } else if (status === "disconnected") {
             setError("Koneksi realtime terputus. Chat akan tersambung kembali otomatis.");
           }
@@ -262,6 +277,7 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
     return () => {
       mountedRef.current = false;
       clearLongPressTimer();
+      clearSubtitleLongPressTimer();
       unsubscribe();
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
@@ -424,6 +440,7 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
       setSelectedFile(null);
       setFileError(null);
       setReplyTo(null);
+      setAttachmentMenuOpen(false);
       await loadMessages();
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "Gagal mengirim pesan.");
@@ -500,7 +517,10 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
               </button>
               <button
                 type="button"
-                onClick={() => setEditingGroupSubtitle(false)}
+                onClick={() => {
+                  clearSubtitleLongPressTimer();
+                  setEditingGroupSubtitle(false);
+                }}
                 disabled={savingGroupSubtitle}
                 aria-label="Batalkan perubahan subjudul"
               >
@@ -508,20 +528,32 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
               </button>
             </form>
           ) : (
-            <div className="chat-subtitle-line">
+            <button
+              type="button"
+              className="chat-subtitle-line"
+              onPointerDown={(event) => {
+                subtitlePointerTypeRef.current = event.pointerType;
+                if (event.pointerType === "mouse") return;
+                clearSubtitleLongPressTimer();
+                subtitleLongPressTimerRef.current = window.setTimeout(startGroupSubtitleEditing, 550);
+              }}
+              onPointerUp={clearSubtitleLongPressTimer}
+              onPointerLeave={clearSubtitleLongPressTimer}
+              onPointerCancel={clearSubtitleLongPressTimer}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                startGroupSubtitleEditing();
+              }}
+              onClick={(event) => {
+                if (subtitlePointerTypeRef.current === "mouse" || event.detail === 0) {
+                  startGroupSubtitleEditing();
+                }
+              }}
+              aria-label="Tahan subjudul untuk mengeditnya bagi semua dokter"
+              title="Tahan lama untuk mengedit subjudul grup"
+            >
               <span>{groupSubtitle || " "}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setGroupSubtitleDraft(groupSubtitle);
-                  setEditingGroupSubtitle(true);
-                }}
-                aria-label="Edit subjudul grup untuk semua dokter"
-                title="Edit subjudul grup"
-              >
-                <Pencil />
-              </button>
-            </div>
+            </button>
           )}
         </div>
         <span className={`chat-online${isOnline && realtimeStatus === "connected" ? " online" : ""}`}>
@@ -733,11 +765,42 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
             <button type="button" onClick={() => setReplyTo(null)} aria-label="Batalkan balasan"><X /></button>
           </div>
         )}
+        {attachmentMenuOpen && (
+          <div className="chat-attachment-menu" role="group" aria-label="Tambah ke chat">
+            <button
+              type="button"
+              onClick={() => {
+                setAttachmentMenuOpen(false);
+                setStickerPickerOpen((open) => !open);
+              }}
+            >
+              <Smile /> Stiker
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAttachmentMenuOpen(false);
+                fileInputRef.current?.click();
+              }}
+            >
+              <Images /> Gambar atau dokumen
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAttachmentMenuOpen(false);
+                cameraInputRef.current?.click();
+              }}
+            >
+              <Camera /> Ambil foto
+            </button>
+          </div>
+        )}
         {stickerPickerOpen && (
           <div className="chat-sticker-picker" role="group" aria-label="Pilih stiker bawaan">
             <div className="chat-sticker-picker-heading">
               <strong>Stiker dokter</strong>
-              <span>Gambar bawaan · tanpa unggah ke Supabase</span>
+              <span>Gambar bawaan yang tersedia di aplikasi</span>
             </div>
             <div className="chat-sticker-grid">
               {doctorChatStickers.map((sticker) => (
@@ -771,17 +834,9 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
             ref={fileInputRef}
             type="file"
             className="visually-hidden"
-            accept="application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept="image/*,application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             onChange={handleFile}
-            aria-label="Pilih dokumen"
-          />
-          <input
-            ref={galleryInputRef}
-            type="file"
-            className="visually-hidden"
-            accept="image/*"
-            onChange={handleFile}
-            aria-label="Pilih foto dari galeri"
+            aria-label="Pilih gambar atau dokumen"
           />
           <input
             ref={cameraInputRef}
@@ -792,49 +847,20 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
             onChange={handleFile}
             aria-label="Ambil foto dengan kamera"
           />
-          <div className="chat-actions">
           <button
             type="button"
-            className={`chat-icon-button${stickerPickerOpen ? " active" : ""}`}
-            onClick={() => setStickerPickerOpen((open) => !open)}
+            className={`chat-icon-button${attachmentMenuOpen || stickerPickerOpen ? " active" : ""}`}
+            onClick={() => {
+              setAttachmentMenuOpen((open) => !open);
+              setStickerPickerOpen(false);
+            }}
             disabled={sending || preparingFile}
-            title="Pilih stiker bawaan"
-            aria-label="Pilih stiker"
-            aria-expanded={stickerPickerOpen}
+            title="Tambah stiker, gambar, atau dokumen"
+            aria-label="Tambah ke chat"
+            aria-expanded={attachmentMenuOpen || stickerPickerOpen}
           >
-            <Smile />
+            <Plus />
           </button>
-          <button
-            type="button"
-            className="chat-icon-button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={sending || preparingFile}
-            title="Lampirkan PDF atau dokumen Word (maks. 10 MB)"
-            aria-label="Lampirkan dokumen"
-          >
-            <Paperclip />
-          </button>
-          <button
-            type="button"
-            className="chat-icon-button"
-            onClick={() => galleryInputRef.current?.click()}
-            disabled={sending || preparingFile}
-            title="Pilih foto dari Galeri / Terbaru"
-            aria-label="Pilih foto dari galeri"
-          >
-            <Images />
-          </button>
-          <button
-            type="button"
-            className="chat-icon-button"
-            onClick={() => cameraInputRef.current?.click()}
-            disabled={sending || preparingFile}
-            title="Ambil foto dengan kamera"
-            aria-label="Ambil foto dengan kamera"
-          >
-            <Camera />
-          </button>
-          </div>
           <textarea
             value={messageText}
             onChange={(event) => setMessageText(event.target.value)}

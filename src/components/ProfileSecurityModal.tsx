@@ -165,7 +165,7 @@ export const ProfileSecurityModal: React.FC<{ isOpen: boolean; onClose: () => vo
                   <span>Ubah Kata Sandi Akun</span>
                 </p>
                 <p className="text-[11px] text-slate-500 leading-relaxed">
-                  Perbarui kata sandi Anda secara berkala untuk menjaga keamanan akun di Supabase Auth.
+                  Perbarui kata sandi Anda secara berkala untuk menjaga keamanan akun di server autentikasi.
                 </p>
               </div>
 
