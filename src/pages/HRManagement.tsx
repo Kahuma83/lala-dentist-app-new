@@ -8,6 +8,7 @@ import { AbsenceRequestManager } from "../components/AbsenceRequestManager";
 import { DoctorSchedulePosterModal } from "../components/poster/DoctorSchedulePosterModal";
 import { DoctorTimetableBoard } from "../components/DoctorTimetableBoard";
 import { DoctorExcelScheduleGrid } from "../components/DoctorExcelScheduleGrid";
+import { MonthlyStaffRosterPlanner } from "../components/MonthlyStaffRosterPlanner";
 import { AuthService, AuthenticatedUserContext } from "../services/authService";
 import { uploadStaffProfilePhoto } from "../utils/staffProfilePhoto";
 import {
@@ -934,6 +935,7 @@ export const HRManagement: React.FC = () => {
   // =========================================================================
   const [shiftDateFilter, setShiftDateFilter] = useState<string>(new Date().toISOString().split("T")[0]);
   const [shiftBranchFilter, setShiftBranchFilter] = useState<string>(userBranchId || "ALL");
+  const [isMonthlyRosterPlannerOpen, setIsMonthlyRosterPlannerOpen] = useState(false);
   const [isAssignShiftModalOpen, setIsAssignShiftModalOpen] = useState(false);
   const [assignShiftForm, setAssignShiftForm] = useState({
     staffId: staff.find((s) => s.active)?.id || "",
@@ -2159,27 +2161,38 @@ export const HRManagement: React.FC = () => {
               )}
             </div>
 
-            <button
-              onClick={() => {
-                const activeStaff = staff.find((s) => s.active);
-                const branchId = userBranchId || activeStaff?.branchId || branches[0]?.id || "";
-                const staffId = activeStaff?.id || "";
-                const availableShifts = getAssignmentShiftOptions(workShifts, branchId, activeStaff?.position);
-                setAssignShiftForm({
-                  staffId,
-                  branchId,
-                  shiftId: availableShifts[0]?.id || "",
-                  date: shiftDateFilter || new Date().toISOString().split("T")[0],
-                  notes: ""
-                });
-                setIsAssignShiftModalOpen(true);
-              }}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-sm transition-colors"
-              id="assign-shift-button"
-            >
-              <Plus className="w-4 h-4" />
-              Tugaskan Shift ke Staff
-            </button>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setIsMonthlyRosterPlannerOpen(true)}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-800 shadow-sm transition-colors hover:bg-blue-100"
+                id="monthly-staff-roster-button"
+              >
+                <CalendarRange className="h-4 w-4" />
+                Isi Jadwal Otomatis 1 Bulan
+              </button>
+              <button
+                onClick={() => {
+                  const activeStaff = staff.find((s) => s.active);
+                  const branchId = userBranchId || activeStaff?.branchId || branches[0]?.id || "";
+                  const staffId = activeStaff?.id || "";
+                  const availableShifts = getAssignmentShiftOptions(workShifts, branchId, activeStaff?.position);
+                  setAssignShiftForm({
+                    staffId,
+                    branchId,
+                    shiftId: availableShifts[0]?.id || "",
+                    date: shiftDateFilter || new Date().toISOString().split("T")[0],
+                    notes: ""
+                  });
+                  setIsAssignShiftModalOpen(true);
+                }}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-sm transition-colors"
+                id="assign-shift-button"
+              >
+                <Plus className="w-4 h-4" />
+                Tugaskan Shift ke Staff
+              </button>
+            </div>
           </div>
 
           {/* Shift Assignments Table */}
@@ -2241,6 +2254,19 @@ export const HRManagement: React.FC = () => {
               </table>
             </div>
           </div>
+          {isMonthlyRosterPlannerOpen && (
+            <MonthlyStaffRosterPlanner
+              initialBranchId={
+                shiftBranchFilter !== "ALL"
+                  ? shiftBranchFilter
+                  : userBranchId && userBranchId !== "ALL"
+                  ? userBranchId
+                  : branches.find((branch) => branch.isActive)?.id || ""
+              }
+              onClose={() => setIsMonthlyRosterPlannerOpen(false)}
+              onSaved={(savedCount) => showSuccess(`${savedCount} jadwal shift bulanan berhasil disimpan.`)}
+            />
+          )}
         </div>
       )}
 

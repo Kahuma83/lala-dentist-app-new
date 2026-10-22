@@ -40,6 +40,7 @@ import {
   DoctorSchedule,
   WorkShift,
   StaffShiftAssignment,
+  StaffShiftRotationTemplate,
   UserAccount,
   AccountType,
   NormalBalance,
@@ -3527,6 +3528,7 @@ export class MockDatabase {
   doctorSchedules = [...JSON.parse(JSON.stringify(MOCK_DOCTOR_SCHEDULES)), ...generateCurrentWeekDoctorSchedules()];
   workShifts = JSON.parse(JSON.stringify(MOCK_WORK_SHIFTS));
   staffShiftAssignments = JSON.parse(JSON.stringify(MOCK_STAFF_SHIFT_ASSIGNMENTS));
+  staffShiftRotationTemplates: StaffShiftRotationTemplate[] = [];
   attendances: Attendance[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_ATTENDANCES)) : [];
   overtimes: OvertimeRecord[] = [];
   replacementAssignments: StaffReplacementAssignment[] = [];
@@ -3638,6 +3640,7 @@ export class MockDatabase {
         }
         if (Array.isArray(stored.workShifts)) this.workShifts = stored.workShifts;
         if (Array.isArray(stored.staffShiftAssignments)) this.staffShiftAssignments = stored.staffShiftAssignments;
+        if (Array.isArray(stored.staffShiftRotationTemplates)) this.staffShiftRotationTemplates = stored.staffShiftRotationTemplates;
         if (Array.isArray(stored.attendances)) this.attendances = stored.attendances;
         if (Array.isArray(stored.overtimes)) this.overtimes = stored.overtimes;
         if (Array.isArray(stored.replacementAssignments)) this.replacementAssignments = stored.replacementAssignments;
@@ -3683,6 +3686,7 @@ export class MockDatabase {
         doctorSchedules: this.doctorSchedules,
         workShifts: this.workShifts,
         staffShiftAssignments: this.staffShiftAssignments,
+        staffShiftRotationTemplates: this.staffShiftRotationTemplates,
         attendances: this.attendances,
         overtimes: this.overtimes,
         replacementAssignments: this.replacementAssignments,
@@ -3734,6 +3738,7 @@ export class MockDatabase {
     this.instance.doctorSchedules = JSON.parse(JSON.stringify(MOCK_DOCTOR_SCHEDULES));
     this.instance.workShifts = JSON.parse(JSON.stringify(MOCK_WORK_SHIFTS));
     this.instance.staffShiftAssignments = JSON.parse(JSON.stringify(MOCK_STAFF_SHIFT_ASSIGNMENTS));
+    this.instance.staffShiftRotationTemplates = [];
     this.instance.attendances = JSON.parse(JSON.stringify(MOCK_ATTENDANCES));
     this.instance.overtimes = [];
     this.instance.replacementAssignments = [];

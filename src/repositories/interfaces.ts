@@ -34,6 +34,7 @@ import {
   DoctorSchedule,
   WorkShift,
   StaffShiftAssignment,
+  StaffShiftRotationTemplate,
   UserAccount,
   UserRole,
   VisitStatus,
@@ -308,6 +309,13 @@ export interface StaffShiftAssignmentRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<void>;
+  getRotationTemplates(branchId: string): Promise<StaffShiftRotationTemplate[]>;
+  saveMonthlyRoster(
+    branchId: string,
+    rotationAnchorMonday: string,
+    templates: StaffShiftRotationTemplate[],
+    assignments: Array<Pick<StaffShiftAssignment, "staffId" | "branchId" | "shiftId" | "date" | "active" | "notes">>
+  ): Promise<number>;
 }
 
 export interface AttendanceFilter {

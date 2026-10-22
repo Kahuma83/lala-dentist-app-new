@@ -85,6 +85,7 @@ import {
   DoctorBranchAssignment,
   WorkShift,
   StaffShiftAssignment,
+  StaffShiftRotationTemplate,
   OvertimeRecord,
   CompensationAccrual,
   StaffCompensationRule,
@@ -7869,6 +7870,48 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
   async removeAssignment(id: string): Promise<void> {
     ensureSupabaseConnected();
     await supabase.from("staff_shift_assignments").delete().eq("id", id);
+  }
+
+  async getRotationTemplates(branchId: string): Promise<StaffShiftRotationTemplate[]> {
+    ensureSupabaseConnected();
+    const { data, error } = await supabase
+      .from("staff_shift_rotation_templates")
+      .select("branch_id,staff_id,initial_shift_id,rotation_anchor_monday")
+      .eq("branch_id", branchId);
+    if (error) throw new Error(`Gagal memuat pola rotasi shift: ${error.message}`);
+    return (data || []).map((row) => ({
+      branchId: row.branch_id,
+      staffId: row.staff_id,
+      initialShiftId: row.initial_shift_id,
+      rotationAnchorMonday: row.rotation_anchor_monday
+    }));
+  }
+
+  async saveMonthlyRoster(
+    branchId: string,
+    rotationAnchorMonday: string,
+    templates: StaffShiftRotationTemplate[],
+    assignments: Array<Pick<StaffShiftAssignment, "staffId" | "branchId" | "shiftId" | "date" | "active" | "notes">>
+  ): Promise<number> {
+    ensureSupabaseConnected();
+    const { data, error } = await supabase.rpc("save_staff_shift_monthly_roster", {
+      p_branch_id: branchId,
+      p_rotation_anchor_monday: rotationAnchorMonday,
+      p_templates: templates.map((template) => ({
+        staff_id: template.staffId,
+        initial_shift_id: template.initialShiftId
+      })),
+      p_assignments: assignments.map((assignment) => ({
+        staff_id: assignment.staffId,
+        shift_id: assignment.shiftId,
+        date: assignment.date,
+        active: assignment.active,
+        notes: assignment.notes
+      }))
+    });
+    if (error) throw new Error(`Gagal menyimpan roster bulanan: ${error.message}`);
+    if (typeof data !== "number") throw new Error("Server tidak mengembalikan jumlah jadwal yang tersimpan.");
+    return data;
   }
 }
 

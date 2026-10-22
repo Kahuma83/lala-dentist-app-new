@@ -78,6 +78,7 @@ import {
   DoctorSchedule,
   WorkShift,
   StaffShiftAssignment,
+  StaffShiftRotationTemplate,
   UserAccount,
   UserRole,
   VisitType,
@@ -1939,6 +1940,49 @@ export class MockStaffShiftAssignmentRepository implements StaffShiftAssignmentR
       }
       db.staffShiftAssignments.splice(index, 1);
     }
+  }
+
+  async getRotationTemplates(branchId: string): Promise<StaffShiftRotationTemplate[]> {
+    return db.staffShiftRotationTemplates
+      .filter((template) => template.branchId === branchId)
+      .map((template) => ({ ...template }));
+  }
+
+  async saveMonthlyRoster(
+    branchId: string,
+    rotationAnchorMonday: string,
+    templates: StaffShiftRotationTemplate[],
+    assignments: Array<Pick<StaffShiftAssignment, "staffId" | "branchId" | "shiftId" | "date" | "active" | "notes">>
+  ): Promise<number> {
+    const savedAt = new Date().toISOString();
+    const currentTemplates = db.staffShiftRotationTemplates.filter((template) => template.branchId !== branchId);
+    db.staffShiftRotationTemplates = [
+      ...currentTemplates,
+      ...templates.map((template) => ({
+        ...template,
+        branchId,
+        rotationAnchorMonday
+      }))
+    ];
+
+    for (const assignment of assignments) {
+      const existing = db.staffShiftAssignments.find((item) =>
+        item.branchId === branchId &&
+        item.staffId === assignment.staffId &&
+        item.date === assignment.date
+      );
+      if (existing) {
+        Object.assign(existing, assignment, { updatedAt: savedAt });
+      } else {
+        db.staffShiftAssignments.push({
+          ...assignment,
+          id: `ssa-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+          createdAt: savedAt,
+          updatedAt: savedAt
+        });
+      }
+    }
+    return assignments.length;
   }
 }
 

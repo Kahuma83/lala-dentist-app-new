@@ -408,6 +408,13 @@ export interface StaffShiftAssignment {
   updatedAt: string;
 }
 
+export interface StaffShiftRotationTemplate {
+  branchId: string;
+  staffId: string;
+  initialShiftId: string;
+  rotationAnchorMonday: string;
+}
+
 export interface Attendance {
   id: string;
   staffId: string;
