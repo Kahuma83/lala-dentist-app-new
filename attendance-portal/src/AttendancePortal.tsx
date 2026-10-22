@@ -138,7 +138,6 @@ function getInitialPasswordView(): PasswordView {
 const allowedRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB"];
 const fiveDayScheduleRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR_ASSISTANT"];
 const attendanceColumns = "id,branch_id,date,attendance_status,scheduled_start_at,scheduled_end_at,actual_check_in_at,actual_check_out_at,late_minutes";
-const installDismissedKey = "lala-attendance-install-screen-dismissed";
 const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
   { id: "home", label: "Beranda", icon: Home },
   { id: "attendance", label: "Absensi", icon: BadgeCheck },
@@ -259,9 +258,7 @@ async function removeOlderPolicyPhotos(staffId: string, keepPath: string): Promi
 
 export function AttendancePortal() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
-  const [installScreenDismissed, setInstallScreenDismissed] = useState(
-    () => localStorage.getItem(installDismissedKey) === "true"
-  );
+  const [installScreenDismissed, setInstallScreenDismissed] = useState(false);
   const [isAppInstalled, setIsAppInstalled] = useState(
     () => window.matchMedia("(display-mode: standalone)").matches ||
       Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
@@ -317,7 +314,6 @@ export function AttendancePortal() {
     const handleAppInstalled = () => {
       setIsAppInstalled(true);
       setInstallScreenDismissed(true);
-      localStorage.setItem(installDismissedKey, "true");
     };
     const standaloneQuery = window.matchMedia("(display-mode: standalone)");
     const handleDisplayModeChange = () => setIsAppInstalled(standaloneQuery.matches);
@@ -640,14 +636,14 @@ export function AttendancePortal() {
     await promptEvent.prompt();
     const choice = await promptEvent.userChoice;
     if (choice.outcome === "accepted") {
-      setInstallHelpMessage("Permintaan pemasangan diterima. Ikuti konfirmasi dari browser.");
+      setInstallScreenDismissed(true);
+      setSuccessMessage("Aplikasi berhasil dipasang. Silakan login untuk melanjutkan.");
     } else {
       setInstallHelpMessage("Pemasangan belum dilanjutkan. Anda tetap dapat membuka portal melalui browser.");
     }
   };
 
   const continueWithoutInstall = () => {
-    localStorage.setItem(installDismissedKey, "true");
     setInstallScreenDismissed(true);
   };
 

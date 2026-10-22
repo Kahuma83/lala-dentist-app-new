@@ -130,6 +130,10 @@ describe("employee portal navigation and row-level access", () => {
     expect(portal).toContain("<h1>MyLala</h1>");
     expect(portal).toContain("beforeinstallprompt");
     expect(portal).toContain("Tambahkan ke Layar Utama");
+    expect(portal).toContain("const [installScreenDismissed, setInstallScreenDismissed] = useState(false);");
+    expect(portal).toContain("setInstallScreenDismissed(true);");
+    expect(portal).toContain('setSuccessMessage("Aplikasi berhasil dipasang. Silakan login untuk melanjutkan.")');
+    expect(portal).not.toContain("localStorage.setItem(installDismissedKey");
     expect(portal).toContain('src="/portal-brand.png"');
     expect(portal).not.toContain('src="/clinic-logo.jpg"');
     expect(html).toContain('href="/portal-brand.png"');
