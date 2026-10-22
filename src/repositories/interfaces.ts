@@ -857,11 +857,13 @@ export interface PayrollRepository {
   getPayrolls(month?: number, year?: number): Promise<MonthlyPayroll[]>;
   getPayrollById(id: string): Promise<MonthlyPayroll | null>;
   getPayrollItems(payrollId: string): Promise<PayrollItem[]>;
+  getPayrollItemsByPayrollIds(payrollIds: string[]): Promise<PayrollItem[]>;
   generateMonthlyPayroll(
     staffId: string,
     month: number,
     year: number,
-    baseSalary?: number
+    baseSalary?: number,
+    preserveExisting?: boolean
   ): Promise<MonthlyPayroll>;
   updatePayrollStatus(
     id: string,

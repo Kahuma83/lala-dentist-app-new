@@ -4417,11 +4417,19 @@ export class MockPayrollRepository implements PayrollRepository {
     return db.payrollItems.filter((item: PayrollItem) => item.payrollId === payrollId).map((item: PayrollItem) => ({ ...item }));
   }
 
+  async getPayrollItemsByPayrollIds(payrollIds: string[]): Promise<PayrollItem[]> {
+    const ids = new Set(payrollIds);
+    return db.payrollItems
+      .filter((item: PayrollItem) => ids.has(item.payrollId))
+      .map((item: PayrollItem) => ({ ...item }));
+  }
+
   async generateMonthlyPayroll(
     staffId: string,
     month: number,
     year: number,
-    baseSalary?: number
+    baseSalary?: number,
+    preserveExisting = false
   ): Promise<MonthlyPayroll> {
     const now = AppClock.nowISO();
     const staff = db.staff.find(s => s.id === staffId || s.userAccountId === staffId);
@@ -4444,22 +4452,24 @@ export class MockPayrollRepository implements PayrollRepository {
     let existingIndex = db.payrolls.findIndex((p: MonthlyPayroll) =>
       p.id === payrollId || (p.staffId === staffId && p.month === month && p.year === year)
     );
+    if (preserveExisting && existingIndex >= 0) {
+      return { ...db.payrolls[existingIndex] };
+    }
 
     const staffBranchId = staff?.branchId || doctor?.assignedBranchId || null;
 
-    let effectiveBaseSalary: number = baseSalary !== undefined ? baseSalary : 2500000;
-    if (baseSalary === undefined) {
-      const activeBaseRule = (db.rules || []).find((r: StaffCompensationRule) =>
-        candidateIds.has(r.staffId) &&
-        r.ruleTypeSnapshot === "BASE_SALARY" &&
-        r.isActive &&
-        (!r.effectiveStartDate || r.effectiveStartDate <= periodDate) &&
-        (!r.effectiveEndDate || r.effectiveEndDate >= periodDate)
-      );
-      if (activeBaseRule) {
-        effectiveBaseSalary = activeBaseRule.valueSnapshot;
-      }
+    const activeBaseRule = (db.rules || []).find((r: StaffCompensationRule) =>
+      candidateIds.has(r.staffId) &&
+      r.ruleTypeSnapshot === "BASE_SALARY" &&
+      r.isActive &&
+      (!r.effectiveStartDate || r.effectiveStartDate <= periodDate) &&
+      (!r.effectiveEndDate || r.effectiveEndDate >= periodDate)
+    );
+    if (baseSalary === undefined && preserveExisting && !activeBaseRule) {
+      throw new Error("Draft tidak dibuat: tidak ada aturan gaji pokok aktif untuk periode ini.");
     }
+    const effectiveBaseSalary = baseSalary !== undefined ? baseSalary : activeBaseRule?.valueSnapshot ?? 2500000;
+    const isDoctor = staff?.position === StaffPosition.DOCTOR || !!doctor;
 
     // Calculate accruals for the same person only within the target month.
     const staffAccruals = db.accruals.filter((a: CompensationAccrual) => {
@@ -4557,6 +4567,9 @@ export class MockPayrollRepository implements PayrollRepository {
     const absenceRecords = [...absenceByDate.values()];
     const totalDeductions = absenceRecords.length * dailySalary;
     const netSalary = effectiveBaseSalary + totalCompensation + totalOvertimeAmount - totalDeductions;
+    if (effectiveBaseSalary + totalCompensation + totalOvertimeAmount <= 0) {
+      throw new Error("Draft tidak dibuat: total gaji pokok dan komponen pembayaran periode ini bernilai nol.");
+    }
 
     const payroll: MonthlyPayroll = {
       id: payrollId,
@@ -4613,7 +4626,9 @@ export class MockPayrollRepository implements PayrollRepository {
         payrollId,
         descriptionSnapshot: accrual.ruleTypeSnapshot === "ADMIN_REFERRAL"
           ? `Insentif Referral Admin (#${accrual.sourceId})`
-          : `Kompensasi Tindakan (#${accrual.sourceId})`,
+          : isDoctor
+            ? `Sharing Dokter - Kompensasi Tindakan (#${accrual.sourceId})`
+            : `Insentif Kompensasi Tindakan (#${accrual.sourceId})`,
         amountSnapshot: accrual.amount,
         type: "EARNING",
         sourceId: accrual.id

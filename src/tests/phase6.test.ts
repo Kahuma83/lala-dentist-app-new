@@ -201,6 +201,27 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     expect(payroll.baseSalary).toBe(4500000);
   });
 
+  it("does not create an automatic payroll draft without an active base-salary rule", async () => {
+    const db = MockDatabase.getInstance();
+    db.rules = db.rules.filter((rule) => rule.staffId !== "staff-ast-clary");
+    const payrollsBefore = await payrollRepo.getPayrolls(9, 2026);
+
+    await expect(
+      payrollRepo.generateMonthlyPayroll("staff-ast-clary", 9, 2026, undefined, true)
+    ).rejects.toThrow("tidak ada aturan gaji pokok aktif");
+    expect(await payrollRepo.getPayrolls(9, 2026)).toEqual(payrollsBefore);
+  });
+
+  it("preserves an existing draft during automatic payroll preparation", async () => {
+    const original = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 9, 2026, 2500000);
+    const originalItems = await payrollRepo.getPayrollItems(original.id);
+
+    const preserved = await payrollRepo.generateMonthlyPayroll("staff-ast-clary", 9, 2026, undefined, true);
+
+    expect(preserved).toEqual(original);
+    expect(await payrollRepo.getPayrollItems(original.id)).toEqual(originalItems);
+  });
+
   it("Test 8: Payroll status lifecycle updates properly", async () => {
     const payroll = await payrollRepo.generateMonthlyPayroll("assistant-clary", 9, 2026);
     expect(payroll.status).toBe(PayrollStatus.DRAFT);

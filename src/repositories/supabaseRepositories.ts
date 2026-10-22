@@ -111,6 +111,7 @@ import {
   JournalSourceType,
   JournalStatus,
   PayrollStatus,
+  StaffPosition,
   AttendanceStatus,
   AttendanceMethod,
   AccountType,
@@ -171,6 +172,7 @@ function mapAttendanceFromDb(row: any): Attendance {
     updatedAt: row.updated_at || AppClock.nowISO()
   };
 }
+
 import { isBranchMatch } from "../utils/branchUtils";
 import { allocateInvoiceNetToLines } from "../utils/invoiceLineAllocation";
 import { getOperationalDateString, getOperationalTimeString, toOperationalDateTime } from "../utils/dateUtils";
@@ -6566,6 +6568,17 @@ export class SupabasePayrollRepository implements PayrollRepository {
     };
   }
 
+  private mapPayrollItemFromDb(row: any): PayrollItem {
+    return {
+      id: row.id,
+      payrollId: row.payroll_id,
+      descriptionSnapshot: row.description_snapshot || "Item",
+      amountSnapshot: Number(row.amount_snapshot) || 0,
+      type: row.type || "EARNING",
+      sourceId: row.source_id || undefined
+    };
+  }
+
   async getPayrolls(month?: number, year?: number): Promise<MonthlyPayroll[]> {
     ensureSupabaseConnected();
     let q = supabase.from("monthly_payrolls").select("*");
@@ -6585,16 +6598,25 @@ export class SupabasePayrollRepository implements PayrollRepository {
     ensureSupabaseConnected();
     const { data, error } = await supabase.from("payroll_items").select("*").eq("payroll_id", payrollId);
     if (error) return handleSupabaseReadError("payroll_items", error, []);
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      payrollId: row.payroll_id,
-      descriptionSnapshot: row.description_snapshot || "Item",
-      amountSnapshot: Number(row.amount_snapshot) || 0,
-      type: row.type || "EARNING",
-      sourceId: row.source_id || undefined
-    }));
+    return (data || []).map((row: any) => this.mapPayrollItemFromDb(row));
   }
-  async generateMonthlyPayroll(staffId: string, month: number, year: number, baseSalary?: number): Promise<MonthlyPayroll> {
+  async getPayrollItemsByPayrollIds(payrollIds: string[]): Promise<PayrollItem[]> {
+    ensureSupabaseConnected();
+    if (payrollIds.length === 0) return [];
+    const { data, error } = await supabase
+      .from("payroll_items")
+      .select("*")
+      .in("payroll_id", payrollIds);
+    if (error) return handleSupabaseReadError("payroll_items", error, []);
+    return (data || []).map((row: any) => this.mapPayrollItemFromDb(row));
+  }
+  async generateMonthlyPayroll(
+    staffId: string,
+    month: number,
+    year: number,
+    baseSalary?: number,
+    preserveExisting = false
+  ): Promise<MonthlyPayroll> {
     ensureSupabaseConnected();
     if (!Number.isInteger(month) || month < 1 || month > 12) {
       throw new Error("Periode payroll tidak valid: bulan harus antara 1 dan 12.");
@@ -6603,36 +6625,35 @@ export class SupabasePayrollRepository implements PayrollRepository {
       throw new Error("Periode payroll tidak valid: tahun harus 2020 atau lebih baru.");
     }
 
-    let staffQuery = supabase.from("staff").select("id, branch_id, user_account_id").eq("id", staffId).maybeSingle();
+    let staffQuery = supabase.from("staff").select("id, branch_id, user_account_id, position").eq("id", staffId).maybeSingle();
     let staff = (await staffQuery).data;
+    let doctor: any = null;
 
-    if (!staff) {
-      const { data: doctor, error: doctorError } = await supabase
+    if (!staff || staff.position === StaffPosition.DOCTOR) {
+      const { data: linkedDoctor, error: doctorError } = await supabase
         .from("dental_doctors")
         .select("id, staff_id, assigned_branch_id")
         .or(`id.eq.${staffId},staff_id.eq.${staffId}`)
         .maybeSingle();
       if (doctorError) throw new Error(`Gagal memuat data karyawan untuk payroll: ${doctorError.message}`);
-      if (!doctor?.staff_id) throw new Error("Karyawan tidak ditemukan. Pastikan dokter sudah ditautkan ke data karyawan.");
+      doctor = linkedDoctor;
+      if (!staff && !doctor?.staff_id) throw new Error("Karyawan tidak ditemukan. Pastikan dokter sudah ditautkan ke data karyawan.");
 
-      const { data: staffByDoctor, error: staffByDoctorError } = await supabase
-        .from("staff")
-        .select("id, branch_id, user_account_id")
-        .eq("id", doctor.staff_id)
-        .maybeSingle();
-      if (staffByDoctorError) throw new Error(`Gagal memuat data karyawan untuk payroll: ${staffByDoctorError.message}`);
-      if (!staffByDoctor) throw new Error("Karyawan tidak ditemukan. Pastikan dokter sudah ditautkan ke data karyawan.");
-      staff = staffByDoctor;
+      if (!staff && doctor?.staff_id) {
+        const { data: staffByDoctor, error: staffByDoctorError } = await supabase
+          .from("staff")
+          .select("id, branch_id, user_account_id, position")
+          .eq("id", doctor.staff_id)
+          .maybeSingle();
+        if (staffByDoctorError) throw new Error(`Gagal memuat data karyawan untuk payroll: ${staffByDoctorError.message}`);
+        if (!staffByDoctor) throw new Error("Karyawan tidak ditemukan. Pastikan dokter sudah ditautkan ke data karyawan.");
+        staff = staffByDoctor;
+      }
     }
+    if (!staff) throw new Error("Karyawan tidak ditemukan untuk payroll.");
 
     let branchId = staff.branch_id || null;
     if (!branchId) {
-      const { data: doctor, error: doctorError } = await supabase
-        .from("dental_doctors")
-        .select("assigned_branch_id")
-        .or(`id.eq.${staffId},staff_id.eq.${staffId}`)
-        .maybeSingle();
-      if (doctorError) throw new Error(`Gagal memuat cabang dokter untuk payroll: ${doctorError.message}`);
       branchId = doctor?.assigned_branch_id || null;
     }
 
@@ -6644,7 +6665,15 @@ export class SupabasePayrollRepository implements PayrollRepository {
     const nextMonth = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
     const periodStartTimestamp = new Date(Date.UTC(year, month - 1, 1)).toISOString();
     const nextMonthTimestamp = new Date(Date.UTC(year, month, 1)).toISOString();
-    const [existingResult, accrualsResult, overtimeResult, attendanceResult, replacementResult, baseRuleResult] = await Promise.all([
+    const [
+      existingResult,
+      accrualsResult,
+      overtimeResult,
+      attendanceResult,
+      replacementResult,
+      baseRuleResult,
+      doctorSchedulesResult
+    ] = await Promise.all([
       supabase
         .from("monthly_payrolls")
         .select("*")
@@ -6669,7 +6698,7 @@ export class SupabasePayrollRepository implements PayrollRepository {
         .in("staff_id", [...candidateIds])
         .gte("date", periodStart)
         .lt("date", nextMonth)
-        .in("attendance_status", ["ABSENT", "SICK", "LEAVE"]),
+        .in("attendance_status", ["PRESENT", "ABSENT", "SICK", "LEAVE"]),
       supabase
         .from("staff_replacement_assignments")
         .select("id,covered_date,absent_staff_id,absent_base_salary_snapshot,amount_snapshot")
@@ -6677,13 +6706,19 @@ export class SupabasePayrollRepository implements PayrollRepository {
         .gte("covered_date", periodStart)
         .lt("covered_date", nextMonth)
         .not("work_confirmed_at", "is", null),
-      baseSalary === undefined
+      supabase
+        .from("staff_compensation_rules")
+        .select("id, value_snapshot, staff_id, rule_type_snapshot, effective_start_date, effective_end_date")
+        .in("staff_id", [...candidateIds])
+        .eq("is_active", true),
+      doctor
         ? supabase
-            .from("staff_compensation_rules")
-            .select("value_snapshot, staff_id")
-            .eq("rule_type_snapshot", "BASE_SALARY")
-            .eq("is_active", true)
-        : Promise.resolve({ data: null, error: null })
+            .from("doctor_schedules")
+            .select("id, doctor_id, branch_id, date, status")
+            .eq("doctor_id", doctor.id)
+            .gte("date", periodStart)
+            .lt("date", nextMonth)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     if (existingResult.error) throw new Error(`Gagal memeriksa payroll periode ini: ${existingResult.error.message}`);
@@ -6691,9 +6726,11 @@ export class SupabasePayrollRepository implements PayrollRepository {
     if (overtimeResult.error) throw new Error(`Gagal memuat lembur yang disetujui: ${overtimeResult.error.message}`);
     if (attendanceResult.error) throw new Error(`Gagal memuat ketidakhadiran periode ini: ${attendanceResult.error.message}`);
     if (replacementResult.error) throw new Error(`Gagal memuat penugasan pengganti terkonfirmasi: ${replacementResult.error.message}`);
-    if (baseRuleResult.error) throw new Error(`Gagal memuat aturan gaji pokok: ${baseRuleResult.error.message}`);
+    if (baseRuleResult.error) throw new Error(`Gagal memuat aturan kompensasi dan gaji: ${baseRuleResult.error.message}`);
+    if (doctor && doctorSchedulesResult.error) throw new Error(`Gagal memuat jadwal dokter untuk kompensasi: ${doctorSchedulesResult.error.message}`);
 
     const existing = existingResult.data;
+    if (existing && preserveExisting) return this.mapPayrollFromDb(existing);
     if (existing && existing.status !== PayrollStatus.DRAFT) {
       throw new Error(`Payroll periode ${month}/${year} sudah berstatus ${existing.status} dan tidak dapat dihitung ulang.`);
     }
@@ -6702,14 +6739,43 @@ export class SupabasePayrollRepository implements PayrollRepository {
     const overtimes = (overtimeResult.data || []).filter((row: any) => candidateIds.has(row.staff_id));
     const absenceByDate = new Map<string, any>();
     for (const row of attendanceResult.data || []) {
-      if (candidateIds.has(row.staff_id) && !absenceByDate.has(row.date)) absenceByDate.set(row.date, row);
+      if (
+        candidateIds.has(row.staff_id) &&
+        [AttendanceStatus.ABSENT, AttendanceStatus.SICK, AttendanceStatus.LEAVE].includes(row.attendance_status) &&
+        !absenceByDate.has(row.date)
+      ) {
+        absenceByDate.set(row.date, row);
+      }
     }
-    const baseRule = (baseRuleResult.data || []).find((row: any) => candidateIds.has(row.staff_id));
+    const periodDate = `${year}-${String(month).padStart(2, "0")}-15`;
+    const activeRules = (baseRuleResult.data || []).filter((row: any) =>
+      candidateIds.has(row.staff_id) &&
+      (!row.effective_start_date || row.effective_start_date <= periodDate) &&
+      (!row.effective_end_date || row.effective_end_date >= periodDate)
+    );
+    const baseRule = activeRules.find((row: any) => row.rule_type_snapshot === "BASE_SALARY");
+    const sittingRule = activeRules.find((row: any) => row.rule_type_snapshot === "DOCTOR_SITTING_FEE");
+    if (baseSalary === undefined && preserveExisting && !baseRule) {
+      throw new Error("Draft tidak dibuat: tidak ada aturan gaji pokok aktif untuk periode ini.");
+    }
     const salary = Number(baseSalary ?? baseRule?.value_snapshot ?? 0);
+    const isDoctor = staff.position === StaffPosition.DOCTOR || Boolean(doctor);
     if (!Number.isFinite(salary) || salary < 0) {
       throw new Error("Gaji pokok harus berupa nominal nol atau lebih.");
     }
-    const totalCompensation = accruals.reduce((sum: number, row: any) => sum + (Number(row.amount) || 0), 0);
+    let totalCompensation = accruals.reduce((sum: number, row: any) => sum + (Number(row.amount) || 0), 0);
+    const presentAttendanceCount = (attendanceResult.data || []).filter((row: any) =>
+      candidateIds.has(row.staff_id) && row.attendance_status === AttendanceStatus.PRESENT
+    ).length;
+    const scheduledSessionCount = (doctorSchedulesResult.data || []).filter((row: any) =>
+      row.status !== ScheduleStatus.CANCELLED &&
+      (!branchId || row.branch_id === branchId)
+    ).length;
+    const sittingFeeSessionCount = Math.max(presentAttendanceCount, scheduledSessionCount);
+    const sittingFeeAmount = sittingRule
+      ? sittingFeeSessionCount * (Number(sittingRule.value_snapshot) || 0)
+      : 0;
+    totalCompensation += sittingFeeAmount;
     const replacementAssignments = replacementResult.data || [];
     const totalReplacementEarnings = replacementAssignments.reduce(
       (sum: number, row: any) => sum + (Number(row.amount_snapshot) || 0),
@@ -6723,6 +6789,9 @@ export class SupabasePayrollRepository implements PayrollRepository {
     const dailySalary = Math.round(Math.round(salary) / 25);
     const absenceRows = [...absenceByDate.values()];
     const totalDeductions = absenceRows.length * dailySalary;
+    if (Math.round(salary) + totalEarnings + overtimeTotal <= 0) {
+      throw new Error("Draft tidak dibuat: total gaji pokok dan komponen pembayaran periode ini bernilai nol.");
+    }
     const now = AppClock.nowISO();
     const payrollPayload = {
       staff_id: staff.id,
@@ -6770,11 +6839,19 @@ export class SupabasePayrollRepository implements PayrollRepository {
         payroll_id: payrollRow.id,
         description_snapshot: row.rule_type_snapshot === "ADMIN_REFERRAL"
           ? `Insentif Referral Admin (#${row.source_id || row.id})`
-          : `Kompensasi Tindakan (#${row.source_id || row.id})`,
+          : isDoctor
+            ? `Sharing Dokter - Kompensasi Tindakan (#${row.source_id || row.id})`
+            : `Insentif Kompensasi Tindakan (#${row.source_id || row.id})`,
         amount_snapshot: Number(row.amount) || 0,
         type: "EARNING",
         source_id: row.id
       })),
+      ...(sittingFeeAmount > 0 ? [{
+        payroll_id: payrollRow.id,
+        description_snapshot: `Sharing Dokter - Doctor Sitting Fee (${sittingFeeSessionCount} sesi)`,
+        amount_snapshot: sittingFeeAmount,
+        type: "EARNING"
+      }] : []),
       ...replacementAssignments.map((row: any) => ({
         payroll_id: payrollRow.id,
         description_snapshot: `Upah Pengganti (${row.covered_date}; gaji pegawai digantikan Rp${(Number(row.absent_base_salary_snapshot) || 0).toLocaleString("id-ID")} ÷ 25)`,

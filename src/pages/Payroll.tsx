@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import { useRouter } from "../components/Router";
 import {
@@ -43,6 +43,10 @@ import {
 import { PayslipDocumentModal } from "../components/documents/PayslipDocumentModal";
 
 import { createPayslipWhatsAppMessage, sanitizeWhatsAppPhone } from "../utils/documentUtils";
+import {
+  createPayrollPaymentSummary,
+  getPreviousPayrollPeriod
+} from "../utils/payrollPaymentCycle";
 
 export const Payroll: React.FC = () => {
   const {
@@ -58,8 +62,10 @@ export const Payroll: React.FC = () => {
   } = useApp();
   const { navigate } = useRouter();
   const currentYear = new Date().getFullYear();
+  const previousPayrollPeriod = getPreviousPayrollPeriod(new Date());
 
   const [payrolls, setPayrolls] = useState<MonthlyPayroll[]>([]);
+  const [periodPayrollItems, setPeriodPayrollItems] = useState<PayrollItem[]>([]);
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [branches, setBranches] = useState<DentalBranch[]>([]);
@@ -68,16 +74,25 @@ export const Payroll: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [selectedMonth, setSelectedMonth] = useState<number>(() => new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(() => previousPayrollPeriod.month);
+  const [selectedYear, setSelectedYear] = useState<number>(() => previousPayrollPeriod.year);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showSlipModal, setShowSlipModal] = useState(false);
   const [selectedPayroll, setSelectedPayroll] = useState<MonthlyPayroll | null>(null);
   const [payrollToDelete, setPayrollToDelete] = useState<MonthlyPayroll | null>(null);
+  const [payrollToConfirmPayment, setPayrollToConfirmPayment] = useState<MonthlyPayroll | null>(null);
   const [isDeletingPayroll, setIsDeletingPayroll] = useState(false);
   const [payrollItems, setPayrollItems] = useState<PayrollItem[]>([]);
   const [payrollJournal, setPayrollJournal] = useState<JournalEntry | null>(null);
   const [syncingPayrollId, setSyncingPayrollId] = useState<string | null>(null);
+  const [isPreparingCycle, setIsPreparingCycle] = useState(false);
+  const [preparationResult, setPreparationResult] = useState<{
+    prepared: string[];
+    skipped: string[];
+    failed: string[];
+  } | null>(null);
+  const [preparationRetry, setPreparationRetry] = useState(0);
+  const attemptedPreparationRef = useRef<string | null>(null);
 
   // Generate Modal state
   const [genStaffId, setGenStaffId] = useState("");
@@ -106,7 +121,9 @@ export const Payroll: React.FC = () => {
         ),
         configRepo.getClinicBranding().catch(() => DEFAULT_CLINIC_BRANDING)
       ]);
+      const items = await payrollRepo.getPayrollItemsByPayrollIds(pList.map((payroll) => payroll.id));
       setPayrolls(pList);
+      setPeriodPayrollItems(items);
       setDoctors(dList);
       setStaffList(sList);
       setBranches(bList);
@@ -123,6 +140,70 @@ export const Payroll: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    const periodKey = `${selectedYear}-${selectedMonth}`;
+    if (
+      loading ||
+      loadError ||
+      currentUser?.role !== UserRole.SUPER_ADMIN ||
+      selectedMonth !== previousPayrollPeriod.month ||
+      selectedYear !== previousPayrollPeriod.year ||
+      attemptedPreparationRef.current === periodKey
+    ) {
+      return;
+    }
+
+    attemptedPreparationRef.current = periodKey;
+    setIsPreparingCycle(true);
+    setPreparationResult(null);
+    void (async () => {
+      const existingStaffIds = new Set(payrolls.map((payroll) => payroll.staffId));
+      const recipientIds = new Set<string>();
+      staffList.filter((staff) => staff.active).forEach((staff) => recipientIds.add(staff.id));
+      doctors.filter((doctor) => doctor.active && doctor.isActive).forEach((doctor) => {
+        recipientIds.add(doctor.staffId || doctor.id);
+      });
+
+      const prepared: string[] = [];
+      const skipped: string[] = [];
+      const failed: string[] = [];
+      for (const staffId of recipientIds) {
+        if (existingStaffIds.has(staffId)) continue;
+        const recipient = getStaffInfo(staffId).name;
+        try {
+          await payrollRepo.generateMonthlyPayroll(staffId, selectedMonth, selectedYear, undefined, true);
+          prepared.push(recipient);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Kesalahan tidak diketahui.";
+          if (/tidak ada gaji pokok aktif|tidak ada gaji pokok|base salary/i.test(message)) {
+            skipped.push(`${recipient}: belum memiliki aturan gaji pokok aktif`);
+          } else if (/tidak ditemukan|ditautkan/i.test(message)) {
+            skipped.push(`${recipient}: belum terhubung dengan data karyawan`);
+          } else {
+            failed.push(`${recipient}: ${message}`);
+          }
+        }
+      }
+      setPreparationResult({ prepared, skipped, failed });
+      if (prepared.length > 0) await loadData();
+    })().catch((error) => {
+      const message = error instanceof Error ? error.message : "Kesalahan tidak diketahui.";
+      setLoadError(`Gagal menyiapkan draft payroll otomatis: ${message}`);
+    }).finally(() => setIsPreparingCycle(false));
+  }, [
+    loading,
+    loadError,
+    currentUser?.role,
+    selectedMonth,
+    selectedYear,
+    previousPayrollPeriod.month,
+    previousPayrollPeriod.year,
+    payrolls,
+    staffList,
+    doctors,
+    preparationRetry
+  ]);
 
   const getBranchName = (branchId?: string | null) => {
     if (!branchId) return "";
@@ -487,6 +568,10 @@ export const Payroll: React.FC = () => {
 
   const totalPayrollBudget = payrolls.reduce((sum, p) => sum + p.netSalary, 0);
   const totalCommissions = payrolls.reduce((sum, p) => sum + p.totalCompensation, 0);
+  const paymentSummary = useMemo(
+    () => createPayrollPaymentSummary(payrolls, periodPayrollItems, staffList, doctors, selectedMonth, selectedYear),
+    [payrolls, periodPayrollItems, staffList, doctors, selectedMonth, selectedYear]
+  );
 
   const accountingPath = currentUser?.role === UserRole.BRANCH_ADMIN ? "/branch-admin/accounting" : "/super-admin/accounting";
 
@@ -599,6 +684,93 @@ export const Payroll: React.FC = () => {
           </select>
         </div>
       </div>
+
+      <section className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Ringkasan Pembayaran Periode {selectedMonth}/{selectedYear}</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Jatuh tempo {new Intl.DateTimeFormat("id-ID", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+                timeZone: "UTC"
+              }).format(new Date(`${paymentSummary.dueDate}T00:00:00Z`))}
+              {" · "}Transfer dilakukan manual setelah payroll disetujui.
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">Total bersih</div>
+            <div className="text-lg font-bold text-slate-900">Rp {paymentSummary.totalNetPay.toLocaleString("id-ID")}</div>
+            <div className="text-[10px] text-slate-500">
+              {paymentSummary.recipientCount} penerima · {paymentSummary.statusCounts[PayrollStatus.DRAFT]} draft ·{" "}
+              {paymentSummary.statusCounts[PayrollStatus.REVIEW]} review ·{" "}
+              {paymentSummary.statusCounts[PayrollStatus.APPROVED]} disetujui ·{" "}
+              {paymentSummary.statusCounts[PayrollStatus.PAID]} dibayar
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mt-4">
+          {([
+            ["Gaji pokok", paymentSummary.categoryTotals.BASE_SALARY],
+            ["Sharing dokter", paymentSummary.categoryTotals.DOCTOR_SHARING],
+            ["Lembur", paymentSummary.categoryTotals.OVERTIME],
+            ["Insentif", paymentSummary.categoryTotals.INCENTIVE],
+            ["Pengganti", paymentSummary.categoryTotals.REPLACEMENT],
+            ["Potongan", paymentSummary.categoryTotals.DEDUCTION],
+            ["Lainnya", paymentSummary.categoryTotals.OTHER]
+          ] as const).map(([label, amount]) => (
+            <div key={label} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
+              <div className="text-[10px] text-slate-500">{label}</div>
+              <div className="text-xs font-bold text-slate-800 mt-1">Rp {amount.toLocaleString("id-ID")}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {currentUser?.role === UserRole.SUPER_ADMIN && (
+        <section
+          className={`rounded-xl border p-3 text-xs ${
+            preparationResult?.failed.length
+              ? "border-rose-200 bg-rose-50 text-rose-800"
+              : preparationResult?.skipped.length
+                ? "border-amber-200 bg-amber-50 text-amber-800"
+                : "border-blue-200 bg-blue-50 text-blue-800"
+          }`}
+          aria-live="polite"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <strong>
+              {isPreparingCycle
+                ? "Menyiapkan draft pembayaran periode sebelumnya..."
+                : preparationResult
+                  ? `${preparationResult.prepared.length} draft disiapkan otomatis`
+                  : "Draft payroll periode sebelumnya disiapkan saat halaman dibuka."}
+            </strong>
+            {!isPreparingCycle && (preparationResult?.skipped.length || preparationResult?.failed.length) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  attemptedPreparationRef.current = null;
+                  setPreparationRetry((attempt) => attempt + 1);
+                }}
+                className="font-semibold underline underline-offset-2"
+              >
+                Coba lagi
+              </button>
+            ) : null}
+          </div>
+          {preparationResult?.skipped.map((warning) => (
+            <p key={warning} className="mt-1">{warning}</p>
+          ))}
+          {preparationResult?.failed.map((failure) => (
+            <p key={failure} className="mt-1">{failure}</p>
+          ))}
+          {preparationResult?.prepared.length ? (
+            <p className="mt-1">Draft baru: {preparationResult.prepared.join(", ")}.</p>
+          ) : null}
+        </section>
+      )}
 
       {/* Payroll Table */}
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
@@ -745,7 +917,7 @@ export const Payroll: React.FC = () => {
                               )}
                               {p.status === PayrollStatus.APPROVED && (
                                 <button
-                                  onClick={() => handleStatusTransition(p.id, PayrollStatus.PAID)}
+                                  onClick={() => setPayrollToConfirmPayment(p)}
                                   disabled={syncingPayrollId === p.id}
                                   className="bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
                                 >
@@ -916,6 +1088,44 @@ export const Payroll: React.FC = () => {
         journalNumber={payrollJournal?.journalNumber}
         payerName={currentUser?.name || "Manajemen Keuangan Lala Dentist"}
       />
+
+      {payrollToConfirmPayment && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 max-w-md w-full p-6">
+            <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-4">
+              <Banknote className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 text-center">Konfirmasi Transfer Payroll</h3>
+            <p className="text-xs text-slate-600 text-center mt-2 leading-relaxed">
+              Status PAID hanya boleh dicatat setelah transfer nyata berhasil dilakukan. Konfirmasi pembayaran{" "}
+              <strong>{getStaffInfo(payrollToConfirmPayment.staffId).name}</strong> sebesar{" "}
+              <strong>Rp {payrollToConfirmPayment.netSalary.toLocaleString("id-ID")}</strong>?
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={syncingPayrollId === payrollToConfirmPayment.id}
+                onClick={() => setPayrollToConfirmPayment(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+              >
+                Belum transfer
+              </button>
+              <button
+                type="button"
+                disabled={syncingPayrollId === payrollToConfirmPayment.id}
+                onClick={() => {
+                  const payrollId = payrollToConfirmPayment.id;
+                  setPayrollToConfirmPayment(null);
+                  void handleStatusTransition(payrollId, PayrollStatus.PAID);
+                }}
+                className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl disabled:opacity-50"
+              >
+                {syncingPayrollId === payrollToConfirmPayment.id ? "Memproses..." : "Ya, transfer berhasil"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Konfirmasi Hapus Slip Gaji */}
       {payrollToDelete && (

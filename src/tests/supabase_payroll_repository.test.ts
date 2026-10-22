@@ -410,7 +410,7 @@ describe("Supabase payroll repository", () => {
     expect(calls.find((call) => call.table === "payroll_items" && call.action === "insert")?.payload)
       .toMatchObject([
         { description_snapshot: "Gaji Pokok Periode 10/2026", amount_snapshot: 2_500_000, type: "EARNING" },
-        { description_snapshot: "Kompensasi Tindakan (#treatment-1)", amount_snapshot: 50_000, source_id: "accrual-1" },
+        { description_snapshot: "Insentif Kompensasi Tindakan (#treatment-1)", amount_snapshot: 50_000, source_id: "accrual-1" },
         { description_snapshot: "Upah Pengganti (2026-10-12; gaji pegawai digantikan Rp1.000.000 ÷ 25)", amount_snapshot: 40_000, source_id: "replacement-1" },
         { description_snapshot: "Lembur Disetujui (2 jam / 2026-10-12)", amount_snapshot: 25_000, source_id: "overtime-1" }
       ]);
@@ -443,6 +443,56 @@ describe("Supabase payroll repository", () => {
 
     await expect(payrollRepo.generateMonthlyPayroll("staff-1", 10, 2026, 2_500_000))
       .rejects.toThrow("sudah berstatus APPROVED");
+    expect(calls.some((call) => call.action === "insert" || call.action === "update" || call.action === "delete"))
+      .toBe(false);
+  });
+
+  it("preserves existing drafts during automatic payroll preparation", async () => {
+    vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
+      createQuery(table, calls, (call) => {
+        if (call.table === "staff") {
+          return { data: { id: "staff-1", branch_id: "branch-1", position: "ASSISTANT" }, error: null };
+        }
+        if (call.table === "monthly_payrolls") {
+          return {
+            data: {
+              id: "payroll-1",
+              staff_id: "staff-1",
+              month: 10,
+              year: 2026,
+              base_salary: 2_000_000,
+              total_compensation: 0,
+              total_deductions: 0,
+              net_salary: 2_000_000,
+              status: "DRAFT",
+              branch_id: "branch-1"
+            },
+            error: null
+          };
+        }
+        return { data: [], error: null };
+      })) as any);
+
+    await expect(
+      payrollRepo.generateMonthlyPayroll("staff-1", 10, 2026, undefined, true)
+    ).resolves.toMatchObject({ id: "payroll-1", netSalary: 2_000_000 });
+    expect(calls.some((call) => call.action === "insert" || call.action === "update" || call.action === "delete"))
+      .toBe(false);
+  });
+
+  it("does not prepare an automatic draft without an active base-salary rule", async () => {
+    vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
+      createQuery(table, calls, (call) => {
+        if (call.table === "staff") {
+          return { data: { id: "staff-1", branch_id: "branch-1", position: "ASSISTANT" }, error: null };
+        }
+        if (call.table === "monthly_payrolls") return { data: null, error: null };
+        return { data: [], error: null };
+      })) as any);
+
+    await expect(
+      payrollRepo.generateMonthlyPayroll("staff-1", 10, 2026, undefined, true)
+    ).rejects.toThrow("tidak ada aturan gaji pokok aktif");
     expect(calls.some((call) => call.action === "insert" || call.action === "update" || call.action === "delete"))
       .toBe(false);
   });
