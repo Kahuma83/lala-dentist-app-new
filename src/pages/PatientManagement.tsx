@@ -263,30 +263,6 @@ export const PatientManagement: React.FC = () => {
   const filteredPatients = useMemo(() => {
     let list = patients;
 
-    if (currentUser?.role === UserRole.DOCTOR) {
-      if (!currentUser.doctorId) {
-        list = [];
-      } else {
-        const assignedPatientIds = new Set<string>();
-        visits
-          .filter((visit) => visit.doctorId === currentUser.doctorId && visit.visitStatus !== VisitStatus.CANCELLED)
-          .forEach((visit) => assignedPatientIds.add(visit.patientId));
-        bookings
-          .filter((booking) =>
-            booking.doctorId === currentUser.doctorId &&
-            (booking.status === BookingStatus.PENDING || booking.status === BookingStatus.CONFIRMED) &&
-            new Date(booking.bookingDateTime).getTime() >= Date.now() - 24 * 60 * 60 * 1000
-          )
-          .forEach((booking) => assignedPatientIds.add(booking.patientId));
-        treatmentJobs
-          .filter((treatment) =>
-            (treatment.assignedDoctorId || treatment.doctorId) === currentUser.doctorId
-          )
-          .forEach((treatment) => assignedPatientIds.add(treatment.patientId));
-        list = list.filter((patient) => assignedPatientIds.has(patient.id));
-      }
-    }
-
     // Filter by branch if user explicitly selected a specific branch
     if (selectedBranchFilter !== "ALL") {
       const branchId = selectedBranchFilter;
@@ -310,12 +286,12 @@ export const PatientManagement: React.FC = () => {
         }));
 
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return branchScopedList;
+    const newestFirst = [...branchScopedList].sort((left, right) =>
+      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+    );
+    if (!q) return newestFirst.slice(0, currentUser?.role === UserRole.DOCTOR ? 5 : 10);
 
-    return branchScopedList.filter((p) => {
-      const nameMatch = (p.name || "").toLowerCase().includes(q) || (p.fullName || "").toLowerCase().includes(q);
-      const phoneMatch = canViewPatientPhone && (p.phone || "").toLowerCase().includes(q);
-      const internalCodeMatch = (p.internalPatientCode || "").toLowerCase().includes(q);
+    return newestFirst.filter((p) => {
       const branchRm = getPatientMedicalRecordNumber(
         p,
         selectedBranchFilter === "ALL" ? undefined : selectedBranchFilter
@@ -324,10 +300,10 @@ export const PatientManagement: React.FC = () => {
         p.branchMedicalRecordNumbers?.some((record) =>
           record.medicalRecordNumber.toLowerCase().includes(q)
         );
-      const rmMatch = branchRm.includes(q) || !!otherBranchRmMatch;
-      return nameMatch || phoneMatch || internalCodeMatch || rmMatch;
+      const globalCodeMatch = p.internalPatientCode?.trim().toLowerCase().includes(q);
+      return branchRm.includes(q) || !!otherBranchRmMatch || !!globalCodeMatch;
     });
-  }, [patients, visits, bookings, treatmentJobs, currentUser?.role, currentUser?.doctorId, searchQuery, selectedBranchFilter, canViewPatientPhone]);
+  }, [patients, visits, currentUser?.role, searchQuery, selectedBranchFilter]);
 
   // Map of patient ID to visits count and branch names
   const patientVisitStats = useMemo(() => {
@@ -1083,19 +1059,19 @@ export const PatientManagement: React.FC = () => {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-bold text-slate-800 tracking-tight">
-              {currentUser?.role === UserRole.DOCTOR ? "Pasien dalam Penugasan Saya" : "Master Pasien Global"}
+              {currentUser?.role === UserRole.DOCTOR ? "Direktori Pasien Global" : "Master Pasien Global"}
             </h1>
             <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
               {currentUser?.role === UserRole.SUPER_ADMIN
                 ? "Lintas Cabang"
                 : currentUser?.role === UserRole.DOCTOR
-                  ? "Jadwal & Tindakan Saya"
+                  ? "Lintas Cabang"
                   : "Branch Scope"}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
             {currentUser?.role === UserRole.DOCTOR
-              ? "Menampilkan pasien dengan kunjungan, jadwal aktif, atau tindakan yang ditugaskan kepada Anda."
+              ? "Tampilkan 5 pasien terbaru, atau masukkan kode global lengkap untuk membuka profil dan riwayat klinis lintas cabang."
               : "Data identitas pasien bersifat global (1 Pasien = 1 Rekam Medis). Kunjungan terikat pada cabang operasional."}
           </p>
         </div>
@@ -1206,9 +1182,7 @@ export const PatientManagement: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={canViewPatientPhone
-                ? "Cari berdasarkan Nama, WhatsApp, atau No. RM..."
-                : "Cari berdasarkan Nama atau No. RM..."}
+              placeholder="Cari No. RM atau kode global (contoh: GEB-RM4357)..."
               className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-8 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
               id="input-search-patient"
             />
@@ -1226,7 +1200,7 @@ export const PatientManagement: React.FC = () => {
           {currentUser?.role === UserRole.DOCTOR ? (
             <div className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800">
               <User className="h-4 w-4" />
-              Pasien dalam penugasan Anda
+              Direktori pasien semua cabang
             </div>
           ) : (
             <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500/20 focus-within:border-emerald-500">
@@ -1268,7 +1242,9 @@ export const PatientManagement: React.FC = () => {
             </span>
           )}
           <span className="text-xs font-medium text-slate-500">
-            Ditemukan: <strong className="text-slate-800">{filteredPatients.length}</strong> pasien
+            {searchQuery.trim()
+              ? <>{currentUser?.role === UserRole.DOCTOR ? "Hasil kode global" : "Hasil No. RM"}: <strong className="text-slate-800">{filteredPatients.length}</strong> pasien</>
+              : <>Menampilkan <strong className="text-slate-800">{filteredPatients.length}</strong> pasien terbaru{currentUser?.role === UserRole.DOCTOR ? " (maksimal 5)" : ""}</>}
           </span>
           <button
             onClick={() => refreshData()}
@@ -1289,7 +1265,7 @@ export const PatientManagement: React.FC = () => {
               <table className="w-full text-left text-xs border-collapse" id="table-patients">
                 <thead>
                   <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">No. RM</th>
+                    <th className="py-3 px-4">No. RM / Kode Global</th>
                     <th className="py-3 px-4">Nama Pasien</th>
                     {canViewPatientPhone && <th className="py-3 px-4">WhatsApp / HP</th>}
                     <th className="py-3 px-4">L/P & Tgl Lahir</th>
@@ -1302,11 +1278,17 @@ export const PatientManagement: React.FC = () => {
                     <tr>
                       <td colSpan={canViewPatientPhone ? 6 : 5} className="text-center py-12 text-slate-400">
                         <User className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="font-bold text-slate-700">{patients.length === 0 ? "Belum Ada Data Pasien" : "Pasien tidak ditemukan"}</p>
+                        <p className="font-bold text-slate-700">{patients.length === 0 ? "Belum Ada Data Pasien" : searchQuery.trim() ? `Pasien dengan ${currentUser?.role === UserRole.DOCTOR ? "kode global" : "No. RM"} tersebut tidak ditemukan` : "Belum ada data pasien"}</p>
                         <p className="text-[11px] text-slate-400 mt-1">
                           {patients.length === 0
                             ? "Klik tombol \"+ Tambah Pasien Baru\" di atas untuk mendaftarkan pasien pertama."
-                            : "Coba gunakan kata kunci pencarian yang berbeda"}
+                            : searchQuery.trim()
+                              ? currentUser?.role === UserRole.DOCTOR
+                                ? "Periksa kode global pasien, misalnya GEB-RM4357."
+                                : "Periksa kembali No. RM atau filter cabang yang dipilih."
+                              : currentUser?.role === UserRole.DOCTOR
+                                ? "Pasien lainnya dapat dicari menggunakan kode global."
+                                : "Pasien lainnya dapat dicari menggunakan No. RM."}
                         </p>
                       </td>
                     </tr>
@@ -1324,6 +1306,9 @@ export const PatientManagement: React.FC = () => {
                         >
                           <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
                             {p.medicalRecordNumber || "Belum check-in"}
+                            <div className="mt-1 text-[10px] font-semibold text-emerald-700">
+                              {p.internalPatientCode || "Kode global belum tersedia"}
+                            </div>
                           </td>
                           <td className="py-3.5 px-4">
                             <div className="font-bold text-slate-800">{p.fullName || p.name}</div>

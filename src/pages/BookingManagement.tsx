@@ -511,7 +511,8 @@ export const BookingManagement: React.FC = () => {
       (p) =>
         (p.fullName || p.name || "").toLowerCase().includes(q) ||
         (canViewPatientPhoneNumber && (p.phone || "").includes(q)) ||
-        getPatientMedicalRecordNumber(p, formBranchId || effectiveBranchId).toLowerCase().includes(q)
+        getPatientMedicalRecordNumber(p, formBranchId || effectiveBranchId).toLowerCase().includes(q) ||
+        (p.internalPatientCode || "").toLowerCase().includes(q)
     ).slice(0, 5);
   }, [patientSearch, patients, canViewPatientPhoneNumber, formBranchId, effectiveBranchId]);
 
@@ -1951,7 +1952,9 @@ export const BookingManagement: React.FC = () => {
                             {canViewPatientPhoneNumber && p.phone && <span className="text-slate-500 ml-2">({p.phone})</span>}
                           </div>
                           <span className="text-[10px] text-slate-400 font-mono">
-                            {getPatientMedicalRecordNumber(p, formBranchId) || p.id}
+                            {getPatientMedicalRecordNumber(p, formBranchId) ||
+                              p.internalPatientCode ||
+                              "No. RM belum tersedia"}
                           </span>
                         </div>
                       ))}

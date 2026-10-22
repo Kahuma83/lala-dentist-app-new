@@ -39,4 +39,17 @@ describe("Global patient history RLS for doctors", () => {
     expect(migration).toContain("public.doctor_can_manage_clinical_visit(visit_id, branch_id, doctor_id)");
     expect(migration).toContain("public.user_can_manage_treatment_branch(branch_id)");
   });
+
+  it("restores global doctor reads without broadening clinical write policies", () => {
+    const globalAccessMigrationPath = path.resolve(
+      process.cwd(),
+      "supabase/migrations/20261216000000_allow_doctors_global_patient_history.sql"
+    );
+    const migration = fs.readFileSync(globalAccessMigrationPath, "utf-8");
+
+    expect(migration).toMatch(/Doctors read global patient profiles[\s\S]*?FOR SELECT[\s\S]*?public\.get_authenticated_doctor_id\(\) IS NOT NULL/i);
+    expect(migration).toMatch(/Doctors read all patient visits[\s\S]*?FOR SELECT[\s\S]*?public\.get_authenticated_doctor_id\(\) IS NOT NULL/i);
+    expect(migration).toMatch(/Clinical records doctor read[\s\S]*?FOR SELECT[\s\S]*?public\.get_authenticated_doctor_id\(\) IS NOT NULL/i);
+    expect(migration).not.toMatch(/FOR (?:ALL|INSERT|UPDATE|DELETE)[\s\S]*?get_authenticated_doctor_id\(\) IS NOT NULL/i);
+  });
 });
