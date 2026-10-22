@@ -365,10 +365,17 @@ export function AttendancePortal() {
     if (staffError) throw new Error(`Gagal membaca tautan staf akun: ${staffError.message}`);
     if (!resolvedStaffId) throw new Error("Akun belum terhubung ke data staf. Hubungi Super Admin.");
 
+    const { data: staffProfile, error: staffProfileError } = await supabase
+      .from("staff")
+      .select("full_name")
+      .eq("id", resolvedStaffId)
+      .maybeSingle();
+    if (staffProfileError) throw new Error(`Gagal membaca nama pegawai: ${staffProfileError.message}`);
+
     const context: StaffContext = {
       branchId: account.branch_id || null,
       doctorId: account.doctor_id || null,
-      name: account.name || user.user_metadata?.name || user.email || "Staf",
+      name: staffProfile?.full_name?.trim() || account.name || user.user_metadata?.name || user.email || "Staf",
       role: account.role as StaffRole,
       staffId: resolvedStaffId,
       userAccountId: account.id
