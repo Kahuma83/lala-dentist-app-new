@@ -581,6 +581,24 @@ const PATIENT_COLUMNS_WITHOUT_PHONE = [
 const patientSelectColumns = (role?: UserRole) =>
   canViewPatientPhone(role) ? "*" : PATIENT_COLUMNS_WITHOUT_PHONE;
 
+const PATIENT_ID_QUERY_BATCH_SIZE = 100;
+
+function chunkPatientIds(patientIds: string[]): string[][] {
+  const batches: string[][] = [];
+  for (let index = 0; index < patientIds.length; index += PATIENT_ID_QUERY_BATCH_SIZE) {
+    batches.push(patientIds.slice(index, index + PATIENT_ID_QUERY_BATCH_SIZE));
+  }
+  return batches;
+}
+
+function isMissingPatientProfilesTable(error: { code?: string; message?: string }): boolean {
+  return (
+    error.code === "42P01" ||
+    error.code === "PGRST205" ||
+    /patient_profiles.*(not found|does not exist)/i.test(error.message || "")
+  );
+}
+
 export class SupabasePatientRepository implements PatientRepository {
   async getPatients(currentUserRole?: UserRole, _userBranchId?: string | null): Promise<PatientProfile[]> {
     ensureSupabaseConnected();
@@ -601,19 +619,18 @@ export class SupabasePatientRepository implements PatientRepository {
       }
 
       // 1. Try querying 'patient_profiles' table first (as requested)
-      try {
-        // RLS scopes branch staff; global portal profiles may have no registered branch.
-        const { data, error } = await supabase.from("patient_profiles").select(selectColumns);
-        if (!error && Array.isArray(data)) {
-          const patients = await this.attachMedicalHistoryNotes(data.map(this.mapPatientFromDb.bind(this)), currentUserRole);
-          const withBranchRms = await this.attachBranchMedicalRecordNumbers(patients);
-          return withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole));
-        }
-      } catch (e) {
-        if (e instanceof Error && e.message.startsWith("Gagal membaca No. RM per cabang:")) {
-          throw e;
-        }
-        console.warn("[Supabase] getPatients from 'patient_profiles' failed:", e);
+      // RLS scopes branch staff; global portal profiles may have no registered branch.
+      const { data, error } = await supabase.from("patient_profiles").select(selectColumns);
+      if (error && !isMissingPatientProfilesTable(error)) {
+        throw new Error(`Gagal membaca pasien dari patient_profiles: ${error.message}`);
+      }
+      if (!error && Array.isArray(data)) {
+        const patients = await this.attachMedicalHistoryNotes(
+          data.map(this.mapPatientFromDb.bind(this)),
+          currentUserRole
+        );
+        const withBranchRms = await this.attachBranchMedicalRecordNumbers(patients);
+        return withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole));
       }
 
       // 2. Try 'patients' table as fallback query
@@ -1172,16 +1189,21 @@ export class SupabasePatientRepository implements PatientRepository {
     if (!supabase) throw new Error("Koneksi Supabase belum terkonfigurasi.");
 
     const patientIds = patients.map((patient) => patient.id).filter(Boolean);
-    const { data, error } = await supabase
-      .from("patient_branch_medical_records")
-      .select("patient_id, branch_id, medical_record_number")
-      .in("patient_id", patientIds);
-    if (error) {
-      throw new Error(`Gagal membaca No. RM per cabang: ${error.message}`);
+    const results = await Promise.all(
+      chunkPatientIds(patientIds).map((batch) =>
+        supabase
+          .from("patient_branch_medical_records")
+          .select("patient_id, branch_id, medical_record_number")
+          .in("patient_id", batch)
+      )
+    );
+    const failedResult = results.find((result) => result.error);
+    if (failedResult?.error) {
+      throw new Error(`Gagal membaca No. RM per cabang: ${failedResult.error.message}`);
     }
 
     const recordsByPatient = new Map<string, Array<{ branchId: string; medicalRecordNumber: string }>>();
-    (data || []).forEach((row) => {
+    results.flatMap((result) => result.data || []).forEach((row) => {
       const records = recordsByPatient.get(row.patient_id) || [];
       records.push({
         branchId: row.branch_id,
@@ -1206,21 +1228,35 @@ export class SupabasePatientRepository implements PatientRepository {
     const patientIds = patients.map((patient) => patient.id).filter(Boolean);
     if (patientIds.length === 0) return patients;
 
-    const { data, error } = await supabase
-      .from("patient_medical_profiles")
-      .select("patient_id, medical_history_notes")
-      .in("patient_id", patientIds);
-    if (error) {
-      if (!this.isMissingPatientMedicalProfilesTable(error)) {
-        throw new Error(`Supabase error: ${error.message}`);
+    const results = await Promise.all(
+      chunkPatientIds(patientIds).map((batch) =>
+        supabase
+          .from("patient_medical_profiles")
+          .select("patient_id, medical_history_notes")
+          .in("patient_id", batch)
+      )
+    );
+    const failedResult = results.find((result) => result.error);
+    if (failedResult?.error) {
+      if (!this.isMissingPatientMedicalProfilesTable(failedResult.error)) {
+        throw new Error(`Supabase error: ${failedResult.error.message}`);
       }
-      const { data: legacyData, error: legacyError } = await supabase
-        .from("patient_profiles")
-        .select("id, medical_history_notes")
-        .in("id", patientIds);
-      if (legacyError) throw new Error(`Gagal membaca riwayat medis: ${legacyError.message}`);
+      const legacyResults = await Promise.all(
+        chunkPatientIds(patientIds).map((batch) =>
+          supabase
+            .from("patient_profiles")
+            .select("id, medical_history_notes")
+            .in("id", batch)
+        )
+      );
+      const failedLegacyResult = legacyResults.find((result) => result.error);
+      if (failedLegacyResult?.error) {
+        throw new Error(`Gagal membaca riwayat medis: ${failedLegacyResult.error.message}`);
+      }
       const legacyNotesByPatientId = new Map(
-        (legacyData || []).map((row) => [row.id, row.medical_history_notes || ""])
+        legacyResults
+          .flatMap((result) => result.data || [])
+          .map((row) => [row.id, row.medical_history_notes || ""])
       );
       return patients.map((patient) => ({
         ...patient,
@@ -1229,7 +1265,9 @@ export class SupabasePatientRepository implements PatientRepository {
     }
 
     const notesByPatientId = new Map(
-      (data || []).map((row) => [row.patient_id, row.medical_history_notes || ""])
+      results
+        .flatMap((result) => result.data || [])
+        .map((row) => [row.patient_id, row.medical_history_notes || ""])
     );
     return patients.map((patient) => ({
       ...patient,
