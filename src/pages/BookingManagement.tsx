@@ -25,6 +25,7 @@ import {
   toOperationalDateTime
 } from "../utils/dateUtils";
 import { isBranchMatch } from "../utils/branchUtils";
+import { canViewPatientPhone } from "../utils/patientPrivacy";
 import {
   Calendar,
   Clock,
@@ -48,6 +49,7 @@ import { TreatmentPicker } from "../components/TreatmentPicker";
 import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
 import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
 import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate, isActiveQueueStatus } from "../utils/bookingQueueGuards";
+import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 
 const addCalendarDays = (date: string, days: number) => {
   const value = new Date(`${date}T12:00:00Z`);
@@ -75,6 +77,7 @@ const getMinutesOfDay = (time: string) => {
 
 export const BookingManagement: React.FC = () => {
   const { repos, currentUser, selectedBranchId, branches, patients, refreshData } = useApp();
+  const canViewPatientPhoneNumber = canViewPatientPhone(currentUser?.role);
   const { navigate, path } = useRouter();
 
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -507,10 +510,10 @@ export const BookingManagement: React.FC = () => {
     return patients.filter(
       (p) =>
         (p.fullName || p.name || "").toLowerCase().includes(q) ||
-        (p.phone || "").includes(q) ||
-        (p.medicalRecordNumber || "").toLowerCase().includes(q)
+        (canViewPatientPhoneNumber && (p.phone || "").includes(q)) ||
+        getPatientMedicalRecordNumber(p, formBranchId || effectiveBranchId).toLowerCase().includes(q)
     ).slice(0, 5);
-  }, [patientSearch, patients]);
+  }, [patientSearch, patients, canViewPatientPhoneNumber, formBranchId, effectiveBranchId]);
 
   const handleCreatePatientForSchedule = async () => {
     const fullName = newPatientForm.fullName.trim();
@@ -530,7 +533,13 @@ export const BookingManagement: React.FC = () => {
     }
 
     try {
-      const duplicates = await repos.patient.checkDuplicates(phone || undefined, undefined, fullName);
+      const duplicates = await repos.patient.checkDuplicates(
+        phone || undefined,
+        undefined,
+        fullName,
+        currentUser?.role,
+        formBranchId || undefined
+      );
       const matchingPatients = duplicates.byPhone
         .filter((patient, index, all) => all.findIndex((item) => item.id === patient.id) === index);
       const existingIdentity = patients.find((patient) =>
@@ -1908,7 +1917,8 @@ export const BookingManagement: React.FC = () => {
                         {selectedPatient.fullName}
                       </div>
                       <div className="text-[11px] text-emerald-700">
-                        {selectedPatient.phone} — {selectedPatient.medicalRecordNumber || "No RM"}
+                        {canViewPatientPhoneNumber && selectedPatient.phone ? `${selectedPatient.phone} — ` : ""}
+                        {getPatientMedicalRecordNumber(selectedPatient, formBranchId) || "No RM"}
                       </div>
                     </div>
                     <button
@@ -1923,7 +1933,7 @@ export const BookingManagement: React.FC = () => {
                   <div className="space-y-2">
                     <input
                       type="text"
-                      placeholder="Ketik nama, HP, atau No RM pasien..."
+                      placeholder={canViewPatientPhoneNumber ? "Ketik nama, HP, atau No RM pasien..." : "Ketik nama atau No RM pasien..."}
                       value={patientSearch}
                       onChange={(e) => setPatientSearch(e.target.value)}
                       className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -1938,10 +1948,10 @@ export const BookingManagement: React.FC = () => {
                         >
                           <div>
                             <span className="font-bold text-slate-800">{p.fullName}</span>
-                            <span className="text-slate-500 ml-2">({p.phone})</span>
+                            {canViewPatientPhoneNumber && p.phone && <span className="text-slate-500 ml-2">({p.phone})</span>}
                           </div>
                           <span className="text-[10px] text-slate-400 font-mono">
-                            {p.medicalRecordNumber || p.id}
+                            {getPatientMedicalRecordNumber(p, formBranchId) || p.id}
                           </span>
                         </div>
                       ))}
@@ -2031,13 +2041,13 @@ export const BookingManagement: React.FC = () => {
                         <div className="border-t border-emerald-200 pt-2">
                           <p className="text-[11px] font-bold text-slate-700">Data kontak & sosial <span className="font-normal text-slate-500">(opsional)</span></p>
                         </div>
-                        <input
+                        {canViewPatientPhoneNumber && <input
                           type="tel"
                           value={newPatientForm.phone}
                           onChange={(event) => setNewPatientForm((form) => ({ ...form, phone: event.target.value }))}
                           placeholder="Nomor HP/WhatsApp"
                           className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
-                        />
+                        />}
                         <input
                           type="text"
                           value={newPatientForm.address}
@@ -2465,14 +2475,14 @@ export const BookingManagement: React.FC = () => {
                         <div className="border-t border-emerald-200 pt-2">
                           <p className="text-[10px] font-bold text-slate-700">Data kontak & sosial (opsional)</p>
                         </div>
-                        <input
+                        {canViewPatientPhoneNumber && <input
                           type="tel"
                           value={patientEditDraft.phone}
                           onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, phone: event.target.value }))}
                           placeholder="Nomor HP/WhatsApp"
                           aria-label="Nomor telepon pasien"
                           className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
-                        />
+                        />}
                         <input
                           type="text"
                           value={patientEditDraft.address}
@@ -2550,11 +2560,11 @@ export const BookingManagement: React.FC = () => {
                   </form>
                 ) : (
                   <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">No. RM</span><span className="text-slate-700">{patientProfileForDetail?.medicalRecordNumber || "Belum ada"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">No. RM</span><span className="text-slate-700">{patientProfileForDetail ? getPatientMedicalRecordNumber(patientProfileForDetail, selectedBooking?.branchId) || "Belum ada" : "Belum ada"}</span></div>
                     <div><span className="block text-[9px] font-bold uppercase text-slate-400">Identitas</span><span className="text-slate-700">{patientProfileForDetail?.identityDocumentType || "Belum diisi"}{patientProfileForDetail?.identityDocumentNumber ? ` ••••${patientProfileForDetail.identityDocumentNumber.slice(-4)}` : ""}</span></div>
                     <div><span className="block text-[9px] font-bold uppercase text-slate-400">Tempat, tanggal lahir</span><span className="text-slate-700">{patientProfileForDetail?.placeOfBirth || "Belum diisi"}{patientProfileForDetail?.dateOfBirth ? `, ${patientProfileForDetail.dateOfBirth}` : ""}</span></div>
                     <div><span className="block text-[9px] font-bold uppercase text-slate-400">Jenis kelamin</span><span className="text-slate-700">{patientProfileForDetail?.gender === "P" ? "Perempuan" : patientProfileForDetail?.gender === "L" ? "Laki-laki" : "Belum diisi"}</span></div>
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Telepon</span><span className="text-slate-700">{patientProfileForDetail?.phone || "Belum diisi"}</span></div>
+                    {canViewPatientPhoneNumber && <div><span className="block text-[9px] font-bold uppercase text-slate-400">Telepon</span><span className="text-slate-700">{patientProfileForDetail?.phone || "Belum diisi"}</span></div>}
                     <div><span className="block text-[9px] font-bold uppercase text-slate-400">Alamat</span><span className="text-slate-700">{patientProfileForDetail?.address || "Belum diisi"}</span></div>
                     <div><span className="block text-[9px] font-bold uppercase text-slate-400">Pekerjaan</span><span className="text-slate-700">{patientProfileForDetail?.occupation || "Belum diisi"}</span></div>
                     <div><span className="block text-[9px] font-bold uppercase text-slate-400">Agama / kepercayaan</span><span className="text-slate-700">{patientProfileForDetail?.religion || "Belum diisi"}</span></div>

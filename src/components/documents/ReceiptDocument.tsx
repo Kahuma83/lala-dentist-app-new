@@ -7,6 +7,7 @@ import {
   ClinicBranding
 } from "../../types/domain";
 import { DocumentHeader } from "./DocumentHeader";
+import { getPatientMedicalRecordNumber } from "../../utils/rmUtils";
 import {
   formatRupiah,
   formatIndoDateTime,
@@ -59,9 +60,9 @@ export const ReceiptDocument: React.FC<ReceiptDocumentProps> = ({
           <div className="col-span-3 font-semibold text-slate-600 text-[11px]">Telah Diterima Dari :</div>
           <div className="col-span-9 font-bold text-slate-900 text-xs">
             {patient?.fullName || "Pasien Umum"}
-            {patient?.medicalRecordNumber && (
+            {patient && getPatientMedicalRecordNumber(patient, payment.branchId) && (
               <span className="ml-2 font-mono text-[11px] font-normal text-slate-500">
-                (No. RM: {patient.medicalRecordNumber})
+                (No. RM: {getPatientMedicalRecordNumber(patient, payment.branchId)})
               </span>
             )}
           </div>

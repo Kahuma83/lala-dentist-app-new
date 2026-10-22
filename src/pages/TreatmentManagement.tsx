@@ -37,6 +37,7 @@ import { TreatmentPicker } from "../components/TreatmentPicker";
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { getActiveDoctorsForSchedule } from "../utils/doctorScheduleUtils";
 import { getOperationalDateString } from "../utils/dateUtils";
+import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { isActiveQueueStatus } from "../utils/bookingQueueGuards";
 import {
   InventoryItem,
@@ -1107,8 +1108,8 @@ export const TreatmentManagement: React.FC = () => {
                   <div className="font-semibold text-slate-800">
                     Pasien: {selectedTreatmentPatient?.fullName || "Nama pasien tidak tersedia"}
                   </div>
-                  {selectedTreatmentPatient?.medicalRecordNumber && (
-                    <div>No. Rekam Medis: {selectedTreatmentPatient.medicalRecordNumber}</div>
+                  {selectedTreatmentPatient && getPatientMedicalRecordNumber(selectedTreatmentPatient, selectedTreatment.branchId) && (
+                    <div>No. Rekam Medis: {getPatientMedicalRecordNumber(selectedTreatmentPatient, selectedTreatment.branchId)}</div>
                   )}
                   <div>
                     Cabang: {selectedTreatmentBranch?.name || "Cabang tidak tersedia"}

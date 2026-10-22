@@ -38,9 +38,12 @@ import {
   ArrowRight,
   Download
 } from "lucide-react";
+import { canViewPatientPhone } from "../utils/patientPrivacy";
+import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 
 export const H1ConfirmationPage: React.FC = () => {
   const { repos, currentUser, selectedBranchId, branches, patients, doctorSchedules } = useApp();
+  const canViewPatientPhoneNumber = canViewPatientPhone(currentUser?.role);
 
   // Selected date for H-1 workflow (defaults to operational tomorrow date)
   const [targetDateStr, setTargetDateStr] = useState<string>(getTomorrowDateString());
@@ -144,7 +147,7 @@ export const H1ConfirmationPage: React.FC = () => {
 
         // Also search in patient profile phone
         const patientObj = patients.find((p) => p.id === b.patientId);
-        const phone = patientObj?.phone || "";
+        const phone = canViewPatientPhoneNumber ? patientObj?.phone || "" : "";
 
         return (
           pName.includes(q) ||
@@ -157,7 +160,7 @@ export const H1ConfirmationPage: React.FC = () => {
 
       return true;
     });
-  }, [bookings, confirmations, statusFilter, doctorFilter, searchQuery, patients]);
+  }, [bookings, confirmations, statusFilter, doctorFilter, searchQuery, patients, canViewPatientPhoneNumber]);
 
   // Metrics summary counts
   const counts = useMemo(() => {
@@ -243,6 +246,7 @@ export const H1ConfirmationPage: React.FC = () => {
 
   // Helper to construct WhatsApp link
   const getWhatsAppLink = (booking: Booking) => {
+    if (!canViewPatientPhoneNumber) return "#";
     const patientObj = patients.find((p) => p.id === booking.patientId);
     let phone = patientObj?.phone || "";
     if (!phone) return "#";
@@ -319,14 +323,14 @@ export const H1ConfirmationPage: React.FC = () => {
         const conf = confirmations[b.id];
         const status = conf?.status || conf?.confirmationStatus || ConfirmationStatusH1.BELUM_DIHUBUNGI;
         const patientObj = patients.find((p) => p.id === b.patientId);
-        const phone = patientObj?.phone || "-";
+        const phone = canViewPatientPhoneNumber ? patientObj?.phone || "-" : "-";
         const patientName = patientObj?.fullName || b.patientNameSnapshot || "-";
         const time = getOperationalTimeString(b.bookingDateTime);
 
         return {
           "No": idx + 1,
           "Nama Pasien": patientName,
-          "No. WhatsApp": phone,
+          ...(canViewPatientPhoneNumber ? { "No. WhatsApp": phone } : {}),
           "Tanggal Booking": getOperationalDateString(b.bookingDateTime),
           "Jam": time,
           "Dokter": b.doctorNameSnapshot || "-",
@@ -617,7 +621,7 @@ export const H1ConfirmationPage: React.FC = () => {
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
                   <th className="py-3.5 px-4">Jam & Dokter</th>
-                  <th className="py-3.5 px-4">Pasien & No HP</th>
+                  <th className="py-3.5 px-4">Pasien{canViewPatientPhoneNumber ? " & No HP" : ""}</th>
                   <th className="py-3.5 px-4">Layanan & Cabang</th>
                   <th className="py-3.5 px-4">Status H-1</th>
                   <th className="py-3.5 px-4">Catatan Konfirmasi</th>
@@ -674,12 +678,12 @@ export const H1ConfirmationPage: React.FC = () => {
                         <div className="font-bold text-slate-900 text-sm">
                           {patientObj?.fullName || b.patientNameSnapshot || "Pasien"}
                         </div>
-                        <div className="text-slate-500 font-mono text-xs mt-0.5">
+                        {canViewPatientPhoneNumber && <div className="text-slate-500 font-mono text-xs mt-0.5">
                           {patientObj?.phone || "No HP -"}
-                        </div>
-                        {patientObj?.medicalRecordNumber && (
+                        </div>}
+                        {patientObj && getPatientMedicalRecordNumber(patientObj, b.branchId) && (
                           <div className="text-[10px] text-emerald-700 bg-emerald-50 inline-block px-1.5 py-0.5 rounded font-mono mt-1">
-                            {patientObj.medicalRecordNumber}
+                            {getPatientMedicalRecordNumber(patientObj, b.branchId)}
                           </div>
                         )}
                       </td>
@@ -716,7 +720,7 @@ export const H1ConfirmationPage: React.FC = () => {
                       <td className="py-3.5 px-4 align-top text-right">
                         <div className="flex items-center justify-end gap-2">
                           {/* WhatsApp Direct Link */}
-                          <a
+                          {canViewPatientPhoneNumber && <a
                             href={waLink}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -727,7 +731,7 @@ export const H1ConfirmationPage: React.FC = () => {
                             <MessageSquare className="w-3.5 h-3.5" />
                             Hubungi WA
                             <ExternalLink className="w-3 h-3 opacity-70" />
-                          </a>
+                          </a>}
 
                           {/* Update Status Button */}
                           <button

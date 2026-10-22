@@ -198,6 +198,30 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
     expect(otherBranchDoctorPatients.find((patient) => patient.id === "patient-1")?.medicalHistoryNotes).toBeUndefined();
   });
 
+  it("exposes patient phone numbers only to super admins and branch admins", async () => {
+    const superAdminPatient = await patientRepo.getPatientById("patient-1", UserRole.SUPER_ADMIN);
+    const branchAdminPatient = await patientRepo.getPatientById("patient-1", UserRole.BRANCH_ADMIN, "branch-gebang");
+    const doctorPatient = await patientRepo.getPatientById("patient-1", UserRole.DOCTOR, "branch-gebang");
+    const assistantPatient = await patientRepo.getPatientById("patient-1", UserRole.DOCTOR_ASSISTANT, "branch-gebang");
+    const doctorDuplicates = await patientRepo.checkDuplicates("081299887766", undefined, undefined, UserRole.DOCTOR);
+    const medicalRecordPhone = await patientRepo.getPatientPhoneForMedicalRecord(
+      "patient-1",
+      "branch-gebang",
+      UserRole.DOCTOR
+    );
+
+    expect(superAdminPatient?.phone).toBe("081299887766");
+    expect(branchAdminPatient?.phone).toBe("081299887766");
+    expect(doctorPatient?.phone).toBe("");
+    expect(assistantPatient?.phone).toBe("");
+    expect(doctorDuplicates.byPhone[0]?.phone).toBe("");
+    expect(doctorDuplicates.byPhone[0]?.medicalHistoryNotes).toBeUndefined();
+    expect(medicalRecordPhone).toBe("081299887766");
+    await expect(
+      patientRepo.getPatientPhoneForMedicalRecord("patient-1", "branch-gebang", UserRole.DOCTOR_ASSISTANT)
+    ).rejects.toThrow("Akses ditolak");
+  });
+
   // TEST 1: Create Medical Record untuk Visit valid
   it("TEST 1: Create Medical Record untuk Visit valid -> Expected: PASS", async () => {
     const record = await mrRepo.createOrUpdateMedicalRecord(

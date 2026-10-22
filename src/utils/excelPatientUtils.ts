@@ -1,12 +1,13 @@
 import * as XLSX from "xlsx";
 import { PatientProfile, DentalBranch, UserRole } from "../types/domain";
 import { PatientRepository } from "../repositories/interfaces";
+import { getPatientMedicalRecordNumber } from "./rmUtils";
 
 export interface ParsedPatientRow {
   index: number;
   medicalRecordNumber?: string;
   name: string;
-  gender: "L" | "P";
+  gender: "L" | "P" | "";
   dateOfBirth: string; // YYYY-MM-DD
   phone: string;
   email?: string;
@@ -37,20 +38,23 @@ export interface ParsedPatientResult {
 /**
  * Normalizes gender input into "L" or "P"
  */
-function normalizeGender(val: any): "L" | "P" {
-  if (!val) return "L";
+function normalizeGender(val: any): "L" | "P" | "" {
+  if (!val) return "";
   const str = String(val).trim().toUpperCase();
-  if (str.startsWith("P") || str.includes("PEREMPUAN") || str.includes("FEMALE") || str.includes("WANITA") || str === "F") {
+  if (str === "P" || str.includes("PEREMPUAN") || str.includes("FEMALE") || str.includes("WANITA") || str === "F") {
     return "P";
   }
-  return "L";
+  if (str === "L" || str.includes("LAKI") || str.includes("MALE") || str.includes("PRIA") || str === "M") {
+    return "L";
+  }
+  return "";
 }
 
 /**
  * Normalizes date string or Excel serial number into YYYY-MM-DD
  */
 function normalizeDate(val: any): string {
-  if (!val) return "1995-01-01";
+  if (!val || String(val).trim() === "") return "";
 
   // If numeric (Excel serial date)
   if (typeof val === "number") {
@@ -63,7 +67,7 @@ function normalizeDate(val: any): string {
         return `${y}-${m}-${d}`;
       }
     } catch {
-      // fallback
+      return "";
     }
   }
 
@@ -87,7 +91,7 @@ function normalizeDate(val: any): string {
     return parsed.toISOString().split("T")[0];
   }
 
-  return "1995-01-01";
+  return "";
 }
 
 /**
@@ -128,9 +132,15 @@ export function exportPatientsToExcel(
 
     return {
       "No": idx + 1,
+      "Kode Internal Pasien": p.internalPatientCode || "-",
       "No. Rekam Medis (No RM)": p.medicalRecordNumber || "-",
+      ...branches.reduce<Record<string, string>>((branchRms, item) => {
+        branchRms[`No. RM ${item.branchCode || item.name}`] =
+          getPatientMedicalRecordNumber(p, item.id) || "-";
+        return branchRms;
+      }, {}),
       "Nama Lengkap Pasien": p.name || p.fullName || "-",
-      "Jenis Kelamin (L/P)": p.gender === "L" ? "L (Laki-laki)" : "P (Perempuan)",
+      "Jenis Kelamin (L/P)": p.gender === "L" ? "L (Laki-laki)" : p.gender === "P" ? "P (Perempuan)" : "",
       "Tanggal Lahir": p.dateOfBirth || "-",
       "Usia": age,
       "Nomor Telepon / WhatsApp": p.phone || "-",
@@ -183,9 +193,9 @@ export function downloadPatientExcelTemplate(): void {
     {
       "No RM (Opsional - Kosongkan jika ingin dibuat otomatis)": "RM-000101",
       "Nama Lengkap Pasien *": "Budi Santoso",
-      "Jenis Kelamin (L/P) *": "L",
-      "Tanggal Lahir (YYYY-MM-DD) *": "1990-05-15",
-      "Nomor Telepon / WhatsApp *": "081234567890",
+      "Jenis Kelamin (L/P)": "L",
+      "Tanggal Lahir (YYYY-MM-DD)": "1990-05-15",
+      "Nomor Telepon / WhatsApp": "081234567890",
       "Email": "budi.santoso@gmail.com",
       "Nama Kontak Darurat": "Siti Santoso",
       "Telepon Kontak Darurat": "081234567891",
@@ -197,9 +207,9 @@ export function downloadPatientExcelTemplate(): void {
     {
       "No RM (Opsional - Kosongkan jika ingin dibuat otomatis)": "RM-000102",
       "Nama Lengkap Pasien *": "Siti Nurhaliza",
-      "Jenis Kelamin (L/P) *": "P",
-      "Tanggal Lahir (YYYY-MM-DD) *": "1996-11-20",
-      "Nomor Telepon / WhatsApp *": "085712345678",
+      "Jenis Kelamin (L/P)": "P",
+      "Tanggal Lahir (YYYY-MM-DD)": "1996-11-20",
+      "Nomor Telepon / WhatsApp": "085712345678",
       "Email": "siti.nur@gmail.com",
       "Nama Kontak Darurat": "Nurhaliza",
       "Telepon Kontak Darurat": "085712345679",
@@ -211,9 +221,9 @@ export function downloadPatientExcelTemplate(): void {
     {
       "No RM (Opsional - Kosongkan jika ingin dibuat otomatis)": "",
       "Nama Lengkap Pasien *": "Ahmad Fauzi",
-      "Jenis Kelamin (L/P) *": "L",
-      "Tanggal Lahir (YYYY-MM-DD) *": "2002-03-08",
-      "Nomor Telepon / WhatsApp *": "082198765432",
+      "Jenis Kelamin (L/P)": "L",
+      "Tanggal Lahir (YYYY-MM-DD)": "2002-03-08",
+      "Nomor Telepon / WhatsApp": "082198765432",
       "Email": "ahmad.fauzi@yahoo.com",
       "Nama Kontak Darurat": "",
       "Telepon Kontak Darurat": "",
@@ -241,8 +251,16 @@ export function downloadPatientExcelTemplate(): void {
     { wch: 32 }
   ];
 
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ["Petunjuk impor pasien lama"],
+    ["Nama pasien wajib diisi."],
+    ["Isi minimal salah satu: No RM atau nomor telepon/WhatsApp."],
+    ["Tanggal lahir dan jenis kelamin boleh dikosongkan jika tidak diketahui."],
+    ["Kolom kosong tidak akan ditebak; periksa duplikat dan cabang sebelum impor."]
+  ]);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Template Pasien");
+  XLSX.utils.book_append_sheet(workbook, instructions, "Petunjuk");
   XLSX.writeFile(workbook, "Template-Import-Pasien-Lala-Dentist.xlsx");
 }
 
@@ -288,7 +306,7 @@ export async function parsePatientExcelFile(
     const emergencyPhoneKey = findKey(row, ["teleponkontakdarurat", "nomorkontakdarurat", "emergencycontactphone"]);
     const emergencyRelationshipKey = findKey(row, ["hubungankontakdarurat", "hubungandarurat", "emergencycontactrelationship"]);
     const dobKey = findKey(row, ["lahir", "dob", "birth", "tgllahir", "tanggallahir"]);
-    const genderKey = findKey(row, ["gender", "kelamin", "jk", "sex", "jeniskelamin"]);
+    const genderKey = findKey(row, ["gender", "kelamin", "jk", "sex", "jeniskelamin", "pl"]);
     const addressKey = findKey(row, ["alamat", "address", "domisili", "kota"]);
     const notesKey = findKey(row, ["riwayat", "alergi", "catatan", "penyakit", "history", "notes"]);
     const diagnosaKey = findKey(row, ["diagnosa", "diagnosis"]);
@@ -304,8 +322,10 @@ export async function parsePatientExcelFile(
     const rawEmergencyName = emergencyNameKey ? String(row[emergencyNameKey]).trim() : "";
     const rawEmergencyPhone = emergencyPhoneKey ? normalizePhone(row[emergencyPhoneKey]) : "";
     const rawEmergencyRelationship = emergencyRelationshipKey ? String(row[emergencyRelationshipKey]).trim() : "";
-    const rawDob = dobKey ? normalizeDate(row[dobKey]) : "1995-01-01";
-    const rawGender = genderKey ? normalizeGender(row[genderKey]) : "L";
+    const rawDobValue = dobKey ? row[dobKey] : "";
+    const rawDob = normalizeDate(rawDobValue);
+    const rawGenderValue = genderKey ? row[genderKey] : "";
+    const rawGender = normalizeGender(rawGenderValue);
     const rawAddress = addressKey ? String(row[addressKey]).trim() : "";
     let rawNotes = notesKey ? String(row[notesKey]).trim() : "";
     const rawBranch = branchKey ? String(row[branchKey]).trim() : "";
@@ -361,16 +381,29 @@ export async function parsePatientExcelFile(
       errors.push("Nama lengkap pasien wajib diisi");
     }
 
-    if (!rawPhone) {
-      errors.push("Nomor telepon / WhatsApp wajib diisi");
-    } else if (rawPhone.length < 8) {
+    if (!rawRM && !rawPhone) {
+      errors.push("No. RM atau nomor telepon wajib diisi agar pasien dapat dicocokkan");
+    }
+
+    if (rawPhone && rawPhone.length < 8) {
       warnings.push("Nomor telepon terlalu pendek (< 8 digit)");
+    }
+    if (!rawDob) {
+      warnings.push(rawDobValue ? "Tanggal lahir tidak dikenali; dibiarkan kosong" : "Tanggal lahir tidak tersedia");
+    }
+    if (!rawGender) {
+      warnings.push(rawGenderValue ? "Jenis kelamin tidak dikenali; dibiarkan kosong" : "Jenis kelamin tidak tersedia");
+    }
+    if (!rawPhone) {
+      warnings.push("Nomor telepon tidak tersedia");
     }
 
     // Check Duplicate against existing database
+    const rmFileKey = `${branchId}:${rawRM.toLowerCase()}`;
     const existingRM = rawRM
       ? existingPatients.find(
-          (p) => (p.medicalRecordNumber || "").trim().toLowerCase() === rawRM.toLowerCase()
+          (patient) =>
+            getPatientMedicalRecordNumber(patient, branchId).trim().toLowerCase() === rawRM.toLowerCase()
         )
       : undefined;
 
@@ -380,7 +413,7 @@ export async function parsePatientExcelFile(
         )
       : undefined;
 
-    const isDuplicateRM = !!existingRM || (rawRM ? seenRMInFile.has(rawRM.toLowerCase()) : false);
+    const isDuplicateRM = !!existingRM || (rawRM ? seenRMInFile.has(rmFileKey) : false);
     const isDuplicatePhone = !!existingPhone || (rawPhone ? seenPhoneInFile.has(rawPhone) : false);
 
     if (existingRM) {
@@ -389,7 +422,7 @@ export async function parsePatientExcelFile(
     if (existingPhone) {
       warnings.push(`No HP "${rawPhone}" sudah terdaftar atas nama ${existingPhone.name}`);
     }
-    if (rawRM && seenRMInFile.has(rawRM.toLowerCase())) {
+    if (rawRM && seenRMInFile.has(rmFileKey)) {
       warnings.push(`No RM "${rawRM}" duplikat dalam file Excel yang sama`);
     }
 
@@ -397,7 +430,7 @@ export async function parsePatientExcelFile(
       duplicateCount++;
     }
 
-    if (rawRM) seenRMInFile.add(rawRM.toLowerCase());
+    if (rawRM) seenRMInFile.add(rmFileKey);
     if (rawPhone) seenPhoneInFile.add(rawPhone);
 
     const parsedRow: ParsedPatientRow = {
@@ -492,7 +525,10 @@ export async function executePatientImport(
         
         if (row.medicalRecordNumber) {
           const matchedByRM = currentDbPatients.find(
-            (p) => (p.medicalRecordNumber || "").trim().toLowerCase() === row.medicalRecordNumber!.trim().toLowerCase()
+            (patient) =>
+              getPatientMedicalRecordNumber(patient, row.registeredBranchId || options.defaultBranchId)
+                .trim()
+                .toLowerCase() === row.medicalRecordNumber!.trim().toLowerCase()
           );
           if (matchedByRM) {
             activeMatch = matchedByRM;
@@ -574,7 +610,8 @@ export async function executePatientImport(
           dateOfBirth: row.dateOfBirth,
           gender: row.gender,
           address: row.address || "-",
-          medicalHistoryNotes: row.medicalHistoryNotes || ""
+          medicalHistoryNotes: row.medicalHistoryNotes || "",
+          registeredBranchId: row.registeredBranchId || options.defaultBranchId
         },
         options.currentUserRole,
         options.userBranchId

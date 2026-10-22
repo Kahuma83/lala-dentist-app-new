@@ -75,7 +75,7 @@ export const Payments: React.FC = () => {
       const results = await Promise.allSettled([
         paymentRepo.getPayments(currentUser?.role, currentUser?.branchId),
         invoiceRepo.getInvoices(currentUser?.role, currentUser?.branchId),
-        patientRepo.getPatients(),
+        patientRepo.getPatients(currentUser?.role, currentUser?.assignedBranchId),
         branchRepo.getBranches(),
         accountingRepo.getJournals(
           currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.branchId

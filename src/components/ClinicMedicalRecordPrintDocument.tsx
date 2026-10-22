@@ -1,17 +1,35 @@
 import React from "react";
 import {
   MedicalRecord,
+  OdontogramCondition,
+  OdontogramSurface,
   OdontogramTooth,
   PatientMedicalProfile,
   PatientProfile,
   PatientVisit
 } from "../types/domain";
 import "./ClinicMedicalRecordPrintDocument.css";
+import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 
 const PERMANENT_UPPER = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28];
 const PRIMARY_UPPER = [55, 54, 53, 52, 51, 61, 62, 63, 64, 65];
 const PRIMARY_LOWER = [85, 84, 83, 82, 81, 71, 72, 73, 74, 75];
 const PERMANENT_LOWER = [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38];
+const PRINT_SURFACE_SHAPES: Array<{ surface: OdontogramSurface; points: string }> = [
+  { surface: "B", points: "2,2 38,2 30,12 10,12" },
+  { surface: "D", points: "38,2 38,38 28,30 28,10" },
+  { surface: "L", points: "2,38 38,38 30,28 10,28" },
+  { surface: "M", points: "2,2 12,10 12,30 2,38" },
+  { surface: "O", points: "12,12 28,12 28,28 12,28" }
+];
+const PRINT_CONDITION_COLORS: Record<OdontogramCondition, string> = {
+  caries: "#ef4444",
+  filling: "#3b82f6",
+  crown: "#8b5cf6",
+  root_canal: "#f59e0b",
+  missing: "#64748b",
+  extraction_indicated: "#ec4899"
+};
 
 interface ClinicMedicalRecordPrintDocumentProps {
   patient: PatientProfile;
@@ -61,20 +79,36 @@ function valueOrDash(value?: string | number | null) {
   return value === undefined || value === null || String(value).trim() === "" ? "-" : String(value);
 }
 
-function ToothMark({ number, tooth }: { number: number; tooth?: OdontogramTooth }) {
-  const condition = tooth?.condition || Object.values(tooth?.surfaces || {}).find(Boolean);
-  const color = condition === "caries" || condition === "extraction_indicated"
-    ? "#c62828"
-    : condition
-      ? "#245b9e"
-      : "#fff";
-
+function ToothMark({
+  number,
+  tooth,
+  labelPosition = "top"
+}: {
+  number: number;
+  tooth?: OdontogramTooth;
+  labelPosition?: "top" | "bottom";
+}) {
   return (
-    <div className="clinic-print-tooth">
-      <span>{number}</span>
+    <div className={`clinic-print-tooth${labelPosition === "bottom" ? " clinic-print-tooth-label-bottom" : ""}`}>
+      <span className="clinic-print-tooth-number">{number}</span>
       <svg viewBox="0 0 40 40" aria-hidden="true">
-        <path d="M8 3 Q20 -1 32 3 Q39 8 36 20 Q34 32 27 37 Q20 41 13 37 Q6 32 4 20 Q1 8 8 3Z" fill={condition ? color : "white"} fillOpacity={condition ? 0.35 : 1} stroke="#222" strokeWidth="1.5" />
-        <path d="M2 2 L38 38 M38 2 L2 38" stroke={condition === "missing" ? "#222" : "transparent"} strokeWidth="2" />
+        {PRINT_SURFACE_SHAPES.map(({ surface, points }) => {
+          const condition = tooth?.condition || tooth?.surfaces?.[surface];
+          return (
+            <polygon
+              key={surface}
+              points={points}
+              fill={condition ? PRINT_CONDITION_COLORS[condition] : "white"}
+              fillOpacity={condition ? 0.75 : 1}
+              stroke="#222"
+              strokeWidth="1"
+            />
+          );
+        })}
+        <path d="M2 2 H38 V38 H2 Z" fill="none" stroke="#222" strokeWidth="1.5" />
+        {tooth?.condition === "missing" && (
+          <path d="M8 8 L32 32 M32 8 L8 32" stroke="#222" strokeWidth="2" />
+        )}
       </svg>
     </div>
   );
@@ -117,10 +151,10 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
 
         <div className="clinic-print-patient-fields">
           {[
-            ["No. Rekam Medis", patient.medicalRecordNumber],
+            ["No. Rekam Medis", getPatientMedicalRecordNumber(patient, visit.branchId)],
             ["Nama", patient.fullName || patient.name],
             ["Tempat/Tanggal Lahir", [patient.placeOfBirth, formatDate(patient.dateOfBirth)].filter(Boolean).join(" / ")],
-            ["Jenis Kelamin", patient.gender === "L" ? "Laki-laki" : "Perempuan"],
+            ["Jenis Kelamin", patient.gender === "L" ? "Laki-laki" : patient.gender === "P" ? "Perempuan" : "Belum diketahui"],
             ["Pekerjaan", patient.occupation],
             ["Alamat", patient.address],
             ["Telepon", patient.phone],
@@ -184,8 +218,8 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
         <h1 className="clinic-print-odontogram-title">FORMULIR PEMERIKSAAN ODONTOGRAM</h1>
         <div className="clinic-print-odontogram-meta">
           <div><strong>NAMA LENGKAP</strong><span>:</span><span>{valueOrDash(patient.fullName || patient.name)}</span></div>
-          <div><strong>JENIS KELAMIN</strong><span>:</span><span>{patient.gender === "L" ? "L" : "P"}</span></div>
-          <div><strong>NO. REGISTER</strong><span>:</span><span>{valueOrDash(patient.medicalRecordNumber)}</span></div>
+          <div><strong>JENIS KELAMIN</strong><span>:</span><span>{patient.gender || "-"}</span></div>
+          <div><strong>NO. REGISTER</strong><span>:</span><span>{valueOrDash(getPatientMedicalRecordNumber(patient, visit.branchId))}</span></div>
           <div><strong>TANGGAL LAHIR</strong><span>:</span><span>{formatDate(patient.dateOfBirth)}</span></div>
         </div>
 
@@ -197,10 +231,10 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
             {PRIMARY_UPPER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} />)}
           </div>
           <div className="clinic-print-tooth-row clinic-print-primary">
-            {PRIMARY_LOWER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} />)}
+            {PRIMARY_LOWER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} labelPosition="bottom" />)}
           </div>
           <div className="clinic-print-tooth-row clinic-print-permanent">
-            {PERMANENT_LOWER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} />)}
+            {PERMANENT_LOWER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} labelPosition="bottom" />)}
           </div>
         </div>
 

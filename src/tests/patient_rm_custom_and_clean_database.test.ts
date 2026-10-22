@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MockDatabase } from "../data/mockData";
 import { MockPatientRepository, MockVisitRepository, MockQueueRepository } from "../repositories/mockRepositories";
-import { UserRole, VisitStatus, VisitType } from "../types/domain";
+import { PatientProfile, UserRole, VisitStatus, VisitType } from "../types/domain";
 import {
   getNextMedicalRecordNumber,
   checkRMUniqueness,
-  formatRMNumber
+  formatRMNumber,
+  formatInternalPatientCode,
+  getPatientMedicalRecordNumber
 } from "../utils/rmUtils";
 
 describe("Patient Custom RM, Sequential Auto-Generation, and Database Clean Workflow", () => {
@@ -102,6 +104,35 @@ describe("Patient Custom RM, Sequential Auto-Generation, and Database Clean Work
 
     const updatedPatient = await patientRepo.getPatientById(patient.id);
     expect(updatedPatient?.medicalRecordNumber).toBe("3000");
+    expect(updatedPatient?.branchMedicalRecordNumbers).toEqual([
+      { branchId: branch.id, medicalRecordNumber: "3000" }
+    ]);
+    expect(updatedPatient?.internalPatientCode).toBe(`${branch.branchCode}-RM3000`);
+
+    const otherBranch = db.branches.find((candidate) => candidate.id !== branch.id);
+    expect(otherBranch).toBeDefined();
+    const secondVisit = await visitRepo.createVisit({
+      patientId: patient.id,
+      branchId: otherBranch!.id,
+      visitType: VisitType.WALK_IN,
+      visitStatus: VisitStatus.WAITING,
+      bookingId: null,
+      doctorId: doctor.id,
+      complaint: "Kunjungan cabang lain",
+      visitDateTime: new Date().toISOString()
+    });
+
+    await queueRepo.checkInVisitToQueue(secondVisit.id);
+
+    const patientWithTwoBranchRms = await patientRepo.getPatientById(patient.id);
+    expect(patientWithTwoBranchRms?.branchMedicalRecordNumbers).toHaveLength(2);
+    expect(
+      patientWithTwoBranchRms?.branchMedicalRecordNumbers?.find(
+        (record) => record.branchId === otherBranch!.id
+      )?.medicalRecordNumber
+    ).toBe("3000");
+    expect(patientWithTwoBranchRms?.internalPatientCode).toBe(`${branch.branchCode}-RM3000`);
+    expect(patientWithTwoBranchRms?.medicalRecordNumber).toBe("3000");
   });
 
   it("4. Should detect and reject duplicate manual RM", async () => {
@@ -124,6 +155,43 @@ describe("Patient Custom RM, Sequential Auto-Generation, and Database Clean Work
         medicalRecordNumber: "3000"
       })
     ).rejects.toThrow();
+  });
+
+  it("scopes RM uniqueness to a branch and forms an internal code from the first branch RM", () => {
+    const existingPatient: PatientProfile = {
+      id: "patient-a",
+      medicalRecordNumber: "0001",
+      name: "Pasien",
+      phone: "",
+      dateOfBirth: "",
+      gender: "",
+      address: "",
+      registeredBranchId: "branch-a",
+      branchMedicalRecordNumbers: [
+        { branchId: "branch-a", medicalRecordNumber: "0001" }
+      ],
+      createdAt: "",
+      updatedAt: ""
+    };
+
+    expect(checkRMUniqueness("0001", [existingPatient], undefined, "branch-a").isUnique).toBe(false);
+    expect(checkRMUniqueness("0001", [existingPatient], undefined, "branch-b").isUnique).toBe(true);
+    expect(getPatientMedicalRecordNumber(existingPatient, "branch-b")).toBe("");
+    expect(formatInternalPatientCode("GBG", "0001")).toBe("GBG-RM0001");
+    expect(formatInternalPatientCode("GBG", "RM-0001")).toBe("GBG-RM-0001");
+
+    const firstRmIssuedAtAnotherBranch: PatientProfile = {
+      ...existingPatient,
+      medicalRecordNumber: "3000",
+      branchMedicalRecordNumbers: [
+        { branchId: "branch-b", medicalRecordNumber: "3000" }
+      ]
+    };
+    expect(getPatientMedicalRecordNumber(firstRmIssuedAtAnotherBranch, "branch-a")).toBe("");
+    expect(getPatientMedicalRecordNumber(firstRmIssuedAtAnotherBranch, "branch-b")).toBe("3000");
+    expect(
+      checkRMUniqueness("3000", [firstRmIssuedAtAnotherBranch], undefined, "branch-a").isUnique
+    ).toBe(true);
   });
 
   it("5. Should support existing patients with manually entered RMs while leaving new patients unnumbered", async () => {

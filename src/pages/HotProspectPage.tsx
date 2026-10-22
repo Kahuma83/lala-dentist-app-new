@@ -30,6 +30,8 @@ import {
   X
 } from "lucide-react";
 import { formatRupiah, formatDate } from "../utils/formatter";
+import { canViewPatientPhone } from "../utils/patientPrivacy";
+import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 
 interface HotProspectItem {
   id: string;
@@ -50,6 +52,7 @@ interface HotProspectItem {
 
 export const HotProspectPage: React.FC = () => {
   const { currentUser, patients, visits, bookings, treatmentJobs, branches } = useApp();
+  const canViewPatientPhoneNumber = canViewPatientPhone(currentUser?.role);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("ALL");
@@ -132,8 +135,8 @@ export const HotProspectPage: React.FC = () => {
         id: itemKey,
         patientId: patient.id,
         patientName: patient.name || patient.fullName || "Tanpa Nama",
-        phone: patient.phone || "-",
-        medicalRecordNumber: patient.medicalRecordNumber || "-",
+        phone: canViewPatientPhoneNumber ? patient.phone || "-" : "",
+        medicalRecordNumber: getPatientMedicalRecordNumber(patient, branchId) || "-",
         branchId,
         branchName,
         lastVisitDate: lastVisit?.visitDateTime ? lastVisit.visitDateTime.substring(0, 10) : (patientBookings[0]?.bookingDateTime ? patientBookings[0].bookingDateTime.substring(0, 10) : "2026-01-01"),
@@ -147,7 +150,7 @@ export const HotProspectPage: React.FC = () => {
     });
 
     return Array.from(map.values());
-  }, [patients, visits, bookings, treatmentJobs, branches, prospectStatusMap]);
+  }, [patients, visits, bookings, treatmentJobs, branches, prospectStatusMap, canViewPatientPhoneNumber]);
 
   // Filtered items
   const filteredProspects = useMemo(() => {
@@ -168,14 +171,14 @@ export const HotProspectPage: React.FC = () => {
       list = list.filter(
         (p) =>
           p.patientName.toLowerCase().includes(q) ||
-          p.phone.toLowerCase().includes(q) ||
+          (canViewPatientPhoneNumber && p.phone.toLowerCase().includes(q)) ||
           p.medicalRecordNumber.toLowerCase().includes(q) ||
           p.lastTreatment.toLowerCase().includes(q)
       );
     }
 
     return list;
-  }, [hotProspects, selectedBranchFilter, statusFilter, categoryFilter, searchQuery]);
+  }, [hotProspects, selectedBranchFilter, statusFilter, categoryFilter, searchQuery, canViewPatientPhoneNumber]);
 
   // Statistics
   const stats = useMemo(() => {
@@ -193,7 +196,7 @@ export const HotProspectPage: React.FC = () => {
         No: idx + 1,
         "No. RM": p.medicalRecordNumber,
         "Nama Pasien": p.patientName,
-        "No. Telepon": p.phone,
+        ...(canViewPatientPhoneNumber ? { "No. Telepon": p.phone } : {}),
         Cabang: p.branchName,
         "Kunjungan Terakhir": p.lastVisitDate,
         "Tindakan Terakhir": p.lastTreatment,
@@ -212,7 +215,7 @@ export const HotProspectPage: React.FC = () => {
         { wch: 5 },
         { wch: 15 },
         { wch: 25 },
-        { wch: 15 },
+        ...(canViewPatientPhoneNumber ? [{ wch: 15 }] : []),
         { wch: 20 },
         { wch: 18 },
         { wch: 30 },
@@ -417,7 +420,7 @@ export const HotProspectPage: React.FC = () => {
                         <span>RM: {p.medicalRecordNumber}</span>
                         <span>•</span>
                         <span className="flex items-center gap-1 text-emerald-600 font-medium">
-                          <Phone className="w-3 h-3" /> {p.phone}
+                          {canViewPatientPhoneNumber && <><Phone className="w-3 h-3" /> {p.phone}</>}
                         </span>
                       </div>
                     </td>
@@ -448,7 +451,7 @@ export const HotProspectPage: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <a
+                        {canViewPatientPhoneNumber && <a
                           href={`https://wa.me/${p.phone.replace(/[^0-9]/g, "")}?text=Halo%20Kak%20${encodeURIComponent(p.patientName)},%20kami%20dari%20Lala%20Dentist%20mengingatkan%20perawatan%20atau%20jadwal%20kontrol%20gigi%20berkala%20Anda.%20Apakah%20ingin%20menjadwalkan%20kunjungan%20kembali?`}
                           target="_blank"
                           rel="noreferrer"
@@ -456,7 +459,7 @@ export const HotProspectPage: React.FC = () => {
                           title="Kirim Pesan WhatsApp"
                         >
                           <Phone className="w-4 h-4" />
-                        </a>
+                        </a>}
                         <button
                           onClick={() => {
                             setActiveModalItem(p);
@@ -494,7 +497,10 @@ export const HotProspectPage: React.FC = () => {
             <div className="space-y-3 text-xs">
               <div>
                 <p className="font-semibold text-slate-800 text-sm">{activeModalItem.patientName}</p>
-                <p className="text-slate-500">No. RM: {activeModalItem.medicalRecordNumber} • {activeModalItem.phone}</p>
+                <p className="text-slate-500">
+                  No. RM: {activeModalItem.medicalRecordNumber}
+                  {canViewPatientPhoneNumber && activeModalItem.phone && ` • ${activeModalItem.phone}`}
+                </p>
               </div>
 
               <div>

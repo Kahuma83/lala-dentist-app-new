@@ -44,7 +44,7 @@ describe("Lala Dentist Web Admin - Phase 1 Operational Core Tests", () => {
 
   // Test 3: Search Patient by WhatsApp / Phone Number
   it("should search patients by Phone Number", async () => {
-    const results = await patientRepo.searchPatients("081299887766");
+    const results = await patientRepo.searchPatients("081299887766", UserRole.SUPER_ADMIN);
     expect(results.length).toBe(1);
     expect(results[0].name).toBe("Amanda Lestari");
   });

@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import * as XLSX from "xlsx";
 import {
   exportPatientsToExcel,
   downloadPatientExcelTemplate,
+  parsePatientExcelFile,
   executePatientImport,
   ParsedPatientRow
 } from "../utils/excelPatientUtils";
@@ -31,6 +33,67 @@ describe("Patient Excel Export & Import Utility Suite", () => {
   it("should have export and template download functions available without errors", () => {
     expect(typeof exportPatientsToExcel).toBe("function");
     expect(typeof downloadPatientExcelTemplate).toBe("function");
+  });
+
+  it("imports legacy rows with RM and name while leaving missing profile fields unknown", async () => {
+    const worksheet = XLSX.utils.json_to_sheet([
+      {
+        "NO RM": "1891",
+        "NAMA PASIEN": "Pasien Legacy",
+        "TANGGAL LAHIR": "",
+        "ALAMAT PASIEN": "Kecamatan Contoh",
+        "P/L": "",
+        "B/L": "Lama",
+        "DIAGNOSA": "Pulpitis",
+        "TERAPI / TINDAKAN": "ROP 2 GIGI",
+        "NO HP": ""
+      }
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Data");
+    const file = new File(
+      [XLSX.write(workbook, { type: "array", bookType: "xlsx" })],
+      "legacy-patients.xlsx"
+    );
+
+    const parsed = await parsePatientExcelFile(file, [], mockBranches, "branch-gebang");
+
+    expect(parsed.validRows).toHaveLength(1);
+    expect(parsed.invalidRows).toHaveLength(0);
+    expect(parsed.validRows[0]).toMatchObject({
+      medicalRecordNumber: "1891",
+      name: "Pasien Legacy",
+      gender: "",
+      dateOfBirth: "",
+      phone: "",
+      isValid: true
+    });
+    expect(parsed.validRows[0].warnings).toEqual(
+      expect.arrayContaining([
+        "Tanggal lahir tidak tersedia",
+        "Jenis kelamin tidak tersedia",
+        "Nomor telepon tidak tersedia"
+      ])
+    );
+    expect(parsed.validRows[0].medicalHistoryNotes).toContain("ROP 2 GIGI");
+
+    const result = await executePatientImport(patientRepo, parsed.validRows, {
+      duplicateStrategy: "skip",
+      defaultBranchId: "branch-gebang",
+      currentUserRole: UserRole.SUPER_ADMIN
+    });
+    expect(result.imported).toBe(1);
+
+    const importedPatient = (await patientRepo.getPatients(UserRole.SUPER_ADMIN)).find(
+      (patient) => patient.medicalRecordNumber === "1891"
+    );
+    expect(importedPatient).toBeDefined();
+    expect(importedPatient).toMatchObject({
+      medicalRecordNumber: "1891",
+      dateOfBirth: "",
+      gender: "",
+      phone: ""
+    });
   });
 
   it("should execute import for valid patient rows into repository", async () => {
@@ -84,7 +147,7 @@ describe("Patient Excel Export & Import Utility Suite", () => {
     expect(result.imported).toBe(2);
     expect(result.failed).toBe(0);
 
-    const created1 = (await patientRepo.getPatients()).find(
+    const created1 = (await patientRepo.getPatients(UserRole.SUPER_ADMIN)).find(
       (p) => p.medicalRecordNumber === "RM-990001"
     );
     expect(created1).toBeDefined();
@@ -95,7 +158,7 @@ describe("Patient Excel Export & Import Utility Suite", () => {
   });
 
   it("should handle duplicate skip strategy appropriately", async () => {
-    const existingPatient = (await patientRepo.getPatients())[0];
+    const existingPatient = (await patientRepo.getPatients(UserRole.SUPER_ADMIN))[0];
     expect(existingPatient).toBeDefined();
 
     const dupRows: ParsedPatientRow[] = [
@@ -129,7 +192,7 @@ describe("Patient Excel Export & Import Utility Suite", () => {
   });
 
   it("should handle duplicate update strategy to refresh patient info", async () => {
-    const existingPatient = (await patientRepo.getPatients())[0];
+    const existingPatient = (await patientRepo.getPatients(UserRole.SUPER_ADMIN))[0];
     expect(existingPatient).toBeDefined();
 
     const updateRows: ParsedPatientRow[] = [

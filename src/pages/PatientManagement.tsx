@@ -45,6 +45,7 @@ import {
   FileSpreadsheet,
   Download,
   Upload,
+  History,
   Settings,
   Sparkles,
   Hash,
@@ -54,6 +55,7 @@ import {
 } from "lucide-react";
 import { formatRupiah, formatDate, formatDateTime } from "../utils/formatter";
 import { PatientExcelModal } from "../components/PatientExcelModal";
+import { LegacyPatientHistoryImportModal } from "../components/LegacyPatientHistoryImportModal";
 import { Odontogram } from "../components/Odontogram";
 import { ClinicDentalAssessmentFields } from "../components/ClinicDentalAssessmentFields";
 import { ClinicMedicalRecordPrintDocument } from "../components/ClinicMedicalRecordPrintDocument";
@@ -62,6 +64,7 @@ import { useRouter } from "../components/Router";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
 import { hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 import { getOperationalDateString } from "../utils/dateUtils";
+import { canViewPatientPhone as isPatientPhoneVisible } from "../utils/patientPrivacy";
 import { normalizeIcd10WhoCode, parseIcd9CmProcedureCodes } from "../utils/clinicalCodeUtils";
 import {
   getRMConfig,
@@ -70,6 +73,7 @@ import {
   checkRMUniqueness,
   extractNumberFromRM,
   formatRMNumber,
+  getPatientMedicalRecordNumber,
   RMConfig,
   RMFormatMode
 } from "../utils/rmUtils";
@@ -79,6 +83,7 @@ export const PatientManagement: React.FC = () => {
   const { path, navigate } = useRouter();
   const canReadMedicalRecords =
     currentUser?.role === UserRole.DOCTOR || currentUser?.role === UserRole.SUPER_ADMIN;
+  const canViewPatientPhone = isPatientPhoneVisible(currentUser?.role);
   const canEditMedicalRecords =
     canReadMedicalRecords;
   const canFinalizeMedicalRecords = currentUser?.role === UserRole.DOCTOR;
@@ -115,6 +120,7 @@ export const PatientManagement: React.FC = () => {
   const [isEditPatientOpen, setIsEditPatientOpen] = useState(false);
   const [isBookingVisitOpen, setIsBookingVisitOpen] = useState(false);
   const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
+  const [isLegacyHistoryImportOpen, setIsLegacyHistoryImportOpen] = useState(false);
   const [excelModalTab, setExcelModalTab] = useState<"export" | "import">("import");
 
   // RM Management & Customization State
@@ -179,6 +185,8 @@ export const PatientManagement: React.FC = () => {
   // Medical Record Modal State
   const [selectedVisitForMR, setSelectedVisitForMR] = useState<PatientVisit | null>(null);
   const [mrModalOpen, setMrModalOpen] = useState(false);
+  const [medicalRecordPrintPatient, setMedicalRecordPrintPatient] = useState<PatientProfile | null>(null);
+  const [shouldPrintMedicalRecord, setShouldPrintMedicalRecord] = useState(false);
   const [loadingMR, setLoadingMR] = useState(false);
   const [existingMR, setExistingMR] = useState<MedicalRecord | null>(null);
   const [visitTreatments, setVisitTreatments] = useState<TreatmentJob[]>([]);
@@ -294,16 +302,32 @@ export const PatientManagement: React.FC = () => {
       );
     }
 
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return list;
+    const branchScopedList = selectedBranchFilter === "ALL"
+      ? list
+      : list.map((patient) => ({
+          ...patient,
+          medicalRecordNumber: getPatientMedicalRecordNumber(patient, selectedBranchFilter)
+        }));
 
-    return list.filter((p) => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return branchScopedList;
+
+    return branchScopedList.filter((p) => {
       const nameMatch = (p.name || "").toLowerCase().includes(q) || (p.fullName || "").toLowerCase().includes(q);
-      const phoneMatch = (p.phone || "").toLowerCase().includes(q);
-      const rmMatch = (p.medicalRecordNumber || "").toLowerCase().includes(q);
-      return nameMatch || phoneMatch || rmMatch;
+      const phoneMatch = canViewPatientPhone && (p.phone || "").toLowerCase().includes(q);
+      const internalCodeMatch = (p.internalPatientCode || "").toLowerCase().includes(q);
+      const branchRm = getPatientMedicalRecordNumber(
+        p,
+        selectedBranchFilter === "ALL" ? undefined : selectedBranchFilter
+      ).toLowerCase();
+      const otherBranchRmMatch = selectedBranchFilter === "ALL" &&
+        p.branchMedicalRecordNumbers?.some((record) =>
+          record.medicalRecordNumber.toLowerCase().includes(q)
+        );
+      const rmMatch = branchRm.includes(q) || !!otherBranchRmMatch;
+      return nameMatch || phoneMatch || internalCodeMatch || rmMatch;
     });
-  }, [patients, visits, bookings, treatmentJobs, currentUser?.role, currentUser?.doctorId, searchQuery, selectedBranchFilter]);
+  }, [patients, visits, bookings, treatmentJobs, currentUser?.role, currentUser?.doctorId, searchQuery, selectedBranchFilter, canViewPatientPhone]);
 
   // Map of patient ID to visits count and branch names
   const patientVisitStats = useMemo(() => {
@@ -328,8 +352,13 @@ export const PatientManagement: React.FC = () => {
     if (rmMode !== "manual" || !patientForm.medicalRecordNumber.trim()) {
       return null;
     }
-    return checkRMUniqueness(patientForm.medicalRecordNumber, patients, patientForm.id || undefined);
-  }, [rmMode, patientForm.medicalRecordNumber, patientForm.id, patients]);
+    return checkRMUniqueness(
+      patientForm.medicalRecordNumber,
+      patients,
+      patientForm.id || undefined,
+      patientForm.registeredBranchId
+    );
+  }, [rmMode, patientForm.medicalRecordNumber, patientForm.id, patientForm.registeredBranchId, patients]);
 
   // Helper to open Add Patient Modal
   const handleOpenAddPatient = () => {
@@ -382,7 +411,7 @@ export const PatientManagement: React.FC = () => {
     setPatientForm({
       id: p.id,
       name: p.fullName || p.name,
-      medicalRecordNumber: p.medicalRecordNumber || "",
+      medicalRecordNumber: getPatientMedicalRecordNumber(p, existingBranchId),
       phone: p.phone,
       email: p.email || "",
       emergencyContactName: p.emergencyContactName || "",
@@ -457,7 +486,9 @@ export const PatientManagement: React.FC = () => {
         const dupResult = await repos.patient.checkDuplicates(
           patientForm.phone,
           candidateRM,
-          patientForm.name
+          patientForm.name,
+          currentUser?.role,
+          patientForm.registeredBranchId
         );
 
         if (dupResult.hasDuplicates) {
@@ -469,6 +500,9 @@ export const PatientManagement: React.FC = () => {
 
       const effBranchId = patientForm.registeredBranchId.trim();
       const rmToSubmit = rmMode === "manual" ? candidateRM : "";
+      if (rmToSubmit && !effBranchId) {
+        throw new Error("Pilih cabang asal sebelum memasukkan No. RM lokal pasien.");
+      }
 
       if (patientForm.id) {
         // Update
@@ -976,21 +1010,61 @@ export const PatientManagement: React.FC = () => {
     }
   };
 
-  const handlePrintMedicalRecord = () => {
-    if (!canReadMedicalRecords) return;
-    document.body.dataset.printDocument = "clinic-medical-record";
-    window.addEventListener(
-      "afterprint",
-      () => {
-        delete document.body.dataset.printDocument;
-      },
-      { once: true }
-    );
-    window.print();
+  const handlePrintMedicalRecord = async () => {
+    if (!canReadMedicalRecords || !selectedPatient || !selectedVisitForMR) return;
+    setMrError(null);
+    try {
+      const phone = await repos.patient.getPatientPhoneForMedicalRecord(
+        selectedPatient.id,
+        selectedVisitForMR.branchId,
+        currentUser?.role
+      );
+      setMedicalRecordPrintPatient({ ...selectedPatient, phone });
+      setShouldPrintMedicalRecord(true);
+    } catch (err) {
+      setMrError(err instanceof Error ? err.message : "Gagal menyiapkan nomor telepon untuk rekam medis.");
+    }
   };
+
+  useEffect(() => {
+    if (!shouldPrintMedicalRecord) return;
+
+    document.body.dataset.printDocument = "clinic-medical-record";
+    const handleAfterPrint = () => {
+      delete document.body.dataset.printDocument;
+      setShouldPrintMedicalRecord(false);
+      setMedicalRecordPrintPatient(null);
+    };
+    window.addEventListener("afterprint", handleAfterPrint, { once: true });
+    window.print();
+
+    return () => {
+      window.removeEventListener("afterprint", handleAfterPrint);
+      delete document.body.dataset.printDocument;
+    };
+  }, [shouldPrintMedicalRecord]);
 
   return (
     <div className="space-y-6" id="patient-management-root">
+      {mrModalOpen && selectedVisitForMR && selectedPatient && canReadMedicalRecords && (
+        <ClinicMedicalRecordPrintDocument
+          patient={medicalRecordPrintPatient || selectedPatient}
+          visit={selectedVisitForMR}
+          profile={medicalProfile}
+          doctorName={existingMR?.doctorNameSnapshot || currentUser?.name || "Dokter"}
+          record={{
+            chiefComplaint: mrForm.chiefComplaint,
+            anamnesis: mrForm.anamnesis,
+            clinicalExamination: mrForm.clinicalExamination,
+            diagnosis: mrForm.diagnosis,
+            diagnosisCode: mrForm.diagnosisCode,
+            treatmentPlan: mrForm.treatmentPlan,
+            doctorNotes: mrForm.doctorNotes,
+            odontogram: mrForm.odontogram,
+            clinicFormData: mrForm.clinicFormData
+          }}
+        />
+      )}
       {/* Toast Feedback */}
       {formSuccess && (
         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl flex items-center justify-between shadow-sm animate-fade-in">
@@ -1050,6 +1124,17 @@ export const PatientManagement: React.FC = () => {
               title="Import Data Pasien dari File Excel / CSV"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Import Excel
+            </button>
+          )}
+
+          {currentUser?.role === UserRole.SUPER_ADMIN && (
+            <button
+              onClick={() => setIsLegacyHistoryImportOpen(true)}
+              className="inline-flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-indigo-300 shadow-2xs transition-all active:scale-95"
+              id="btn-import-legacy-history"
+              title="Impor profil dan riwayat kunjungan dari workbook historis"
+            >
+              <History className="w-4 h-4 text-indigo-600" /> Impor Riwayat Lama
             </button>
           )}
 
@@ -1121,7 +1206,9 @@ export const PatientManagement: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Cari berdasarkan Nama, WhatsApp, atau No. RM..."
+              placeholder={canViewPatientPhone
+                ? "Cari berdasarkan Nama, WhatsApp, atau No. RM..."
+                : "Cari berdasarkan Nama atau No. RM..."}
               className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-8 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
               id="input-search-patient"
             />
@@ -1204,7 +1291,7 @@ export const PatientManagement: React.FC = () => {
                   <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-500 font-semibold uppercase tracking-wider">
                     <th className="py-3 px-4">No. RM</th>
                     <th className="py-3 px-4">Nama Pasien</th>
-                    <th className="py-3 px-4">WhatsApp / HP</th>
+                    {canViewPatientPhone && <th className="py-3 px-4">WhatsApp / HP</th>}
                     <th className="py-3 px-4">L/P & Tgl Lahir</th>
                     <th className="py-3 px-4">Kunjungan</th>
                     <th className="py-3 px-4 text-right">Aksi</th>
@@ -1213,7 +1300,7 @@ export const PatientManagement: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {filteredPatients.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="text-center py-12 text-slate-400">
+                      <td colSpan={canViewPatientPhone ? 6 : 5} className="text-center py-12 text-slate-400">
                         <User className="w-8 h-8 mx-auto mb-2 opacity-30" />
                         <p className="font-bold text-slate-700">{patients.length === 0 ? "Belum Ada Data Pasien" : "Pasien tidak ditemukan"}</p>
                         <p className="text-[11px] text-slate-400 mt-1">
@@ -1254,18 +1341,18 @@ export const PatientManagement: React.FC = () => {
                               {p.address && <span className="text-[10px] text-slate-400 line-clamp-1">{p.address}</span>}
                             </div>
                           </td>
-                          <td className="py-3.5 px-4 text-slate-600 font-mono">
-                            {p.phone ? (
-                              <span className="flex items-center gap-1">
-                                <Phone className="w-3 h-3 text-slate-400" /> {p.phone}
-                              </span>
-                            ) : (
-                              "-"
-                            )}
-                          </td>
+                          {canViewPatientPhone && (
+                            <td className="py-3.5 px-4 text-slate-600 font-mono">
+                              {p.phone ? (
+                                <span className="flex items-center gap-1">
+                                  <Phone className="w-3 h-3 text-slate-400" /> {p.phone}
+                                </span>
+                              ) : "-"}
+                            </td>
+                          )}
                           <td className="py-3.5 px-4 text-slate-600">
-                            <span className="font-semibold text-slate-700">{p.gender === "L" ? "Laki-laki" : "Perempuan"}</span>
-                            <div className="text-[10px] text-slate-400">{p.dateOfBirth}</div>
+                            <span className="font-semibold text-slate-700">{p.gender === "L" ? "Laki-laki" : p.gender === "P" ? "Perempuan" : "Belum diketahui"}</span>
+                            <div className="text-[10px] text-slate-400">{p.dateOfBirth || "Tanggal lahir belum diketahui"}</div>
                           </td>
                           <td className="py-3.5 px-4">
                             <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded text-[10px]">
@@ -1337,6 +1424,11 @@ export const PatientManagement: React.FC = () => {
                 <span className="text-[10px] font-mono font-bold text-emerald-600 uppercase tracking-wider block">
                   {selectedPatient.medicalRecordNumber || "Belum check-in"}
                 </span>
+                {selectedPatient.internalPatientCode && (
+                  <span className="text-[9px] font-mono text-slate-500 block">
+                    Kode internal: {selectedPatient.internalPatientCode}
+                  </span>
+                )}
                 <h2 className="text-sm font-bold text-slate-800">{selectedPatient.fullName || selectedPatient.name}</h2>
               </div>
               <button
@@ -1349,13 +1441,13 @@ export const PatientManagement: React.FC = () => {
 
             {/* Profile Information */}
             <div className="space-y-2.5 text-xs">
-              <div className="flex items-start gap-2.5 text-slate-600">
+              {canViewPatientPhone && <div className="flex items-start gap-2.5 text-slate-600">
                 <Phone className="w-3.5 h-3.5 text-slate-400 mt-0.5 flex-shrink-0" />
                 <div>
                   <span className="text-[10px] text-slate-400 block">WhatsApp / No. Telp</span>
                   <span className="font-mono font-semibold text-slate-700">{selectedPatient.phone || "Tidak diisi"}</span>
                 </div>
-              </div>
+              </div>}
               {(selectedPatient.emergencyContactName || selectedPatient.emergencyContactPhone) && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
                   <span className="mb-1 block text-[10px] font-bold">Kontak Darurat</span>
@@ -1372,7 +1464,7 @@ export const PatientManagement: React.FC = () => {
                 <div>
                   <span className="text-[10px] text-slate-400 block">Gender & Tanggal Lahir</span>
                   <span className="font-semibold text-slate-700">
-                    {selectedPatient.gender === "L" ? "Laki-laki" : "Perempuan"} ({selectedPatient.dateOfBirth})
+                    {selectedPatient.gender === "L" ? "Laki-laki" : selectedPatient.gender === "P" ? "Perempuan" : "Belum diketahui"} ({selectedPatient.dateOfBirth || "Tanggal lahir belum diketahui"})
                   </span>
                 </div>
               </div>
@@ -1459,12 +1551,16 @@ export const PatientManagement: React.FC = () => {
                         </div>
 
                         <div className="flex items-center justify-between text-[11px] text-slate-500">
-                          <span>{formatDateTime(v.visitDateTime)}</span>
+                          <span>
+                            {v.complaint?.startsWith("[Riwayat historis impor")
+                              ? formatDate(v.visitDateTime)
+                              : formatDateTime(v.visitDateTime)}
+                          </span>
                           <span className="font-semibold text-slate-600">{v.visitStatus}</span>
                         </div>
 
                         {v.complaint && (
-                          <p className="text-[10px] text-slate-500 bg-white p-1.5 rounded border border-slate-100 italic">
+                          <p className="text-[10px] text-slate-500 bg-white p-1.5 rounded border border-slate-100 italic whitespace-pre-line">
                             "{v.complaint}"
                           </p>
                         )}
@@ -1541,7 +1637,10 @@ export const PatientManagement: React.FC = () => {
                     <div key={dup.id} className="bg-white p-2.5 rounded border border-amber-200 flex items-center justify-between">
                       <div>
                         <div className="font-bold text-slate-800">{dup.fullName || dup.name}</div>
-                        <div className="text-[10px] text-slate-500 font-mono">RM: {dup.medicalRecordNumber || "Belum check-in"} | WA: {dup.phone}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          RM: {dup.medicalRecordNumber || "Belum check-in"}
+                          {canViewPatientPhone && ` | WA: ${dup.phone}`}
+                        </div>
                       </div>
                       <button
                         onClick={() => {
@@ -1792,7 +1891,7 @@ export const PatientManagement: React.FC = () => {
                   )}
                 </div>
 
-                <div>
+                {canViewPatientPhone && <div>
                   <label className="block font-semibold text-slate-700 mb-1">WhatsApp / No. HP <span className="font-normal text-slate-400">(opsional)</span></label>
                   <input
                     type="text"
@@ -1802,7 +1901,7 @@ export const PatientManagement: React.FC = () => {
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                     id="input-patient-phone"
                   />
-                </div>
+                </div>}
 
                 <div>
                   <label htmlFor="input-patient-email" className="block font-semibold text-slate-700 mb-1">
@@ -2139,25 +2238,6 @@ export const PatientManagement: React.FC = () => {
       {/* ========================================== */}
       {mrModalOpen && selectedVisitForMR && selectedPatient && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          {canReadMedicalRecords && (
-            <ClinicMedicalRecordPrintDocument
-              patient={selectedPatient}
-              visit={selectedVisitForMR}
-              profile={medicalProfile}
-              doctorName={existingMR?.doctorNameSnapshot || currentUser?.name || "Dokter"}
-              record={{
-                chiefComplaint: mrForm.chiefComplaint,
-                anamnesis: mrForm.anamnesis,
-                clinicalExamination: mrForm.clinicalExamination,
-                diagnosis: mrForm.diagnosis,
-                diagnosisCode: mrForm.diagnosisCode,
-                treatmentPlan: mrForm.treatmentPlan,
-                doctorNotes: mrForm.doctorNotes,
-                odontogram: mrForm.odontogram,
-                clinicFormData: mrForm.clinicFormData
-              }}
-            />
-          )}
           <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col animate-scale-in">
             {/* Header */}
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
@@ -2280,9 +2360,8 @@ export const PatientManagement: React.FC = () => {
                           "Tempat / Tanggal Lahir",
                           [selectedPatient.placeOfBirth, selectedPatient.dateOfBirth].filter(Boolean).join(" / ") || "-"
                         ],
-                        ["Jenis Kelamin", selectedPatient.gender === "L" ? "Laki-laki" : "Perempuan"],
+                        ["Jenis Kelamin", selectedPatient.gender === "L" ? "Laki-laki" : selectedPatient.gender === "P" ? "Perempuan" : "Belum diketahui"],
                         ["Pekerjaan", selectedPatient.occupation || "-"],
-                        ["Telepon", selectedPatient.phone || "-"],
                         ["Alamat", selectedPatient.address || "-"]
                       ].map(([label, value]) => (
                         <div key={label} className="rounded-lg bg-slate-50 px-3 py-2">
@@ -2779,10 +2858,10 @@ export const PatientManagement: React.FC = () => {
                 <span className="text-slate-500">Nama Pasien:</span>
                 <span className="font-bold text-slate-800">{patientToDelete.fullName || patientToDelete.name}</span>
               </div>
-              <div className="flex justify-between">
+              {canViewPatientPhone && <div className="flex justify-between">
                 <span className="text-slate-500">WhatsApp / HP:</span>
                 <span className="font-mono text-slate-700">{patientToDelete.phone || "-"}</span>
-              </div>
+              </div>}
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
@@ -3042,6 +3121,22 @@ export const PatientManagement: React.FC = () => {
           );
         }}
       />
+      {currentUser?.role === UserRole.SUPER_ADMIN && (
+        <LegacyPatientHistoryImportModal
+          isOpen={isLegacyHistoryImportOpen}
+          onClose={() => setIsLegacyHistoryImportOpen(false)}
+          branches={branches}
+          patients={patients}
+          patientRepo={repos.patient}
+          visitRepo={repos.visit}
+          currentUserRole={currentUser.role}
+          userBranchId={currentUser.assignedBranchId}
+          onImportComplete={async () => {
+            await refreshData();
+            setFormSuccess("Impor riwayat kunjungan historis selesai. Periksa ringkasan dan baris yang gagal.");
+          }}
+        />
+      )}
     </div>
   );
 };

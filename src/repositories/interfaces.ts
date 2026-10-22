@@ -107,6 +107,11 @@ export interface PatientRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<PatientProfile | null>;
+  getPatientPhoneForMedicalRecord(
+    patientId: string,
+    branchId: string,
+    currentUserRole?: UserRole
+  ): Promise<string>;
   searchPatients(query: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]>;
   createPatient(
     patientData: Omit<PatientProfile, "id" | "medicalRecordNumber" | "createdAt" | "updatedAt"> & { id?: string; medicalRecordNumber?: string },
@@ -119,7 +124,20 @@ export interface PatientRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<PatientProfile>;
-  checkDuplicates(phone?: string, medicalRecordNumber?: string, fullName?: string): Promise<DuplicateCheckResult>;
+  registerPatientBranchMedicalRecordNumber(
+    patientId: string,
+    branchId: string,
+    medicalRecordNumber: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<void>;
+  checkDuplicates(
+    phone?: string,
+    medicalRecordNumber?: string,
+    fullName?: string,
+    currentUserRole?: UserRole,
+    branchId?: string
+  ): Promise<DuplicateCheckResult>;
   deletePatient(id: string, currentUserRole?: UserRole): Promise<boolean>;
   clearAllPatients?(currentUserRole?: UserRole): Promise<boolean>;
 }
@@ -1020,6 +1038,14 @@ export interface AccountingRepository {
     id: string,
     voidedBy: string,
     reason?: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<JournalEntry>;
+  reversePostedJournal(
+    id: string,
+    reason: string,
+    reversalDate: string,
+    reversedBy: string,
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<JournalEntry>;

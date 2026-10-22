@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useApp } from "../context/AppContext";
 import { getOperationalDateString } from "../utils/dateUtils";
+import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { useRouter } from "../components/Router";
 import { UserRole, QueueStatus, TreatmentJobStatus, ScheduleStatus } from "../types/domain";
 import { formatDateTime, formatDate } from "../utils/formatter";
@@ -132,7 +133,7 @@ export const Dashboard: React.FC = () => {
       return {
         id: v.id,
         patientName: p?.fullName || p?.name || "Pasien",
-        rmNumber: p?.medicalRecordNumber || "-",
+        rmNumber: p ? getPatientMedicalRecordNumber(p, v.branchId) || "-" : "-",
         serviceName: tJob?.serviceNameSnapshot || v.complaint || "Konsultasi / Kunjungan",
         branchName: b?.name || "Cabang",
         visitDateTime: v.visitDateTime,

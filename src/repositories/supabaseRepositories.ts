@@ -126,8 +126,9 @@ import {
   AccountBalanceResult
 } from "./interfaces";
 import { AppClock } from "../utils/clock";
+import { canViewPatientPhone, redactPatientPhone } from "../utils/patientPrivacy";
 import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentUtils";
-import { checkRMUniqueness } from "../utils/rmUtils";
+import { checkRMUniqueness, getPatientMedicalRecordNumber } from "../utils/rmUtils";
 
 const attendanceSelectColumns = [
   "id", "staff_id", "branch_id", "date", "attendance_status",
@@ -563,40 +564,70 @@ export class SupabaseBranchRepository implements BranchRepository {
 // =====================================================================
 // 2. SUPABASE PATIENT REPOSITORY
 // =====================================================================
+const PATIENT_COLUMNS_WITHOUT_PHONE = [
+  "id",
+  "medical_record_number",
+  "internal_patient_code",
+  "name",
+  "full_name",
+  "email",
+  "date_of_birth",
+  "gender",
+  "address",
+  "created_at",
+  "updated_at"
+].join(",");
+
+const patientSelectColumns = (role?: UserRole) =>
+  canViewPatientPhone(role) ? "*" : PATIENT_COLUMNS_WITHOUT_PHONE;
+
 export class SupabasePatientRepository implements PatientRepository {
   async getPatients(currentUserRole?: UserRole, _userBranchId?: string | null): Promise<PatientProfile[]> {
     ensureSupabaseConnected();
+    const selectColumns = patientSelectColumns(currentUserRole);
 
     if (isSupabaseConfigured && supabase) {
       if (currentUserRole === UserRole.DOCTOR) {
-        const { data, error } = await supabase.from("patient_profiles").select("*");
+        const { data, error } = await supabase.from("patient_profiles").select(selectColumns);
         if (error) {
           throw new Error(`Gagal membaca pasien yang ditugaskan kepada dokter: ${error.message}`);
         }
-        return this.attachMedicalHistoryNotes(
+        const patients = await this.attachMedicalHistoryNotes(
           (data || []).map(this.mapPatientFromDb.bind(this)),
           currentUserRole
         );
+        const withBranchRms = await this.attachBranchMedicalRecordNumbers(patients);
+        return withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole));
       }
 
       // 1. Try querying 'patient_profiles' table first (as requested)
       try {
         // RLS scopes branch staff; global portal profiles may have no registered branch.
-        const { data, error } = await supabase.from("patient_profiles").select("*");
+        const { data, error } = await supabase.from("patient_profiles").select(selectColumns);
         if (!error && Array.isArray(data)) {
-          return this.attachMedicalHistoryNotes(data.map(this.mapPatientFromDb.bind(this)), currentUserRole);
+          const patients = await this.attachMedicalHistoryNotes(data.map(this.mapPatientFromDb.bind(this)), currentUserRole);
+          const withBranchRms = await this.attachBranchMedicalRecordNumbers(patients);
+          return withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole));
         }
       } catch (e) {
+        if (e instanceof Error && e.message.startsWith("Gagal membaca No. RM per cabang:")) {
+          throw e;
+        }
         console.warn("[Supabase] getPatients from 'patient_profiles' failed:", e);
       }
 
       // 2. Try 'patients' table as fallback query
       try {
-        const { data, error } = await supabase.from("patients").select("*");
+        const { data, error } = await supabase.from("patients").select(selectColumns);
         if (!error && Array.isArray(data)) {
-          return this.attachMedicalHistoryNotes(data.map(this.mapPatientFromDb.bind(this)), currentUserRole);
+          const patients = await this.attachMedicalHistoryNotes(data.map(this.mapPatientFromDb.bind(this)), currentUserRole);
+          const withBranchRms = await this.attachBranchMedicalRecordNumbers(patients);
+          return withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole));
         }
       } catch (e) {
+        if (e instanceof Error && e.message.startsWith("Gagal membaca No. RM per cabang:")) {
+          throw e;
+        }
         console.warn("[Supabase] getPatients from 'patients' error:", e);
       }
     }
@@ -611,10 +642,11 @@ export class SupabasePatientRepository implements PatientRepository {
   ): Promise<PatientProfile | null> {
     ensureSupabaseConnected();
     if (isSupabaseConfigured && supabase) {
+      const selectColumns = patientSelectColumns(currentUserRole);
       if (currentUserRole === UserRole.DOCTOR) {
         const { data, error } = await supabase
           .from("patient_profiles")
-          .select("*")
+          .select(selectColumns)
           .eq("id", id)
           .maybeSingle();
         if (error) throw new Error(`Gagal membaca pasien yang ditugaskan kepada dokter: ${error.message}`);
@@ -623,32 +655,42 @@ export class SupabasePatientRepository implements PatientRepository {
           [this.mapPatientFromDb(data)],
           currentUserRole
         );
-        return patient;
+        if (!patient) return null;
+        const [withBranchRms] = await this.attachBranchMedicalRecordNumbers([patient]);
+        return withBranchRms ? redactPatientPhone(withBranchRms, currentUserRole) : null;
       }
 
       let lastError: any = null;
       try {
-        const { data, error } = await supabase.from("patients").select("*").eq("id", id).single();
+        const { data, error } = await supabase.from("patients").select(selectColumns).eq("id", id).single();
         if (!error && data) {
           const [patient] = await this.attachMedicalHistoryNotes([this.mapPatientFromDb(data)], currentUserRole);
-          return patient;
+          const [withBranchRms] = await this.attachBranchMedicalRecordNumbers([patient]);
+          return redactPatientPhone(withBranchRms, currentUserRole);
         }
         if (error) lastError = error;
       } catch (e) {
+        if (e instanceof Error && e.message.startsWith("Gagal membaca No. RM per cabang:")) {
+          throw e;
+        }
         lastError = e;
       }
 
       try {
-        const { data, error } = await supabase.from("patient_profiles").select("*").eq("id", id).single();
+        const { data, error } = await supabase.from("patient_profiles").select(selectColumns).eq("id", id).single();
         if (!error && data) {
           const [patient] = await this.attachMedicalHistoryNotes([this.mapPatientFromDb(data)], currentUserRole);
-          return patient;
+          const [withBranchRms] = await this.attachBranchMedicalRecordNumbers([patient]);
+          return redactPatientPhone(withBranchRms, currentUserRole);
         }
         if (error) {
           if (error.code === "PGRST116") return null;
           return handleSupabaseReadError("patient_profiles", error, null);
         }
       } catch (e: any) {
+        if (e instanceof Error && e.message.startsWith("Gagal membaca No. RM per cabang:")) {
+          throw e;
+        }
         if (lastError) {
           throw new Error(lastError.message || e.message || "Supabase read error");
         }
@@ -656,6 +698,33 @@ export class SupabasePatientRepository implements PatientRepository {
       }
     }
     return null;
+  }
+
+  async getPatientPhoneForMedicalRecord(
+    patientId: string,
+    branchId: string,
+    currentUserRole?: UserRole
+  ): Promise<string> {
+    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak untuk membaca nomor telepon rekam medis.");
+    }
+    if (currentUserRole === UserRole.DOCTOR && !branchId) {
+      throw new Error("Cabang kunjungan wajib ditentukan untuk membaca nomor telepon rekam medis.");
+    }
+
+    ensureSupabaseConnected();
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error("Koneksi Supabase belum terkonfigurasi.");
+    }
+
+    const { data, error } = await supabase
+      .from("patient_profiles")
+      .select("phone")
+      .eq("id", patientId)
+      .maybeSingle();
+    if (error) throw new Error(`Gagal membaca nomor telepon pasien untuk rekam medis: ${error.message}`);
+    if (!data) throw new Error("Profil pasien tidak ditemukan saat menyiapkan rekam medis.");
+    return data.phone || "";
   }
 
   async searchPatients(query: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]> {
@@ -668,6 +737,10 @@ export class SupabasePatientRepository implements PatientRepository {
         (p.name || "").toLowerCase().includes(q) ||
         (p.fullName || "").toLowerCase().includes(q) ||
         (p.medicalRecordNumber || "").toLowerCase().includes(q) ||
+        (p.internalPatientCode || "").toLowerCase().includes(q) ||
+        p.branchMedicalRecordNumbers?.some((record) =>
+          record.medicalRecordNumber.toLowerCase().includes(q)
+        ) ||
         (p.phone || "").includes(q)
     );
   }
@@ -698,10 +771,12 @@ export class SupabasePatientRepository implements PatientRepository {
 
     let finalRM = patientData.medicalRecordNumber ? patientData.medicalRecordNumber.trim() : "";
     if (finalRM) {
-      const existingWithRM = existingList.find(
-        (p) => (p.medicalRecordNumber || "").trim().toLowerCase() === finalRM.toLowerCase()
-      );
-      if (existingWithRM) {
+      if (!effBranch) {
+        throw new Error("Cabang wajib ditentukan untuk mendaftarkan No. RM lokal.");
+      }
+      const uniqueness = checkRMUniqueness(finalRM, existingList, undefined, effBranch);
+      if (!uniqueness.isUnique && uniqueness.conflictPatient) {
+        const existingWithRM = uniqueness.conflictPatient;
         throw new Error(`Nomor Rekam Medis (No RM) "${finalRM}" sudah digunakan oleh pasien ${existingWithRM.fullName || existingWithRM.name}`);
       }
     }
@@ -718,8 +793,8 @@ export class SupabasePatientRepository implements PatientRepository {
       identity_document_type: patientData.identityDocumentType || null,
       identity_document_number: patientData.identityDocumentNumber?.trim() || null,
       place_of_birth: patientData.placeOfBirth?.trim() || null,
-      date_of_birth: patientData.dateOfBirth || "1990-01-01",
-      gender: patientData.gender || "L",
+      date_of_birth: patientData.dateOfBirth || null,
+      gender: patientData.gender || null,
       address: patientData.address || "-",
       occupation: patientData.occupation?.trim() || null,
       religion: patientData.religion?.trim() || null,
@@ -741,13 +816,13 @@ export class SupabasePatientRepository implements PatientRepository {
 
     if (isSupabaseConfigured && supabase) {
       const tryInsert = async (table: string, payload: any) => {
-        let res = await supabase.from(table).insert(payload).select().single();
+        let res = await supabase.from(table).insert(payload).select(patientSelectColumns(currentUserRole)).single();
         if (res.error && res.error.message?.includes("does not exist")) {
           const sanitized = { ...payload };
           if (res.error.message.includes("assigned_branch_id")) delete sanitized.assigned_branch_id;
           if (res.error.message.includes("branch_id")) delete sanitized.branch_id;
           if (res.error.message.includes("registered_branch_id")) delete sanitized.registered_branch_id;
-          res = await supabase.from(table).insert(sanitized).select().single();
+          res = await supabase.from(table).insert(sanitized).select(patientSelectColumns(currentUserRole)).single();
         }
         return res;
       };
@@ -782,7 +857,11 @@ export class SupabasePatientRepository implements PatientRepository {
           );
           patient.medicalHistoryNotes = patientData.medicalHistoryNotes;
         }
-        return patient;
+        const [withBranchRms] = await this.attachBranchMedicalRecordNumbers([patient]);
+        if (finalRM && effBranch && !getPatientMedicalRecordNumber(withBranchRms, effBranch)) {
+          throw new Error("Profil tersimpan tetapi No. RM cabang belum berhasil ditautkan. Periksa migrasi RM cabang sebelum melanjutkan.");
+        }
+        return redactPatientPhone(withBranchRms, currentUserRole);
       }
 
       throw new Error(lastErrorMsg || "Gagal menyimpan data pasien ke tabel patient_profiles / patients Supabase (RLS/Koneksi bermasalah).");
@@ -805,6 +884,26 @@ export class SupabasePatientRepository implements PatientRepository {
     ) {
       throw new Error("Riwayat medis hanya dapat diubah oleh Dokter atau Super Admin.");
     }
+    const rmBranchId =
+      updates.registeredBranchId ||
+      updates.branch_id ||
+      updates.assignedBranchId ||
+      updates.branchId ||
+      userBranchId ||
+      undefined;
+    if (updates.medicalRecordNumber !== undefined) {
+      if (!rmBranchId) {
+        throw new Error("Cabang wajib ditentukan untuk mengelola No. RM lokal pasien.");
+      }
+      await this.registerPatientBranchMedicalRecordNumber(
+        id,
+        rmBranchId,
+        updates.medicalRecordNumber,
+        currentUserRole,
+        userBranchId
+      );
+    }
+
     const dbPayload: any = {
       updated_at: AppClock.nowISO()
     };
@@ -828,7 +927,6 @@ export class SupabasePatientRepository implements PatientRepository {
     if (updates.education !== undefined) dbPayload.education = updates.education?.trim() || null;
     if (updates.gender !== undefined) dbPayload.gender = updates.gender;
     if (updates.dateOfBirth !== undefined) dbPayload.date_of_birth = updates.dateOfBirth;
-    if (updates.medicalRecordNumber !== undefined) dbPayload.medical_record_number = updates.medicalRecordNumber;
     if (updates.acquisitionSource !== undefined) dbPayload.acquisition_source = updates.acquisitionSource;
     if (updates.referringStaffId !== undefined) dbPayload.referring_staff_id = updates.referringStaffId || null;
     if (updates.referralName !== undefined || updates.acquisitionSource !== undefined) {
@@ -849,14 +947,14 @@ export class SupabasePatientRepository implements PatientRepository {
     if (isSupabaseConfigured && supabase) {
       let updatedData: any = null;
       try {
-        const { data: pData } = await supabase.from("patients").update(dbPayload).eq("id", id).select().single();
+        const { data: pData } = await supabase.from("patients").update(dbPayload).eq("id", id).select(patientSelectColumns(currentUserRole)).single();
         if (pData) updatedData = pData;
       } catch (e) {
         // ...
       }
 
       try {
-        const { data, error } = await supabase.from("patient_profiles").update(dbPayload).eq("id", id).select().single();
+        const { data, error } = await supabase.from("patient_profiles").update(dbPayload).eq("id", id).select(patientSelectColumns(currentUserRole)).single();
         if (!error && data) {
           updatedData = data;
         }
@@ -879,25 +977,73 @@ export class SupabasePatientRepository implements PatientRepository {
           );
           patient.medicalHistoryNotes = updates.medicalHistoryNotes;
         }
-        return patient;
+        const [withBranchRms] = await this.attachBranchMedicalRecordNumbers([patient]);
+        return redactPatientPhone(withBranchRms, currentUserRole);
       }
     }
 
     throw new Error("Koneksi Supabase belum terkonfigurasi");
   }
 
-  async checkDuplicates(phone?: string, medicalRecordNumber?: string, fullName?: string): Promise<DuplicateCheckResult> {
-    const all = await this.getPatients();
+  async registerPatientBranchMedicalRecordNumber(
+    patientId: string,
+    branchId: string,
+    medicalRecordNumber: string,
+    _currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<void> {
+    ensureSupabaseConnected();
+    if (!supabase) throw new Error("Koneksi Supabase belum terkonfigurasi.");
+    const { error } = await supabase.rpc("register_patient_branch_medical_record_number", {
+      target_patient_id: patientId,
+      target_branch_id: branchId,
+      requested_rm: medicalRecordNumber
+    });
+    if (error) {
+      throw new Error(`Gagal menautkan No. RM ke cabang: ${error.message}`);
+    }
+  }
+
+  async checkDuplicates(
+    phone?: string,
+    medicalRecordNumber?: string,
+    fullName?: string,
+    currentUserRole?: UserRole,
+    branchId?: string
+  ): Promise<DuplicateCheckResult> {
+    const all = await this.getPatients(currentUserRole);
     const cleanPhone = phone ? phone.replace(/\D/g, "") : "";
     const cleanRM = medicalRecordNumber ? medicalRecordNumber.trim().toLowerCase() : "";
     const cleanName = fullName ? fullName.trim().toLowerCase() : "";
 
-    const byPhone = cleanPhone && cleanPhone.length >= 6
-      ? all.filter((p) => (p.phone || "").replace(/\D/g, "").includes(cleanPhone))
-      : [];
+    let byPhone: PatientProfile[] = [];
+    if (cleanPhone.length >= 6) {
+      if (canViewPatientPhone(currentUserRole)) {
+        byPhone = all.filter((patient) => (patient.phone || "").replace(/\D/g, "").includes(cleanPhone));
+      } else if (isSupabaseConfigured && supabase) {
+        let { data, error } = await supabase
+          .from("patient_profiles")
+          .select(PATIENT_COLUMNS_WITHOUT_PHONE)
+          .ilike("phone", `%${cleanPhone}%`);
+        if (error) {
+          const fallback = await supabase
+            .from("patients")
+            .select(PATIENT_COLUMNS_WITHOUT_PHONE)
+            .ilike("phone", `%${cleanPhone}%`);
+          data = fallback.data;
+          error = fallback.error;
+        }
+        if (error) {
+          throw new Error(`Gagal memeriksa duplikasi nomor telepon pasien: ${error.message}`);
+        }
+        byPhone = (data || []).map(this.mapPatientFromDb.bind(this));
+      }
+    }
 
     const byRM = cleanRM
-      ? all.filter((p) => (p.medicalRecordNumber || "").trim().toLowerCase() === cleanRM)
+      ? all.filter((patient) =>
+          getPatientMedicalRecordNumber(patient, branchId).trim().toLowerCase() === cleanRM
+        )
       : [];
 
     const byName = cleanName && cleanName.length >= 3
@@ -908,9 +1054,9 @@ export class SupabasePatientRepository implements PatientRepository {
       : [];
 
     return {
-      byPhone,
-      byRM,
-      byName,
+      byPhone: byPhone.map((patient) => redactPatientPhone(patient, currentUserRole)),
+      byRM: byRM.map((patient) => redactPatientPhone(patient, currentUserRole)),
+      byName: byName.map((patient) => redactPatientPhone(patient, currentUserRole)),
       hasDuplicates: byPhone.length > 0 || byRM.length > 0 || byName.length > 0
     };
   }
@@ -987,6 +1133,7 @@ export class SupabasePatientRepository implements PatientRepository {
     return {
       id: row.id,
       medicalRecordNumber: row.medical_record_number || row.medicalRecordNumber || "",
+      internalPatientCode: row.internal_patient_code || row.internalPatientCode || undefined,
       name: row.name || row.full_name || row.fullName || "Pasien",
       fullName: row.full_name || row.name || row.fullName || "Pasien",
       phone: row.phone || row.phone_number || "",
@@ -997,8 +1144,8 @@ export class SupabasePatientRepository implements PatientRepository {
       identityDocumentType: row.identity_document_type || row.identityDocumentType || undefined,
       identityDocumentNumber: row.identity_document_number || row.identityDocumentNumber || undefined,
       placeOfBirth: row.place_of_birth || row.placeOfBirth || "",
-      dateOfBirth: row.date_of_birth || row.dateOfBirth || "1990-01-01",
-      gender: (row.gender as "L" | "P") || "L",
+      dateOfBirth: row.date_of_birth || row.dateOfBirth || "",
+      gender: row.gender === "L" || row.gender === "P" ? row.gender : "",
       address: row.address || "",
       occupation: row.occupation || "",
       religion: row.religion || "",
@@ -1014,6 +1161,37 @@ export class SupabasePatientRepository implements PatientRepository {
       createdAt: row.created_at || row.registered_at || AppClock.nowISO(),
       updatedAt: row.updated_at || AppClock.nowISO()
     };
+  }
+
+  private async attachBranchMedicalRecordNumbers(
+    patients: PatientProfile[]
+  ): Promise<PatientProfile[]> {
+    if (patients.length === 0) return patients;
+    if (!supabase) throw new Error("Koneksi Supabase belum terkonfigurasi.");
+
+    const patientIds = patients.map((patient) => patient.id).filter(Boolean);
+    const { data, error } = await supabase
+      .from("patient_branch_medical_records")
+      .select("patient_id, branch_id, medical_record_number")
+      .in("patient_id", patientIds);
+    if (error) {
+      throw new Error(`Gagal membaca No. RM per cabang: ${error.message}`);
+    }
+
+    const recordsByPatient = new Map<string, Array<{ branchId: string; medicalRecordNumber: string }>>();
+    (data || []).forEach((row) => {
+      const records = recordsByPatient.get(row.patient_id) || [];
+      records.push({
+        branchId: row.branch_id,
+        medicalRecordNumber: row.medical_record_number
+      });
+      recordsByPatient.set(row.patient_id, records);
+    });
+
+    return patients.map((patient) => ({
+      ...patient,
+      branchMedicalRecordNumbers: recordsByPatient.get(patient.id) || []
+    }));
   }
 
   private async attachMedicalHistoryNotes(
@@ -6819,6 +6997,8 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       sourceType: row.source_type,
       sourceId: row.source_id,
       event: row.event,
+      reversalOfJournalId: row.reversal_of_journal_id,
+      reversalReason: row.reversal_reason,
       status: row.status,
       totalDebit: Number(row.total_debit || 0),
       totalCredit: Number(row.total_credit || 0),
@@ -6849,6 +7029,8 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       sourceType: data.source_type,
       sourceId: data.source_id,
       event: data.event,
+      reversalOfJournalId: data.reversal_of_journal_id,
+      reversalReason: data.reversal_reason,
       status: data.status,
       lines: (lineRows || []).map((line: any) => ({
         id: line.id,
@@ -6881,6 +7063,8 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       sourceType: row.source_type,
       sourceId: row.source_id,
       event: row.event,
+      reversalOfJournalId: row.reversal_of_journal_id,
+      reversalReason: row.reversal_reason,
       status: row.status,
       totalDebit: Number(row.total_debit || 0),
       totalCredit: Number(row.total_credit || 0),
@@ -6894,6 +7078,9 @@ export class SupabaseAccountingRepository implements AccountingRepository {
   }
   async createDraftJournal(data: CreateJournalInput, createdBy: string): Promise<JournalEntry> {
     ensureSupabaseConnected();
+    if (data.sourceType === JournalSourceType.REVERSAL) {
+      throw new Error("Jurnal pembalik hanya dapat dibuat melalui alur koreksi jurnal.");
+    }
     const totalDebit = data.lines.reduce((sum, line) => sum + line.debit, 0);
     const totalCredit = data.lines.reduce((sum, line) => sum + line.credit, 0);
     if (
@@ -7056,7 +7243,37 @@ export class SupabaseAccountingRepository implements AccountingRepository {
     if (current.status !== JournalStatus.POSTED) {
       throw new Error("Hanya jurnal POSTED yang dapat dikoreksi; draft dapat dihapus tanpa pembatalan.");
     }
-    throw new Error("Jurnal POSTED tidak dapat di-VOID sebelum tersedia proses jurnal pembalik.");
+    throw new Error("Jurnal POSTED tidak dapat di-VOID langsung. Gunakan jurnal pembalik yang terkait.");
+  }
+  async reversePostedJournal(
+    id: string,
+    reason: string,
+    reversalDate: string,
+    reversedBy: string
+  ): Promise<JournalEntry> {
+    ensureSupabaseConnected();
+    const { data: reversalId, error } = await supabase.rpc("reverse_posted_journal", {
+      p_journal_id: id,
+      p_reason: reason.trim(),
+      p_reversal_date: reversalDate,
+      p_reversed_by: reversedBy.trim()
+    });
+    if (error) {
+      if (error.code === "PGRST202") {
+        throw new Error(
+          "Fungsi jurnal pembalik belum tersedia di server atau skema API belum diperbarui. Terapkan migration 20261203000000_add_journal_reversal_workflow.sql pada project Supabase yang digunakan aplikasi, lalu muat ulang halaman."
+        );
+      }
+      throw new Error(`Gagal membuat jurnal pembalik: ${error.message}`);
+    }
+    if (typeof reversalId !== "string" || !reversalId) {
+      throw new Error("Server tidak mengembalikan jurnal pembalik yang valid.");
+    }
+    const reversal = await this.getJournalById(reversalId);
+    if (!reversal) {
+      throw new Error("Jurnal pembalik berhasil dibuat, tetapi detailnya belum dapat dimuat. Muat ulang jurnal sebelum mencoba lagi.");
+    }
+    return reversal;
   }
   async deleteDraftJournal(id: string): Promise<boolean> {
     ensureSupabaseConnected();

@@ -198,7 +198,8 @@ export enum JournalSourceType {
   COMPENSATION = "COMPENSATION",
   PAYROLL = "PAYROLL",
   EXPENSE = "EXPENSE",
-  ADJUSTMENT = "ADJUSTMENT"
+  ADJUSTMENT = "ADJUSTMENT",
+  REVERSAL = "REVERSAL"
 }
 
 export enum AttendanceStatus {
@@ -232,7 +233,12 @@ export type PatientAcquisitionSource =
 
 export interface PatientProfile {
   id: string; // stable identifier
-  medicalRecordNumber: string; // Empty until the patient's first queue check-in
+  medicalRecordNumber: string; // First assigned RM retained for legacy compatibility
+  internalPatientCode?: string; // Immutable branch-prefixed identifier created with the first RM
+  branchMedicalRecordNumbers?: Array<{
+    branchId: string;
+    medicalRecordNumber: string;
+  }>;
   name: string;
   fullName?: string; // Optional alias for name
   phone: string;
@@ -244,7 +250,7 @@ export interface PatientProfile {
   identityDocumentNumber?: string;
   placeOfBirth?: string;
   dateOfBirth: string; // ISO format (YYYY-MM-DD)
-  gender: "L" | "P";
+  gender: "L" | "P" | "";
   address: string;
   occupation?: string;
   religion?: string;
@@ -977,6 +983,8 @@ export interface JournalEntry {
   voidedAt?: string | null;
   voidedBy?: string | null;
   voidReason?: string | null;
+  reversalOfJournalId?: string | null;
+  reversalReason?: string | null;
   updatedAt?: string;
   event?: "ACCRUAL" | "PAYMENT";
 }

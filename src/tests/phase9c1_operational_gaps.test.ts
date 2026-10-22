@@ -253,7 +253,7 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
       ).rejects.toThrow(/Akses ditolak: Branch Admin hanya dapat mencatat pengeluaran/i);
     });
 
-    it("should block VOID on a POSTED expense journal until a reversal workflow exists", async () => {
+    it("should keep POSTED expense journals immutable instead of changing them to VOID", async () => {
       const accounts = await accountingRepo.getAccounts();
       const expenseAcc = accounts.find((a) => a.code === "5040")!;
       const cashAcc = accounts.find((a) => a.code === "1000")!;
@@ -280,8 +280,60 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
         "Kwitansi ganda, transaksi dibatalkan",
         UserRole.BRANCH_ADMIN,
         "branch-gebang"
-      )).rejects.toThrow(/jurnal pembalik/i);
+      )).rejects.toThrow(/tidak dapat di-VOID langsung/i);
       expect((await accountingRepo.getJournalById(journal.id))?.status).toBe(JournalStatus.POSTED);
+    });
+
+    it("should create one balanced reversal while preserving the posted source journal", async () => {
+      const accounts = await accountingRepo.getAccounts();
+      const expenseAcc = accounts.find((a) => a.code === "5040")!;
+      const cashAcc = accounts.find((a) => a.code === "1000")!;
+      const original = await postingService.postBranchExpense(
+        {
+          branchId: "branch-gebang",
+          expenseAccountId: expenseAcc.id,
+          paymentAccountId: cashAcc.id,
+          amount: 300000,
+          date: "2026-09-22",
+          description: "Pembelian ATK Operasional"
+        },
+        UserRole.BRANCH_ADMIN,
+        "branch-gebang",
+        "Admin Gebang"
+      );
+
+      const reversal = await accountingRepo.reversePostedJournal(
+        original.id,
+        "Kategori pengeluaran salah",
+        "2026-09-23",
+        "Admin Gebang",
+        UserRole.BRANCH_ADMIN,
+        "branch-gebang"
+      );
+
+      expect(original.status).toBe(JournalStatus.POSTED);
+      expect(reversal.status).toBe(JournalStatus.POSTED);
+      expect(reversal.sourceType).toBe(JournalSourceType.REVERSAL);
+      expect(reversal.reversalOfJournalId).toBe(original.id);
+      expect(reversal.reversalReason).toBe("Kategori pengeluaran salah");
+      expect(reversal.totalDebit).toBe(original.totalCredit);
+      expect(reversal.totalCredit).toBe(original.totalDebit);
+      expect(reversal.lines).toHaveLength(original.lines.length);
+      reversal.lines.forEach((line, index) => {
+        expect(line.accountId).toBe(original.lines[index].accountId);
+        expect(line.debit).toBe(original.lines[index].credit);
+        expect(line.credit).toBe(original.lines[index].debit);
+      });
+
+      await expect(accountingRepo.reversePostedJournal(
+        original.id,
+        "Percobaan pembalikan kedua",
+        "2026-09-24",
+        "Admin Gebang",
+        UserRole.BRANCH_ADMIN,
+        "branch-gebang"
+      )).rejects.toThrow(/sudah memiliki jurnal pembalik/i);
+      expect((await accountingRepo.getJournalById(original.id))?.status).toBe(JournalStatus.POSTED);
     });
   });
 });

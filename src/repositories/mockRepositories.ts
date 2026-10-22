@@ -44,6 +44,7 @@ import {
 } from "./interfaces";
 
 import { MockDatabase, MOCK_SERVICES, MOCK_BRANCH_TARIFFS, MOCK_DOCTORS, MOCK_BRANCHES } from "../data/mockData";
+import { formatInternalPatientCode, getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import {
   PatientProfile,
   DentalBranch,
@@ -125,6 +126,7 @@ import {
 } from "../types/domain";
 import { AppClock } from "../utils/clock";
 export { AppClock } from "../utils/clock";
+import { redactPatientPhone } from "../utils/patientPrivacy";
 import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentUtils";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
 import { getVisitStatusForQueueStatus, hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
@@ -180,17 +182,23 @@ export class MockPatientRepository implements PatientRepository {
         p.branchId === userBranchId
       );
       return patients.map((patient) =>
-        canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
-          ? { ...patient }
-          : { ...patient, medicalHistoryNotes: undefined }
+        redactPatientPhone(
+          canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
+            ? { ...patient }
+            : { ...patient, medicalHistoryNotes: undefined },
+          currentUserRole
+        )
       );
     }
 
     // Branch Admins and super-admins should see the full global patient registry by default.
     return db.patients.map((patient) =>
-      canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
-        ? { ...patient }
-        : { ...patient, medicalHistoryNotes: undefined }
+      redactPatientPhone(
+        canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
+          ? { ...patient }
+          : { ...patient, medicalHistoryNotes: undefined },
+        currentUserRole
+      )
     );
   }
 
@@ -201,9 +209,31 @@ export class MockPatientRepository implements PatientRepository {
   ): Promise<PatientProfile | null> {
     const patient = db.patients.find((p) => p.id === id);
     if (!patient) return null;
-    return canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
-      ? { ...patient }
-      : { ...patient, medicalHistoryNotes: undefined };
+    return redactPatientPhone(
+      canReadPatientMedicalNotes(patient, currentUserRole, userBranchId)
+        ? { ...patient }
+        : { ...patient, medicalHistoryNotes: undefined },
+      currentUserRole
+    );
+  }
+
+  async getPatientPhoneForMedicalRecord(
+    patientId: string,
+    branchId: string,
+    currentUserRole?: UserRole
+  ): Promise<string> {
+    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak untuk membaca nomor telepon rekam medis.");
+    }
+    const patient = db.patients.find((item) => item.id === patientId);
+    if (!patient) throw new Error("Profil pasien tidak ditemukan saat menyiapkan rekam medis.");
+    if (
+      currentUserRole === UserRole.DOCTOR &&
+      (!branchId || !db.visits.some((visit) => visit.patientId === patientId && visit.branchId === branchId))
+    ) {
+      throw new Error("Dokter tidak memiliki akses ke nomor telepon pasien pada cabang kunjungan ini.");
+    }
+    return patient.phone || "";
   }
 
   async searchPatients(query: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]> {
@@ -216,7 +246,12 @@ export class MockPatientRepository implements PatientRepository {
     return all.filter((p) => {
       const nameMatch = (p.name || "").toLowerCase().includes(q) || (p.fullName || "").toLowerCase().includes(q);
       const phoneMatch = (p.phone || "").toLowerCase().includes(q);
-      const rmMatch = (p.medicalRecordNumber || "").toLowerCase().includes(q);
+      const rmMatch =
+        (p.medicalRecordNumber || "").toLowerCase().includes(q) ||
+        (p.internalPatientCode || "").toLowerCase().includes(q) ||
+        p.branchMedicalRecordNumbers?.some((record) =>
+          record.medicalRecordNumber.toLowerCase().includes(q)
+        );
       return nameMatch || phoneMatch || rmMatch;
     });
   }
@@ -224,7 +259,9 @@ export class MockPatientRepository implements PatientRepository {
   async checkDuplicates(
     phone?: string,
     medicalRecordNumber?: string,
-    fullName?: string
+    fullName?: string,
+    currentUserRole?: UserRole,
+    branchId?: string
   ): Promise<DuplicateCheckResult> {
     const cleanPhone = phone ? phone.replace(/\D/g, "") : "";
     const cleanRM = medicalRecordNumber ? medicalRecordNumber.trim().toLowerCase() : "";
@@ -235,7 +272,9 @@ export class MockPatientRepository implements PatientRepository {
       : [];
 
     const byRM = cleanRM
-      ? db.patients.filter((p) => (p.medicalRecordNumber || "").trim().toLowerCase() === cleanRM)
+      ? db.patients.filter((patient) =>
+          getPatientMedicalRecordNumber(patient, branchId).trim().toLowerCase() === cleanRM
+        )
       : [];
 
     const byName = cleanName && cleanName.length >= 3
@@ -246,9 +285,9 @@ export class MockPatientRepository implements PatientRepository {
       : [];
 
     return {
-      byPhone,
-      byRM,
-      byName,
+      byPhone: byPhone.map((patient) => redactPatientPhone({ ...patient, medicalHistoryNotes: undefined }, currentUserRole)),
+      byRM: byRM.map((patient) => redactPatientPhone({ ...patient, medicalHistoryNotes: undefined }, currentUserRole)),
+      byName: byName.map((patient) => redactPatientPhone({ ...patient, medicalHistoryNotes: undefined }, currentUserRole)),
       hasDuplicates: byPhone.length > 0 || byRM.length > 0 || byName.length > 0
     };
   }
@@ -282,7 +321,8 @@ export class MockPatientRepository implements PatientRepository {
     let finalRM = patientData.medicalRecordNumber ? patientData.medicalRecordNumber.trim() : "";
     if (finalRM) {
       const existingWithRM = db.patients.find(
-        (p) => (p.medicalRecordNumber || "").trim().toLowerCase() === finalRM.toLowerCase()
+        (patient) =>
+          getPatientMedicalRecordNumber(patient, effBranch).trim().toLowerCase() === finalRM.toLowerCase()
       );
       if (existingWithRM) {
         throw new Error("Medical record number already exists");
@@ -293,6 +333,15 @@ export class MockPatientRepository implements PatientRepository {
     const newPatient: PatientProfile = {
       id: patientData.id || `patient-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       medicalRecordNumber: finalRM,
+      internalPatientCode: finalRM && effBranch
+        ? formatInternalPatientCode(
+            db.branches.find((branch) => branch.id === effBranch)?.branchCode || effBranch.slice(0, 3),
+            finalRM
+          )
+        : undefined,
+      branchMedicalRecordNumbers: finalRM && effBranch
+        ? [{ branchId: effBranch, medicalRecordNumber: finalRM }]
+        : [],
       name: nameToUse,
       fullName: nameToUse,
       phone: patientData.phone || "",
@@ -303,8 +352,8 @@ export class MockPatientRepository implements PatientRepository {
       identityDocumentType: patientData.identityDocumentType,
       identityDocumentNumber: patientData.identityDocumentNumber?.trim() || "",
       placeOfBirth: patientData.placeOfBirth?.trim() || "",
-      dateOfBirth: patientData.dateOfBirth || "1990-01-01",
-      gender: patientData.gender || "L",
+      dateOfBirth: patientData.dateOfBirth || "",
+      gender: patientData.gender || "",
       address: patientData.address || "",
       occupation: patientData.occupation?.trim() || "",
       religion: patientData.religion?.trim() || "",
@@ -324,7 +373,7 @@ export class MockPatientRepository implements PatientRepository {
 
     db.patients.push(newPatient);
     db.saveToStorage();
-    return newPatient;
+    return redactPatientPhone(newPatient, currentUserRole);
   }
 
   async updatePatient(
@@ -354,10 +403,21 @@ export class MockPatientRepository implements PatientRepository {
       throw new Error("Dokter hanya dapat mengubah riwayat medis dalam cabang yang diizinkan.");
     }
 
+    const effectiveBranchId =
+      updates.registeredBranchId ||
+      updates.branch_id ||
+      updates.assignedBranchId ||
+      updates.branchId ||
+      existing.registeredBranchId ||
+      existing.branch_id ||
+      existing.assignedBranchId ||
+      existing.branchId;
     if (updates.medicalRecordNumber) {
       const newRM = updates.medicalRecordNumber.trim();
       const duplicateRM = db.patients.find(
-        (p) => p.id !== id && (p.medicalRecordNumber || "").trim().toLowerCase() === newRM.toLowerCase()
+        (patient) =>
+          patient.id !== id &&
+          getPatientMedicalRecordNumber(patient, effectiveBranchId).trim().toLowerCase() === newRM.toLowerCase()
       );
       if (duplicateRM) {
         throw new Error("Medical record number already exists");
@@ -370,6 +430,20 @@ export class MockPatientRepository implements PatientRepository {
     const updatedPatient: PatientProfile = {
       ...existing,
       ...updates,
+      ...(updates.medicalRecordNumber && effectiveBranchId
+        ? {
+            internalPatientCode: existing.internalPatientCode || formatInternalPatientCode(
+              db.branches.find((branch) => branch.id === effectiveBranchId)?.branchCode || effectiveBranchId.slice(0, 3),
+              updates.medicalRecordNumber
+            ),
+            branchMedicalRecordNumbers: [
+              ...(existing.branchMedicalRecordNumbers || []).filter(
+                (record) => record.branchId !== effectiveBranchId
+              ),
+              { branchId: effectiveBranchId, medicalRecordNumber: updates.medicalRecordNumber.trim() }
+            ]
+          }
+        : {}),
       name: nameToUse,
       fullName: nameToUse,
       acquisitionSource: updates.acquisitionSource ?? existing.acquisitionSource ?? "UNKNOWN",
@@ -390,7 +464,55 @@ export class MockPatientRepository implements PatientRepository {
 
     db.patients[index] = updatedPatient;
     db.saveToStorage();
-    return updatedPatient;
+    return redactPatientPhone(updatedPatient, currentUserRole);
+  }
+
+  async registerPatientBranchMedicalRecordNumber(
+    patientId: string,
+    branchId: string,
+    medicalRecordNumber: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<void> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Hanya administrator yang dapat menautkan No. RM ke cabang.");
+    }
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId !== branchId) {
+      throw new Error("Admin cabang hanya dapat mengelola No. RM cabangnya sendiri.");
+    }
+
+    const patient = db.patients.find((item) => item.id === patientId);
+    if (!patient) throw new Error("Profil pasien tidak ditemukan.");
+    const cleanRm = medicalRecordNumber.trim();
+    if (!cleanRm) throw new Error("No. RM wajib diisi.");
+
+    const currentBranchRm = getPatientMedicalRecordNumber(patient, branchId);
+    if (currentBranchRm) {
+      if (currentBranchRm.toLowerCase() !== cleanRm.toLowerCase()) {
+        throw new Error("No. RM cabang yang sudah terdaftar tidak dapat diganti.");
+      }
+      return;
+    }
+
+    const duplicate = db.patients.find(
+      (candidate) =>
+        candidate.id !== patientId &&
+        getPatientMedicalRecordNumber(candidate, branchId).trim().toLowerCase() === cleanRm.toLowerCase()
+    );
+    if (duplicate) throw new Error("No. RM sudah digunakan pasien lain di cabang ini.");
+
+    const branch = db.branches.find((item) => item.id === branchId);
+    if (!branch) throw new Error("Cabang tidak ditemukan.");
+    patient.branchMedicalRecordNumbers = [
+      ...(patient.branchMedicalRecordNumbers || []),
+      { branchId, medicalRecordNumber: cleanRm }
+    ];
+    if (!patient.medicalRecordNumber) patient.medicalRecordNumber = cleanRm;
+    if (!patient.internalPatientCode) {
+      patient.internalPatientCode = formatInternalPatientCode(branch.branchCode || "BRN", cleanRm);
+    }
+    patient.updatedAt = new Date().toISOString();
+    db.saveToStorage();
   }
 
   async deletePatient(id: string, currentUserRole?: UserRole): Promise<boolean> {
@@ -2531,8 +2653,20 @@ export class MockQueueRepository implements QueueRepository {
       throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain");
     }
 
-    if (!patient.medicalRecordNumber) {
-      patient.medicalRecordNumber = getNextMedicalRecordNumber(db.patients);
+    if (!getPatientMedicalRecordNumber(patient, visit.branchId)) {
+      const branchPatients = db.patients.map((candidate) => ({
+        ...candidate,
+        medicalRecordNumber: getPatientMedicalRecordNumber(candidate, visit.branchId)
+      }));
+      const localRm = getNextMedicalRecordNumber(branchPatients);
+      patient.branchMedicalRecordNumbers = [
+        ...(patient.branchMedicalRecordNumbers || []),
+        { branchId: visit.branchId, medicalRecordNumber: localRm }
+      ];
+      if (!patient.medicalRecordNumber) patient.medicalRecordNumber = localRm;
+      if (!patient.internalPatientCode) {
+        patient.internalPatientCode = formatInternalPatientCode(branch.branchCode || "BRN", localRm);
+      }
     }
 
     // 6. Doctor Determination & Validation
@@ -5166,6 +5300,9 @@ export class MockAccountingRepository implements AccountingRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<JournalEntry> {
+    if (data.sourceType === JournalSourceType.REVERSAL) {
+      throw new Error("Jurnal pembalik hanya dapat dibuat melalui alur koreksi jurnal.");
+    }
     if (currentUserRole === UserRole.DOCTOR || currentUserRole === UserRole.DOCTOR_ASSISTANT) {
       throw new Error("Akses ditolak: Dokter atau Asisten tidak memiliki wewenang untuk membuat Jurnal Akuntansi");
     }
@@ -5366,7 +5503,7 @@ export class MockAccountingRepository implements AccountingRepository {
       throw new Error("Jurnal sudah dalam status VOID");
     }
     if (journal.status === JournalStatus.POSTED) {
-      throw new Error("Jurnal POSTED tidak dapat di-VOID sebelum tersedia proses jurnal pembalik.");
+      throw new Error("Jurnal POSTED tidak dapat di-VOID langsung. Gunakan jurnal pembalik yang terkait.");
     }
 
     const now = AppClock.nowISO();
@@ -5378,6 +5515,81 @@ export class MockAccountingRepository implements AccountingRepository {
     db.saveToStorage();
 
     return JSON.parse(JSON.stringify(journal));
+  }
+
+  async reversePostedJournal(
+    id: string,
+    reason: string,
+    reversalDate: string,
+    reversedBy: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<JournalEntry> {
+    const original = (db.journals || []).find((journal: JournalEntry) => journal.id === id);
+    if (!original) throw new Error("Jurnal asal tidak ditemukan.");
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && original.branchId !== userBranchId) {
+      throw new Error("Akses ditolak: jurnal berada di luar cabang yang dapat diakses.");
+    }
+    if (original.status !== JournalStatus.POSTED) {
+      throw new Error("Hanya jurnal POSTED yang dapat dibalik.");
+    }
+    if (![JournalSourceType.EXPENSE, JournalSourceType.MANUAL, JournalSourceType.ADJUSTMENT].includes(original.sourceType)) {
+      throw new Error("Jurnal transaksi invoice, pembayaran, payroll, atau kompensasi harus dikoreksi dari transaksi sumber.");
+    }
+    if (original.sourceType === JournalSourceType.EXPENSE && original.sourceId?.startsWith("RECURRING_SETTLEMENT:")) {
+      throw new Error("Pembayaran penyisihan berulang harus dikoreksi melalui alur rencana akrual.");
+    }
+    if (reason.trim().length < 5 || reason.trim().length > 500) {
+      throw new Error("Alasan koreksi wajib diisi 5 sampai 500 karakter.");
+    }
+    if (!reversalDate || reversalDate < original.journalDate) {
+      throw new Error("Tanggal jurnal pembalik tidak boleh sebelum tanggal jurnal asal.");
+    }
+    if (original.lines.length < 2) throw new Error("Baris jurnal asal tidak ditemukan.");
+    if ((db.journals || []).some((journal: JournalEntry) => journal.reversalOfJournalId === original.id)) {
+      throw new Error("Jurnal ini sudah memiliki jurnal pembalik.");
+    }
+
+    const now = AppClock.nowISO();
+    const reversalId = `journal-reversal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const lines: JournalLine[] = original.lines.map((line, index) => ({
+      id: `${reversalId}-line-${index + 1}`,
+      journalEntryId: reversalId,
+      accountId: line.accountId,
+      branchId: original.branchId,
+      debit: line.credit,
+      credit: line.debit,
+      description: line.description ? `Pembalik: ${line.description}` : "Jurnal pembalik"
+    }));
+    const totalDebit = lines.reduce((total, line) => total + line.debit, 0);
+    const totalCredit = lines.reduce((total, line) => total + line.credit, 0);
+    if (totalDebit <= 0 || totalDebit !== totalCredit) {
+      throw new Error("Jurnal asal tidak seimbang; jurnal pembalik tidak dapat dibuat.");
+    }
+
+    const reversal: JournalEntry = {
+      id: reversalId,
+      journalNumber: generateJournalNumber(original.branchId, reversalDate),
+      journalDate: reversalDate,
+      branchId: original.branchId,
+      description: `Pembalik ${original.journalNumber}: ${reason.trim()}`,
+      sourceType: JournalSourceType.REVERSAL,
+      sourceId: original.id,
+      status: JournalStatus.POSTED,
+      totalDebit,
+      totalCredit,
+      lines,
+      createdBy: reversedBy,
+      createdAt: now,
+      postedAt: now,
+      postedBy: reversedBy,
+      reversalOfJournalId: original.id,
+      reversalReason: reason.trim(),
+      updatedAt: now
+    };
+    (db.journals || []).push(reversal);
+    db.saveToStorage();
+    return JSON.parse(JSON.stringify(reversal));
   }
 
   async deleteDraftJournal(

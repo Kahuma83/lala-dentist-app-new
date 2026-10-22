@@ -109,6 +109,38 @@ export function formatRMNumber(num: number, config: { prefix: string; padDigits:
   return `${config.prefix}${num}`;
 }
 
+export function getPatientMedicalRecordNumber(
+  patient: PatientProfile,
+  branchId?: string | null
+): string {
+  if (branchId) {
+    if (patient.branchMedicalRecordNumbers) {
+      return patient.branchMedicalRecordNumbers.find(
+        (record) => record.branchId === branchId
+      )?.medicalRecordNumber || "";
+    }
+
+    const registeredBranchId =
+      patient.registeredBranchId ||
+      patient.branch_id ||
+      patient.assignedBranchId ||
+      patient.branchId;
+    if (registeredBranchId !== branchId) return "";
+  }
+  return patient.medicalRecordNumber || "";
+}
+
+export function formatInternalPatientCode(branchCode: string, medicalRecordNumber: string): string {
+  const cleanRm = medicalRecordNumber.trim().toUpperCase();
+  if (!branchCode.trim() || !cleanRm) {
+    throw new Error("Kode cabang dan No. RM wajib diisi untuk membentuk kode internal pasien.");
+  }
+  const rmCode = cleanRm.startsWith("RM")
+    ? `RM-${cleanRm.replace(/^RM[- ]*/, "")}`
+    : `RM${cleanRm}`;
+  return `${branchCode.trim().toUpperCase()}-${rmCode}`;
+}
+
 /**
  * Calculate the next medical record number based on existing patients and current settings.
  * It will NEVER start from 1 if a custom starting number or higher existing number exists.
@@ -165,7 +197,8 @@ export function getNextMedicalRecordNumber(
 export function checkRMUniqueness(
   rmCandidate: string,
   existingPatients: PatientProfile[] = [],
-  excludePatientId?: string
+  excludePatientId?: string,
+  branchId?: string
 ): { isUnique: boolean; conflictPatient?: PatientProfile } {
   const clean = rmCandidate.trim().toLowerCase();
   if (!clean) {
@@ -173,9 +206,27 @@ export function checkRMUniqueness(
   }
 
   const conflict = existingPatients.find(
-    (p) =>
-      p.id !== excludePatientId &&
-      (p.medicalRecordNumber || "").trim().toLowerCase() === clean
+    (patient) => {
+      if (patient.id === excludePatientId) return false;
+      if (branchId) {
+        if (patient.branchMedicalRecordNumbers) {
+          return patient.branchMedicalRecordNumbers.some(
+            (record) =>
+              record.branchId === branchId &&
+              record.medicalRecordNumber.trim().toLowerCase() === clean
+          );
+        }
+        const legacyRegisteredBranchRm =
+          patient.registeredBranchId === branchId ||
+          patient.branch_id === branchId ||
+          patient.assignedBranchId === branchId ||
+          patient.branchId === branchId
+            ? patient.medicalRecordNumber
+            : "";
+        return (legacyRegisteredBranchRm || "").trim().toLowerCase() === clean;
+      }
+      return (patient.medicalRecordNumber || "").trim().toLowerCase() === clean;
+    }
   );
 
   return {

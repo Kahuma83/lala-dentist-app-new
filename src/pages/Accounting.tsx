@@ -47,6 +47,7 @@ import {
   TrendingDown,
   DollarSign
 } from "lucide-react";
+import { formatShortAccountingReference } from "../utils/accountingDisplay";
 
 export const Accounting: React.FC = () => {
   const {
@@ -207,6 +208,10 @@ export const Accounting: React.FC = () => {
 
   // Modals & Drawers
   const [selectedJournal, setSelectedJournal] = useState<JournalEntry | null>(null);
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false);
+  const [reversalReason, setReversalReason] = useState("");
+  const [reversalDate, setReversalDate] = useState(new Date().toISOString().slice(0, 10));
+  const [isReversingJournal, setIsReversingJournal] = useState(false);
   const [isCreateJournalOpen, setIsCreateJournalOpen] = useState(false);
   const [isEditAccountOpen, setIsEditAccountOpen] = useState(false);
   const [selectedAccountForEdit, setSelectedAccountForEdit] = useState<ChartOfAccount | null>(null);
@@ -586,9 +591,9 @@ export const Accounting: React.FC = () => {
           currentUser?.role,
           currentUser?.assignedBranchId
         );
-        setSuccessMessage(`Jurnal ${created.journalNumber} berhasil dibuat dan diposting.`);
+        setSuccessMessage(`Jurnal ${formatShortAccountingReference(created.journalNumber)} berhasil dibuat dan diposting.`);
       } else {
-        setSuccessMessage(`Draft jurnal ${created.journalNumber} berhasil disimpan.`);
+        setSuccessMessage(`Draft jurnal ${formatShortAccountingReference(created.journalNumber)} berhasil disimpan.`);
       }
 
       await refreshData();
@@ -625,7 +630,7 @@ export const Accounting: React.FC = () => {
         currentUser?.role,
         currentUser?.assignedBranchId
       );
-      setSuccessMessage(`Jurnal ${posted.journalNumber} berhasil diposting.`);
+      setSuccessMessage(`Jurnal ${formatShortAccountingReference(posted.journalNumber)} berhasil diposting.`);
       await refreshData();
       if (selectedJournal && selectedJournal.id === journalId) {
         setSelectedJournal(posted);
@@ -652,7 +657,7 @@ export const Accounting: React.FC = () => {
         currentUser?.role,
         currentUser?.assignedBranchId
       );
-      setSuccessMessage(`Jurnal ${voided.journalNumber} berhasil dibatalkan (VOID).`);
+      setSuccessMessage(`Jurnal ${formatShortAccountingReference(voided.journalNumber)} berhasil dibatalkan (VOID).`);
       setVoidReasonModalOpen(false);
       setVoidReasonText("");
       await refreshData();
@@ -665,6 +670,64 @@ export const Accounting: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const handleOpenJournalDetails = async (journal: JournalEntry) => {
+    setSelectedJournal(journal);
+    setActionError(null);
+    try {
+      const details = await accountingRepo.getJournalById(
+        journal.id,
+        currentUser?.role,
+        currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId || currentUser.branchId : null
+      );
+      if (!details) throw new Error("Detail jurnal tidak ditemukan atau tidak dapat diakses.");
+      setSelectedJournal(details);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Gagal memuat detail jurnal.");
+    }
+  };
+
+  const handleCreateReversal = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedJournal) return;
+    if (reversalReason.trim().length < 5) {
+      setActionError("Alasan koreksi minimal 5 karakter.");
+      return;
+    }
+
+    setIsReversingJournal(true);
+    setActionError(null);
+    try {
+      const reversal = await accountingRepo.reversePostedJournal(
+        selectedJournal.id,
+        reversalReason.trim(),
+        reversalDate,
+        currentUser?.name || "Admin",
+        currentUser?.role,
+        currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId || currentUser.branchId : null
+      );
+      await refreshData();
+      await loadJournalsData();
+      setSelectedJournal(reversal);
+      setSuccessMessage(`Jurnal pembalik ${formatShortAccountingReference(reversal.journalNumber)} berhasil diposting.`);
+      setIsReversalModalOpen(false);
+      setReversalReason("");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Gagal membuat jurnal pembalik.");
+    } finally {
+      setIsReversingJournal(false);
+    }
+  };
+
+  const selectedJournalHasReversal = selectedJournal
+    ? localJournals.some((journal) => journal.reversalOfJournalId === selectedJournal.id)
+    : false;
+  const selectedJournalCanReverse = Boolean(
+    selectedJournal?.status === JournalStatus.POSTED
+    && [JournalSourceType.EXPENSE, JournalSourceType.MANUAL, JournalSourceType.ADJUSTMENT].includes(selectedJournal.sourceType)
+    && !(selectedJournal.sourceType === JournalSourceType.EXPENSE && selectedJournal.sourceId?.startsWith("RECURRING_SETTLEMENT:"))
+    && !selectedJournalHasReversal
+  );
 
   // Delete / Koreksi journal (Super Admin / Draft)
   const handleConfirmDeleteJournal = async () => {
@@ -1096,6 +1159,7 @@ export const Accounting: React.FC = () => {
                   <option value={JournalSourceType.PAYROLL}>PAYROLL</option>
                   <option value={JournalSourceType.EXPENSE}>EXPENSE</option>
                   <option value={JournalSourceType.ADJUSTMENT}>ADJUSTMENT</option>
+                  <option value={JournalSourceType.REVERSAL}>REVERSAL</option>
                 </select>
               </div>
             </div>
@@ -1172,7 +1236,7 @@ export const Accounting: React.FC = () => {
                       return (
                         <tr key={j.id} className="hover:bg-slate-50/80 transition-colors">
                           <td className="py-3 px-4 font-mono font-semibold text-slate-900">
-                            {j.journalNumber}
+                            <span title={j.journalNumber}>{formatShortAccountingReference(j.journalNumber)}</span>
                           </td>
                           <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
                             {j.journalDate}
@@ -1183,8 +1247,8 @@ export const Accounting: React.FC = () => {
                           <td className="py-3 px-4 text-slate-800 max-w-xs truncate" title={j.description}>
                             <div>{j.description}</div>
                             {j.sourceId && (
-                              <span className="text-[10px] text-slate-400 font-mono">
-                                Ref: {j.sourceId}
+                              <span className="text-[10px] text-slate-400 font-mono" title={`Ref lengkap: ${j.sourceId}`}>
+                                Ref: {formatShortAccountingReference(j.sourceId)}
                               </span>
                             )}
                           </td>
@@ -1222,7 +1286,7 @@ export const Accounting: React.FC = () => {
                           <td className="py-3 px-4 text-center whitespace-nowrap">
                             <div className="flex items-center justify-center gap-1.5">
                               <button
-                                onClick={() => setSelectedJournal(j)}
+                                onClick={() => void handleOpenJournalDetails(j)}
                                 className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors"
                                 title="Lihat Detail Jurnal"
                               >
@@ -1559,7 +1623,7 @@ export const Accounting: React.FC = () => {
                           {e.journalDate}
                         </td>
                         <td className="py-3 px-4 font-mono font-semibold text-emerald-700 whitespace-nowrap">
-                          {e.journalNumber}
+                          <span title={e.journalNumber}>{formatShortAccountingReference(e.journalNumber)}</span>
                         </td>
                         {ledgerAccountId === "ALL" && (
                           <td className="py-3 px-4 font-medium text-slate-900 whitespace-nowrap">
@@ -1916,7 +1980,9 @@ export const Accounting: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm font-bold text-slate-900">
-                    {selectedJournal.journalNumber}
+                    <span title={selectedJournal.journalNumber}>
+                      {formatShortAccountingReference(selectedJournal.journalNumber)}
+                    </span>
                   </span>
                   {selectedJournal.status === JournalStatus.POSTED && (
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
@@ -1965,7 +2031,9 @@ export const Accounting: React.FC = () => {
                 <div>
                   <span className="text-slate-500 block">Ref Transaksi</span>
                   <span className="font-mono font-semibold text-slate-800">
-                    {selectedJournal.sourceId || "-"}
+                    <span title={selectedJournal.sourceId || undefined}>
+                      {formatShortAccountingReference(selectedJournal.sourceId)}
+                    </span>
                   </span>
                 </div>
               </div>
@@ -1976,6 +2044,22 @@ export const Accounting: React.FC = () => {
                   <span className="font-bold">Alasan Pembatalan (VOID):</span>{" "}
                   {selectedJournal.voidReason || "Tidak ada alasan tercatat."} &bull; Oleh:{" "}
                   {selectedJournal.voidedBy || "System"} ({selectedJournal.voidedAt})
+                </div>
+              )}
+
+              {selectedJournal.reversalOfJournalId && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs">
+                  <span className="font-bold">Jurnal pembalik dari:</span>{" "}
+                  <span className="font-mono" title={selectedJournal.reversalOfJournalId}>
+                    {formatShortAccountingReference(selectedJournal.reversalOfJournalId)}
+                  </span>
+                  <div className="mt-1"><span className="font-bold">Alasan koreksi:</span> {selectedJournal.reversalReason}</div>
+                </div>
+              )}
+
+              {!selectedJournal.reversalOfJournalId && selectedJournalHasReversal && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs">
+                  Jurnal ini sudah memiliki jurnal pembalik. Jurnal asal tetap dipertahankan sebagai jejak audit.
                 </div>
               )}
 
@@ -2084,14 +2168,29 @@ export const Accounting: React.FC = () => {
             {/* Modal Footer Actions */}
             <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                {selectedJournal.status === JournalStatus.POSTED && (
+                {selectedJournal.status === JournalStatus.POSTED && !selectedJournalCanReverse && !selectedJournalHasReversal && (
                   <span className="max-w-xs text-[11px] text-amber-800">
-                    VOID ditahan sampai proses jurnal pembalik tersedia.
+                    Jurnal sumber ini harus dikoreksi melalui transaksi asal atau alur khususnya.
                   </span>
                 )}
               </div>
 
               <div className="flex items-center gap-2">
+                {selectedJournalCanReverse && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReversalReason("");
+                      setReversalDate(new Date().toISOString().slice(0, 10));
+                      setActionError(null);
+                      setIsReversalModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-2 px-3 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-semibold"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Buat Jurnal Pembalik
+                  </button>
+                )}
                 {selectedJournal.status === JournalStatus.DRAFT && (
                   <>
                     <button
@@ -2479,6 +2578,70 @@ export const Accounting: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {isReversalModalOpen && selectedJournal && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <form onSubmit={(event) => void handleCreateReversal(event)} className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-6 space-y-4 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="font-bold text-amber-800 text-sm flex items-center gap-2">
+                <RotateCcw className="w-4 h-4" /> Buat Jurnal Pembalik
+              </h3>
+              <button type="button" onClick={() => setIsReversalModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-700" aria-label="Tutup">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
+              Jurnal pembalik akan menyalin semua baris jurnal asal dengan debit dan kredit ditukar, lalu langsung diposting. Jurnal asal tetap disimpan. Transaksi invoice, pembayaran, payroll, dan kompensasi harus dikoreksi melalui sumbernya.
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="font-mono font-bold" title={selectedJournal.journalNumber}>
+                {formatShortAccountingReference(selectedJournal.journalNumber)}
+              </div>
+              <div className="mt-1 text-slate-600">{selectedJournal.description}</div>
+              <div className="mt-1 font-semibold">{formatRupiah(selectedJournal.totalDebit)}</div>
+            </div>
+            <label className="block">
+              <span className="mb-1 block font-semibold text-slate-700">Tanggal pembalik *</span>
+              <input
+                type="date"
+                value={reversalDate}
+                min={selectedJournal.journalDate}
+                onChange={(event) => setReversalDate(event.target.value)}
+                required
+                className="w-full rounded-lg border border-slate-200 p-2"
+              />
+              <small className="mt-1 block text-slate-500">Tanggal ini menentukan periode laporan yang menerima koreksi.</small>
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-semibold text-slate-700">Alasan koreksi (5–500 karakter) *</span>
+              <textarea
+                rows={3}
+                value={reversalReason}
+                onChange={(event) => setReversalReason(event.target.value)}
+                minLength={5}
+                maxLength={500}
+                required
+                placeholder="Jelaskan alasan jurnal perlu dibalik."
+                className="w-full rounded-lg border border-slate-200 p-2"
+              />
+            </label>
+            {actionError && <div role="alert" className="rounded-lg bg-rose-50 p-2 text-rose-700">{actionError}</div>}
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+              <button type="button" onClick={() => setIsReversalModalOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 font-semibold text-slate-600">
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={isReversingJournal || reversalReason.trim().length < 5}
+                className="inline-flex items-center gap-2 rounded-lg bg-amber-700 px-4 py-2 font-semibold text-white disabled:opacity-50"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {isReversingJournal ? "Memproses..." : "Konfirmasi Pembalik"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

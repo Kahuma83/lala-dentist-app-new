@@ -143,6 +143,24 @@ Walk-In tidak memiliki janji yang dibuat sebelumnya, tetapi tetap dicatat sebaga
 
 Jika aplikasi menyatakan pasien sudah memiliki booking aktif hari ini atau sudah berada dalam antrean, jangan ulangi sebagai Walk-In. Cari jadwal/visit pasien pada halaman Check-In Pasien untuk mencegah kunjungan atau antrean ganda.
 
+## C. Impor profil dan riwayat kunjungan lama
+
+**Penanggung jawab:** Super Admin
+
+**Menu:** **Master Data → Data Pasien → Impor Riwayat Lama**
+
+1. Siapkan workbook Excel dengan lembar **Profil Pasien** (satu baris per No. RM) dan **Data** (satu baris per kunjungan).
+2. Unggah file, pilih cabang asal riwayat, lalu periksa jumlah profil dan kunjungan yang siap atau bermasalah.
+3. Sistem mencocokkan pasien berdasarkan pasangan cabang dan No. RM lokal. RM yang sama di cabang berbeda tidak dianggap pasien yang sama. Jika RM cabang belum terdaftar, penautan ke profil yang ada hanya ditawarkan bila NIK cocok persis dan perlu konfirmasi khusus; kecocokan nama/telepon saja tidak menautkan pasien.
+4. Periksa pratinjau dan konfirmasi sebelum menyimpan. Baris kunjungan tanpa No. RM yang cocok atau tanggal kunjungan valid tidak diimpor.
+5. Kunjungan lama ditampilkan di **Riwayat Kunjungan** sebagai kunjungan selesai. Objektif, diagnosis, nama tindakan lama, dokter sumber, dan status lama disimpan sebagai catatan historis; nama tindakan tidak otomatis dipetakan ke katalog.
+
+No. RM otomatis tetap diterbitkan pada check-in pertama di masing-masing cabang. Kode internal pasien dibentuk saat RM pertama terbit, memakai kode cabang dan nomor RM (contoh `GEB-RM0001` untuk Gebang). UUID pasien tetap menjadi identitas global; pasien yang berkunjung ke cabang lain dapat memiliki RM lokal tambahan tanpa mengubah RM lama.
+
+Kode cabang Gebang ditetapkan **GEB**. Sebelum menerapkan migrasi [20261215000000_branch_scoped_patient_medical_record_numbers.sql](../supabase/migrations/20261215000000_branch_scoped_patient_medical_record_numbers.sql) ke database produksi, tinjau pemetaan RM lama untuk memastikan cabang asalnya benar. Migrasi sengaja berhenti jika cabang asal RM lama ambigu atau bertentangan; jangan mengatasi kegagalan dengan menghapus pemeriksaan tersebut.
+
+Impor historis tidak membuat antrean, treatment job, invoice, tagihan, atau pemakaian stok. Impor ulang workbook yang sama tidak membuat kunjungan duplikat. Untuk menyimpan profil dengan tanggal lahir atau jenis kelamin kosong, pastikan migrasi Supabase [20261214000000_allow_incomplete_legacy_patient_profiles.sql](../supabase/migrations/20261214000000_allow_incomplete_legacy_patient_profiles.sql) sudah diterapkan.
+
 ## Alur ringkas per jabatan
 
 | Tahap | Jabatan utama | Menu | Aksi utama |

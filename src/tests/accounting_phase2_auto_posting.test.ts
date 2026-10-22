@@ -1396,7 +1396,7 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       ).rejects.toThrow(/Jurnal POSTED atau VOID harus dipertahankan/);
     });
 
-    it("should block voiding an automatic journal until a reversal workflow exists", async () => {
+    it("should keep an automatic POSTED journal immutable while allowing separate reversal entries", async () => {
       const invoice = await invoiceRepo.createInvoice({
         visitId: "visit-void-test",
         patientId: "patient-1",

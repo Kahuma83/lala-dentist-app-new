@@ -8,6 +8,7 @@ import {
   InvoiceStatus
 } from "../../types/domain";
 import { DocumentHeader } from "./DocumentHeader";
+import { getPatientMedicalRecordNumber } from "../../utils/rmUtils";
 import {
   formatRupiah,
   formatIndoDate,
@@ -64,7 +65,7 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
           <div className="text-xs font-bold text-slate-900">{patient?.fullName || "Pasien Umum"}</div>
           <div className="text-slate-600 mt-0.5 text-[11px]">
             <span className="font-semibold text-slate-700">No. Rekam Medis (RM):</span>{" "}
-            <span className="font-mono">{patient?.medicalRecordNumber || "-"}</span>
+            <span className="font-mono">{patient ? getPatientMedicalRecordNumber(patient, invoice.branchId) || "-" : "-"}</span>
           </div>
           <div className="text-slate-600 mt-0.5 text-[11px]">
             <span className="font-semibold text-slate-700">No. WhatsApp / HP:</span>{" "}

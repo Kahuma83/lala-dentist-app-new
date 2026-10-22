@@ -31,9 +31,7 @@
   body[data-print-document="clinic-medical-record"] .clinic-medical-print {
     display: block !important;
     page: clinic-medical-record;
-    position: absolute !important;
-    top: 0 !important;
-    left: 0 !important;
+    position: static !important;
     width: 192mm !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -57,6 +55,11 @@
   .clinic-print-page:last-child {
     page-break-after: auto;
     break-after: auto;
+  }
+
+  .clinic-print-page + .clinic-print-page {
+    page-break-before: always;
+    break-before: page;
   }
 
   .clinic-print-header {
@@ -248,6 +251,10 @@
     align-items: center;
     width: 9.2mm;
     font-size: 7pt;
+  }
+
+  .clinic-print-tooth-label-bottom .clinic-print-tooth-number {
+    order: 1;
   }
 
   .clinic-print-primary .clinic-print-tooth {

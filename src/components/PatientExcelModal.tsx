@@ -108,7 +108,7 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
   };
 
   // Handle File Selected for Import
-  const handleFileChange = async (file: File) => {
+  const handleFileChange = async (file: File, selectedDefaultBranchId = defaultBranchId) => {
     if (!file) return;
     setSelectedFile(file);
     setParsingLoading(true);
@@ -117,7 +117,7 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
     setImportResult(null);
 
     try {
-      const res = await parsePatientExcelFile(file, allPatients, branches, defaultBranchId);
+      const res = await parsePatientExcelFile(file, allPatients, branches, selectedDefaultBranchId);
       setParseResult(res);
     } catch (err: any) {
       setParseError(err.message || "Gagal membaca file Excel. Pastikan format file sesuai.");
@@ -263,7 +263,7 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
                   <div>
                     <h4 className="text-xs font-bold text-emerald-900">1. Unduh Template Standar Excel</h4>
                     <p className="text-[11px] text-emerald-700 mt-0.5">
-                      Gunakan template resmi kami yang sudah dilengkapi petunjuk kolom (No RM, Nama, Jenis Kelamin, Tgl Lahir, No HP, Alamat, Alergi, Cabang).
+                      Nama pasien wajib diisi. Isi minimal No. RM atau nomor telepon. Jenis kelamin dan tanggal lahir boleh kosong jika tidak diketahui.
                     </p>
                   </div>
                 </div>
@@ -326,6 +326,9 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
                         </p>
                         <p className="text-[11px] text-slate-400 mt-0.5">
                           Mendukung format Microsoft Excel (.xlsx, .xls) dan CSV (.csv)
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Data kosong tidak akan ditebak. Periksa pratinjau, duplikat, dan cabang sebelum impor.
                         </p>
                       </div>
                     )}
@@ -411,7 +414,13 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
                       </label>
                       <select
                         value={defaultBranchId}
-                        onChange={(e) => setDefaultBranchId(e.target.value)}
+                        onChange={(e) => {
+                          const selectedBranchId = e.target.value;
+                          setDefaultBranchId(selectedBranchId);
+                          if (selectedFile) {
+                            void handleFileChange(selectedFile, selectedBranchId);
+                          }
+                        }}
                         className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-medium"
                       >
                         {branches.map((b) => (
@@ -537,8 +546,16 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
                                       <AlertTriangle className="w-3 h-3" /> Duplikat
                                     </span>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
-                                      <CheckCircle className="w-3 h-3" /> Siap
+                                    <span
+                                      className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                        row.warnings.length > 0
+                                          ? "text-amber-800 bg-amber-100"
+                                          : "text-emerald-700 bg-emerald-100"
+                                      }`}
+                                      title={row.warnings.join(", ")}
+                                    >
+                                      {row.warnings.length > 0 ? <AlertTriangle className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
+                                      {row.warnings.length > 0 ? "Siap • Cek" : "Siap"}
                                     </span>
                                   )}
                                 </td>
@@ -550,16 +567,16 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
                                 </td>
                                 <td className="py-2 px-3">
                                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                    row.gender === "L" ? "bg-blue-100 text-blue-700" : "bg-pink-100 text-pink-700"
+                                    row.gender === "L" ? "bg-blue-100 text-blue-700" : row.gender === "P" ? "bg-pink-100 text-pink-700" : "bg-slate-100 text-slate-600"
                                   }`}>
-                                    {row.gender}
+                                    {row.gender || "?"}
                                   </span>
                                 </td>
                                 <td className="py-2 px-3 font-mono text-slate-600">
                                   {row.phone || <span className="text-rose-500 italic">(Kosong)</span>}
                                 </td>
                                 <td className="py-2 px-3 text-slate-600">
-                                  {row.dateOfBirth}
+                                  {row.dateOfBirth || "Belum diketahui"}
                                 </td>
                                 <td className="py-2 px-3 text-slate-600">
                                   {row.branchNameHint || "-"}

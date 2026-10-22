@@ -123,7 +123,7 @@ export const Invoices: React.FC = () => {
     try {
       const results = await Promise.allSettled([
         invoiceRepo.getInvoices(currentUser?.role, currentUser?.branchId),
-        patientRepo.getPatients(),
+        patientRepo.getPatients(currentUser?.role, currentUser?.assignedBranchId),
         branchRepo.getBranches(),
         configRepo.getServices(),
         configRepo.getClinicBranding(),
