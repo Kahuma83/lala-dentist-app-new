@@ -2639,18 +2639,15 @@ export const HRManagement: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">
-                    NIK {staffForm.position === StaffPosition.DOCTOR ? "*" : ""}
-                  </label>
+                  <label className="block text-slate-600 font-semibold mb-1">NIK (Opsional)</label>
                   <input
                     type="text"
                     inputMode="numeric"
                     pattern="[0-9]{16}"
                     maxLength={16}
-                    required={staffForm.position === StaffPosition.DOCTOR}
                     value={staffForm.nik}
                     onChange={(e) => setStaffForm({ ...staffForm, nik: e.target.value.replace(/\D/g, "") })}
-                    placeholder="16 digit NIK"
+                    placeholder="16 digit NIK (boleh dikosongkan)"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 font-mono"
                   />
                   {staffForm.position === StaffPosition.DOCTOR && (

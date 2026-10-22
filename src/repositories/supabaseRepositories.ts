@@ -6106,7 +6106,6 @@ export class SupabaseStaffRepository implements StaffRepository {
 
     const payload: any = {
       employee_code: employeeCode,
-      nik: data.nik?.trim() || null,
       full_name: data.fullName,
       phone: data.phone,
       position: data.position,
@@ -6116,6 +6115,7 @@ export class SupabaseStaffRepository implements StaffRepository {
       notes: data.notes,
       branch_id: data.branchId || (currentUserRole === UserRole.BRANCH_ADMIN ? userBranchId : null)
     };
+    if (data.nik?.trim()) payload.nik = data.nik.trim();
     if (data.userAccountId !== undefined) payload.user_account_id = data.userAccountId;
     if (data.id) payload.id = data.id;
 
@@ -6128,7 +6128,7 @@ export class SupabaseStaffRepository implements StaffRepository {
     ensureSupabaseConnected();
     const payload: any = {};
     if (updates.employeeCode) payload.employee_code = updates.employeeCode;
-    if (updates.nik !== undefined) payload.nik = updates.nik?.trim() || null;
+    if (updates.nik?.trim()) payload.nik = updates.nik.trim();
     if (updates.fullName) payload.full_name = updates.fullName;
     if (updates.phone) payload.phone = updates.phone;
     if (updates.position) payload.position = updates.position;
