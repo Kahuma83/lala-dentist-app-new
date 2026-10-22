@@ -149,17 +149,19 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
     if (!parseResult || parseResult.validRows.length === 0) return;
 
     setIsImporting(true);
-    setImportProgress(10);
+    setImportProgress(0);
 
     try {
       const options: ImportPatientOptions = {
         duplicateStrategy,
         defaultBranchId,
         currentUserRole,
-        userBranchId
+        userBranchId,
+        onProgress: (completed, total) => {
+          setImportProgress(total > 0 ? Math.round((completed / total) * 100) : 100);
+        }
       };
 
-      setImportProgress(40);
       const result = await executePatientImport(patientRepo, parseResult.validRows, options);
       setImportProgress(100);
       setImportResult(result);
@@ -591,13 +593,25 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
 
                   {/* IMPORT RESULT REPORT (If Executed) */}
                   {importResult && (
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2 animate-fade-in">
-                      <div className="flex items-center gap-2 text-emerald-800 font-bold text-xs">
-                        <CheckCircle className="w-5 h-5 text-emerald-600" />
-                        <span>Impor Data Pasien Berhasil Diselesaikan!</span>
+                    <div className={`border rounded-xl p-4 space-y-2 animate-fade-in ${
+                      importResult.failed > 0
+                        ? "bg-amber-50 border-amber-200"
+                        : "bg-emerald-50 border-emerald-200"
+                    }`}>
+                      <div className={`flex items-center gap-2 font-bold text-xs ${
+                        importResult.failed > 0 ? "text-amber-900" : "text-emerald-800"
+                      }`}>
+                        {importResult.failed > 0
+                          ? <AlertTriangle className="w-5 h-5 text-amber-600" />
+                          : <CheckCircle className="w-5 h-5 text-emerald-600" />}
+                        <span>
+                          {importResult.failed > 0
+                            ? "Impor selesai dengan baris gagal"
+                            : "Impor Data Pasien Berhasil Diselesaikan!"}
+                        </span>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center text-xs">
-                        <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 text-center text-xs">
+                        <div className="bg-white p-2 rounded-lg border border-slate-200">
                           <span className="text-[10px] text-slate-500 block">Total Diproses</span>
                           <span className="font-bold text-slate-800">{importResult.total}</span>
                         </div>
@@ -609,11 +623,29 @@ export const PatientExcelModal: React.FC<PatientExcelModalProps> = ({
                           <span className="text-[10px] text-blue-600 block">Data Diperbarui</span>
                           <span className="font-bold text-blue-700">{importResult.updated}</span>
                         </div>
-                        <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                        <div className="bg-white p-2 rounded-lg border border-slate-200">
                           <span className="text-[10px] text-slate-500 block">Dilewati (Duplikat)</span>
                           <span className="font-bold text-slate-700">{importResult.skipped}</span>
                         </div>
+                        <div className="bg-white p-2 rounded-lg border border-rose-200">
+                          <span className="text-[10px] text-rose-600 block">Gagal</span>
+                          <span className="font-bold text-rose-700">{importResult.failed}</span>
+                        </div>
                       </div>
+                      {importResult.errors.length > 0 && (
+                        <div className="max-h-48 overflow-y-auto rounded-lg border border-rose-200 bg-white p-3 text-[11px] text-rose-900">
+                          <p className="font-bold">
+                            Rincian kegagalan (menampilkan {Math.min(importResult.errors.length, 20)} dari {importResult.errors.length}):
+                          </p>
+                          <ul className="mt-2 space-y-1">
+                            {importResult.errors.slice(0, 20).map((item, index) => (
+                              <li key={`${item.row}-${index}`}>
+                                Baris {item.row} — {item.name || "Tanpa nama"}: {item.error}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

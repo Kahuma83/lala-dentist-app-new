@@ -494,6 +494,7 @@ export interface ImportPatientOptions {
   defaultBranchId?: string;
   currentUserRole?: UserRole;
   userBranchId?: string | null;
+  onProgress?: (completed: number, total: number) => void;
 }
 
 export interface ImportPatientExecutionResult {
@@ -522,18 +523,18 @@ export async function executePatientImport(
     errors: []
   };
 
-  for (const row of rowsToImport) {
-    if (!row.isValid) {
-      result.failed++;
-      result.errors.push({
-        row: row.index,
-        name: row.name,
-        error: row.errors.join(", ")
-      });
-      continue;
-    }
-
+  for (const [index, row] of rowsToImport.entries()) {
     try {
+      if (!row.isValid) {
+        result.failed++;
+        result.errors.push({
+          row: row.index,
+          name: row.name,
+          error: row.errors.join(", ")
+        });
+        continue;
+      }
+
       // Dynamic duplicate lookup to handle records that are created/updated during this loop
       let activeMatch = row.existingPatientMatch;
       
@@ -641,6 +642,8 @@ export async function executePatientImport(
         name: row.name,
         error: err.message || "Gagal menyimpan pasien"
       });
+    } finally {
+      options.onProgress?.(index + 1, rowsToImport.length);
     }
   }
 

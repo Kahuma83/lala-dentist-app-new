@@ -259,4 +259,45 @@ describe("Patient Excel Export & Import Utility Suite", () => {
     expect(updated?.address).toBe("Jl. Alamat Diperbarui dari Excel");
     expect(updated?.medicalHistoryNotes).toContain("Alergi makanan laut (Updated)");
   });
+
+  it("reports row-level update failures and reports import progress", async () => {
+    const existingPatient = (await patientRepo.getPatients(UserRole.SUPER_ADMIN))[0];
+    expect(existingPatient).toBeDefined();
+    patientRepo.updatePatient = async () => {
+      throw new Error("Akses ditolak oleh database");
+    };
+    const progress: Array<[number, number]> = [];
+
+    const result = await executePatientImport(
+      patientRepo,
+      [{
+        index: 7,
+        name: existingPatient.name,
+        medicalRecordNumber: existingPatient.medicalRecordNumber,
+        gender: existingPatient.gender,
+        dateOfBirth: existingPatient.dateOfBirth,
+        phone: existingPatient.phone,
+        address: existingPatient.address,
+        isValid: true,
+        errors: [],
+        warnings: [],
+        isDuplicateRM: true,
+        isDuplicatePhone: false,
+        existingPatientMatch: existingPatient
+      }],
+      {
+        duplicateStrategy: "update",
+        currentUserRole: UserRole.SUPER_ADMIN,
+        onProgress: (completed, total) => progress.push([completed, total])
+      }
+    );
+
+    expect(result).toMatchObject({
+      total: 1,
+      updated: 0,
+      failed: 1,
+      errors: [{ row: 7, error: "Akses ditolak oleh database" }]
+    });
+    expect(progress).toEqual([[1, 1]]);
+  });
 });
