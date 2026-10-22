@@ -96,6 +96,37 @@ describe("Patient Excel Export & Import Utility Suite", () => {
     });
   });
 
+  it("imports only the Data worksheet when the workbook contains other tabs", async () => {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet([{ "NO RM": "WRONG-001", "NAMA PASIEN": "Jangan Impor" }]),
+      "Profil Pasien"
+    );
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet([{ "NO RM": "GEB-001", "NAMA PASIEN": "Pasien Data" }]),
+      "Data"
+    );
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet([{ "NO RM": "WRONG-002", "NAMA PASIEN": "Jangan Impor 2" }]),
+      "HP Ganda"
+    );
+    const file = new File(
+      [XLSX.write(workbook, { type: "array", bookType: "xlsx" })],
+      "gebang.xlsx"
+    );
+
+    const parsed = await parsePatientExcelFile(file, [], mockBranches, "branch-gebang");
+
+    expect(parsed.validRows).toHaveLength(1);
+    expect(parsed.validRows[0]).toMatchObject({
+      medicalRecordNumber: "GEB-001",
+      name: "Pasien Data"
+    });
+  });
+
   it("should execute import for valid patient rows into repository", async () => {
     const validRows: ParsedPatientRow[] = [
       {

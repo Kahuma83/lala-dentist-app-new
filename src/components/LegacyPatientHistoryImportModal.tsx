@@ -196,7 +196,7 @@ export const LegacyPatientHistoryImportModal: React.FC<LegacyPatientHistoryImpor
               >
                 <span className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                   {isReading ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4 text-indigo-600" />}
-                  {selectedFile ? selectedFile.name : "Pilih workbook dengan lembar Data dan Profil Pasien"}
+                  {selectedFile ? selectedFile.name : "Pilih workbook yang memiliki lembar Data"}
                 </span>
                 {selectedFile && (
                   <span className="block mt-1 pl-6 text-[10px] text-slate-500">
@@ -254,7 +254,7 @@ export const LegacyPatientHistoryImportModal: React.FC<LegacyPatientHistoryImpor
                   <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Pratinjau sebelum simpan
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  Hanya lembar Data dan Profil Pasien yang digunakan.
+                  Hanya isi lembar Data yang dibaca dan diimpor.
                   {preview.ignoredSheets.length > 0 && ` Lembar lain diabaikan: ${preview.ignoredSheets.join(", ")}.`}
                 </p>
               </div>

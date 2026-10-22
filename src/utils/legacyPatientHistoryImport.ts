@@ -123,11 +123,12 @@ function normalizeLegacyGender(value: unknown): "L" | "P" | "" {
   return "";
 }
 
-async function getWorkbookDigest(data: ArrayBuffer): Promise<string> {
+async function getDataSheetDigest(rows: Record<string, unknown>[]): Promise<string> {
   if (!globalThis.crypto?.subtle) {
     throw new Error("Browser tidak mendukung pemeriksaan keamanan file untuk impor riwayat.");
   }
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+  const dataBytes = new TextEncoder().encode(JSON.stringify(rows));
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", dataBytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
@@ -161,46 +162,43 @@ function sheetRows(workbook: XLSX.WorkBook, desiredName: string): Record<string,
   return rows;
 }
 
+function uniqueProfileRowsFromData(
+  rows: Record<string, unknown>[]
+): Array<{ source: Record<string, unknown>; rowNumber: number }> {
+  const rmColumn = findColumn(rows, ["NO RM", "NOMOR RM", "NOMOR REKAM MEDIS"]);
+  if (!rmColumn) return [];
+
+  const profilesByRm = new Map<string, { source: Record<string, unknown>; rowNumber: number }>();
+  rows.forEach((source, index) => {
+    const rm = normalizeMedicalRecordNumber(source[rmColumn]);
+    if (!rm) return;
+
+    const existing = profilesByRm.get(rm);
+    if (!existing) {
+      profilesByRm.set(rm, { source: { ...source }, rowNumber: index + 2 });
+      return;
+    }
+
+    Object.keys(source).forEach((key) => {
+      if (!cellText(existing.source[key]) && cellText(source[key])) {
+        existing.source[key] = source[key];
+      }
+    });
+  });
+
+  return Array.from(profilesByRm.values());
+}
+
 export async function parseLegacyPatientHistoryWorkbook(
   file: File,
   existingPatients: PatientProfile[],
   branchId?: string
 ): Promise<LegacyPatientHistoryImportPreview> {
   const data = await file.arrayBuffer();
-  const sourceDigest = await getWorkbookDigest(data);
   const workbook = XLSX.read(data, { type: "array", cellDates: false });
-  const profileSourceRows = sheetRows(workbook, "Profil Pasien");
   const visitSourceRows = sheetRows(workbook, "Data");
-  const blockingReviewIssues: string[] = [];
-  const reviewWarnings: string[] = [];
-  const problemSheetName = workbook.SheetNames.find(
-    (name) => normalizeHeader(name) === "bermasalah"
-  );
-  if (problemSheetName) {
-    const problemRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      workbook.Sheets[problemSheetName],
-      { defval: "", raw: true }
-    );
-    if (problemRows.length > 0) {
-      blockingReviewIssues.push(
-        `Lembar Bermasalah masih berisi ${problemRows.length} baris; periksa dan selesaikan di file sumber sebelum impor.`
-      );
-    }
-  }
-  const duplicatePhoneSheetName = workbook.SheetNames.find(
-    (name) => normalizeHeader(name) === "hpganda"
-  );
-  if (duplicatePhoneSheetName) {
-    const duplicatePhoneRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      workbook.Sheets[duplicatePhoneSheetName],
-      { defval: "", raw: true }
-    );
-    if (duplicatePhoneRows.length > 0) {
-      reviewWarnings.push(
-        `Lembar HP Ganda mencatat ${duplicatePhoneRows.length} baris. Pencocokan impor hanya memakai No. RM, bukan nomor HP.`
-      );
-    }
-  }
+  const sourceDigest = await getDataSheetDigest(visitSourceRows);
+  const profileSourceRows = uniqueProfileRowsFromData(visitSourceRows);
   const existingByRm = new Map<string, PatientProfile>();
   const sameRmInOtherBranch = new Set<string>();
   existingPatients.forEach((patient) => {
@@ -229,136 +227,142 @@ export async function parseLegacyPatientHistoryWorkbook(
     }
   });
 
+  const profileRowsSource = profileSourceRows.map(({ source }) => source);
   const profileColumn = {
-    rm: findColumn(profileSourceRows, ["NO RM", "NOMOR RM", "NOMOR REKAM MEDIS"]),
-    name: findColumn(profileSourceRows, ["NAMA PASIEN", "NAMA LENGKAP"]),
-    dateOfBirth: findColumn(profileSourceRows, ["TANGGAL LAHIR", "TGL LAHIR"]),
-    gender: findColumn(profileSourceRows, ["P/L", "JENIS KELAMIN", "GENDER"]),
-    phone: findColumn(profileSourceRows, ["NO HP", "NO TELEPON", "WHATSAPP"]),
-    address: findColumn(profileSourceRows, ["ALAMAT PASIEN", "ALAMAT"]),
-    identity: findColumn(profileSourceRows, ["NO KTP", "NIK"]),
-    nameVariants: findColumn(profileSourceRows, ["VARIAN NAMA", "VARIASI NAMA"])
+    rm: findColumn(profileRowsSource, ["NO RM", "NOMOR RM", "NOMOR REKAM MEDIS"]),
+    name: findColumn(profileRowsSource, ["NAMA PASIEN", "NAMA LENGKAP"]),
+    dateOfBirth: findColumn(profileRowsSource, ["TANGGAL LAHIR", "TGL LAHIR"]),
+    gender: findColumn(profileRowsSource, ["P/L", "JENIS KELAMIN", "GENDER"]),
+    phone: findColumn(profileRowsSource, ["NO HP", "NO TELEPON", "WHATSAPP"]),
+    address: findColumn(profileRowsSource, ["ALAMAT PASIEN", "ALAMAT"]),
+    identity: findColumn(profileRowsSource, ["NO KTP", "NIK"])
   };
 
-  const missingProfileColumns = Object.entries(profileColumn)
-    .filter(([, key]) => !key)
-    .map(([field]) => field);
-  if (missingProfileColumns.includes("rm") || missingProfileColumns.includes("name")) {
-    throw new Error("Lembar Profil Pasien harus memiliki kolom No. RM dan Nama Pasien.");
-  }
-  if (profileColumn.nameVariants) {
-    const variantCount = profileSourceRows.filter((row) =>
-      cellText(row[profileColumn.nameVariants!])
-    ).length;
-    if (variantCount > 0) {
-      blockingReviewIssues.push(
-        `Kolom varian nama berisi ${variantCount} profil; pastikan nama utama sudah diverifikasi di file sumber sebelum impor.`
-      );
-    }
-  }
-
-  const profileRows: LegacyPatientProfileRow[] = profileSourceRows.map((source, index) => {
-    const medicalRecordNumber = normalizeMedicalRecordNumber(source[profileColumn.rm!]);
-    const name = cellText(source[profileColumn.name!]);
-    const dateOfBirth = parseLegacyDate(profileColumn.dateOfBirth ? source[profileColumn.dateOfBirth] : "");
-    const gender = normalizeLegacyGender(profileColumn.gender ? source[profileColumn.gender] : "");
-    const errors: string[] = [];
-    const warnings: string[] = [];
-    if (!medicalRecordNumber) errors.push("No. RM kosong");
-    if (!name) errors.push("Nama pasien kosong");
-    if (profileColumn.dateOfBirth && cellText(source[profileColumn.dateOfBirth]) && !dateOfBirth) {
-      warnings.push("Tanggal lahir tidak dikenali dan tidak akan diimpor");
-    }
-    if (profileColumn.gender && cellText(source[profileColumn.gender]) && !gender) {
-      warnings.push("Jenis kelamin tidak dikenali dan tidak akan diimpor");
-    }
-    if (!dateOfBirth) warnings.push("Tanggal lahir tidak tersedia");
-    if (!gender) warnings.push("Jenis kelamin tidak tersedia");
-    const sourcePhone = profileColumn.phone ? cellText(source[profileColumn.phone]).replace(/\D/g, "") : "";
-    const sourceIdentity = profileColumn.identity
-      ? cellText(source[profileColumn.identity]).replace(/\s/g, "").toLowerCase()
-      : "";
-    const identityMatches = sourceIdentity
-      ? existingPatients.filter(
-          (patient) =>
-            patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === sourceIdentity
-        )
+  const profileRows: LegacyPatientProfileRow[] =
+    profileColumn.rm && profileColumn.name
+      ? profileSourceRows.map(({ source, rowNumber }) => {
+          const medicalRecordNumber = normalizeMedicalRecordNumber(source[profileColumn.rm!]);
+          const name = cellText(source[profileColumn.name!]);
+          const dateOfBirth = parseLegacyDate(
+            profileColumn.dateOfBirth ? source[profileColumn.dateOfBirth] : ""
+          );
+          const gender = normalizeLegacyGender(
+            profileColumn.gender ? source[profileColumn.gender] : ""
+          );
+          const errors: string[] = [];
+          const warnings: string[] = [];
+          if (!medicalRecordNumber) errors.push("No. RM kosong");
+          if (!name) errors.push("Nama pasien kosong");
+          if (
+            profileColumn.dateOfBirth &&
+            cellText(source[profileColumn.dateOfBirth]) &&
+            !dateOfBirth
+          ) {
+            warnings.push("Tanggal lahir tidak dikenali dan tidak akan diimpor");
+          }
+          if (profileColumn.gender && cellText(source[profileColumn.gender]) && !gender) {
+            warnings.push("Jenis kelamin tidak dikenali dan tidak akan diimpor");
+          }
+          if (!dateOfBirth) warnings.push("Tanggal lahir tidak tersedia");
+          if (!gender) warnings.push("Jenis kelamin tidak tersedia");
+          const sourcePhone = profileColumn.phone
+            ? cellText(source[profileColumn.phone]).replace(/\D/g, "")
+            : "";
+          const sourceIdentity = profileColumn.identity
+            ? cellText(source[profileColumn.identity]).replace(/\s/g, "").toLowerCase()
+            : "";
+          const identityMatches = sourceIdentity
+            ? existingPatients.filter(
+                (patient) =>
+                  patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() ===
+                  sourceIdentity
+              )
+            : [];
+          const existing = existingByRm.get(medicalRecordNumber);
+          const identityMatch =
+            !existing && identityMatches.length === 1 ? identityMatches[0] : undefined;
+          const existingIdentity = existing?.identityDocumentNumber
+            ?.replace(/\s/g, "")
+            .toLowerCase();
+          const matchingConflict = !!(
+            existing &&
+            sourceIdentity &&
+            existingIdentity &&
+            sourceIdentity !== existingIdentity
+          );
+          if (matchingConflict) {
+            errors.push("No. RM cabang cocok tetapi NIK pada file berbeda dari profil yang ada");
+          }
+          if (
+            branchId &&
+            !existingByRm.has(medicalRecordNumber) &&
+            !identityMatch &&
+            sameRmInOtherBranch.has(medicalRecordNumber)
+          ) {
+            errors.push("No. RM yang sama tercatat di cabang lain; pasien tidak dicocokkan otomatis");
+          }
+          if (!existing && identityMatches.length > 1) {
+            errors.push("NIK cocok dengan lebih dari satu profil; pilih pasien yang benar sebelum impor");
+          }
+          if (identityMatch) {
+            warnings.push(
+              "NIK sama dengan satu profil yang sudah ada; RM cabang akan ditautkan setelah konfirmasi"
+            );
+          }
+          const normalizedName = name
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/\s+/g, " ")
+            .trim();
+          const possibleGlobalDuplicate =
+            branchId &&
+            !existing &&
+            !identityMatch &&
+            existingPatients.some((patient) => {
+              const identityMatches =
+                sourceIdentity &&
+                patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() ===
+                  sourceIdentity;
+              const phoneMatches =
+                sourcePhone && patient.phone.replace(/\D/g, "") === sourcePhone;
+              const patientName = (patient.fullName || patient.name || "")
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase()
+                .replace(/\s+/g, " ")
+                .trim();
+              return (
+                !!identityMatches ||
+                !!phoneMatches ||
+                (!!normalizedName && patientName === normalizedName)
+              );
+            });
+          if (possibleGlobalDuplicate) {
+            errors.push(
+              "Profil serupa sudah ada; verifikasi identitas dan tautkan RM cabang secara manual sebelum impor"
+            );
+          }
+          return {
+            rowNumber,
+            medicalRecordNumber,
+            name,
+            dateOfBirth,
+            gender,
+            phone: profileColumn.phone ? cellText(source[profileColumn.phone]) : "",
+            address: profileColumn.address ? cellText(source[profileColumn.address]) : "",
+            identityDocumentNumber: profileColumn.identity
+              ? cellText(source[profileColumn.identity])
+              : "",
+            isValid: errors.length === 0,
+            existingPatientId: existing?.id || identityMatch?.id,
+            matchMethod: existing ? "branch_rm" : identityMatch ? "identity_document" : undefined,
+            matchingConflict,
+            errors,
+            warnings
+          };
+        })
       : [];
-    const existing = existingByRm.get(medicalRecordNumber);
-    const identityMatch = !existing && identityMatches.length === 1 ? identityMatches[0] : undefined;
-    const existingIdentity = existing?.identityDocumentNumber
-      ?.replace(/\s/g, "")
-      .toLowerCase();
-    const matchingConflict = !!(
-      existing &&
-      sourceIdentity &&
-      existingIdentity &&
-      sourceIdentity !== existingIdentity
-    );
-    if (matchingConflict) {
-      errors.push("No. RM cabang cocok tetapi NIK pada file berbeda dari profil yang ada");
-    }
-    if (
-      branchId &&
-      !existingByRm.has(medicalRecordNumber) &&
-      !identityMatch &&
-      sameRmInOtherBranch.has(medicalRecordNumber)
-    ) {
-      errors.push("No. RM yang sama tercatat di cabang lain; pasien tidak dicocokkan otomatis");
-    }
-    if (!existing && identityMatches.length > 1) {
-      errors.push("NIK cocok dengan lebih dari satu profil; pilih pasien yang benar sebelum impor");
-    }
-    if (identityMatch) {
-      warnings.push("NIK sama dengan satu profil yang sudah ada; RM cabang akan ditautkan setelah konfirmasi");
-    }
-    const normalizedName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
-    const possibleGlobalDuplicate = branchId && !existing && !identityMatch && existingPatients.some((patient) => {
-      const identityMatches = sourceIdentity && patient.identityDocumentNumber
-        ?.replace(/\s/g, "")
-        .toLowerCase() === sourceIdentity;
-      const phoneMatches = sourcePhone && patient.phone.replace(/\D/g, "") === sourcePhone;
-      const patientName = (patient.fullName || patient.name || "")
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/\s+/g, " ")
-        .trim();
-      return !!identityMatches || !!phoneMatches || (!!normalizedName && patientName === normalizedName);
-    });
-    if (possibleGlobalDuplicate) {
-      errors.push("Profil serupa sudah ada; verifikasi identitas dan tautkan RM cabang secara manual sebelum impor");
-    }
-    return {
-      rowNumber: index + 2,
-      medicalRecordNumber,
-      name,
-      dateOfBirth,
-      gender,
-      phone: profileColumn.phone ? cellText(source[profileColumn.phone]) : "",
-      address: profileColumn.address ? cellText(source[profileColumn.address]) : "",
-      identityDocumentNumber: profileColumn.identity ? cellText(source[profileColumn.identity]) : "",
-      isValid: errors.length === 0,
-      existingPatientId: existing?.id || identityMatch?.id,
-      matchMethod: existing ? "branch_rm" : identityMatch ? "identity_document" : undefined,
-      matchingConflict,
-      errors,
-      warnings
-    };
-  });
-
-  const profileRmCounts = new Map<string, number>();
-  profileRows.forEach((row) => {
-    if (row.medicalRecordNumber) {
-      profileRmCounts.set(row.medicalRecordNumber, (profileRmCounts.get(row.medicalRecordNumber) || 0) + 1);
-    }
-  });
-  profileRows.forEach((row) => {
-    if ((profileRmCounts.get(row.medicalRecordNumber) || 0) > 1) {
-      row.isValid = false;
-      row.errors.push("No. RM muncul lebih dari sekali di lembar Profil Pasien");
-    }
-  });
 
   const patientIdByRm = new Map(existingByRm);
   profileRows.forEach((row) => {
@@ -403,7 +407,7 @@ export async function parseLegacyPatientHistoryWorkbook(
     if (!medicalRecordNumber) errors.push("No. RM kosong; pasien tidak dapat dicocokkan");
     if (!visitDate) errors.push("Tanggal kunjungan kosong atau tidak valid");
     const matchedPatient = patientIdByRm.get(medicalRecordNumber);
-    if (!matchedPatient) errors.push("No. RM tidak ditemukan pada database atau lembar Profil Pasien");
+    if (!matchedPatient) errors.push("No. RM tidak ditemukan pada database atau lembar Data");
     const details = [
       "[Riwayat historis impor — bukan rekam medis klinis terverifikasi]",
       visitColumn.objective && cellText(source[visitColumn.objective])
@@ -434,18 +438,13 @@ export async function parseLegacyPatientHistoryWorkbook(
     };
   });
 
-  const usedSheets = new Set([
-    workbook.SheetNames.find((name) => normalizeHeader(name) === "data"),
-    workbook.SheetNames.find((name) => normalizeHeader(name) === "profilpasien")
-  ]);
-
   return {
     sourceDigest,
     profileRows,
     visitRows,
-    ignoredSheets: workbook.SheetNames.filter((name) => !usedSheets.has(name)),
-    blockingReviewIssues,
-    reviewWarnings
+    ignoredSheets: workbook.SheetNames.filter((name) => normalizeHeader(name) !== "data"),
+    blockingReviewIssues: [],
+    reviewWarnings: []
   };
 }
 

@@ -14,6 +14,7 @@ function createLegacyWorkbook(includeProblemRow = false, includeIdentity = false
       "NO RM": "RM-OLD-001",
       TANGGAL: 46244,
       "NAMA PASIEN": "Pasien Contoh",
+      ...(includeIdentity ? { NIK: "3201010101900001" } : {}),
       OBJEKTIF: "Kontrol rutin",
       DIAGNOSA: "Diagnosis historis",
       "TERAPI / TINDAKAN": "Tindakan lama bebas",
@@ -28,7 +29,7 @@ function createLegacyWorkbook(includeProblemRow = false, includeIdentity = false
     {
       "NO RM": "RM-TIDAK-DITEMUKAN",
       TANGGAL: 46244,
-      "NAMA PASIEN": "Pasien Tidak Cocok"
+      "NAMA PASIEN": ""
     }
   ]);
   const profiles = XLSX.utils.json_to_sheet([
@@ -42,21 +43,26 @@ function createLegacyWorkbook(includeProblemRow = false, includeIdentity = false
       "ALAMAT PASIEN": ""
     }
   ]);
-  XLSX.utils.book_append_sheet(workbook, visits, "Data");
   XLSX.utils.book_append_sheet(workbook, profiles, "Profil Pasien");
   const problems = includeProblemRow
     ? XLSX.utils.aoa_to_sheet([["NO RM", "MASALAH"], ["RM-OLD-001", "Nama perlu verifikasi"]])
     : XLSX.utils.aoa_to_sheet([]);
   XLSX.utils.book_append_sheet(workbook, problems, "Bermasalah");
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["NO HP"], ["08123456789"]]),
+    "HP Ganda"
+  );
+  XLSX.utils.book_append_sheet(workbook, visits, "Data");
   const bytes = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
   return new File([bytes], "legacy-history.xlsx");
 }
 
 describe("Legacy patient history import", () => {
-  it("previews legacy profile and visit sheets while preserving unmatched and incomplete rows", async () => {
+  it("derives profiles and visits from Data while preserving unmatched and incomplete rows", async () => {
     const preview = await parseLegacyPatientHistoryWorkbook(createLegacyWorkbook(), []);
 
-    expect(preview.profileRows).toHaveLength(1);
+    expect(preview.profileRows).toHaveLength(2);
     expect(preview.profileRows[0]).toMatchObject({
       medicalRecordNumber: "RM-OLD-001",
       name: "Pasien Contoh",
@@ -73,36 +79,29 @@ describe("Legacy patient history import", () => {
     expect(preview.visitRows[0].historicalDetails).toContain("Tindakan lama (belum dipetakan)");
     expect(preview.visitRows[1].errors).toContain("Tanggal kunjungan kosong atau tidak valid");
     expect(preview.visitRows[2].errors).toContain(
-      "No. RM tidak ditemukan pada database atau lembar Profil Pasien"
+      "No. RM tidak ditemukan pada database atau lembar Data"
     );
     expect(preview.ignoredSheets).toContain("Bermasalah");
+    expect(preview.ignoredSheets).toContain("Profil Pasien");
+    expect(preview.ignoredSheets).toContain("HP Ganda");
     expect(preview.blockingReviewIssues).toHaveLength(0);
+    expect(preview.reviewWarnings).toHaveLength(0);
   });
 
-  it("blocks import when unresolved audit rows remain in the workbook", async () => {
-    const preview = await parseLegacyPatientHistoryWorkbook(createLegacyWorkbook(true), []);
-    expect(preview.blockingReviewIssues).toHaveLength(1);
+  it("ignores all non-Data worksheets, including audit and profile sheets", async () => {
+    const previewWithOtherSheets = await parseLegacyPatientHistoryWorkbook(
+      createLegacyWorkbook(true),
+      []
+    );
+    const previewWithoutProblemRows = await parseLegacyPatientHistoryWorkbook(
+      createLegacyWorkbook(),
+      []
+    );
 
-    await expect(
-      executeLegacyPatientHistoryImport(
-        {
-          getPatients: async () => [],
-          createPatient: async () => {
-            throw new Error("Should not create a profile while audit issues remain");
-          },
-          registerPatientBranchMedicalRecordNumber: async () => {}
-        },
-        {
-          getVisitById: async () => null,
-          createVisit: async () => {
-            throw new Error("Should not create a visit while audit issues remain");
-          }
-        },
-        preview,
-        "branch-gebang",
-        UserRole.SUPER_ADMIN
-      )
-    ).rejects.toThrow("Impor dihentikan");
+    expect(previewWithOtherSheets.blockingReviewIssues).toEqual([]);
+    expect(previewWithOtherSheets.reviewWarnings).toEqual([]);
+    expect(previewWithOtherSheets.sourceDigest).toBe(previewWithoutProblemRows.sourceDigest);
+    expect(previewWithOtherSheets.profileRows[0].name).toBe("Pasien Contoh");
   });
 
   it("matches imported profiles only against the selected branch RM", async () => {

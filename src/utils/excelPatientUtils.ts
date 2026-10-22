@@ -276,12 +276,29 @@ export async function parsePatientExcelFile(
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: "array" });
 
-  const firstSheetName = workbook.SheetNames[0];
-  if (!firstSheetName) {
+  if (workbook.SheetNames.length === 0) {
     throw new Error("File Excel tidak memiliki lembar kerja (worksheet).");
   }
 
-  const worksheet = workbook.Sheets[firstSheetName];
+  const dataSheetName = workbook.SheetNames.find(
+    (name) => name.trim().toLocaleLowerCase("id-ID") === "data"
+  );
+  const templateSheetName = workbook.SheetNames.find((name) =>
+    ["template pasien", "data pasien"].includes(name.trim().toLocaleLowerCase("id-ID"))
+  );
+  const sheetName =
+    dataSheetName ||
+    templateSheetName ||
+    (file.name.toLocaleLowerCase("id-ID").endsWith(".csv") || workbook.SheetNames.length === 1
+      ? workbook.SheetNames[0]
+      : undefined);
+  if (!sheetName) {
+    throw new Error(
+      'Worksheet "Data" tidak ditemukan. Untuk file dengan beberapa worksheet, hanya lembar "Data" yang dapat diimpor.'
+    );
+  }
+
+  const worksheet = workbook.Sheets[sheetName];
   const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
   if (rawRows.length === 0) {
