@@ -229,12 +229,12 @@ export const onRequestPost = async ({ request, env }) => {
         user_metadata: { username, name, role }
       }
     });
-    if (!authUserData?.user?.id) {
+    const authUserId = authUserData?.user?.id || authUserData?.id;
+    if (!authUserId) {
       console.error("[pages-function] Supabase Auth did not return the created staff user.");
       return jsonResponse({ message: "Supabase Auth tidak mengembalikan akun staf yang valid." }, 502, origin);
     }
 
-    const authUserId = authUserData.user.id;
     let accounts;
     try {
       accounts = await requestSupabase({

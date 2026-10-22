@@ -119,7 +119,7 @@ describe("Cloudflare Pages staff account endpoint", () => {
         { role: "SUPER_ADMIN", active: true }
       ]), { status: 200 }))
       .mockResolvedValueOnce(new Response("[]", { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ user: createdAuthUser }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(createdAuthUser), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([insertedAccount]), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
 
