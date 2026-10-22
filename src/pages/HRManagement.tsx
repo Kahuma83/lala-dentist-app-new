@@ -167,6 +167,8 @@ export const HRManagement: React.FC = () => {
   const [isLoadingLoginAccounts, setIsLoadingLoginAccounts] = useState(isSupabaseConfigured);
   const [loginAccountsLoadError, setLoginAccountsLoadError] = useState(false);
   const [loginAccountTarget, setLoginAccountTarget] = useState<LoginAccountTarget | null>(null);
+  const [editingLoginAccount, setEditingLoginAccount] = useState<UserAccount | null>(null);
+  const [loginCredentialsForm, setLoginCredentialsForm] = useState({ username: "", password: "" });
   const [loginAccountForm, setLoginAccountForm] = useState({
     username: "",
     password: "",
@@ -203,6 +205,35 @@ export const HRManagement: React.FC = () => {
       showError(error instanceof Error ? error.message : "Gagal memperbarui foto profil pegawai.");
     } finally {
       setUploadingProfilePhotoStaffId(null);
+    }
+  };
+
+  const handleUpdateLoginCredentials = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingLoginAccount) return;
+    setIsSubmitting(true);
+    try {
+      const actorContext: AuthenticatedUserContext = {
+        authUserId: currentUser?.authUserId || "",
+        userAccountId: currentUser?.userAccountId || currentUser?.id || "",
+        role: currentUser?.role || UserRole.PATIENT,
+        assignedBranchId: currentUser?.assignedBranchId || null
+      };
+      const updatedAccount = await AuthService.updateStaffLoginCredentials(actorContext, {
+        accountId: editingLoginAccount.id,
+        username: loginCredentialsForm.username,
+        password: loginCredentialsForm.password
+      });
+      setLoginAccounts((accounts) => accounts.map((account) =>
+        account.id === updatedAccount.id ? updatedAccount : account
+      ));
+      setEditingLoginAccount(null);
+      setLoginCredentialsForm({ username: "", password: "" });
+      showSuccess(`Kredensial login ${updatedAccount.name} berhasil diperbarui.`);
+    } catch (error: unknown) {
+      showError(error instanceof Error ? error.message : "Gagal memperbarui kredensial akun.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1698,12 +1729,16 @@ export const HRManagement: React.FC = () => {
                               if (userAcc) {
                                 return (
                                   <button
-                                    onClick={() => showError("Akun sudah terhubung. Pengelolaan/perubahan akun login dilakukan melalui Supabase Auth.")}
-                                    title={`Akun Supabase terhubung: ${userAcc.email || userAcc.username} (${userAcc.role}).`}
+                                    onClick={() => {
+                                      if (!isSuper) return;
+                                      setEditingLoginAccount(userAcc);
+                                      setLoginCredentialsForm({ username: userAcc.username, password: "" });
+                                    }}
+                                    title={`Kelola akun login: ${userAcc.email || userAcc.username} (${userAcc.role}).`}
                                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
                                   >
                                     <UserCheck className="w-3 h-3 text-emerald-600" />
-                                    <span>{userAcc.role}</span>
+                                    <span>{isSuper ? `${userAcc.role} · Kelola` : userAcc.role}</span>
                                   </button>
                                 );
                               }
@@ -3463,6 +3498,82 @@ export const HRManagement: React.FC = () => {
                   : loginAccountTarget.existingAccountId
                   ? "Tautkan Data Pegawai"
                   : "Buat Akun"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {editingLoginAccount && isSuper && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <form
+            onSubmit={handleUpdateLoginCredentials}
+            className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl"
+          >
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Kelola Akun Login</h3>
+                <p className="mt-1 text-sm text-slate-500">{editingLoginAccount.name} · {editingLoginAccount.role}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingLoginAccount(null)}
+                aria-label="Tutup"
+                className="text-slate-500 hover:text-slate-800"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <label className="block text-sm font-medium text-slate-700">
+                Username
+                <input
+                  required
+                  minLength={3}
+                  maxLength={64}
+                  pattern="[a-zA-Z0-9_.-]+"
+                  value={loginCredentialsForm.username}
+                  onChange={(event) => setLoginCredentialsForm({
+                    ...loginCredentialsForm,
+                    username: event.target.value.toLowerCase()
+                  })}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2"
+                  autoComplete="username"
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Password baru
+                <input
+                  type="password"
+                  minLength={6}
+                  value={loginCredentialsForm.password}
+                  onChange={(event) => setLoginCredentialsForm({
+                    ...loginCredentialsForm,
+                    password: event.target.value
+                  })}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2"
+                  autoComplete="new-password"
+                  placeholder="Kosongkan jika tidak ingin mengubah password"
+                />
+              </label>
+              <p className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs leading-5 text-blue-800">
+                Perubahan hanya berlaku untuk akun login pegawai ini. Jika password diubah, sampaikan password baru melalui kanal yang aman.
+              </p>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingLoginAccount(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isSubmitting ? "Menyimpan..." : "Simpan Perubahan"}
               </button>
             </div>
           </form>

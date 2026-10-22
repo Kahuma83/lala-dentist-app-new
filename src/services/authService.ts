@@ -988,6 +988,54 @@ export class AuthService {
     }
   }
 
+  static async updateStaffLoginCredentials(
+    actorContext: AuthenticatedUserContext,
+    params: { accountId: string; username: string; password?: string }
+  ): Promise<UserAccount> {
+    if (actorContext.role !== UserRole.SUPER_ADMIN) {
+      throw new Error("Permission denied: Only SUPER_ADMIN can update staff login credentials.");
+    }
+    if (!params.accountId) throw new Error("Akun staf yang akan diubah wajib dipilih.");
+    const username = this.normalizeUsername(params.username);
+    if (username.length < 3 || username.length > 64) {
+      throw new Error("Username minimal 3 karakter.");
+    }
+    if (params.password && params.password.length < 6) {
+      throw new Error("Password baru minimal harus 6 karakter.");
+    }
+    if (!isSupabaseConfigured) {
+      throw new Error("Pengelolaan kredensial akun staf memerlukan koneksi Supabase.");
+    }
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+    if (sessionError || !accessToken) {
+      throw new Error("Sesi autentikasi SUPER_ADMIN tidak valid. Silakan login ulang.");
+    }
+
+    const response = await fetch("/api/staff", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        accountId: params.accountId,
+        username,
+        password: params.password || ""
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.message || "Gagal memperbarui kredensial akun staf.");
+    }
+    const account = payload?.account as UserAccount | undefined;
+    if (!account?.id) {
+      throw new Error("Server tidak mengembalikan akun staf yang berhasil diperbarui.");
+    }
+    return account;
+  }
+
   /**
    * Dedicated recovery & synchronization tool for staff accounts.
    * Can ONLY be invoked by an active SUPER_ADMIN.

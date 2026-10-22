@@ -351,6 +351,131 @@ app.post('/api/staff', async (req, res) => {
   }
 });
 
+app.put('/api/staff', async (req, res) => {
+  try {
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      return res.status(500).json({
+        message: 'Supabase service-role key belum dikonfigurasi di server. Tidak bisa mengelola akun staf.'
+      });
+    }
+
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) {
+      return res.status(401).json({ message: 'Unauthorized: token sesi tidak ditemukan.' });
+    }
+
+    const supabaseAnon = createClient(supabaseUrl, supabaseAnonKey || 'placeholder-anon-key-string', {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    });
+    const { data: userData, error: userError } = await supabaseAnon.auth.getUser(token);
+    if (userError || !userData?.user) {
+      return res.status(401).json({ message: 'Unauthorized: sesi login tidak valid.' });
+    }
+
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    });
+    const { data: actorAccount, error: actorError } = await supabaseAdmin
+      .from('user_accounts')
+      .select('role,active')
+      .eq('auth_user_id', userData.user.id)
+      .maybeSingle();
+    if (actorError || !actorAccount) {
+      return res.status(403).json({ message: 'Gagal memverifikasi akun administrator.' });
+    }
+    if (actorAccount.role !== 'SUPER_ADMIN' || actorAccount.active !== true) {
+      return res.status(403).json({ message: 'Hanya SUPER_ADMIN aktif yang dapat mengubah akun staf.' });
+    }
+
+    const accountId = String(req.body?.accountId || '').trim();
+    const username = String(req.body?.username || '').trim().toLowerCase();
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!accountId) return res.status(400).json({ message: 'Akun staf yang akan diubah wajib dipilih.' });
+    if (username.length < 3 || username.length > 64 || !/^[a-z0-9_.-]+$/.test(username)) {
+      return res.status(400).json({ message: 'Username minimal 3 karakter dan hanya boleh berisi huruf, angka, titik, garis bawah, atau tanda hubung.' });
+    }
+    if (password && password.length < 6) {
+      return res.status(400).json({ message: 'Password baru minimal harus 6 karakter.' });
+    }
+
+    const { data: target, error: targetError } = await supabaseAdmin
+      .from('user_accounts')
+      .select('id,auth_user_id,username,email,name,role,branch_id,staff_id,doctor_id,active,created_at')
+      .eq('id', accountId)
+      .maybeSingle();
+    if (targetError || !target) return res.status(404).json({ message: 'Akun staf tidak ditemukan.' });
+    if (!['BRANCH_ADMIN', 'DOCTOR', 'DOCTOR_ASSISTANT', 'OB'].includes(target.role)) {
+      return res.status(400).json({ message: 'Akun ini bukan akun staf yang dapat dikelola melalui menu HR.' });
+    }
+    if (target.active !== true) return res.status(400).json({ message: 'Akun staf nonaktif tidak dapat diperbarui.' });
+    if (!target.auth_user_id) return res.status(409).json({ message: 'Akun staf belum terhubung ke Supabase Auth.' });
+
+    const nextEmail = `${username}@laladentist.id`;
+    const { data: duplicates, error: duplicateError } = await supabaseAdmin
+      .from('user_accounts')
+      .select('id')
+      .neq('id', accountId)
+      .or(`username.ilike.${username},email.ilike.${nextEmail}`)
+      .limit(2);
+    if (duplicateError) {
+      console.error('[server] staff account username check failed:', duplicateError);
+      return res.status(400).json({ message: 'Gagal memeriksa username yang sudah terdaftar.' });
+    }
+    if (duplicates?.length) return res.status(409).json({ message: `Username '${username}' sudah digunakan akun lain.` });
+
+    const { data: updatedAccount, error: updateError } = await supabaseAdmin
+      .from('user_accounts')
+      .update({ username, email: nextEmail, updated_at: new Date().toISOString() })
+      .eq('id', accountId)
+      .select()
+      .single();
+    if (updateError || !updatedAccount) {
+      console.error('[server] staff account profile update failed:', updateError);
+      return res.status(400).json({ message: 'Profil akun staf tidak berhasil diperbarui.' });
+    }
+
+    const { error: authUpdateError } = await supabaseAdmin.auth.admin.updateUserById(target.auth_user_id, {
+      email: nextEmail,
+      email_confirm: true,
+      user_metadata: {
+        username,
+        name: target.name,
+        role: target.role
+      },
+      ...(password ? { password } : {})
+    });
+    if (authUpdateError) {
+      const { error: rollbackError } = await supabaseAdmin
+        .from('user_accounts')
+        .update({ username: target.username, email: target.email, updated_at: new Date().toISOString() })
+        .eq('id', accountId);
+      if (rollbackError) console.error('[server] staff account profile rollback failed:', rollbackError);
+      return res.status(400).json({ message: `Gagal memperbarui kredensial Supabase Auth: ${authUpdateError.message}` });
+    }
+
+    return res.json({
+      account: {
+        id: updatedAccount.id,
+        authUserId: updatedAccount.auth_user_id,
+        username: updatedAccount.username,
+        email: updatedAccount.email,
+        name: updatedAccount.name,
+        role: updatedAccount.role,
+        branchId: updatedAccount.branch_id || null,
+        staffId: updatedAccount.staff_id || null,
+        doctorId: updatedAccount.doctor_id || null,
+        active: updatedAccount.active ?? true,
+        createdAt: updatedAccount.created_at || target.created_at,
+        updatedAt: updatedAccount.updated_at || new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('[server] staff account update failed:', error);
+    return res.status(500).json({ message: error?.message || 'Server error saat memperbarui akun staf.' });
+  }
+});
+
 app.post('/api/bookings', async (req, res) => {
   try {
     if (!supabaseUrl || !supabaseServiceRoleKey) {

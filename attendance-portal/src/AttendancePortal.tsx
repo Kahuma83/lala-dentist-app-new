@@ -56,6 +56,8 @@ type AttendanceRow = {
   actual_check_in_at: string | null;
   actual_check_out_at: string | null;
   late_minutes: number;
+  check_out_correction_status: "PENDING" | "APPROVED" | "RESOLVED" | null;
+  check_out_correction_reason: string | null;
 };
 type StaffContext = {
   branchId: string | null;
@@ -137,7 +139,8 @@ function getInitialPasswordView(): PasswordView {
 
 const allowedRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB"];
 const fiveDayScheduleRoles: StaffRole[] = ["BRANCH_ADMIN", "DOCTOR_ASSISTANT"];
-const attendanceColumns = "id,branch_id,date,attendance_status,scheduled_start_at,scheduled_end_at,actual_check_in_at,actual_check_out_at,late_minutes";
+const legacyAttendanceColumns = "id,branch_id,date,attendance_status,scheduled_start_at,scheduled_end_at,actual_check_in_at,actual_check_out_at,late_minutes";
+const attendanceColumns = `${legacyAttendanceColumns},check_out_correction_status,check_out_correction_reason`;
 const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
   { id: "home", label: "Beranda", icon: Home },
   { id: "attendance", label: "Absensi", icon: BadgeCheck },
@@ -300,6 +303,8 @@ export function AttendancePortal() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [attendanceSuccess, setAttendanceSuccess] = useState<AttendanceAction | null>(null);
+  const [correctionSchemaAvailable, setCorrectionSchemaAvailable] = useState(true);
   const photoInput = useRef<HTMLInputElement>(null);
   const profilePhotoInput = useRef<HTMLInputElement>(null);
   const pendingAction = useRef<AttendanceAction | null>(null);
@@ -331,7 +336,15 @@ export function AttendancePortal() {
   const currentBranch = branches.find((branch) => branch.id === selectedBranchId) || null;
   const todayAttendances = attendanceRows.filter((row) => row.date === today);
   const todayAttendance = todayAttendances.find((row) => row.branch_id === selectedBranchId) || null;
-  const unfinishedTodayAttendance = todayAttendances.find((row) => row.actual_check_in_at && !row.actual_check_out_at) || null;
+  const unfinishedTodayRecords = todayAttendances.filter((row) => row.actual_check_in_at && !row.actual_check_out_at);
+  const unfinishedTodayAttendance = unfinishedTodayRecords.find(
+    (row) => row.check_out_correction_status === "PENDING"
+  ) || unfinishedTodayRecords
+    .slice()
+    .sort((a, b) => String(b.actual_check_in_at).localeCompare(String(a.actual_check_in_at)))[0] || null;
+  const unfinishedCurrentBranchAttendance = todayAttendances.find(
+    (row) => row.branch_id === selectedBranchId && row.actual_check_in_at && !row.actual_check_out_at
+  ) || null;
   const currentMonthRows = useMemo(
     () => attendanceRows.filter((row) => row.date >= monthStart && row.date <= today),
     [attendanceRows, monthStart, today]
@@ -404,8 +417,18 @@ export function AttendancePortal() {
         if (scheduleError) throw new Error(`Gagal membaca jadwal dokter hari ini: ${scheduleError.message}`);
         branchIds = Array.from(new Set((schedules || []).map((schedule) => schedule.branch_id)));
       }
-    } else if (context.branchId) {
-      branchIds = [context.branchId];
+    } else if (context.role === "BRANCH_ADMIN") {
+      if (context.branchId) branchIds = [context.branchId];
+    } else {
+      const { data: assignments, error: assignmentError } = await supabase
+        .from("staff_shift_assignments")
+        .select("branch_id")
+        .eq("staff_id", context.staffId)
+        .eq("date", today)
+        .eq("active", true);
+      if (assignmentError) throw new Error(`Gagal membaca penempatan cabang hari ini: ${assignmentError.message}`);
+      branchIds = Array.from(new Set((assignments || []).map((assignment) => assignment.branch_id)));
+      if (branchIds.length === 0 && context.branchId) branchIds = [context.branchId];
     }
 
     const fetchedBranches = branchIds.length
@@ -418,16 +441,41 @@ export function AttendancePortal() {
       throw new Error(`Gagal membaca cabang absensi: ${fetchedBranches.error.message}`);
     }
 
-    const { data: history, error: historyError } = await supabase
+    let { data: history, error: historyError } = await supabase
       .from("attendances")
       .select(attendanceColumns)
       .gte("date", monthStart)
       .lte("date", today)
       .order("date", { ascending: false });
+    if (
+      historyError?.message.includes("check_out_correction_status") ||
+      historyError?.message.includes("check_out_correction_reason")
+    ) {
+      const fallbackHistory = await supabase
+        .from("attendances")
+        .select(legacyAttendanceColumns)
+        .gte("date", monthStart)
+        .lte("date", today)
+        .order("date", { ascending: false });
+      if (fallbackHistory.error) {
+        throw new Error(`Gagal membaca riwayat absensi: ${fallbackHistory.error.message}`);
+      }
+      history = (fallbackHistory.data || []).map((row) => ({
+        ...row,
+        check_out_correction_status: null,
+        check_out_correction_reason: null
+      }));
+      historyError = null;
+      setCorrectionSchemaAvailable(false);
+    } else if (!historyError) {
+      setCorrectionSchemaAvailable(true);
+    }
     if (historyError) throw new Error(`Gagal membaca riwayat absensi: ${historyError.message}`);
 
     const todayRows = (history || []).filter((row) => row.date === today);
-    const unfinishedTodayRecord = todayRows.find((row) => !row.actual_check_out_at);
+    const unfinishedTodayRecord = todayRows
+      .filter((row) => row.actual_check_in_at && !row.actual_check_out_at)
+      .sort((a, b) => String(b.actual_check_in_at).localeCompare(String(a.actual_check_in_at)))[0];
     const historyBranchId = unfinishedTodayRecord?.branch_id;
     setStaffContext(context);
     setBranches(fetchedBranches.data || []);
@@ -902,6 +950,7 @@ export function AttendancePortal() {
   const beginAttendance = (action: AttendanceAction) => {
     setErrorMessage(null);
     setSuccessMessage(null);
+    setAttendanceSuccess(null);
     pendingAction.current = action;
     photoInput.current?.click();
   };
@@ -979,7 +1028,7 @@ export function AttendancePortal() {
         cleanupWarning = `Absensi tersimpan, tetapi foto lama belum berhasil dibersihkan: ${friendlyError(cleanupError, "Kesalahan tidak diketahui.")}`;
       }
       await loadPortalContext(sessionUser!);
-      setSuccessMessage(action === "check-in" ? "Absen masuk berhasil disimpan." : "Absen pulang berhasil disimpan.");
+      setAttendanceSuccess(action);
       if (cleanupWarning) setErrorMessage(cleanupWarning);
     } catch (submitError: unknown) {
       if (uploadedPath) {
@@ -1181,6 +1230,17 @@ export function AttendancePortal() {
 
       {!(activeTab === "chat" && staffContext.role === "DOCTOR") && errorMessage && <div className="notice error" role="alert"><AlertCircle />{errorMessage}</div>}
       {!(activeTab === "chat" && staffContext.role === "DOCTOR") && successMessage && <div className="notice success" role="status"><CheckCircle2 />{successMessage}</div>}
+      {!(activeTab === "chat" && staffContext.role === "DOCTOR") && attendanceSuccess && (
+        <div className="attendance-success" role="status" aria-live="polite">
+          <CheckCircle2 aria-hidden="true" />
+          <div className="attendance-success-copy">
+            <strong>{attendanceSuccess === "check-in" ? "Absen masuk berhasil" : "Absen pulang selesai"}</strong>
+            <span>{attendanceSuccess === "check-in"
+              ? "Siap melayani! Semoga lancar hari ini."
+              : "Waktunya istirahat! Sampai ketemu lagi besok 😊"}</span>
+          </div>
+        </div>
+      )}
 
       {!(activeTab === "chat" && staffContext.role === "DOCTOR") && <nav className="portal-nav" aria-label="Menu portal pegawai">
         {portalTabs
@@ -1234,22 +1294,29 @@ export function AttendancePortal() {
 
       {activeTab === "attendance" && (
         <>
-      {staffContext.role === "DOCTOR" && branches.length > 1 && (
+      {branches.length > 1 && (
         <label className="branch-picker">
           Cabang praktik hari ini
         <select
           value={selectedBranchId}
           onChange={(event) => setSelectedBranchId(event.target.value)}
-          disabled={!!unfinishedTodayAttendance}
         >
           {branches.map((branch) => {
             const branchAttendance = todayAttendances.find((row) => row.branch_id === branch.id);
-            const status = branchAttendance?.actual_check_out_at ? "Selesai" : branchAttendance?.actual_check_in_at ? "Sudah masuk" : branchAttendance ? "Sudah dicatat" : "Belum absen";
+            const status = branchAttendance?.check_out_correction_status === "PENDING"
+              ? "Perlu koreksi"
+              : branchAttendance?.actual_check_out_at
+              ? "Selesai"
+              : branchAttendance?.actual_check_in_at
+              ? "Sudah masuk"
+              : branchAttendance
+              ? "Sudah dicatat"
+              : "Belum absen";
             return <option key={branch.id} value={branch.id}>{branch.name} · {status}</option>;
           })}
         </select>
         <span className="branch-picker-note">{unfinishedTodayAttendance
-          ? "Selesaikan check-out di cabang yang sedang aktif sebelum berpindah ke cabang berikutnya."
+          ? `Check-out ${branches.find((branch) => branch.id === unfinishedTodayAttendance.branch_id)?.name || "cabang sebelumnya"} belum tercatat. Anda tetap dapat check-in di cabang lain; absensi ini akan menunggu koreksi Super Admin.`
           : "Setiap cabang memiliki catatan masuk dan pulang terpisah. Selesaikan check-in dan check-out di cabang yang sama sebelum berpindah."}</span>
         </label>
       )}
@@ -1266,21 +1333,27 @@ export function AttendancePortal() {
           <div className="location-heading"><MapPin /><div><strong>{currentBranch?.name}</strong><span>{geofenceConfigured
             ? `Radius absensi ${currentBranch?.geofence_radius_meters} meter`
             : "Geofence belum dikonfigurasi"}</span></div></div>
-          {staffContext.role === "DOCTOR" && unfinishedTodayAttendance && unfinishedTodayAttendance.branch_id === currentBranch?.id && (
-            <div className="notice warning compact"><AlertCircle />Absensi cabang ini masih berlangsung. Selesaikan check-out sebelum memulai absensi di cabang lain.</div>
+          {unfinishedCurrentBranchAttendance && (
+            <div className="notice warning compact"><AlertCircle />Absensi Aktif</div>
+          )}
+          {unfinishedTodayAttendance && unfinishedTodayAttendance.branch_id !== currentBranch?.id && (
+            <div className="notice warning compact"><AlertCircle />Check-out di {branches.find((branch) => branch.id === unfinishedTodayAttendance.branch_id)?.name || "cabang sebelumnya"} belum tercatat. Check-in di cabang ini akan menandai absensi sebelumnya untuk koreksi Super Admin.</div>
           )}
           {!geofenceConfigured && <div className="notice warning compact"><AlertCircle />Absensi belum dapat dilakukan di cabang ini.</div>}
+          {!correctionSchemaAvailable && unfinishedTodayAttendance && unfinishedTodayAttendance.branch_id !== currentBranch?.id && (
+            <div className="notice warning compact"><AlertCircle />Database belum diperbarui. Check-in di cabang berbeda sementara belum dapat diproses. Hubungi Super Admin untuk menerapkan pembaruan database.</div>
+          )}
           <div className="action-buttons">
             <button
-              className="primary-button"
+              className={todayAttendance ? "secondary-button" : "primary-button"}
               onClick={() => beginAttendance("check-in")}
-              disabled={isSubmitting || !geofenceConfigured || !!todayAttendance || !!unfinishedTodayAttendance}
+              disabled={isSubmitting || !geofenceConfigured || !!todayAttendance || !!unfinishedCurrentBranchAttendance || (!correctionSchemaAvailable && !!unfinishedTodayAttendance && unfinishedTodayAttendance.branch_id !== currentBranch?.id)}
             >
               {isSubmitting ? <RefreshCw className="spin" /> : <Camera />}
-              {todayAttendance ? "Masuk tercatat" : "Masuk"}
+              {todayAttendance?.actual_check_in_at ? "Masuk tercatat" : "Masuk"}
             </button>
             <button
-              className="secondary-button"
+              className={todayAttendance?.actual_check_in_at && !todayAttendance.actual_check_out_at ? "primary-button" : "secondary-button"}
               onClick={() => beginAttendance("check-out")}
               disabled={isSubmitting || !geofenceConfigured || !todayAttendance?.actual_check_in_at || currentBranch?.id !== todayAttendance.branch_id || !!todayAttendance.actual_check_out_at}
             >
@@ -1314,7 +1387,13 @@ export function AttendancePortal() {
                   <span>{row.attendance_status === "LATE" ? `Terlambat ${row.late_minutes} menit` : row.attendance_status === "PRESENT" ? "Hadir" : row.attendance_status}</span>
                   {branches.find((branch) => branch.id === row.branch_id) && <small>{branches.find((branch) => branch.id === row.branch_id)?.name}</small>}
                 </div>
-                <div className="history-times"><span>Masuk {formatTime(row.actual_check_in_at)}</span><span>Pulang {formatTime(row.actual_check_out_at)}</span></div>
+                <div className="history-times">
+                  <span>Masuk {formatTime(row.actual_check_in_at)}</span>
+                  <span>Pulang {formatTime(row.actual_check_out_at)}</span>
+                  {row.check_out_correction_status === "PENDING" && <small className="correction-pending">Menunggu persetujuan koreksi Super Admin</small>}
+                  {row.check_out_correction_status === "APPROVED" && <small className="correction-approved">Koreksi disetujui Super Admin</small>}
+                  {row.check_out_correction_status === "RESOLVED" && <small>Pulang tercatat langsung di cabang</small>}
+                </div>
               </article>
             ))}
           </div>

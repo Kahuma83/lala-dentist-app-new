@@ -394,6 +394,13 @@ export interface AttendanceRepository {
   ): Promise<Attendance[]>;
   checkIn(input: CheckInInput, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Attendance>;
   checkOut(input: CheckOutInput, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Attendance>;
+  approveCheckOutCorrection(input: {
+    attendanceId: string;
+    checkOutAt: string;
+    notes?: string;
+    actorRole?: UserRole;
+    actorId?: string;
+  }): Promise<Attendance>;
   createAbsence(input: CreateAbsenceInput, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Attendance>;
 }
 

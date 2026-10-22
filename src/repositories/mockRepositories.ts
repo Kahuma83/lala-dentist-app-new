@@ -6347,11 +6347,6 @@ export class MockAttendanceRepository implements AttendanceRepository {
     }
 
     // 4. Duplicate Check-in Check
-    const existing = db.attendances.find(a => a.staffId === staff.id && a.date === date);
-    if (existing) {
-      throw new Error("Staff sudah melakukan absensi pada tanggal ini");
-    }
-
     // 5. Determine Schedule & Snapshot
     let scheduledStartAt = input.scheduledStartAt || "";
     let scheduledEndAt = input.scheduledEndAt || "";
@@ -6421,9 +6416,43 @@ export class MockAttendanceRepository implements AttendanceRepository {
     if (!scheduledStartAt) scheduledStartAt = "08:00";
     if (!scheduledEndAt) scheduledEndAt = "14:00";
 
+    const existing = db.attendances.find(
+      (attendance) => attendance.staffId === staff!.id &&
+        attendance.date === date &&
+        attendance.branchId === targetBranchId
+    );
+    if (existing) {
+      throw new Error("Staff sudah melakukan absensi di cabang ini pada tanggal tersebut");
+    }
+
     if (effectiveRole === UserRole.BRANCH_ADMIN && effectiveBranch && targetBranchId !== effectiveBranch) {
       throw new Error("Branch Admin hanya dapat mencatat absensi di cabangnya sendiri");
     }
+
+    const openAttendanceAtSameBranch = db.attendances.find(
+      (attendance) => attendance.staffId === staff!.id &&
+        attendance.date === date &&
+        attendance.branchId === targetBranchId &&
+        attendance.actualCheckInAt &&
+        !attendance.actualCheckOutAt
+    );
+    if (openAttendanceAtSameBranch) {
+      throw new Error("Check-out di cabang ini harus diselesaikan sebelum check-in berikutnya.");
+    }
+
+    db.attendances
+      .filter((attendance) => attendance.staffId === staff!.id &&
+        attendance.date === date &&
+        attendance.branchId !== targetBranchId &&
+        attendance.actualCheckInAt &&
+        !attendance.actualCheckOutAt)
+      .forEach((attendance) => {
+        attendance.checkOutCorrectionStatus = "PENDING";
+        attendance.checkOutCorrectionRequestedAt ||= AppClock.nowISO();
+        attendance.checkOutCorrectionRequestedBy ||= input.actorId || null;
+        attendance.checkOutCorrectionReason ||= `Lupa check-out sebelum check-in di cabang ${targetBranchId}.`;
+        attendance.updatedAt = AppClock.nowISO();
+      });
 
     // 6. Timestamps & Late Minutes
     const actualCheckInAt = input.checkInTime || AppClock.nowISO();
@@ -6521,6 +6550,9 @@ export class MockAttendanceRepository implements AttendanceRepository {
 
     // 7. Update Record (Overtime is not calculated as money/payroll here)
     attendance.actualCheckOutAt = actualCheckOutAt;
+    if (attendance.checkOutCorrectionStatus === "PENDING") {
+      attendance.checkOutCorrectionStatus = "RESOLVED";
+    }
     attendance.earlyCheckoutMinutes = earlyCheckoutMinutes;
     if (input.checkOutPhotoPath !== undefined || input.photoPath !== undefined) {
       attendance.checkOutPhotoPath = input.checkOutPhotoPath ?? input.photoPath ?? null;
@@ -6537,6 +6569,49 @@ export class MockAttendanceRepository implements AttendanceRepository {
     attendance.updatedAt = AppClock.nowISO();
     attendance.updatedBy = input.actorId || "system";
 
+    return JSON.parse(JSON.stringify(attendance));
+  }
+
+  async approveCheckOutCorrection(input: {
+    attendanceId: string;
+    checkOutAt: string;
+    notes?: string;
+    actorRole?: UserRole;
+    actorId?: string;
+  }): Promise<Attendance> {
+    if (input.actorRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat menyetujui koreksi check-out.");
+    }
+    const attendance = db.attendances.find((row) => row.id === input.attendanceId);
+    if (!attendance || attendance.checkOutCorrectionStatus !== "PENDING" || attendance.actualCheckOutAt) {
+      throw new Error("Permintaan koreksi check-out tidak ditemukan atau sudah diproses.");
+    }
+    const checkOutAt = input.checkOutAt.includes("T")
+      ? new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Jakarta",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23"
+      }).format(new Date(input.checkOutAt))
+      : input.checkOutAt;
+    if (parseTimeToMinutes(checkOutAt) < parseTimeToMinutes(attendance.actualCheckInAt || "")) {
+      throw new Error("Waktu checkout tidak boleh sebelum waktu check-in.");
+    }
+    attendance.actualCheckOutAt = checkOutAt;
+    attendance.earlyCheckoutMinutes = Math.max(
+      0,
+      parseTimeToMinutes(attendance.scheduledEndAt) - parseTimeToMinutes(checkOutAt)
+    );
+    attendance.checkOutCorrectionStatus = "APPROVED";
+    attendance.checkOutCorrectionApprovedAt = AppClock.nowISO();
+    attendance.checkOutCorrectionApprovedBy = input.actorId || "system";
+    if (input.notes) {
+      attendance.checkOutCorrectionReason = attendance.checkOutCorrectionReason
+        ? `${attendance.checkOutCorrectionReason} Catatan: ${input.notes}`
+        : input.notes;
+    }
+    attendance.updatedAt = AppClock.nowISO();
+    attendance.updatedBy = input.actorId || "system";
     return JSON.parse(JSON.stringify(attendance));
   }
 

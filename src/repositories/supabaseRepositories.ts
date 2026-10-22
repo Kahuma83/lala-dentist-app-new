@@ -139,8 +139,30 @@ const attendanceSelectColumns = [
   "check_in_photo_path", "check_out_photo_path", "check_in_latitude",
   "check_in_longitude", "check_in_accuracy_meters", "check_out_latitude",
   "check_out_longitude", "check_out_accuracy_meters", "check_in_method",
+  "check_out_method", "check_out_correction_status", "check_out_correction_requested_at",
+  "check_out_correction_requested_by",
+  "check_out_correction_approved_at", "check_out_correction_approved_by",
+  "check_out_correction_reason", "notes", "created_by", "updated_by", "created_at", "updated_at"
+].join(", ");
+const legacyAttendanceSelectColumns = [
+  "id", "staff_id", "branch_id", "date", "attendance_status",
+  "scheduled_start_at", "scheduled_end_at", "actual_check_in_at",
+  "actual_check_out_at", "late_minutes", "early_checkout_minutes",
+  "check_in_photo_path", "check_out_photo_path", "check_in_latitude",
+  "check_in_longitude", "check_in_accuracy_meters", "check_out_latitude",
+  "check_out_longitude", "check_out_accuracy_meters", "check_in_method",
   "check_out_method", "notes", "created_by", "updated_by", "created_at", "updated_at"
 ].join(", ");
+
+async function queryAttendanceWithSchemaFallback<T>(
+  query: (columns: string) => PromiseLike<{ data: T; error: { message: string } | null }>
+): Promise<{ data: T; error: { message: string } | null }> {
+  const result = await query(attendanceSelectColumns);
+  const missingCorrectionColumn = result.error?.message &&
+    result.error.message.includes("check_out_correction_") &&
+    /does not exist|schema cache|could not find/i.test(result.error.message);
+  return missingCorrectionColumn ? query(legacyAttendanceSelectColumns) : result;
+}
 
 function mapAttendanceFromDb(row: any): Attendance {
   return {
@@ -165,6 +187,12 @@ function mapAttendanceFromDb(row: any): Attendance {
     checkOutAccuracyMeters: row.check_out_accuracy_meters,
     checkInMethod: row.check_in_method,
     checkOutMethod: row.check_out_method,
+    checkOutCorrectionStatus: row.check_out_correction_status,
+    checkOutCorrectionRequestedAt: row.check_out_correction_requested_at,
+    checkOutCorrectionRequestedBy: row.check_out_correction_requested_by,
+    checkOutCorrectionApprovedAt: row.check_out_correction_approved_at,
+    checkOutCorrectionApprovedBy: row.check_out_correction_approved_by,
+    checkOutCorrectionReason: row.check_out_correction_reason,
     notes: row.notes,
     createdBy: row.created_by,
     updatedBy: row.updated_by,
@@ -7998,20 +8026,21 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
 export class SupabaseAttendanceRepository implements AttendanceRepository {
   async getById(id: string, _currentUserRole?: UserRole, _userBranchId?: string | null): Promise<Attendance | null> {
     ensureSupabaseConnected();
-    const { data, error } = await supabase.from("attendances")
-      .select(attendanceSelectColumns)
-      .eq("id", id)
-      .maybeSingle();
+    const { data, error } = await queryAttendanceWithSchemaFallback((columns) =>
+      supabase.from("attendances").select(columns).eq("id", id).maybeSingle()
+    );
     if (error) return handleSupabaseReadError("attendances", error, null);
     return data ? mapAttendanceFromDb(data) : null;
   }
   async getByStaff(staffId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    let query = supabase.from("attendances").select(attendanceSelectColumns).eq("staff_id", staffId);
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
-      query = query.eq("branch_id", userBranchId);
-    }
-    const { data, error } = await query.order("date", { ascending: false });
+    const { data, error } = await queryAttendanceWithSchemaFallback((columns) => {
+      let query = supabase.from("attendances").select(columns).eq("staff_id", staffId);
+      if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+        query = query.eq("branch_id", userBranchId);
+      }
+      return query.order("date", { ascending: false });
+    });
     if (error) return handleSupabaseReadError("attendances", error, []);
     return (data || []).map(mapAttendanceFromDb);
   }
@@ -8022,13 +8051,15 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
     userBranchId?: string | null
   ): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    let q = supabase.from("attendances").select(attendanceSelectColumns).eq("date", date);
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
-      q = q.eq("branch_id", userBranchId);
-    } else if (branchId) {
-      q = q.eq("branch_id", branchId);
-    }
-    const { data, error } = await q;
+    const { data, error } = await queryAttendanceWithSchemaFallback((columns) => {
+      let query = supabase.from("attendances").select(columns).eq("date", date);
+      if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+        query = query.eq("branch_id", userBranchId);
+      } else if (branchId) {
+        query = query.eq("branch_id", branchId);
+      }
+      return query;
+    });
     if (error) return handleSupabaseReadError("attendances", error, []);
     return (data || []).map(mapAttendanceFromDb);
   }
@@ -8038,11 +8069,13 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
     userBranchId?: string | null
   ): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    let query = supabase.from("attendances").select(attendanceSelectColumns).eq("branch_id", branchId);
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
-      query = query.eq("branch_id", userBranchId);
-    }
-    const { data, error } = await query.order("date", { ascending: false });
+    const { data, error } = await queryAttendanceWithSchemaFallback((columns) => {
+      let query = supabase.from("attendances").select(columns).eq("branch_id", branchId);
+      if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+        query = query.eq("branch_id", userBranchId);
+      }
+      return query.order("date", { ascending: false });
+    });
     if (error) return handleSupabaseReadError("attendances", error, []);
     return (data || []).map(mapAttendanceFromDb);
   }
@@ -8053,27 +8086,29 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
     currentStaffId?: string | null
   ): Promise<Attendance[]> {
     ensureSupabaseConnected();
-    let query = supabase.from("attendances").select(attendanceSelectColumns);
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
-      query = query.eq("branch_id", userBranchId);
-    } else if (filter?.branchId) {
-      query = query.eq("branch_id", filter.branchId);
-    }
+    const { data, error } = await queryAttendanceWithSchemaFallback((columns) => {
+      let query = supabase.from("attendances").select(columns);
+      if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+        query = query.eq("branch_id", userBranchId);
+      } else if (filter?.branchId) {
+        query = query.eq("branch_id", filter.branchId);
+      }
 
-    if (
-      currentStaffId &&
-      [UserRole.DOCTOR, UserRole.DOCTOR_ASSISTANT, UserRole.OB].includes(currentUserRole as UserRole)
-    ) {
-      query = query.eq("staff_id", currentStaffId);
-    } else if (filter?.staffId) {
-      query = query.eq("staff_id", filter.staffId);
-    }
-    if (filter?.date) query = query.eq("date", filter.date);
-    if (filter?.dateRange?.startDate) query = query.gte("date", filter.dateRange.startDate);
-    if (filter?.dateRange?.endDate) query = query.lte("date", filter.dateRange.endDate);
-    if (filter?.attendanceStatus) query = query.eq("attendance_status", filter.attendanceStatus);
+      if (
+        currentStaffId &&
+        [UserRole.DOCTOR, UserRole.DOCTOR_ASSISTANT, UserRole.OB].includes(currentUserRole as UserRole)
+      ) {
+        query = query.eq("staff_id", currentStaffId);
+      } else if (filter?.staffId) {
+        query = query.eq("staff_id", filter.staffId);
+      }
+      if (filter?.date) query = query.eq("date", filter.date);
+      if (filter?.dateRange?.startDate) query = query.gte("date", filter.dateRange.startDate);
+      if (filter?.dateRange?.endDate) query = query.lte("date", filter.dateRange.endDate);
+      if (filter?.attendanceStatus) query = query.eq("attendance_status", filter.attendanceStatus);
 
-    const { data, error } = await query.order("date", { ascending: false });
+      return query.order("date", { ascending: false });
+    });
     if (error) return handleSupabaseReadError("attendances", error, []);
     return (data || []).map(mapAttendanceFromDb);
   }
@@ -8116,6 +8151,25 @@ export class SupabaseAttendanceRepository implements AttendanceRepository {
     if (error) throw new Error(`Gagal menyimpan check-out: ${error.message}`);
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) throw new Error("Supabase tidak mengembalikan catatan check-out yang tersimpan.");
+    return mapAttendanceFromDb(row);
+  }
+  async approveCheckOutCorrection(input: {
+    attendanceId: string;
+    checkOutAt: string;
+    notes?: string;
+  }): Promise<Attendance> {
+    ensureSupabaseConnected();
+    if (!input.attendanceId || !input.checkOutAt) {
+      throw new Error("Catatan absensi dan waktu pulang yang valid wajib disertakan.");
+    }
+    const { data, error } = await supabase.rpc("approve_staff_attendance_checkout_correction", {
+      p_attendance_id: input.attendanceId,
+      p_check_out_at: input.checkOutAt,
+      p_notes: input.notes || null
+    });
+    if (error) throw new Error(`Gagal menyetujui koreksi check-out: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Supabase tidak mengembalikan koreksi check-out yang disetujui.");
     return mapAttendanceFromDb(row);
   }
   async createAbsence(input: CreateAbsenceInput): Promise<Attendance> {

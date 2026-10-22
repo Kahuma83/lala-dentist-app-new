@@ -783,4 +783,54 @@ describe("PHASE HR-2A — Attendance Core", () => {
     expect(lateList[0].staffId).toBe("staff-ast-clary");
     expect(lateList[0].attendanceStatus).toBe(AttendanceStatus.LATE);
   });
+
+  it("Scenario 36: check-in cabang berikutnya menandai check-out tertinggal untuk persetujuan Super Admin", async () => {
+    await doctorScheduleRepo.createSchedule({
+      doctorId: "doc-yuni",
+      branchId: "branch-gebang",
+      date: "2026-10-13",
+      startTime: "08:00",
+      endTime: "12:00",
+      status: ScheduleStatus.ACTIVE
+    });
+    await doctorScheduleRepo.createSchedule({
+      doctorId: "doc-yuni",
+      branchId: "branch-ambulu",
+      date: "2026-10-13",
+      startTime: "13:00",
+      endTime: "17:00",
+      status: ScheduleStatus.ACTIVE
+    });
+
+    const firstBranchAttendance = await attendanceRepo.checkIn({
+      staffId: "doc-yuni",
+      branchId: "branch-gebang",
+      date: "2026-10-13",
+      checkInTime: "08:00"
+    });
+    const secondBranchAttendance = await attendanceRepo.checkIn({
+      staffId: "doc-yuni",
+      branchId: "branch-ambulu",
+      date: "2026-10-13",
+      checkInTime: "13:00"
+    });
+
+    expect(secondBranchAttendance.branchId).toBe("branch-ambulu");
+    expect((await attendanceRepo.getById(firstBranchAttendance.id))?.checkOutCorrectionStatus).toBe("PENDING");
+    await expect(attendanceRepo.approveCheckOutCorrection({
+      attendanceId: firstBranchAttendance.id,
+      checkOutAt: "2026-10-13T05:00:00.000Z",
+      actorRole: UserRole.DOCTOR
+    })).rejects.toThrow(/hanya Super Admin/i);
+
+    const approved = await attendanceRepo.approveCheckOutCorrection({
+      attendanceId: firstBranchAttendance.id,
+      checkOutAt: "2026-10-13T05:00:00.000Z",
+      actorRole: UserRole.SUPER_ADMIN,
+      actorId: "super-admin-1"
+    });
+    expect(approved.actualCheckOutAt).toBe("12:00");
+    expect(approved.checkOutCorrectionStatus).toBe("APPROVED");
+    expect(approved.checkOutCorrectionApprovedBy).toBe("super-admin-1");
+  });
 });

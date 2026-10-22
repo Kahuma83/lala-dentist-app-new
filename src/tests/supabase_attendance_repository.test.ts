@@ -51,6 +51,40 @@ describe("Supabase attendance repository", () => {
     expect(attendances[0].checkInLatitude).toBe(-8.16);
   });
 
+  it("retries attendance reads without correction fields when the database migration is pending", async () => {
+    const missingColumnQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      gte: vi.fn().mockReturnThis(),
+      lte: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      then: (resolve: (result: unknown) => unknown) =>
+        Promise.resolve({
+          data: null,
+          error: { message: "column attendances.check_out_correction_status does not exist" }
+        }).then(resolve)
+    };
+    const legacyQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      gte: vi.fn().mockReturnThis(),
+      lte: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      then: (resolve: (result: unknown) => unknown) =>
+        Promise.resolve({ data: [attendanceRow], error: null }).then(resolve)
+    };
+    vi.spyOn(supabaseLib.supabase, "from")
+      .mockReturnValueOnce(missingColumnQuery as any)
+      .mockReturnValueOnce(legacyQuery as any);
+
+    const attendances = await attendanceRepo.list();
+
+    expect(missingColumnQuery.select).toHaveBeenCalledWith(expect.stringContaining("check_out_correction_status"));
+    expect(legacyQuery.select).toHaveBeenCalledWith(expect.not.stringContaining("check_out_correction_status"));
+    expect(attendances).toHaveLength(1);
+    expect(attendances[0].id).toBe("attendance-1");
+  });
+
   it("filters attendance by branch, staff, and date range in Supabase", async () => {
     const query = {
       select: vi.fn().mockReturnThis(),
@@ -142,6 +176,32 @@ describe("Supabase attendance repository", () => {
       p_photo_path: "branch-gebang/staff-1/check-out.jpg"
     });
     expect(attendance.checkOutAccuracyMeters).toBe(10);
+  });
+
+  it("approves a missed check-out correction through the Super Admin RPC", async () => {
+    const correctedRow = {
+      ...attendanceRow,
+      actual_check_out_at: "2026-10-16T06:00:00.000Z",
+      check_out_correction_status: "APPROVED",
+      check_out_correction_approved_at: "2026-10-16T08:00:00.000Z"
+    };
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({
+      data: correctedRow as any,
+      error: null
+    } as any);
+
+    const attendance = await attendanceRepo.approveCheckOutCorrection({
+      attendanceId: "attendance-1",
+      checkOutAt: "2026-10-16T06:00:00.000Z",
+      notes: "Disetujui"
+    });
+
+    expect(rpc).toHaveBeenCalledWith("approve_staff_attendance_checkout_correction", {
+      p_attendance_id: "attendance-1",
+      p_check_out_at: "2026-10-16T06:00:00.000Z",
+      p_notes: "Disetujui"
+    });
+    expect(attendance.checkOutCorrectionStatus).toBe("APPROVED");
   });
 
   it("persists staff absence through the secure RPC", async () => {

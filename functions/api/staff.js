@@ -10,7 +10,7 @@ const getAllowedOrigins = (env) => {
 
 const corsHeaders = (origin) => ({
   "Access-Control-Allow-Origin": origin,
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "POST, PUT, OPTIONS",
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Max-Age": "86400",
   "Cache-Control": "no-store",
@@ -70,9 +70,196 @@ const isAllowedOrigin = (request, env) => {
 export const onRequestOptions = async ({ request, env }) => {
   const origin = isAllowedOrigin(request, env);
   if (!origin) {
-    return jsonResponse({ message: "Origin tidak diizinkan untuk membuat akun staf." }, 403);
+    return jsonResponse({ message: "Origin tidak diizinkan untuk mengelola akun staf." }, 403);
   }
   return new Response(null, { status: 204, headers: corsHeaders(origin) });
+};
+
+export const onRequestPut = async ({ request, env }) => {
+  const originHeader = getOrigin(request);
+  const origin = originHeader ? isAllowedOrigin(request, env) : null;
+  if (originHeader && !origin) {
+    return jsonResponse({ message: "Origin tidak diizinkan untuk mengelola akun staf." }, 403);
+  }
+
+  const supabaseUrl = env.VITE_SUPABASE_URL || env.SUPABASE_URL;
+  const serviceKey = env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY;
+  const publicApiKey = env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY || serviceKey;
+  if (!supabaseUrl || !serviceKey || !publicApiKey) {
+    console.error("[pages-function] Staff account management is missing server-side Supabase configuration.");
+    return jsonResponse({ message: "Layanan pengelolaan akun staf belum dikonfigurasi di server." }, 500, origin);
+  }
+
+  const authorization = request.headers.get("Authorization") || "";
+  const bearerPrefix = `${["Bear", "er"].join("")} `;
+  const accessToken = authorization.startsWith(bearerPrefix) ? authorization.slice(bearerPrefix.length) : "";
+  if (!accessToken) {
+    return jsonResponse({ message: "Unauthorized: token sesi tidak ditemukan." }, 401, origin);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ message: "Permintaan perubahan akun staf tidak valid." }, 400, origin);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return jsonResponse({ message: "Permintaan perubahan akun staf tidak valid." }, 400, origin);
+  }
+
+  const accountId = String(body.accountId || "").trim();
+  const username = String(body.username || "").trim().toLowerCase();
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!accountId) {
+    return jsonResponse({ message: "Akun staf yang akan diubah wajib dipilih." }, 400, origin);
+  }
+  if (username.length < 3 || username.length > 64 || !/^[a-z0-9_.-]+$/.test(username)) {
+    return jsonResponse({ message: "Username minimal 3 karakter dan hanya boleh berisi huruf, angka, titik, garis bawah, atau tanda hubung." }, 400, origin);
+  }
+  if (password && password.length < 6) {
+    return jsonResponse({ message: "Password baru minimal harus 6 karakter." }, 400, origin);
+  }
+
+  try {
+    const authUser = await requestSupabase({
+      url: supabaseUrl,
+      apiKey: publicApiKey,
+      accessToken,
+      path: "/auth/v1/user"
+    });
+    if (!authUser?.id) {
+      return jsonResponse({ message: "Unauthorized: sesi login tidak valid." }, 401, origin);
+    }
+
+    const actorAccounts = await requestSupabase({
+      url: supabaseUrl,
+      apiKey: serviceKey,
+      path: `/rest/v1/user_accounts?${queryString({
+        select: "role,active",
+        auth_user_id: `eq.${authUser.id}`,
+        limit: "2"
+      })}`
+    });
+    if (!Array.isArray(actorAccounts) || actorAccounts.length !== 1) {
+      console.error("[pages-function] Staff account update returned an unexpected actor account count.");
+      return jsonResponse({ message: "Gagal memverifikasi akun administrator." }, 500, origin);
+    }
+    if (actorAccounts[0].role !== "SUPER_ADMIN" || actorAccounts[0].active !== true) {
+      return jsonResponse({ message: "Forbidden: hanya SUPER_ADMIN aktif yang dapat mengubah akun staf." }, 403, origin);
+    }
+
+    const targetRows = await requestSupabase({
+      url: supabaseUrl,
+      apiKey: serviceKey,
+      path: `/rest/v1/user_accounts?${queryString({
+        select: "id,auth_user_id,username,email,name,role,branch_id,staff_id,doctor_id,active,created_at",
+        id: `eq.${accountId}`,
+        limit: "2"
+      })}`
+    });
+    if (!Array.isArray(targetRows) || targetRows.length !== 1) {
+      return jsonResponse({ message: "Akun staf tidak ditemukan." }, 404, origin);
+    }
+    const target = targetRows[0];
+    if (!["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB"].includes(target.role)) {
+      return jsonResponse({ message: "Akun ini bukan akun staf yang dapat dikelola melalui menu HR." }, 400, origin);
+    }
+    if (target.active !== true) {
+      return jsonResponse({ message: "Akun staf nonaktif tidak dapat diperbarui." }, 400, origin);
+    }
+    if (!target.auth_user_id) {
+      return jsonResponse({ message: "Akun staf belum terhubung ke Supabase Auth." }, 409, origin);
+    }
+
+    const nextEmail = `${username}@laladentist.id`;
+    const duplicates = await requestSupabase({
+      url: supabaseUrl,
+      apiKey: serviceKey,
+      path: `/rest/v1/user_accounts?${queryString({
+        select: "id",
+        or: `(username.ilike.${username},email.ilike.${nextEmail})`,
+        id: `neq.${accountId}`,
+        limit: "2"
+      })}`
+    });
+    if (!Array.isArray(duplicates)) {
+      return jsonResponse({ message: "Gagal memeriksa username yang sudah terdaftar." }, 502, origin);
+    }
+    if (duplicates.length) {
+      return jsonResponse({ message: `Username '${username}' sudah digunakan akun lain.` }, 409, origin);
+    }
+
+    const authUpdate = {
+      email: nextEmail,
+      email_confirm: true,
+      user_metadata: {
+        username,
+        name: target.name,
+        role: target.role
+      },
+      ...(password ? { password } : {})
+    };
+    const updatedRows = await requestSupabase({
+      url: supabaseUrl,
+      apiKey: serviceKey,
+      path: `/rest/v1/user_accounts?${queryString({ id: `eq.${accountId}`, select: "*" })}`,
+      method: "PATCH",
+      body: { username, email: nextEmail, updated_at: new Date().toISOString() },
+      prefer: "return=representation"
+    });
+    if (!Array.isArray(updatedRows) || updatedRows.length !== 1) {
+      return jsonResponse({ message: "Profil akun staf tidak berhasil diperbarui." }, 502, origin);
+    }
+
+    try {
+      await requestSupabase({
+        url: supabaseUrl,
+        apiKey: serviceKey,
+        path: `/auth/v1/admin/users/${encodeURIComponent(target.auth_user_id)}`,
+        method: "PUT",
+        body: authUpdate
+      });
+    } catch (authError) {
+      await requestSupabase({
+        url: supabaseUrl,
+        apiKey: serviceKey,
+        path: `/rest/v1/user_accounts?${queryString({ id: `eq.${accountId}` })}`,
+        method: "PATCH",
+        body: { username: target.username, email: target.email, updated_at: new Date().toISOString() }
+      }).catch((rollbackError) => {
+        console.error("[pages-function] Failed to roll back staff account profile after Auth update failure:", rollbackError);
+      });
+      throw authError;
+    }
+
+    const updated = updatedRows[0];
+    return jsonResponse({
+      account: {
+        id: updated.id,
+        authUserId: updated.auth_user_id,
+        username: updated.username,
+        email: updated.email,
+        name: updated.name,
+        role: updated.role,
+        branchId: updated.branch_id || null,
+        staffId: updated.staff_id || null,
+        doctorId: updated.doctor_id || null,
+        active: updated.active ?? true,
+        createdAt: updated.created_at || target.created_at,
+        updatedAt: updated.updated_at || new Date().toISOString()
+      }
+    }, 200, origin);
+  } catch (error) {
+    const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 600
+      ? error.status === 401 || error.status === 403 ? error.status : 502
+      : 502;
+    console.error("[pages-function] Staff account update failed:", error);
+    return jsonResponse({
+      message: status === 401
+        ? "Unauthorized: sesi login tidak valid."
+        : `Gagal memperbarui akun staf: ${error.message}`
+    }, status, origin);
+  }
 };
 
 export const onRequestPost = async ({ request, env }) => {

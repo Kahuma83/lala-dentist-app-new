@@ -437,6 +437,12 @@ export interface Attendance {
   checkOutAccuracyMeters?: number | null;
   checkInMethod?: AttendanceMethod;
   checkOutMethod?: AttendanceMethod | null;
+  checkOutCorrectionStatus?: "PENDING" | "APPROVED" | "RESOLVED" | null;
+  checkOutCorrectionRequestedBy?: string | null;
+  checkOutCorrectionRequestedAt?: string | null;
+  checkOutCorrectionApprovedAt?: string | null;
+  checkOutCorrectionApprovedBy?: string | null;
+  checkOutCorrectionReason?: string | null;
   notes?: string;
   createdAt: string;
   updatedAt: string;

@@ -247,23 +247,40 @@ export const AttendanceManager: React.FC = () => {
 
     try {
       setIsSubmitting(true);
-      await attendanceRepo.checkOut(
-        {
+      if (targetAttendanceForCheckout?.checkOutCorrectionStatus === "PENDING") {
+        if (!isSuper) throw new Error("Hanya Super Admin yang dapat menyetujui koreksi check-out.");
+        const checkOutAt = new Date(
+          `${targetAttendanceForCheckout.date}T${checkOutForm.checkOutTime}:00+07:00`
+        );
+        if (Number.isNaN(checkOutAt.getTime())) throw new Error("Waktu check-out koreksi tidak valid.");
+        await attendanceRepo.approveCheckOutCorrection({
           attendanceId: checkOutForm.attendanceId,
-          checkOutTime: checkOutForm.checkOutTime,
-          photoPath: checkOutForm.photoPath || null,
-          method: checkOutForm.method,
+          checkOutAt: checkOutAt.toISOString(),
           notes: checkOutForm.notes || undefined,
           actorRole: currentUser?.role,
-          actorBranchId: userBranchId,
           actorId: currentUser?.id
-        },
-        currentUser?.role,
-        userBranchId
-      );
+        });
+      } else {
+        await attendanceRepo.checkOut(
+          {
+            attendanceId: checkOutForm.attendanceId,
+            checkOutTime: checkOutForm.checkOutTime,
+            photoPath: checkOutForm.photoPath || null,
+            method: checkOutForm.method,
+            notes: checkOutForm.notes || undefined,
+            actorRole: currentUser?.role,
+            actorBranchId: userBranchId,
+            actorId: currentUser?.id
+          },
+          currentUser?.role,
+          userBranchId
+        );
+      }
 
       await refreshData();
-      showSuccess("Check-out berhasil dicatat!");
+      showSuccess(targetAttendanceForCheckout?.checkOutCorrectionStatus === "PENDING"
+        ? "Koreksi check-out telah disetujui."
+        : "Check-out berhasil dicatat!");
       setIsCheckOutModalOpen(false);
       setTargetAttendanceForCheckout(null);
     } catch (err: unknown) {
@@ -550,11 +567,43 @@ export const AttendanceManager: React.FC = () => {
                           <span className="text-slate-400 italic">Belum checkout</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-slate-600 max-w-xs truncate">
-                        {att.notes || "-"}
+                      <td className="px-4 py-3 text-slate-600 max-w-xs">
+                        <div className="truncate">{att.notes || "-"}</div>
+                        {att.checkOutCorrectionReason && (
+                          <div className="mt-1 text-[10px] font-medium text-amber-700">
+                            {att.checkOutCorrectionReason}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
-                        {att.actualCheckInAt && !att.actualCheckOutAt
+                        {att.checkOutCorrectionStatus === "PENDING" ? (
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[11px] font-semibold text-amber-700">Perlu koreksi pulang</span>
+                            {isSuper && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTargetAttendanceForCheckout(att);
+                                  setCheckOutForm({
+                                    attendanceId: att.id,
+                                    checkOutTime: att.scheduledEndAt || "17:00",
+                                    method: AttendanceMethod.WEB,
+                                    photoPath: "",
+                                    notes: ""
+                                  });
+                                  setIsCheckOutModalOpen(true);
+                                }}
+                                className="rounded-md bg-blue-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-blue-700"
+                              >
+                                Tinjau & setujui
+                              </button>
+                            )}
+                          </div>
+                        ) : att.checkOutCorrectionStatus === "APPROVED" ? (
+                          <span className="text-[11px] font-semibold text-emerald-700">Koreksi disetujui Super Admin</span>
+                        ) : att.checkOutCorrectionStatus === "RESOLVED" ? (
+                          <span className="text-[11px] text-slate-500">Pulang tercatat langsung di cabang</span>
+                        ) : att.actualCheckInAt && !att.actualCheckOutAt
                           ? <span className="text-[11px] text-amber-700">Menunggu check-out mandiri</span>
                           : <span className="text-[11px] text-slate-400">Selesai</span>}
                       </td>
@@ -710,7 +759,9 @@ export const AttendanceManager: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <LogOut className="w-4 h-4 text-amber-600" />
-                Catat Check-Out Kehadiran
+                {targetAttendanceForCheckout.checkOutCorrectionStatus === "PENDING"
+                  ? "Tinjau Koreksi Check-Out"
+                  : "Catat Check-Out Kehadiran"}
               </h3>
               <button
                 onClick={() => setIsCheckOutModalOpen(false)}
@@ -732,10 +783,19 @@ export const AttendanceManager: React.FC = () => {
                 <div className="text-slate-500">
                   Waktu Check-In: {targetAttendanceForCheckout.actualCheckInAt}
                 </div>
+                {targetAttendanceForCheckout.checkOutCorrectionReason && (
+                  <div className="mt-2 text-amber-700">
+                    Permintaan: {targetAttendanceForCheckout.checkOutCorrectionReason}
+                  </div>
+                )}
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Waktu Check-Out *</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  {targetAttendanceForCheckout.checkOutCorrectionStatus === "PENDING"
+                    ? "Waktu Pulang yang Disetujui (WIB) *"
+                    : "Waktu Check-Out *"}
+                </label>
                 <input
                   type="text"
                   required
@@ -747,22 +807,28 @@ export const AttendanceManager: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Path Foto Metadata (Simulasi Kamera)
-                </label>
-                <input
-                  type="text"
-                  placeholder="uploads/attendance/checkout.jpg"
-                  value={checkOutForm.photoPath}
-                  onChange={(e) => setCheckOutForm({ ...checkOutForm, photoPath: e.target.value })}
-                  className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-amber-500/20"
-                  id="checkout-photo-input"
-                />
-              </div>
+              {targetAttendanceForCheckout.checkOutCorrectionStatus !== "PENDING" && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Path Foto Metadata (Simulasi Kamera)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="uploads/attendance/checkout.jpg"
+                    value={checkOutForm.photoPath}
+                    onChange={(e) => setCheckOutForm({ ...checkOutForm, photoPath: e.target.value })}
+                    className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-amber-500/20"
+                    id="checkout-photo-input"
+                  />
+                </div>
+              )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Catatan Tambahan</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  {targetAttendanceForCheckout.checkOutCorrectionStatus === "PENDING"
+                    ? "Catatan Persetujuan (opsional)"
+                    : "Catatan Tambahan"}
+                </label>
                 <textarea
                   rows={2}
                   value={checkOutForm.notes}
@@ -783,10 +849,14 @@ export const AttendanceManager: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-4 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm disabled:opacity-50"
+                  className={`px-4 py-2 text-xs font-semibold ${targetAttendanceForCheckout.checkOutCorrectionStatus === "PENDING" ? "bg-blue-600 hover:bg-blue-700" : "bg-amber-600 hover:bg-amber-700"} text-white rounded-lg shadow-sm disabled:opacity-50`}
                   id="btn-submit-checkout"
                 >
-                  {isSubmitting ? "Menyimpan..." : "Simpan Check-Out"}
+                  {isSubmitting
+                    ? "Menyimpan..."
+                    : targetAttendanceForCheckout.checkOutCorrectionStatus === "PENDING"
+                    ? "Setujui Koreksi"
+                    : "Simpan Check-Out"}
                 </button>
               </div>
             </form>

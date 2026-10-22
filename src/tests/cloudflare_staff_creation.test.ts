@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { onRequestOptions, onRequestPost } from "../../functions/api/staff.js";
+import { onRequestOptions, onRequestPost, onRequestPut } from "../../functions/api/staff.js";
 
 const origin = "https://klinik.laladentist.id";
 const env = {
@@ -163,5 +163,133 @@ describe("Cloudflare Pages staff account endpoint", () => {
 
     expect(response.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows an active Super Admin to update a staff username and password", async () => {
+    const updatedAccount = {
+      id: "account-id",
+      auth_user_id: "staff-auth-id",
+      username: "ani.baru",
+      email: "ani.baru@laladentist.id",
+      name: "Ani Staff",
+      role: "BRANCH_ADMIN",
+      branch_id: "branch-id",
+      staff_id: "staff-id",
+      doctor_id: null,
+      active: true,
+      created_at: "2026-10-22T00:00:00.000Z",
+      updated_at: "2026-10-23T00:00:00.000Z"
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "super-admin-auth-id",
+        user_metadata: { display: "Admin" }
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { role: "SUPER_ADMIN", active: true }
+      ]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        id: "account-id",
+        auth_user_id: "staff-auth-id",
+        username: "ani",
+        email: "ani@laladentist.id",
+        name: "Ani Staff",
+        role: "BRANCH_ADMIN",
+        branch_id: "branch-id",
+        staff_id: "staff-id",
+        doctor_id: null,
+        active: true,
+        created_at: "2026-10-22T00:00:00.000Z"
+      }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response("[]", { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([updatedAccount]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { id: "staff-auth-id" } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestPut({
+      request: createRequest("PUT", {
+        accountId: "account-id",
+        username: "Ani.Baru",
+        password: "new-secret-password"
+      }, { Authorization: "Bearer test-session-token" }),
+      env
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      account: { id: "account-id", username: "ani.baru", email: "ani.baru@laladentist.id" }
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock.mock.calls[4][1].method).toBe("PATCH");
+    expect(fetchMock.mock.calls[5][0]).toContain("/auth/v1/admin/users/staff-auth-id");
+    expect(fetchMock.mock.calls[5][1].method).toBe("PUT");
+    expect(fetchMock.mock.calls[5][1].body).toContain("new-secret-password");
+    expect(fetchMock.mock.calls[5][1].body).toContain("ani.baru@laladentist.id");
+    expect(fetchMock.mock.calls[5][1].body).not.toContain("Admin");
+  });
+
+  it("rejects staff credential changes from non-Super Admin accounts", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "branch-admin-auth-id" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { role: "BRANCH_ADMIN", active: true }
+      ]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestPut({
+      request: createRequest("PUT", {
+        accountId: "account-id",
+        username: "ani",
+        password: "new-secret-password"
+      }, { Authorization: "Bearer test-session-token" }),
+      env
+    });
+
+    expect(response.status).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires a session token before updating staff credentials", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestPut({
+      request: createRequest("PUT", { accountId: "account-id", username: "ani" }),
+      env
+    });
+
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a username already used by another account", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "super-admin-auth-id" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { role: "SUPER_ADMIN", active: true }
+      ]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        id: "account-id",
+        auth_user_id: "staff-auth-id",
+        username: "ani",
+        email: "ani@laladentist.id",
+        name: "Ani Staff",
+        role: "BRANCH_ADMIN",
+        active: true,
+        created_at: "2026-10-22T00:00:00.000Z"
+      }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "another-account-id" }]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestPut({
+      request: createRequest("PUT", {
+        accountId: "account-id",
+        username: "taken-name"
+      }, { Authorization: "Bearer test-session-token" }),
+      env
+    });
+
+    expect(response.status).toBe(409);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
