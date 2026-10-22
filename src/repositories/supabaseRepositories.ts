@@ -926,7 +926,9 @@ export class SupabasePatientRepository implements PatientRepository {
     if (updates.maritalStatus !== undefined) dbPayload.marital_status = updates.maritalStatus?.trim() || null;
     if (updates.education !== undefined) dbPayload.education = updates.education?.trim() || null;
     if (updates.gender !== undefined) dbPayload.gender = updates.gender;
-    if (updates.dateOfBirth !== undefined) dbPayload.date_of_birth = updates.dateOfBirth;
+    if (updates.dateOfBirth !== undefined) {
+      dbPayload.date_of_birth = updates.dateOfBirth.trim() ? updates.dateOfBirth : null;
+    }
     if (updates.acquisitionSource !== undefined) dbPayload.acquisition_source = updates.acquisitionSource;
     if (updates.referringStaffId !== undefined) dbPayload.referring_staff_id = updates.referringStaffId || null;
     if (updates.referralName !== undefined || updates.acquisitionSource !== undefined) {
