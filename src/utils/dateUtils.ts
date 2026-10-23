@@ -55,6 +55,13 @@ export function getOperationalTimeString(value: string | undefined): string {
   }).format(date);
 }
 
+export function formatAttendanceTime(value: string | null | undefined): string {
+  if (!value) return "-";
+  if (!value.includes("T")) return value;
+  const operationalTime = getOperationalTimeString(value);
+  return operationalTime === "--:--" ? value : operationalTime;
+}
+
 export function toOperationalDateTime(value: string, time: string): string {
   const operationalDate = getOperationalDateString(value);
   if (!operationalDate || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) {

@@ -24,6 +24,7 @@ import {
   AlertTriangle
 } from "lucide-react";
 import { AppClock } from "../utils/clock";
+import { formatAttendanceTime } from "../utils/dateUtils";
 
 export const AttendanceManager: React.FC = () => {
   const {
@@ -532,9 +533,7 @@ export const AttendanceManager: React.FC = () => {
                         {att.actualCheckInAt ? (
                           <div>
                             <div className="font-semibold text-slate-900 font-mono">
-                              {att.actualCheckInAt.includes("T")
-                                ? att.actualCheckInAt.split("T")[1]?.substring(0, 5)
-                                : att.actualCheckInAt}
+                              {formatAttendanceTime(att.actualCheckInAt)}
                             </div>
                             <div className="text-[10px] text-slate-400 flex items-center gap-1">
                               <span>{att.checkInMethod}</span>
@@ -549,9 +548,7 @@ export const AttendanceManager: React.FC = () => {
                         {att.actualCheckOutAt ? (
                           <div>
                             <div className="font-semibold text-slate-900 font-mono">
-                              {att.actualCheckOutAt.includes("T")
-                                ? att.actualCheckOutAt.split("T")[1]?.substring(0, 5)
-                                : att.actualCheckOutAt}
+                              {formatAttendanceTime(att.actualCheckOutAt)}
                             </div>
                             <div className="text-[10px] text-slate-400 flex items-center gap-1">
                               <span>{att.checkOutMethod || "WEB"}</span>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCalendarDate, getOperationalDateString, getOperationalTimeString, toOperationalDateTime } from "../utils/dateUtils";
+import { formatAttendanceTime, formatCalendarDate, getOperationalDateString, getOperationalTimeString, toOperationalDateTime } from "../utils/dateUtils";
 
 describe("operational booking time formatting", () => {
   it("formats schedule calendar dates without converting local midnight to UTC", () => {
@@ -17,6 +17,12 @@ describe("operational booking time formatting", () => {
 
   it("formats booking timestamps already expressed in WIB without shifting the displayed time", () => {
     expect(getOperationalTimeString("2026-10-16T11:00:00+07:00")).toBe("11:00");
+  });
+
+  it("formats attendance timestamps in WIB and preserves legacy time-only values", () => {
+    expect(formatAttendanceTime("2026-10-16T11:00:00+00:00")).toBe("18:00");
+    expect(formatAttendanceTime("14:05")).toBe("14:05");
+    expect(formatAttendanceTime(null)).toBe("-");
   });
 
   it("normalizes the selected local slot even when the incoming timestamp was encoded as UTC", () => {
