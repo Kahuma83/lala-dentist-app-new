@@ -96,6 +96,43 @@ describe("Supabase payroll repository", () => {
     ).rejects.toThrow(/Payroll memiliki riwayat jurnal/);
   });
 
+  it("reopens a reviewed payroll through the guarded correction function", async () => {
+    const payrollRow = {
+      id: "00000000-0000-4000-8000-000000000001",
+      staff_id: "00000000-0000-4000-8000-000000000002",
+      month: 9,
+      year: 2026,
+      base_salary: 2500000,
+      total_compensation: 0,
+      total_deductions: 0,
+      net_salary: 2500000,
+      status: "DRAFT",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-20T00:00:00.000Z"
+    };
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({ data: payrollRow, error: null } as any);
+
+    await expect(
+      payrollRepo.reopenReviewedPayrollForCorrection(payrollRow.id, UserRole.SUPER_ADMIN)
+    ).resolves.toMatchObject({ id: payrollRow.id, status: "DRAFT" });
+
+    expect(rpc).toHaveBeenCalledWith("reopen_reviewed_payroll_for_correction", {
+      p_payroll_id: payrollRow.id
+    });
+  });
+
+  it("rejects reviewed payroll correction for non-admin callers", async () => {
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc");
+
+    await expect(
+      payrollRepo.reopenReviewedPayrollForCorrection(
+        "00000000-0000-4000-8000-000000000001",
+        UserRole.BRANCH_ADMIN
+      )
+    ).rejects.toThrow(/hanya Super Admin/i);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("does not void or delete a POSTED journal through the repository", async () => {
     const accountingRepo = new SupabaseAccountingRepository();
     vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>

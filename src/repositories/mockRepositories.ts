@@ -4693,6 +4693,29 @@ export class MockPayrollRepository implements PayrollRepository {
     return { ...p };
   }
 
+  async reopenReviewedPayrollForCorrection(id: string, currentUserRole?: UserRole): Promise<MonthlyPayroll> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak: hanya Super Admin yang dapat mengembalikan payroll REVIEW untuk koreksi.");
+    }
+    const payroll = db.payrolls.find((item: MonthlyPayroll) => item.id === id);
+    if (!payroll) throw new Error("Payroll tidak ditemukan.");
+    if (payroll.status !== PayrollStatus.REVIEW) {
+      throw new Error("Hanya payroll berstatus REVIEW yang dapat dikembalikan ke DRAFT.");
+    }
+    if (db.journals.some((journal) =>
+      journal.sourceType === JournalSourceType.PAYROLL && journal.sourceId === id
+    )) {
+      throw new Error("Payroll memiliki riwayat jurnal dan tidak dapat dibuka kembali untuk koreksi.");
+    }
+    db.payrollItems = db.payrollItems.filter((item: PayrollItem) => item.payrollId !== id);
+    payroll.status = PayrollStatus.DRAFT;
+    payroll.totalCompensation = 0;
+    payroll.totalDeductions = 0;
+    payroll.netSalary = 0;
+    payroll.updatedAt = AppClock.nowISO();
+    return { ...payroll };
+  }
+
   private async handlePayrollAccounting(payroll: MonthlyPayroll) {
     const journalRepo = new MockAccountingRepository();
     const staff = db.staff.find(s => s.id === payroll.staffId);

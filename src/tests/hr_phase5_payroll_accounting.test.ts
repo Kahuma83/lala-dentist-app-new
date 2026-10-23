@@ -122,6 +122,37 @@ describe("HR-5: Payroll Accounting Integration", () => {
     expect(journals.length).toBe(0);
   });
 
+  it("REVIEW dapat dikembalikan ke DRAFT untuk koreksi sebelum jurnal dibuat", async () => {
+    const payroll = await createTestPayroll({
+      staffId: "staff-ast-clary",
+      month: 9,
+      year: 2026
+    });
+    await payrollRepo.updatePayrollStatus(payroll.id, PayrollStatus.REVIEW);
+
+    const reopened = await payrollRepo.reopenReviewedPayrollForCorrection(
+      payroll.id,
+      UserRole.SUPER_ADMIN
+    );
+
+    expect(reopened.status).toBe(PayrollStatus.DRAFT);
+    expect(reopened.netSalary).toBe(0);
+    expect(await payrollRepo.getPayrollItems(payroll.id)).toHaveLength(0);
+  });
+
+  it("tidak mengembalikan payroll APPROVED ke DRAFT", async () => {
+    const payroll = await createTestPayroll({
+      staffId: "staff-ast-clary",
+      month: 9,
+      year: 2026
+    });
+    await payrollRepo.updatePayrollStatus(payroll.id, PayrollStatus.APPROVED);
+
+    await expect(
+      payrollRepo.reopenReviewedPayrollForCorrection(payroll.id, UserRole.SUPER_ADMIN)
+    ).rejects.toThrow(/Hanya payroll berstatus REVIEW/i);
+  });
+
   it("3. REVIEW tidak menghasilkan payment", async () => {
     const payroll = await createTestPayroll({
       staffId: "staff-ast-clary",

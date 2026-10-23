@@ -876,6 +876,7 @@ export interface PayrollRepository {
     id: string,
     status: PayrollStatus
   ): Promise<MonthlyPayroll>;
+  reopenReviewedPayrollForCorrection(id: string, currentUserRole?: UserRole): Promise<MonthlyPayroll>;
   deletePayroll(id: string, currentUserRole?: UserRole): Promise<boolean>;
 }
 

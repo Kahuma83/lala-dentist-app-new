@@ -6928,6 +6928,19 @@ export class SupabasePayrollRepository implements PayrollRepository {
     if (error) throw new Error(`Gagal memperbarui status payroll: ${error.message}`);
     return this.mapPayrollFromDb(data);
   }
+  async reopenReviewedPayrollForCorrection(id: string, currentUserRole?: UserRole): Promise<MonthlyPayroll> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Akses ditolak: hanya Super Admin yang dapat mengembalikan payroll REVIEW untuk koreksi.");
+    }
+    if (!isValidUUID(id)) throw new Error("ID payroll tidak valid.");
+    const { data, error } = await supabase.rpc("reopen_reviewed_payroll_for_correction", {
+      p_payroll_id: id
+    });
+    if (error) throw new Error(`Gagal mengembalikan payroll ke DRAFT: ${error.message}`);
+    if (!data) throw new Error("Payroll tidak ditemukan atau tidak dapat dikembalikan ke DRAFT.");
+    return this.mapPayrollFromDb(data);
+  }
   async deletePayroll(id: string, currentUserRole?: UserRole): Promise<boolean> {
     ensureSupabaseConnected();
     if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {

@@ -80,7 +80,9 @@ export const Payroll: React.FC = () => {
   const [showSlipModal, setShowSlipModal] = useState(false);
   const [selectedPayroll, setSelectedPayroll] = useState<MonthlyPayroll | null>(null);
   const [payrollToDelete, setPayrollToDelete] = useState<MonthlyPayroll | null>(null);
+  const [payrollToReopen, setPayrollToReopen] = useState<MonthlyPayroll | null>(null);
   const [payrollToConfirmPayment, setPayrollToConfirmPayment] = useState<MonthlyPayroll | null>(null);
+  const [correctionPayrollId, setCorrectionPayrollId] = useState<string | null>(null);
   const [isDeletingPayroll, setIsDeletingPayroll] = useState(false);
   const [payrollItems, setPayrollItems] = useState<PayrollItem[]>([]);
   const [payrollJournal, setPayrollJournal] = useState<JournalEntry | null>(null);
@@ -98,8 +100,11 @@ export const Payroll: React.FC = () => {
   const [genStaffId, setGenStaffId] = useState("");
   const [genBaseSalary, setGenBaseSalary] = useState<number>(2500000);
   const [hasBaseSalaryRule, setHasBaseSalaryRule] = useState<boolean>(false);
+  const [loadingBaseSalaryRule, setLoadingBaseSalaryRule] = useState(false);
+  const [baseSalaryRuleLoadError, setBaseSalaryRuleLoadError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const baseSalaryRequestRef = useRef(0);
   const availableYears = useMemo(
     () => Array.from({ length: Math.max(1, currentYear - 2019) }, (_, index) => currentYear - index),
     [currentYear]
@@ -289,17 +294,34 @@ export const Payroll: React.FC = () => {
 
   const handleSelectStaffForPayroll = async (staffId: string) => {
     setGenStaffId(staffId);
+    setGenBaseSalary(0);
+    setHasBaseSalaryRule(false);
+    setBaseSalaryRuleLoadError(false);
+    setErrorMsg("");
+    const requestId = ++baseSalaryRequestRef.current;
+    setLoadingBaseSalaryRule(true);
+
     try {
       const rules = await compRepo.getCompensationRulesByStaff(staffId);
-      const baseSalaryRule = rules.find((r) => r.ruleTypeSnapshot === "BASE_SALARY" && r.isActive);
+      if (requestId !== baseSalaryRequestRef.current) return;
+      const periodDate = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-15`;
+      const baseSalaryRule = rules.find((rule) =>
+        rule.ruleTypeSnapshot === "BASE_SALARY" &&
+        rule.isActive &&
+        (!rule.effectiveStartDate || rule.effectiveStartDate <= periodDate) &&
+        (!rule.effectiveEndDate || rule.effectiveEndDate >= periodDate)
+      );
       if (baseSalaryRule) {
         setGenBaseSalary(baseSalaryRule.valueSnapshot);
         setHasBaseSalaryRule(true);
-      } else {
-        setHasBaseSalaryRule(false);
       }
-    } catch {
-      setHasBaseSalaryRule(false);
+    } catch (error) {
+      if (requestId === baseSalaryRequestRef.current) {
+        setBaseSalaryRuleLoadError(true);
+        setErrorMsg(`Gagal memuat aturan gaji pokok: ${error instanceof Error ? error.message : "Kesalahan tidak diketahui."}`);
+      }
+    } finally {
+      if (requestId === baseSalaryRequestRef.current) setLoadingBaseSalaryRule(false);
     }
   };
 
@@ -338,6 +360,10 @@ export const Payroll: React.FC = () => {
 
   const handleGeneratePayroll = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loadingBaseSalaryRule || baseSalaryRuleLoadError) {
+      setErrorMsg("Aturan gaji pokok belum berhasil dimuat. Pilih ulang karyawan atau dokter, lalu coba kembali.");
+      return;
+    }
     if (!genStaffId) {
       setErrorMsg("Pilih karyawan atau dokter terlebih dahulu");
       return;
@@ -351,12 +377,56 @@ export const Payroll: React.FC = () => {
         selectedYear,
         Number(genBaseSalary)
       );
+      setCorrectionPayrollId(null);
       setShowGenerateModal(false);
       await loadData();
     } catch (err: any) {
       setErrorMsg(err.message || "Gagal mengenerate slip gaji");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const closeGenerateModal = () => {
+    setShowGenerateModal(false);
+    setCorrectionPayrollId(null);
+    setErrorMsg("");
+  };
+
+  const handleReopenReviewedPayroll = async () => {
+    if (!payrollToReopen) return;
+    const payroll = payrollToReopen;
+    setSyncingPayrollId(payroll.id);
+    setLoadError(null);
+
+    try {
+      const rules = await compRepo.getCompensationRulesByStaff(payroll.staffId);
+      const periodDate = `${payroll.year}-${String(payroll.month).padStart(2, "0")}-15`;
+      const baseSalaryRule = rules.find((rule) =>
+        rule.ruleTypeSnapshot === "BASE_SALARY" &&
+        rule.isActive &&
+        (!rule.effectiveStartDate || rule.effectiveStartDate <= periodDate) &&
+        (!rule.effectiveEndDate || rule.effectiveEndDate >= periodDate)
+      );
+
+      await payrollRepo.reopenReviewedPayrollForCorrection(payroll.id, currentUser?.role);
+
+      baseSalaryRequestRef.current += 1;
+      setLoadingBaseSalaryRule(false);
+      setBaseSalaryRuleLoadError(false);
+      setGenStaffId(payroll.staffId);
+      setGenBaseSalary(payroll.baseSalary);
+      setHasBaseSalaryRule(Boolean(baseSalaryRule && baseSalaryRule.valueSnapshot === payroll.baseSalary));
+      setCorrectionPayrollId(payroll.id);
+      setErrorMsg("");
+      setPayrollToReopen(null);
+      setShowGenerateModal(true);
+      await loadData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kesalahan tidak diketahui.";
+      setLoadError(`Payroll belum dapat dibuka untuk koreksi: ${message}`);
+    } finally {
+      setSyncingPayrollId(null);
     }
   };
 
@@ -805,6 +875,7 @@ export const Payroll: React.FC = () => {
                 payrolls.map((p) => {
                   const jrn = getPayrollJournal(p);
                   const info = getStaffInfo(p.staffId);
+                  const hasPayrollItems = periodPayrollItems.some((item) => item.payrollId === p.id);
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3.5 px-4 font-semibold text-slate-900">
@@ -900,20 +971,31 @@ export const Payroll: React.FC = () => {
                               {p.status === PayrollStatus.DRAFT && (
                                 <button
                                   onClick={() => handleStatusTransition(p.id, PayrollStatus.REVIEW)}
-                                  disabled={syncingPayrollId === p.id}
-                                  className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
+                                  disabled={syncingPayrollId === p.id || !hasPayrollItems}
+                                  title={hasPayrollItems ? "Kirim payroll untuk ditinjau" : "Hitung ulang payroll terlebih dahulu sebelum dikirim untuk ditinjau"}
+                                  className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   {syncingPayrollId === p.id ? "Memproses..." : "Review"}
                                 </button>
                               )}
                               {p.status === PayrollStatus.REVIEW && (
-                                <button
-                                  onClick={() => handleStatusTransition(p.id, PayrollStatus.APPROVED)}
-                                  disabled={syncingPayrollId === p.id}
-                                  className="bg-teal-600 hover:bg-teal-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
-                                >
-                                  {syncingPayrollId === p.id ? "Memproses..." : "Setujui"}
-                                </button>
+                                <>
+                                  <button
+                                    onClick={() => setPayrollToReopen(p)}
+                                    disabled={syncingPayrollId === p.id}
+                                    className="bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-0.5 rounded text-[10px] font-semibold"
+                                    title="Kembalikan payroll ke DRAFT untuk koreksi dan hitung ulang"
+                                  >
+                                    Koreksi
+                                  </button>
+                                  <button
+                                    onClick={() => handleStatusTransition(p.id, PayrollStatus.APPROVED)}
+                                    disabled={syncingPayrollId === p.id}
+                                    className="bg-teal-600 hover:bg-teal-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
+                                  >
+                                    {syncingPayrollId === p.id ? "Memproses..." : "Setujui"}
+                                  </button>
+                                </>
                               )}
                               {p.status === PayrollStatus.APPROVED && (
                                 <button
@@ -953,10 +1035,10 @@ export const Payroll: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Plus className="w-5 h-5 text-emerald-600" />
-                Hitung Payroll Periode {selectedMonth}/{selectedYear}
+                {correctionPayrollId ? "Koreksi Payroll" : "Hitung Payroll"} Periode {selectedMonth}/{selectedYear}
               </h3>
               <button
-                onClick={() => setShowGenerateModal(false)}
+                onClick={closeGenerateModal}
                 className="text-slate-400 hover:text-slate-600"
               >
                 ✕
@@ -971,6 +1053,12 @@ export const Payroll: React.FC = () => {
                 </div>
               )}
 
+              {correctionPayrollId && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+                  Payroll sudah kembali ke DRAFT. Pastikan koreksi pada data sumber sudah dilakukan, lalu hitung ulang untuk memperbarui total dan rincian slip.
+                </div>
+              )}
+
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
                   Pilih Karyawan / Dokter *
@@ -979,7 +1067,8 @@ export const Payroll: React.FC = () => {
                   value={genStaffId}
                   onChange={(e) => handleSelectStaffForPayroll(e.target.value)}
                   required
-                  className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  disabled={Boolean(correctionPayrollId)}
+                  className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-500"
                 >
                   <optgroup label="Branch Admin">
                     {availableStaff.branchAdmins.map((s) => (
@@ -1046,28 +1135,38 @@ export const Payroll: React.FC = () => {
                   min="0"
                   value={genBaseSalary}
                   onChange={(e) => setGenBaseSalary(parseInt(e.target.value) || 0)}
-                  className="w-full text-sm font-bold border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                  disabled={loadingBaseSalaryRule || hasBaseSalaryRule || baseSalaryRuleLoadError}
+                  className="w-full text-sm font-bold border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono disabled:bg-slate-100 disabled:text-slate-500"
                   required
                 />
                 <span className="text-[10px] text-slate-400 mt-1 block">
-                  * Sistem akan otomatis mengakumulasi komisi tindakan periode ini, lembur yang disetujui, dan membentuk slip gaji.
+                  {loadingBaseSalaryRule
+                    ? "Memuat aturan gaji pokok untuk periode ini..."
+                    : hasBaseSalaryRule
+                      ? "Nominal mengikuti aturan gaji pokok aktif yang berlaku pada periode payroll ini."
+                      : "Belum ada aturan gaji pokok aktif untuk periode ini. Masukkan nominal secara manual."}
+                  {" "}Sistem juga mengakumulasi komisi tindakan dan lembur yang disetujui.
                 </span>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowGenerateModal(false)}
+                  onClick={closeGenerateModal}
                   className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || loadingBaseSalaryRule || baseSalaryRuleLoadError}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs disabled:opacity-50"
                 >
-                  {isSubmitting ? "Menghitung..." : "Generate Slip Gaji"}
+                  {isSubmitting
+                    ? "Menghitung..."
+                    : correctionPayrollId
+                      ? "Hitung Ulang & Simpan Koreksi"
+                      : "Generate Slip Gaji"}
                 </button>
               </div>
             </form>
@@ -1121,6 +1220,41 @@ export const Payroll: React.FC = () => {
                 className="px-4 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl disabled:opacity-50"
               >
                 {syncingPayrollId === payrollToConfirmPayment.id ? "Memproses..." : "Ya, transfer berhasil"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {payrollToReopen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 max-w-md w-full p-6">
+            <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto mb-4">
+              <RefreshCw className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 text-center">Kembalikan Payroll untuk Koreksi?</h3>
+            <p className="text-xs text-slate-600 text-center mt-2 leading-relaxed">
+              Payroll <strong>{getStaffInfo(payrollToReopen.staffId).name}</strong> periode{" "}
+              <strong>{payrollToReopen.month}/{payrollToReopen.year}</strong> akan kembali ke status DRAFT.
+              Setelah dikonfirmasi, periksa atau perbarui data sumber lalu pilih <strong>Hitung Ulang &amp; Simpan Koreksi</strong>.
+              Payroll yang sudah memiliki jurnal tidak dapat dibuka kembali.
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={syncingPayrollId === payrollToReopen.id}
+                onClick={() => setPayrollToReopen(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={syncingPayrollId === payrollToReopen.id}
+                onClick={() => void handleReopenReviewedPayroll()}
+                className="px-4 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-xl disabled:opacity-50"
+              >
+                {syncingPayrollId === payrollToReopen.id ? "Memproses..." : "Ya, Buka untuk Koreksi"}
               </button>
             </div>
           </div>
