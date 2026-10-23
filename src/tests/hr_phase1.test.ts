@@ -548,6 +548,27 @@ describe("PHASE HR-1: Master SDM, Dokter Multi-Cabang, Jadwal Dokter & Shift Sta
     expect(assignment.shiftId).toBe(targetShift.id);
   });
 
+  it("can assign a custom schedule without creating a master shift", async () => {
+    const activeStaff = (await staffRepo.getStaff()).find((s) => s.active && s.branchId === "branch-gebang");
+    expect(activeStaff).toBeDefined();
+
+    const assignment = await staffShiftRepo.assignStaffShift({
+      staffId: activeStaff!.id,
+      branchId: "branch-gebang",
+      shiftId: null,
+      customShiftName: "Jadwal Administrasi",
+      customStartTime: "09:30",
+      customEndTime: "16:30",
+      date: "2026-10-29",
+      active: true
+    });
+
+    expect(assignment.shiftId).toBeNull();
+    expect(assignment.customShiftName).toBe("Jadwal Administrasi");
+    expect(assignment.customStartTime).toBe("09:30");
+    expect(assignment.customEndTime).toBe("16:30");
+  });
+
   it("Test 30: Validation: Reject shift assignment to inactive staff", async () => {
     const staffList = await staffRepo.getStaff();
     const targetStaff = staffList[0];

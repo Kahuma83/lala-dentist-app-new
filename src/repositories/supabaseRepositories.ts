@@ -4914,11 +4914,17 @@ export class SupabaseDoctorRepository implements DoctorRepository {
     };
   }
 
-  async getDoctors(currentUserRole?: UserRole, userBranchId?: string | null): Promise<DentalDoctor[]> {
+  async getDoctors(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    includeInactive = false
+  ): Promise<DentalDoctor[]> {
     if (!useRepositoryTestFallbacks()) ensureSupabaseConnected();
     if (isSupabaseConfigured && supabase) {
       try {
-        let q = supabase.from("dental_doctors").select("*").eq("active", true).order("name");
+        const canIncludeInactive = includeInactive && currentUserRole === UserRole.SUPER_ADMIN;
+        let q = supabase.from("dental_doctors").select("*").order("name");
+        if (!canIncludeInactive) q = q.eq("active", true);
         
         // If userBranchId is a valid UUID, query by UUID directly if needed,
         // otherwise do not add invalid UUID filter at Postgres level
@@ -4949,7 +4955,6 @@ export class SupabaseDoctorRepository implements DoctorRepository {
         if (!useRepositoryTestFallbacks()) throw error;
       }
     }
-
     const fallback = this.getFallbackDoctors();
     if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
       const matched = fallback.filter((d) => isBranchMatch(d.assignedBranchId, userBranchId, MOCK_BRANCHES));
@@ -7912,6 +7917,9 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       id: row.id,
       staffId: row.staff_id,
       shiftId: row.shift_id,
+      customShiftName: row.custom_shift_name,
+      customStartTime: row.custom_start_time,
+      customEndTime: row.custom_end_time,
       branchId: row.branch_id,
       date: row.date,
       active: row.active ?? true,
@@ -7929,6 +7937,9 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       id: data.id,
       staffId: data.staff_id,
       shiftId: data.shift_id,
+      customShiftName: data.custom_shift_name,
+      customStartTime: data.custom_start_time,
+      customEndTime: data.custom_end_time,
       branchId: data.branch_id,
       date: data.date,
       active: data.active ?? true,
@@ -7942,6 +7953,9 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
     const payload: any = {
       staff_id: data.staffId,
       shift_id: data.shiftId,
+      custom_shift_name: data.customShiftName,
+      custom_start_time: data.customStartTime,
+      custom_end_time: data.customEndTime,
       branch_id: data.branchId,
       date: data.date,
       active: data.active ?? true,
@@ -7954,6 +7968,9 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       id: inserted.id,
       staffId: inserted.staff_id,
       shiftId: inserted.shift_id,
+      customShiftName: inserted.custom_shift_name,
+      customStartTime: inserted.custom_start_time,
+      customEndTime: inserted.custom_end_time,
       branchId: inserted.branch_id,
       date: inserted.date,
       active: inserted.active ?? true,
@@ -7966,7 +7983,10 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
     ensureSupabaseConnected();
     const payload: any = {};
     if (updates.staffId) payload.staff_id = updates.staffId;
-    if (updates.shiftId) payload.shift_id = updates.shiftId;
+    if (updates.shiftId !== undefined) payload.shift_id = updates.shiftId;
+    if (updates.customShiftName !== undefined) payload.custom_shift_name = updates.customShiftName;
+    if (updates.customStartTime !== undefined) payload.custom_start_time = updates.customStartTime;
+    if (updates.customEndTime !== undefined) payload.custom_end_time = updates.customEndTime;
     if (updates.branchId) payload.branch_id = updates.branchId;
     if (updates.date) payload.date = updates.date;
     if (updates.active !== undefined) payload.active = updates.active;
@@ -7977,6 +7997,9 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
       id: updated.id,
       staffId: updated.staff_id,
       shiftId: updated.shift_id,
+      customShiftName: updated.custom_shift_name,
+      customStartTime: updated.custom_start_time,
+      customEndTime: updated.custom_end_time,
       branchId: updated.branch_id,
       date: updated.date,
       active: updated.active ?? true,

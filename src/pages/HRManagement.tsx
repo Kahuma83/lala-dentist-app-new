@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "../components/Router";
 import { useApp } from "../context/AppContext";
 import { isSupabaseConfigured } from "../lib/supabase";
@@ -395,6 +395,7 @@ export const HRManagement: React.FC = () => {
   // =========================================================================
   const [doctorSearch, setDoctorSearch] = useState("");
   const [doctorBranchFilter, setDoctorBranchFilter] = useState<string>(userBranchId || "ALL");
+  const [adminDoctorRecords, setAdminDoctorRecords] = useState<DentalDoctor[] | null>(null);
   const [isDoctorModalOpen, setIsDoctorModalOpen] = useState(false);
   const [editingDoctor, setEditingDoctor] = useState<DentalDoctor | null>(null);
   const [doctorForm, setDoctorForm] = useState({
@@ -431,8 +432,24 @@ export const HRManagement: React.FC = () => {
     notes: ""
   });
 
+  const loadAdminDoctorRecords = useCallback(async () => {
+    if (!isSuper) {
+      setAdminDoctorRecords(null);
+      return;
+    }
+    try {
+      setAdminDoctorRecords(await doctorRepo.getDoctors(UserRole.SUPER_ADMIN, null, true));
+    } catch (error: unknown) {
+      showError(error instanceof Error ? error.message : "Gagal memuat data dokter nonaktif.");
+    }
+  }, [doctorRepo, isSuper]);
+
+  useEffect(() => {
+    void loadAdminDoctorRecords();
+  }, [loadAdminDoctorRecords]);
+
   const filteredDoctors = useMemo(() => {
-    return doctors.filter((doc) => {
+    return (adminDoctorRecords || doctors).filter((doc) => {
       // Branch filter
       if (doctorBranchFilter !== "ALL") {
         const hasAssignment = doctorBranchAssignments.some(
@@ -453,7 +470,7 @@ export const HRManagement: React.FC = () => {
 
       return true;
     });
-  }, [doctors, doctorBranchFilter, doctorSearch, doctorBranchAssignments]);
+  }, [adminDoctorRecords, doctors, doctorBranchFilter, doctorSearch, doctorBranchAssignments]);
 
   const handleOpenDoctorModal = (doc?: DentalDoctor) => {
     if (doc) {
@@ -549,6 +566,7 @@ export const HRManagement: React.FC = () => {
       setIsDoctorModalOpen(false);
       setEditingDoctor(null);
       await refreshData();
+      await loadAdminDoctorRecords();
     } catch (err: unknown) {
       showError(err instanceof Error ? err.message : "Gagal menyimpan data dokter");
     } finally {
@@ -568,6 +586,7 @@ export const HRManagement: React.FC = () => {
         setEditingDoctor(null);
       }
       await refreshData();
+      await loadAdminDoctorRecords();
     } catch (err: unknown) {
       showError(err instanceof Error ? err.message : "Gagal menghapus dokter");
     } finally {
@@ -608,6 +627,7 @@ export const HRManagement: React.FC = () => {
       });
       showSuccess(`Status dokter ${doctor.name} berhasil diubah menjadi ${!currentActive ? "Aktif" : "Nonaktif"}.`);
       await refreshData();
+      await loadAdminDoctorRecords();
     } catch (err: unknown) {
       showError(err instanceof Error ? err.message : "Gagal mengubah status dokter");
     }
@@ -972,6 +992,10 @@ export const HRManagement: React.FC = () => {
     staffId: staff.find((s) => s.active)?.id || "",
     branchId: userBranchId || "branch-gebang",
     shiftId: workShifts[0]?.id || "",
+    shiftMode: "standard" as "standard" | "custom",
+    customShiftName: "",
+    customStartTime: "08:00",
+    customEndTime: "17:00",
     date: new Date().toISOString().split("T")[0],
     notes: ""
   });
@@ -995,6 +1019,15 @@ export const HRManagement: React.FC = () => {
     assignShiftForm.branchId,
     selectedAssignmentStaff?.position
   );
+  const isCustomShiftValid = Boolean(
+    assignShiftForm.customShiftName.trim() &&
+    /^([01]\d|2[0-3]):[0-5]\d$/.test(assignShiftForm.customStartTime) &&
+    /^([01]\d|2[0-3]):[0-5]\d$/.test(assignShiftForm.customEndTime) &&
+    assignShiftForm.customEndTime > assignShiftForm.customStartTime
+  );
+  const isShiftAssignmentValid = assignShiftForm.shiftMode === "custom"
+    ? isCustomShiftValid
+    : assignmentShiftOptions.some((shift) => shift.id === assignShiftForm.shiftId);
 
   const handleCreateStandardStaffShifts = async () => {
     if (!isSuper) {
@@ -1056,13 +1089,24 @@ export const HRManagement: React.FC = () => {
 
   const handleSaveShiftAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (assignShiftForm.shiftMode === "custom" && !isCustomShiftValid) {
+      showError("Isi nama shift dan jam yang valid. Jam selesai harus lebih akhir dari jam mulai.");
+      return;
+    }
+    if (assignShiftForm.shiftMode === "standard" && !isShiftAssignmentValid) {
+      showError("Pilih shift kerja yang tersedia untuk cabang ini.");
+      return;
+    }
     setIsSubmitting(true);
     try {
       await staffShiftRepo.assignStaffShift(
         {
           staffId: assignShiftForm.staffId,
           branchId: assignShiftForm.branchId,
-          shiftId: assignShiftForm.shiftId,
+          shiftId: assignShiftForm.shiftMode === "custom" ? null : assignShiftForm.shiftId,
+          customShiftName: assignShiftForm.shiftMode === "custom" ? assignShiftForm.customShiftName.trim() : null,
+          customStartTime: assignShiftForm.shiftMode === "custom" ? assignShiftForm.customStartTime : null,
+          customEndTime: assignShiftForm.shiftMode === "custom" ? assignShiftForm.customEndTime : null,
           date: assignShiftForm.date,
           active: true,
           notes: assignShiftForm.notes
@@ -2216,6 +2260,10 @@ export const HRManagement: React.FC = () => {
                     staffId,
                     branchId,
                     shiftId: availableShifts[0]?.id || "",
+                    shiftMode: "standard",
+                    customShiftName: "",
+                    customStartTime: "08:00",
+                    customEndTime: "17:00",
                     date: shiftDateFilter || new Date().toISOString().split("T")[0],
                     notes: ""
                   });
@@ -2268,7 +2316,7 @@ export const HRManagement: React.FC = () => {
                           <td className="px-4 py-3 text-slate-600">{st?.position}</td>
                           <td className="px-4 py-3">
                             <span className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded text-[11px] border border-emerald-200">
-                              {ws?.name} ({ws?.startTime} - {ws?.endTime})
+                              {a.customShiftName || ws?.name || "Shift"} ({a.customStartTime || ws?.startTime || "-"} - {a.customEndTime || ws?.endTime || "-"})
                             </span>
                           </td>
                           <td className="px-4 py-3 text-slate-700">{br?.name || a.branchId}</td>
@@ -3093,7 +3141,7 @@ export const HRManagement: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">Tugaskan Shift ke Staff</h3>
-                <p className="text-xs text-slate-500">Pilih staff aktif dan shift kerja harian</p>
+                <p className="text-xs text-slate-500">Pilih shift standar atau atur jam custom untuk staff/admin</p>
               </div>
               <button onClick={() => setIsAssignShiftModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-4 h-4" />
@@ -3109,7 +3157,12 @@ export const HRManagement: React.FC = () => {
                     const staffId = e.target.value;
                     const selectedStaff = staff.find((item) => item.id === staffId);
                     const availableShifts = getAssignmentShiftOptions(workShifts, assignShiftForm.branchId, selectedStaff?.position);
-                    setAssignShiftForm({ ...assignShiftForm, staffId, shiftId: availableShifts[0]?.id || "" });
+                    setAssignShiftForm({
+                      ...assignShiftForm,
+                      staffId,
+                      shiftId: availableShifts[0]?.id || "",
+                      shiftMode: assignShiftForm.shiftMode === "custom" ? "custom" : "standard"
+                    });
                   }}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
                 >
@@ -3130,7 +3183,12 @@ export const HRManagement: React.FC = () => {
                   onChange={(e) => {
                     const branchId = e.target.value;
                     const availableShifts = getAssignmentShiftOptions(workShifts, branchId, selectedAssignmentStaff?.position);
-                    setAssignShiftForm({ ...assignShiftForm, branchId, shiftId: availableShifts[0]?.id || "" });
+                    setAssignShiftForm({
+                      ...assignShiftForm,
+                      branchId,
+                      shiftId: availableShifts[0]?.id || "",
+                      shiftMode: assignShiftForm.shiftMode === "custom" ? "custom" : "standard"
+                    });
                   }}
                   disabled={currentUser?.role === UserRole.BRANCH_ADMIN}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white disabled:bg-slate-100"
@@ -3146,10 +3204,15 @@ export const HRManagement: React.FC = () => {
               <div>
                 <label className="block text-slate-600 font-semibold mb-1">Pilih Shift Kerja *</label>
                 <select
-                  value={assignShiftForm.shiftId}
-                  onChange={(e) => setAssignShiftForm({ ...assignShiftForm, shiftId: e.target.value })}
+                  value={assignShiftForm.shiftMode === "custom" ? "__custom__" : assignShiftForm.shiftId}
+                  onChange={(e) => setAssignShiftForm({
+                    ...assignShiftForm,
+                    shiftMode: e.target.value === "__custom__" ? "custom" : "standard",
+                    shiftId: e.target.value === "__custom__" ? "" : e.target.value
+                  })}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
                 >
+                  <option value="__custom__">Custom - atur jam manual</option>
                   {assignmentShiftOptions.length === 0 && (
                     <option value="" disabled>
                       {isStandardShiftStaff(selectedAssignmentStaff?.position)
@@ -3163,7 +3226,49 @@ export const HRManagement: React.FC = () => {
                     </option>
                   ))}
                 </select>
-                {assignmentShiftOptions.length === 0 && (
+                {assignShiftForm.shiftMode === "custom" && (
+                  <div className="mt-3 space-y-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                    <div>
+                      <label className="block text-slate-600 font-semibold mb-1">Nama Jadwal *</label>
+                      <input
+                        type="text"
+                        required
+                        value={assignShiftForm.customShiftName}
+                        onChange={(e) => setAssignShiftForm({ ...assignShiftForm, customShiftName: e.target.value })}
+                        placeholder="Contoh: Shift Khusus"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-slate-600 font-semibold mb-1">Jam Mulai *</label>
+                        <input
+                          type="time"
+                          required
+                          value={assignShiftForm.customStartTime}
+                          onChange={(e) => setAssignShiftForm({ ...assignShiftForm, customStartTime: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-600 font-semibold mb-1">Jam Selesai *</label>
+                        <input
+                          type="time"
+                          required
+                          value={assignShiftForm.customEndTime}
+                          onChange={(e) => setAssignShiftForm({ ...assignShiftForm, customEndTime: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
+                        />
+                      </div>
+                    </div>
+                    {!isCustomShiftValid && (
+                      <p className="text-[10px] text-amber-700">
+                        Jam selesai harus lebih akhir dari jam mulai dan nama jadwal wajib diisi.
+                      </p>
+                    )}
+                  </div>
+                )}
+                {assignmentShiftOptions.length === 0 && assignShiftForm.shiftMode !== "custom" && (
                   <p className="mt-1 text-[10px] text-amber-700">
                     {isStandardShiftStaff(selectedAssignmentStaff?.position)
                       ? "Shift standar belum tersedia. Super Admin dapat menambahkannya melalui tombol “Siapkan Shift Pagi & Sore”."
@@ -3204,7 +3309,7 @@ export const HRManagement: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || !assignmentShiftOptions.some((shift) => shift.id === assignShiftForm.shiftId)}
+                  disabled={isSubmitting || !isShiftAssignmentValid}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold"
                 >
                   {isSubmitting ? "Menyimpan..." : "Tugaskan Shift"}

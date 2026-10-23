@@ -400,7 +400,10 @@ export interface StaffShiftAssignment {
   id: string;
   staffId: string;
   branchId: string;
-  shiftId: string;
+  shiftId: string | null;
+  customShiftName?: string | null;
+  customStartTime?: string | null;
+  customEndTime?: string | null;
   date: string; // YYYY-MM-DD
   active: boolean;
   notes?: string;

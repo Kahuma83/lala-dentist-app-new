@@ -51,4 +51,25 @@ describe("Supabase doctor staff relation persistence", () => {
       staff_id: "22222222-2222-4222-8222-222222222222"
     }));
   });
+
+  it("keeps inactive doctors out of the default result", async () => {
+    const repository = new SupabaseDoctorRepository();
+
+    await repository.getDoctors(UserRole.SUPER_ADMIN);
+
+    expect(mocks.query.eq).toHaveBeenCalledWith("active", true);
+  });
+
+  it("includes inactive doctors only when explicitly requested by a super admin", async () => {
+    const repository = new SupabaseDoctorRepository();
+
+    await repository.getDoctors(UserRole.SUPER_ADMIN, null, true);
+
+    expect(mocks.query.eq).not.toHaveBeenCalledWith("active", true);
+
+    vi.clearAllMocks();
+    await repository.getDoctors(UserRole.BRANCH_ADMIN, null, true);
+
+    expect(mocks.query.eq).toHaveBeenCalledWith("active", true);
+  });
 });

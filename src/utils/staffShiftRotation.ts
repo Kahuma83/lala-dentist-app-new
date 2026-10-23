@@ -167,7 +167,7 @@ export const buildMonthlyRosterPreview = ({
         date,
         active: true,
         notes: existing?.notes || `Rotasi minggu ${weekOffset + 1}`,
-        previousShiftId: existing?.shiftId
+        previousShiftId: existing?.shiftId ?? (existing?.customStartTime ? "CUSTOM" : undefined)
       });
     }
   }

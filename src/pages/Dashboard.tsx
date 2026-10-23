@@ -616,6 +616,14 @@ export const Dashboard: React.FC = () => {
 
               {activePromotions.length > 0 ? (
                 <div>
+                  {activePromotions[0].imageUrl && (
+                    <img
+                      src={activePromotions[0].imageUrl}
+                      alt={activePromotions[0].title || "Promosi klinik"}
+                      loading="lazy"
+                      className="mb-3 h-32 w-full rounded-xl border border-white/15 object-cover"
+                    />
+                  )}
                   <h3 className="text-sm font-black text-white leading-snug tracking-tight">
                     {activePromotions[0].title}
                   </h3>

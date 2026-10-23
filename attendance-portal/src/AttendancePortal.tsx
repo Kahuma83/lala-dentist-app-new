@@ -806,7 +806,7 @@ export function AttendancePortal() {
           const assignmentEnd = isFiveDaySchedule ? addDays(today, 4) : addDays(requestedWeekStart, 6);
           const { data: assignments, error: assignmentError } = await supabase
             .from("staff_shift_assignments")
-            .select("id,date,branch_id,shift_id,notes")
+            .select("id,date,branch_id,shift_id,custom_shift_name,custom_start_time,custom_end_time,notes")
             .eq("staff_id", staffContext!.staffId)
             .eq("active", true)
             .gte("date", assignmentStart)
@@ -814,7 +814,9 @@ export function AttendancePortal() {
             .order("date", { ascending: true });
           if (assignmentError) throw new Error(`Gagal memuat jadwal shift: ${assignmentError.message}`);
 
-          const shiftIds = Array.from(new Set((assignments || []).map((row) => row.shift_id)));
+          const shiftIds = Array.from(new Set((assignments || [])
+            .map((row) => row.shift_id)
+            .filter((shiftId): shiftId is string => Boolean(shiftId))));
           const shiftsResult = shiftIds.length
             ? await supabase.from("work_shifts").select("id,name,start_time,end_time").in("id", shiftIds)
             : { data: [], error: null };
@@ -823,15 +825,17 @@ export function AttendancePortal() {
             (shiftsResult.data || []).map((shift): [string, { id: string; name: string; start_time: string; end_time: string }] => [shift.id, shift])
           );
           nextSchedules = (assignments || []).flatMap((assignment) => {
-            const shift = shiftsById.get(assignment.shift_id);
-            return shift ? [{
+            const shift = assignment.shift_id ? shiftsById.get(assignment.shift_id) : undefined;
+            const startTime = assignment.custom_start_time || shift?.start_time;
+            const endTime = assignment.custom_end_time || shift?.end_time;
+            return startTime && endTime ? [{
               id: assignment.id,
               date: assignment.date,
               branchId: assignment.branch_id,
               branchName: "",
-              startTime: shift.start_time,
-              endTime: shift.end_time,
-              shiftName: shift.name,
+              startTime,
+              endTime,
+              shiftName: assignment.custom_shift_name || shift?.name || "Jadwal custom",
               notes: assignment.notes
             }] : [];
           });

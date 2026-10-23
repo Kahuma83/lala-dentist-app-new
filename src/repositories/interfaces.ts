@@ -207,7 +207,11 @@ export interface StaffRepository {
 }
 
 export interface DoctorRepository {
-  getDoctors(currentUserRole?: UserRole, userBranchId?: string | null): Promise<DentalDoctor[]>;
+  getDoctors(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    includeInactive?: boolean
+  ): Promise<DentalDoctor[]>;
   getDoctorById(id: string): Promise<DentalDoctor | null>;
   getDoctorByStaffId(staffId: string): Promise<DentalDoctor | null>;
   getDoctorByCode(code: string): Promise<DentalDoctor | null>;

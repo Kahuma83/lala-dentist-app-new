@@ -903,7 +903,11 @@ export class MockDoctorRepository implements DoctorRepository {
     }
   }
 
-  async getDoctors(currentUserRole?: UserRole, userBranchId?: string | null): Promise<DentalDoctor[]> {
+  async getDoctors(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    _includeInactive = false
+  ): Promise<DentalDoctor[]> {
     this.syncFromStorage();
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
       // Return doctors assigned to this branch via assignments or default branch
@@ -1884,12 +1888,28 @@ export class MockStaffShiftAssignmentRepository implements StaffShiftAssignmentR
       throw new Error("Staff berstatus tidak aktif tidak dapat ditugaskan shift");
     }
 
+    const hasCustomShiftDetails = Boolean(data.customShiftName || data.customStartTime || data.customEndTime);
+    if (
+      (!data.shiftId && (
+        !data.customShiftName?.trim() ||
+        !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(data.customStartTime || "") ||
+        !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(data.customEndTime || "") ||
+        (data.customEndTime || "") <= (data.customStartTime || "")
+      )) ||
+      (data.shiftId && hasCustomShiftDetails)
+    ) {
+      throw new Error("Jadwal custom harus memiliki nama dan jam valid tanpa shift master.");
+    }
+
     const now = new Date().toISOString();
     const newAssignment: StaffShiftAssignment = {
       id: data.id || `ssa-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       staffId: data.staffId,
       branchId: data.branchId,
       shiftId: data.shiftId,
+      customShiftName: data.customShiftName,
+      customStartTime: data.customStartTime,
+      customEndTime: data.customEndTime,
       date: data.date,
       active: data.active ?? true,
       notes: data.notes,
