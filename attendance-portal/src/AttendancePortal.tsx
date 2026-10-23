@@ -444,6 +444,7 @@ export function AttendancePortal() {
     let { data: history, error: historyError } = await supabase
       .from("attendances")
       .select(attendanceColumns)
+      .eq("staff_id", context.staffId)
       .gte("date", monthStart)
       .lte("date", today)
       .order("date", { ascending: false });
@@ -454,6 +455,7 @@ export function AttendancePortal() {
       const fallbackHistory = await supabase
         .from("attendances")
         .select(legacyAttendanceColumns)
+        .eq("staff_id", context.staffId)
         .gte("date", monthStart)
         .lte("date", today)
         .order("date", { ascending: false });
