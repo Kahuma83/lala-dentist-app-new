@@ -39,6 +39,10 @@ function createQuery(
       call.filters.push(["lt", column, value]);
       return query;
     }),
+    is: vi.fn((column: string, value: unknown) => {
+      call.filters.push(["is", column, value]);
+      return query;
+    }),
     not: vi.fn((column: string, operator: string, value: unknown) => {
       call.filters.push(["not", `${column}.${operator}`, value]);
       return query;
@@ -401,6 +405,7 @@ describe("Supabase payroll repository", () => {
               id: "accrual-1",
               source_id: "treatment-1",
               staff_id: "staff-1",
+              branch_id: "branch-1",
               rule_type_snapshot: "FIXED_PER_TREATMENT",
               amount: 50_000
             }],
@@ -412,6 +417,7 @@ describe("Supabase payroll repository", () => {
             data: [{
               id: "overtime-1",
               staff_id: "staff-1",
+              branch_id: "branch-1",
               date: "2026-10-12",
               overtime_hours: 2,
               overtime_amount_snapshot: 25_000
@@ -424,6 +430,7 @@ describe("Supabase payroll repository", () => {
             data: [{
               id: "replacement-1",
               covered_date: "2026-10-12",
+              branch_id: "branch-1",
               absent_staff_id: "staff-2",
               absent_base_salary_snapshot: 1_000_000,
               amount_snapshot: 40_000

@@ -12,6 +12,7 @@ import {
   Staff,
   DentalDoctor,
   DentalBranch,
+  DoctorBranchAssignment,
   StaffCompensationRule,
   ClinicBranding
 } from "../types/domain";
@@ -48,6 +49,18 @@ import {
   getPreviousPayrollPeriod
 } from "../utils/payrollPaymentCycle";
 
+function isDoctorAssignmentActiveForPeriod(
+  assignment: DoctorBranchAssignment,
+  month: number,
+  year: number
+): boolean {
+  const periodStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  return assignment.active &&
+    assignment.startDate <= periodEnd &&
+    (!assignment.endDate || assignment.endDate >= periodStart);
+}
+
 export const Payroll: React.FC = () => {
   const {
     currentUser,
@@ -69,6 +82,7 @@ export const Payroll: React.FC = () => {
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [branches, setBranches] = useState<DentalBranch[]>([]);
+  const [doctorAssignments, setDoctorAssignments] = useState<DoctorBranchAssignment[]>([]);
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [branding, setBranding] = useState<ClinicBranding>(DEFAULT_CLINIC_BRANDING);
   const [loading, setLoading] = useState(true);
@@ -98,8 +112,10 @@ export const Payroll: React.FC = () => {
 
   // Generate Modal state
   const [genStaffId, setGenStaffId] = useState("");
+  const [genBranchId, setGenBranchId] = useState("");
   const [genBaseSalary, setGenBaseSalary] = useState<number>(2500000);
   const [hasBaseSalaryRule, setHasBaseSalaryRule] = useState<boolean>(false);
+  const [genTaxRate, setGenTaxRate] = useState<number | null>(null);
   const [loadingBaseSalaryRule, setLoadingBaseSalaryRule] = useState(false);
   const [baseSalaryRuleLoadError, setBaseSalaryRuleLoadError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -114,7 +130,7 @@ export const Payroll: React.FC = () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [pList, dList, sList, bList, jList, brand] = await Promise.all([
+      const [pList, dList, sList, bList, jList, brand, assignments] = await Promise.all([
         payrollRepo.getPayrolls(selectedMonth, selectedYear),
         doctorRepo.getDoctors(),
         staffRepo.getStaff(),
@@ -124,7 +140,8 @@ export const Payroll: React.FC = () => {
             ? { branchId: currentUser.branchId }
             : undefined
         ),
-        configRepo.getClinicBranding().catch(() => DEFAULT_CLINIC_BRANDING)
+        configRepo.getClinicBranding().catch(() => DEFAULT_CLINIC_BRANDING),
+        doctorRepo.getDoctorBranchAssignments()
       ]);
       const items = await payrollRepo.getPayrollItemsByPayrollIds(pList.map((payroll) => payroll.id));
       setPayrolls(pList);
@@ -132,6 +149,7 @@ export const Payroll: React.FC = () => {
       setDoctors(dList);
       setStaffList(sList);
       setBranches(bList);
+      setDoctorAssignments(assignments);
       setJournals(jList);
       if (brand) setBranding(brand);
     } catch (err) {
@@ -163,30 +181,56 @@ export const Payroll: React.FC = () => {
     setIsPreparingCycle(true);
     setPreparationResult(null);
     void (async () => {
-      const existingStaffIds = new Set(payrolls.map((payroll) => payroll.staffId));
-      const recipientIds = new Set<string>();
-      staffList.filter((staff) => staff.active).forEach((staff) => recipientIds.add(staff.id));
+      const existingPayrollKeys = new Set(
+        payrolls.map((payroll) => `${payroll.staffId}|${payroll.branchId || ""}`)
+      );
+      const recipients = new Map<string, { staffId: string; branchId: string | null }>();
+      const addRecipient = (staffId: string, branchId: string | null) => {
+        recipients.set(`${staffId}|${branchId || ""}`, { staffId, branchId });
+      };
+      staffList.filter((staff) => staff.active).forEach((staff) => addRecipient(staff.id, staff.branchId || null));
       doctors.filter((doctor) => doctor.active && doctor.isActive).forEach((doctor) => {
-        recipientIds.add(doctor.staffId || doctor.id);
+        const branchIds = new Set(
+          doctorAssignments
+            .filter((assignment) =>
+              assignment.doctorId === doctor.id &&
+              isDoctorAssignmentActiveForPeriod(assignment, selectedMonth, selectedYear)
+            )
+            .map((assignment) => assignment.branchId)
+        );
+        if (doctor.assignedBranchId) branchIds.add(doctor.assignedBranchId);
+        if (branchIds.size === 0) addRecipient(doctor.staffId || doctor.id, null);
+        else branchIds.forEach((branchId) => addRecipient(doctor.staffId || doctor.id, branchId));
       });
 
       const prepared: string[] = [];
       const skipped: string[] = [];
       const failed: string[] = [];
-      for (const staffId of recipientIds) {
-        if (existingStaffIds.has(staffId)) continue;
+      for (const recipientEntry of recipients.values()) {
+        if (existingPayrollKeys.has(`${recipientEntry.staffId}|${recipientEntry.branchId || ""}`)) continue;
+        const staffId = recipientEntry.staffId;
         const recipient = getStaffInfo(staffId).name;
         try {
-          await payrollRepo.generateMonthlyPayroll(staffId, selectedMonth, selectedYear, undefined, true);
-          prepared.push(recipient);
+          await payrollRepo.generateMonthlyPayroll(
+            staffId,
+            selectedMonth,
+            selectedYear,
+            undefined,
+            true,
+            recipientEntry.branchId
+          );
+          const branchName = recipientEntry.branchId ? getBranchName(recipientEntry.branchId) : "";
+          prepared.push(branchName ? `${recipient} (${branchName})` : recipient);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Kesalahan tidak diketahui.";
+          const branchName = recipientEntry.branchId ? getBranchName(recipientEntry.branchId) : "";
+          const recipientLabel = branchName ? `${recipient} (${branchName})` : recipient;
           if (/tidak ada gaji pokok aktif|tidak ada gaji pokok|base salary/i.test(message)) {
-            skipped.push(`${recipient}: belum memiliki aturan gaji pokok aktif`);
+            skipped.push(`${recipientLabel}: belum memiliki aturan gaji pokok aktif`);
           } else if (/tidak ditemukan|ditautkan/i.test(message)) {
-            skipped.push(`${recipient}: belum terhubung dengan data karyawan`);
+            skipped.push(`${recipientLabel}: belum terhubung dengan data karyawan`);
           } else {
-            failed.push(`${recipient}: ${message}`);
+            failed.push(`${recipientLabel}: ${message}`);
           }
         }
       }
@@ -207,6 +251,8 @@ export const Payroll: React.FC = () => {
     payrolls,
     staffList,
     doctors,
+    doctorAssignments,
+    branches,
     preparationRetry
   ]);
 
@@ -280,7 +326,17 @@ export const Payroll: React.FC = () => {
 
     if (currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.branchId) {
       filteredStaff = filteredStaff.filter((s) => s.branchId === currentUser.branchId);
-      filteredDoctors = filteredDoctors.filter((d) => d.assignedBranchId === currentUser.branchId);
+      const assignedDoctorIds = new Set(
+        doctorAssignments
+          .filter((assignment) =>
+            assignment.branchId === currentUser.branchId &&
+            isDoctorAssignmentActiveForPeriod(assignment, selectedMonth, selectedYear)
+          )
+          .map((assignment) => assignment.doctorId)
+      );
+      filteredDoctors = filteredDoctors.filter(
+        (doctor) => doctor.assignedBranchId === currentUser.branchId || assignedDoctorIds.has(doctor.id)
+      );
     }
 
     return {
@@ -290,12 +346,41 @@ export const Payroll: React.FC = () => {
       otherStaff: filteredStaff.filter((s) => s.position === StaffPosition.OTHER),
       doctors: filteredDoctors
     };
-  }, [staffList, doctors, currentUser]);
+  }, [staffList, doctors, currentUser, doctorAssignments, selectedMonth, selectedYear]);
+
+  const payrollBranchOptions = useMemo(() => {
+    const doctor = doctors.find((item) => item.id === genStaffId || item.staffId === genStaffId);
+    if (!doctor) {
+      const staff = staffList.find((item) => item.id === genStaffId || item.userAccountId === genStaffId);
+      return branches.filter((branch) =>
+        currentUser?.role === UserRole.BRANCH_ADMIN
+          ? branch.id === currentUser.branchId
+          : !staff?.branchId || branch.id === staff.branchId
+      );
+    }
+
+    const assignedIds = new Set(
+      doctorAssignments
+        .filter((assignment) =>
+          assignment.doctorId === doctor.id &&
+          isDoctorAssignmentActiveForPeriod(assignment, selectedMonth, selectedYear)
+        )
+        .map((assignment) => assignment.branchId)
+    );
+    if (doctor.assignedBranchId) assignedIds.add(doctor.assignedBranchId);
+    const linkedStaff = staffList.find((staff) => staff.id === doctor.staffId);
+    if (linkedStaff?.branchId) assignedIds.add(linkedStaff.branchId);
+    if (currentUser?.role === UserRole.BRANCH_ADMIN) {
+      return branches.filter((branch) => branch.id === currentUser.branchId && assignedIds.has(branch.id));
+    }
+    return branches.filter((branch) => assignedIds.has(branch.id));
+  }, [doctors, doctorAssignments, branches, genStaffId, staffList, currentUser, selectedMonth, selectedYear]);
 
   const handleSelectStaffForPayroll = async (staffId: string) => {
     setGenStaffId(staffId);
     setGenBaseSalary(0);
     setHasBaseSalaryRule(false);
+    setGenTaxRate(null);
     setBaseSalaryRuleLoadError(false);
     setErrorMsg("");
     const requestId = ++baseSalaryRequestRef.current;
@@ -305,20 +390,86 @@ export const Payroll: React.FC = () => {
       const rules = await compRepo.getCompensationRulesByStaff(staffId);
       if (requestId !== baseSalaryRequestRef.current) return;
       const periodDate = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-15`;
-      const baseSalaryRule = rules.find((rule) =>
+      const selectedStaff = staffList.find((staff) => staff.id === staffId || staff.userAccountId === staffId);
+      const selectedDoctor = doctors.find((doctor) => doctor.id === staffId || doctor.staffId === staffId);
+      const configuredBranchId = rules.find((rule) =>
         rule.ruleTypeSnapshot === "BASE_SALARY" &&
         rule.isActive &&
+        rule.branchId &&
         (!rule.effectiveStartDate || rule.effectiveStartDate <= periodDate) &&
         (!rule.effectiveEndDate || rule.effectiveEndDate >= periodDate)
+      )?.branchId;
+      const branchId = currentUser?.role === UserRole.BRANCH_ADMIN
+        ? currentUser.branchId || ""
+        : selectedDoctor?.assignedBranchId || selectedStaff?.branchId || configuredBranchId || "";
+      setGenBranchId(branchId);
+      const matchesPeriod = (rule: StaffCompensationRule) =>
+        rule.isActive &&
+        (!rule.effectiveStartDate || rule.effectiveStartDate <= periodDate) &&
+        (!rule.effectiveEndDate || rule.effectiveEndDate >= periodDate);
+      const baseSalaryRule = rules.find((rule) =>
+        rule.ruleTypeSnapshot === "BASE_SALARY" &&
+        matchesPeriod(rule) &&
+        rule.branchId === branchId
+      ) || rules.find((rule) =>
+        rule.ruleTypeSnapshot === "BASE_SALARY" && matchesPeriod(rule) && !rule.branchId
       );
+      const taxRule = rules.find((rule) =>
+        rule.ruleTypeSnapshot === "TAX_PERCENTAGE" &&
+        matchesPeriod(rule) &&
+        rule.branchId === branchId
+      );
+      setGenTaxRate(taxRule?.valueSnapshot ?? null);
       if (baseSalaryRule) {
         setGenBaseSalary(baseSalaryRule.valueSnapshot);
         setHasBaseSalaryRule(true);
+      } else if (selectedStaff?.branchId || selectedDoctor?.assignedBranchId) {
+        setGenBaseSalary(0);
       }
     } catch (error) {
       if (requestId === baseSalaryRequestRef.current) {
         setBaseSalaryRuleLoadError(true);
         setErrorMsg(`Gagal memuat aturan gaji pokok: ${error instanceof Error ? error.message : "Kesalahan tidak diketahui."}`);
+      }
+    } finally {
+      if (requestId === baseSalaryRequestRef.current) setLoadingBaseSalaryRule(false);
+    }
+  };
+
+  const handleSelectPayrollBranch = async (branchId: string) => {
+    setGenBranchId(branchId);
+    setHasBaseSalaryRule(false);
+    setGenTaxRate(null);
+    setBaseSalaryRuleLoadError(false);
+    const requestId = ++baseSalaryRequestRef.current;
+    setLoadingBaseSalaryRule(true);
+    try {
+      const rules = await compRepo.getCompensationRulesByStaff(genStaffId);
+      if (requestId !== baseSalaryRequestRef.current) return;
+      const periodDate = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-15`;
+      const matchesPeriod = (rule: StaffCompensationRule) =>
+        rule.isActive &&
+        (!rule.effectiveStartDate || rule.effectiveStartDate <= periodDate) &&
+        (!rule.effectiveEndDate || rule.effectiveEndDate >= periodDate);
+      const baseRule = rules.find((rule) =>
+        rule.ruleTypeSnapshot === "BASE_SALARY" && matchesPeriod(rule) && rule.branchId === branchId
+      ) || rules.find((rule) =>
+        rule.ruleTypeSnapshot === "BASE_SALARY" && matchesPeriod(rule) && !rule.branchId
+      );
+      const taxRule = rules.find((rule) =>
+        rule.ruleTypeSnapshot === "TAX_PERCENTAGE" && matchesPeriod(rule) && rule.branchId === branchId
+      );
+      setGenTaxRate(taxRule?.valueSnapshot ?? null);
+      if (baseRule) {
+        setGenBaseSalary(baseRule.valueSnapshot);
+        setHasBaseSalaryRule(true);
+      } else {
+        setGenBaseSalary(0);
+      }
+    } catch (error) {
+      if (requestId === baseSalaryRequestRef.current) {
+        setBaseSalaryRuleLoadError(true);
+        setErrorMsg(`Gagal memuat aturan payroll cabang: ${error instanceof Error ? error.message : "Kesalahan tidak diketahui."}`);
       }
     } finally {
       if (requestId === baseSalaryRequestRef.current) setLoadingBaseSalaryRule(false);
@@ -375,7 +526,9 @@ export const Payroll: React.FC = () => {
         genStaffId,
         selectedMonth,
         selectedYear,
-        Number(genBaseSalary)
+        Number(genBaseSalary),
+        false,
+        genBranchId || null
       );
       setCorrectionPayrollId(null);
       setShowGenerateModal(false);
@@ -405,6 +558,20 @@ export const Payroll: React.FC = () => {
       const baseSalaryRule = rules.find((rule) =>
         rule.ruleTypeSnapshot === "BASE_SALARY" &&
         rule.isActive &&
+        rule.branchId === payroll.branchId &&
+        (!rule.effectiveStartDate || rule.effectiveStartDate <= periodDate) &&
+        (!rule.effectiveEndDate || rule.effectiveEndDate >= periodDate)
+      ) || rules.find((rule) =>
+        rule.ruleTypeSnapshot === "BASE_SALARY" &&
+        rule.isActive &&
+        !rule.branchId &&
+        (!rule.effectiveStartDate || rule.effectiveStartDate <= periodDate) &&
+        (!rule.effectiveEndDate || rule.effectiveEndDate >= periodDate)
+      );
+      const taxRule = rules.find((rule) =>
+        rule.ruleTypeSnapshot === "TAX_PERCENTAGE" &&
+        rule.isActive &&
+        rule.branchId === payroll.branchId &&
         (!rule.effectiveStartDate || rule.effectiveStartDate <= periodDate) &&
         (!rule.effectiveEndDate || rule.effectiveEndDate >= periodDate)
       );
@@ -415,7 +582,9 @@ export const Payroll: React.FC = () => {
       setLoadingBaseSalaryRule(false);
       setBaseSalaryRuleLoadError(false);
       setGenStaffId(payroll.staffId);
+      setGenBranchId(payroll.branchId || "");
       setGenBaseSalary(payroll.baseSalary);
+      setGenTaxRate(taxRule?.valueSnapshot ?? null);
       setHasBaseSalaryRule(Boolean(baseSalaryRule && baseSalaryRule.valueSnapshot === payroll.baseSalary));
       setCorrectionPayrollId(payroll.id);
       setErrorMsg("");
@@ -659,7 +828,7 @@ export const Payroll: React.FC = () => {
           </p>
         </div>
 
-        {currentUser?.role === UserRole.SUPER_ADMIN && (
+        {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
           <button
             onClick={() => {
               const defaultStaff = availableDoctorsFirst();
@@ -892,7 +1061,9 @@ export const Payroll: React.FC = () => {
                             {info.code}
                           </span>
                           <span>{info.role}</span>
-                          {info.branch && <span>• {info.branch}</span>}
+                          {(getBranchName(p.branchId) || info.branch) && (
+                            <span>• {getBranchName(p.branchId) || info.branch}</span>
+                          )}
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-right font-medium text-slate-700 font-mono">
@@ -966,7 +1137,7 @@ export const Payroll: React.FC = () => {
                             <span>Kirim WA</span>
                           </button>
 
-                          {currentUser?.role === UserRole.SUPER_ADMIN && (
+                          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
                             <>
                               {p.status === PayrollStatus.DRAFT && (
                                 <button
@@ -979,25 +1150,27 @@ export const Payroll: React.FC = () => {
                                 </button>
                               )}
                               {p.status === PayrollStatus.REVIEW && (
-                                <>
-                                  <button
-                                    onClick={() => setPayrollToReopen(p)}
-                                    disabled={syncingPayrollId === p.id}
-                                    className="bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-0.5 rounded text-[10px] font-semibold"
-                                    title="Kembalikan payroll ke DRAFT untuk koreksi dan hitung ulang"
-                                  >
-                                    Koreksi
-                                  </button>
-                                  <button
-                                    onClick={() => handleStatusTransition(p.id, PayrollStatus.APPROVED)}
-                                    disabled={syncingPayrollId === p.id}
-                                    className="bg-teal-600 hover:bg-teal-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
-                                  >
-                                    {syncingPayrollId === p.id ? "Memproses..." : "Setujui"}
-                                  </button>
-                                </>
+                                currentUser?.role === UserRole.SUPER_ADMIN && (
+                                  <>
+                                    <button
+                                      onClick={() => setPayrollToReopen(p)}
+                                      disabled={syncingPayrollId === p.id}
+                                      className="bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-0.5 rounded text-[10px] font-semibold"
+                                      title="Kembalikan payroll ke DRAFT untuk koreksi dan hitung ulang"
+                                    >
+                                      Koreksi
+                                    </button>
+                                    <button
+                                      onClick={() => handleStatusTransition(p.id, PayrollStatus.APPROVED)}
+                                      disabled={syncingPayrollId === p.id}
+                                      className="bg-teal-600 hover:bg-teal-700 text-white px-2 py-0.5 rounded text-[10px] font-semibold"
+                                    >
+                                      {syncingPayrollId === p.id ? "Memproses..." : "Setujui"}
+                                    </button>
+                                  </>
+                                )
                               )}
-                              {p.status === PayrollStatus.APPROVED && (
+                              {p.status === PayrollStatus.APPROVED && currentUser?.role === UserRole.SUPER_ADMIN && (
                                 <button
                                   onClick={() => setPayrollToConfirmPayment(p)}
                                   disabled={syncingPayrollId === p.id}
@@ -1115,6 +1288,30 @@ export const Payroll: React.FC = () => {
               </div>
 
               <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Cabang Penerbit Slip *
+                </label>
+                <select
+                  value={genBranchId}
+                  onChange={(e) => void handleSelectPayrollBranch(e.target.value)}
+                  required={Boolean(doctors.some((doctor) => doctor.id === genStaffId || doctor.staffId === genStaffId))}
+                  disabled={
+                    Boolean(correctionPayrollId) ||
+                    currentUser?.role === UserRole.BRANCH_ADMIN ||
+                    !doctors.some((doctor) => doctor.id === genStaffId || doctor.staffId === genStaffId)
+                  }
+                  className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-500"
+                >
+                  {payrollBranchOptions.map((branch) => (
+                      <option key={branch.id} value={branch.id}>{branch.name}</option>
+                    ))}
+                </select>
+                <span className="text-[10px] text-slate-400 mt-1 block">
+                  Slip, gaji pokok, sharing tindakan, dan pajak dihitung terpisah sesuai cabang ini.
+                </span>
+              </div>
+
+              <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-[11px] font-semibold text-slate-700 uppercase">
                     Gaji Pokok Tetap (Rp) *
@@ -1148,6 +1345,11 @@ export const Payroll: React.FC = () => {
                   {" "}Sistem juga mengakumulasi komisi tindakan dan lembur yang disetujui.
                 </span>
               </div>
+              {genTaxRate !== null && (
+                <div className="rounded-lg border border-rose-100 bg-rose-50 p-3 text-[11px] text-rose-800">
+                  Pajak cabang: <strong>{genTaxRate}%</strong> dari penghasilan bruto, dipotong seluruhnya dari gaji dokter.
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button

@@ -45,6 +45,7 @@ import {
 
 import { MockDatabase, MOCK_SERVICES, MOCK_BRANCH_TARIFFS, MOCK_DOCTORS, MOCK_BRANCHES } from "../data/mockData";
 import { formatInternalPatientCode, getPatientMedicalRecordNumber } from "../utils/rmUtils";
+import { calculatePayrollTax } from "../utils/payrollTax";
 import {
   PatientProfile,
   DentalBranch,
@@ -4065,7 +4066,7 @@ function validateAndCheckRuleOverlap(
   branchId?: string | null,
   excludeRuleId?: string
 ): void {
-  const isSingleInstanceType = ruleType === "BASE_SALARY" || ruleType === "DOCTOR_SITTING_FEE";
+  const isSingleInstanceType = ruleType === "BASE_SALARY" || ruleType === "DOCTOR_SITTING_FEE" || ruleType === "TAX_PERCENTAGE";
   if (!isSingleInstanceType && !serviceId) {
     return;
   }
@@ -4135,6 +4136,21 @@ export class MockCompensationRepository implements CompensationRepository {
   async createCompensationRule(
     data: Omit<StaffCompensationRule, "id" | "createdAt" | "updatedAt"> & { id?: string }
   ): Promise<StaffCompensationRule> {
+    if (
+      !Number.isFinite(data.valueSnapshot) ||
+      (data.ruleTypeSnapshot === "TAX_PERCENTAGE" ? data.valueSnapshot < 0 : data.valueSnapshot <= 0)
+    ) {
+      throw new Error("Nilai kompensasi tidak valid.");
+    }
+    if (
+      (data.ruleTypeSnapshot === "PERCENTAGE" || data.ruleTypeSnapshot === "TAX_PERCENTAGE") &&
+      data.valueSnapshot > 100
+    ) {
+      throw new Error("Persentase tidak boleh lebih dari 100%.");
+    }
+    if (data.ruleTypeSnapshot === "TAX_PERCENTAGE" && !data.branchId) {
+      throw new Error("Aturan pajak harus ditetapkan untuk cabang tertentu.");
+    }
     // Validate Doctor Sitting Fee
     if (data.ruleTypeSnapshot === "DOCTOR_SITTING_FEE") {
       const isDoc = (db.doctors || []).some((d: DentalDoctor) => d.id === data.staffId) ||
@@ -4292,10 +4308,12 @@ export class MockCompensationRepository implements CompensationRepository {
     }
 
     const doctorRules = db.rules.filter((r: StaffCompensationRule) =>
-      doctorCandidateIds.has(r.staffId) && isRuleEffectiveOnDate(r, treatmentDate)
+      doctorCandidateIds.has(r.staffId) &&
+      (!r.branchId || r.branchId === job.branchId) &&
+      isRuleEffectiveOnDate(r, treatmentDate)
     );
     for (const rule of doctorRules) {
-      if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE") continue;
+      if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE" || rule.ruleTypeSnapshot === "TAX_PERCENTAGE") continue;
       if (rule.serviceId && rule.serviceId !== job.serviceId) continue;
       if (existingRuleKeys.has(`${job.doctorId}:${rule.id}`)) continue;
 
@@ -4309,6 +4327,7 @@ export class MockCompensationRepository implements CompensationRepository {
       const accrual: CompensationAccrual = {
         id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
         staffId: job.doctorId,
+        branchId: job.branchId,
         ruleIdSnapshot: rule.id,
         ruleTypeSnapshot: rule.ruleTypeSnapshot,
         valueSnapshot: rule.valueSnapshot,
@@ -4326,10 +4345,12 @@ export class MockCompensationRepository implements CompensationRepository {
     // Find rules for assistant if assigned
     if (job.picAssistantId) {
       const assistantRules = db.rules.filter((r: StaffCompensationRule) =>
-        r.staffId === job.picAssistantId && isRuleEffectiveOnDate(r, treatmentDate)
+        r.staffId === job.picAssistantId &&
+        (!r.branchId || r.branchId === job.branchId) &&
+        isRuleEffectiveOnDate(r, treatmentDate)
       );
       for (const rule of assistantRules) {
-        if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE") continue;
+        if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE" || rule.ruleTypeSnapshot === "TAX_PERCENTAGE") continue;
         if (rule.serviceId && rule.serviceId !== job.serviceId) continue;
         if (existingRuleKeys.has(`${job.picAssistantId}:${rule.id}`)) continue;
 
@@ -4343,6 +4364,7 @@ export class MockCompensationRepository implements CompensationRepository {
         const accrual: CompensationAccrual = {
           id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
           staffId: job.picAssistantId,
+          branchId: job.branchId,
           ruleIdSnapshot: rule.id,
           ruleTypeSnapshot: rule.ruleTypeSnapshot,
           valueSnapshot: rule.valueSnapshot,
@@ -4449,7 +4471,8 @@ export class MockPayrollRepository implements PayrollRepository {
     month: number,
     year: number,
     baseSalary?: number,
-    preserveExisting = false
+    preserveExisting = false,
+    requestedBranchId?: string | null
   ): Promise<MonthlyPayroll> {
     const now = AppClock.nowISO();
     const staff = db.staff.find(s => s.id === staffId || s.userAccountId === staffId);
@@ -4465,26 +4488,30 @@ export class MockPayrollRepository implements PayrollRepository {
     }
 
     const payrollKeyId = staff?.id || doctor?.staffId || doctor?.id || staffId;
-    const payrollId = `payroll-${payrollKeyId}-${year}-${month}`;
+    const staffBranchId = requestedBranchId || staff?.branchId || doctor?.assignedBranchId || null;
+    const payrollId = `payroll-${payrollKeyId}-${staffBranchId || "global"}-${year}-${month}`;
     const periodDate = `${year}-${String(month).padStart(2, "0")}-15`;
 
     // Check if payroll already exists
     let existingIndex = db.payrolls.findIndex((p: MonthlyPayroll) =>
-      p.id === payrollId || (p.staffId === staffId && p.month === month && p.year === year)
+      (p.id === payrollId || (p.staffId === staffId && p.month === month && p.year === year)) &&
+      (p.branchId || null) === staffBranchId
     );
     if (preserveExisting && existingIndex >= 0) {
       return { ...db.payrolls[existingIndex] };
     }
 
-    const staffBranchId = staff?.branchId || doctor?.assignedBranchId || null;
-
-    const activeBaseRule = (db.rules || []).find((r: StaffCompensationRule) =>
+    const activeRules = (db.rules || []).filter((r: StaffCompensationRule) =>
       candidateIds.has(r.staffId) &&
-      r.ruleTypeSnapshot === "BASE_SALARY" &&
       r.isActive &&
+      (!r.branchId || r.branchId === staffBranchId) &&
       (!r.effectiveStartDate || r.effectiveStartDate <= periodDate) &&
       (!r.effectiveEndDate || r.effectiveEndDate >= periodDate)
     );
+    const getApplicableRule = (ruleType: StaffCompensationRule["ruleTypeSnapshot"]) =>
+      activeRules.find((rule) => rule.ruleTypeSnapshot === ruleType && Boolean(staffBranchId) && rule.branchId === staffBranchId) ||
+      activeRules.find((rule) => rule.ruleTypeSnapshot === ruleType && !rule.branchId);
+    const activeBaseRule = getApplicableRule("BASE_SALARY");
     if (baseSalary === undefined && preserveExisting && !activeBaseRule) {
       throw new Error("Draft tidak dibuat: tidak ada aturan gaji pokok aktif untuk periode ini.");
     }
@@ -4494,6 +4521,7 @@ export class MockPayrollRepository implements PayrollRepository {
     // Calculate accruals for the same person only within the target month.
     const staffAccruals = db.accruals.filter((a: CompensationAccrual) => {
       if (!candidateIds.has(a.staffId)) return false;
+      if (requestedBranchId && a.branchId !== requestedBranchId) return false;
       if (!a.accruedAt) return false;
       const [accYear, accMonth] = a.accruedAt.slice(0, 7).split("-").map((part) => parseInt(part, 10));
       return accYear === year && accMonth === month;
@@ -4503,6 +4531,7 @@ export class MockPayrollRepository implements PayrollRepository {
       const [assignmentYear, assignmentMonth] = assignment.coveredDate.split("-").map(Number);
       return assignment.replacementStaffId === (staff?.id || staffId)
         && Boolean(assignment.workConfirmedAt)
+        && (!staffBranchId || assignment.branchId === staffBranchId)
         && assignmentYear === year
         && assignmentMonth === month;
     });
@@ -4514,13 +4543,8 @@ export class MockPayrollRepository implements PayrollRepository {
     // Calculate Doctor Sitting Fee if applicable
     let doctorSittingFeeAmount = 0;
     let sittingFeeSessionCount = 0;
-    const activeSittingRule = (db.rules || []).find((r: StaffCompensationRule) =>
-      candidateIds.has(r.staffId) &&
-      r.ruleTypeSnapshot === "DOCTOR_SITTING_FEE" &&
-      r.isActive &&
-      (!r.effectiveStartDate || r.effectiveStartDate <= periodDate) &&
-      (!r.effectiveEndDate || r.effectiveEndDate >= periodDate)
-    );
+    const activeSittingRule = getApplicableRule("DOCTOR_SITTING_FEE");
+    const taxRule = getApplicableRule("TAX_PERCENTAGE");
 
     if (activeSittingRule) {
       const monthlySchedules = (db.doctorSchedules || []).filter((sch: DoctorSchedule) => {
@@ -4577,6 +4601,7 @@ export class MockPayrollRepository implements PayrollRepository {
         matchesStaff
         && attendanceYear === year
         && attendanceMonth === month
+        && (!staffBranchId || attendance.branchId === staffBranchId)
         && [AttendanceStatus.ABSENT, AttendanceStatus.SICK, AttendanceStatus.LEAVE].includes(attendance.attendanceStatus)
         && !absenceByDate.has(attendance.date)
       ) {
@@ -4585,9 +4610,13 @@ export class MockPayrollRepository implements PayrollRepository {
     }
     const dailySalary = Math.round(effectiveBaseSalary / 25);
     const absenceRecords = [...absenceByDate.values()];
-    const totalDeductions = absenceRecords.length * dailySalary;
-    const netSalary = effectiveBaseSalary + totalCompensation + totalOvertimeAmount - totalDeductions;
-    if (effectiveBaseSalary + totalCompensation + totalOvertimeAmount <= 0) {
+    const absenceDeductions = absenceRecords.length * dailySalary;
+    const grossIncome = effectiveBaseSalary + totalCompensation + totalOvertimeAmount;
+    const taxRate = taxRule?.valueSnapshot || 0;
+    const taxAmount = taxRule ? calculatePayrollTax(grossIncome, taxRate) : 0;
+    const totalDeductions = absenceDeductions + taxAmount;
+    const netSalary = grossIncome - totalDeductions;
+    if (grossIncome <= 0) {
       throw new Error("Draft tidak dibuat: total gaji pokok dan komponen pembayaran periode ini bernilai nol.");
     }
 
@@ -4688,6 +4717,17 @@ export class MockPayrollRepository implements PayrollRepository {
         sourceId: attendance.id
       });
     });
+
+    if (taxRule) {
+      db.payrollItems.push({
+        id: `item-${payrollId}-tax`,
+        payrollId,
+        descriptionSnapshot: `Potongan Pajak (${taxRate}% dari bruto)`,
+        amountSnapshot: taxAmount,
+        type: "DEDUCTION",
+        sourceId: taxRule?.id
+      });
+    }
 
     return { ...payroll };
   }

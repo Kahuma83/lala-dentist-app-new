@@ -12,6 +12,7 @@ import {
   DentalDoctor,
   MasterService,
   DentalBranch,
+  DoctorBranchAssignment,
   TreatmentJobStatus
 } from "../types/domain";
 import {
@@ -58,6 +59,8 @@ export const Compensation: React.FC = () => {
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [services, setServices] = useState<MasterService[]>([]);
   const [branches, setBranches] = useState<DentalBranch[]>([]);
+  const [doctorAssignments, setDoctorAssignments] = useState<DoctorBranchAssignment[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState("");
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncingAccruals, setSyncingAccruals] = useState(false);
@@ -78,9 +81,10 @@ export const Compensation: React.FC = () => {
   // Rule Modal state
   const [formStaffId, setFormStaffId] = useState("");
   const [formName, setFormName] = useState("");
-  const [formType, setFormType] = useState<"PERCENTAGE" | "FIXED_PER_TREATMENT" | "BASE_SALARY">("PERCENTAGE");
+  const [formType, setFormType] = useState<"PERCENTAGE" | "FIXED_PER_TREATMENT" | "BASE_SALARY" | "TAX_PERCENTAGE">("PERCENTAGE");
   const [formValue, setFormValue] = useState<number>(30);
   const [formServiceId, setFormServiceId] = useState<string>("");
+  const [formBranchId, setFormBranchId] = useState("");
   const [formError, setFormError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -91,7 +95,7 @@ export const Compensation: React.FC = () => {
     setErrorMessage(null);
     try {
       const assistantStaffId = isAssistant ? (currentUser?.staffId || currentUser?.id) : undefined;
-      const [rList, aList, dList, sList, srvList, bList, jList] = await Promise.all([
+      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList] = await Promise.all([
         compRepo.getCompensationRules(),
         compRepo.getCompensationAccruals(assistantStaffId),
         doctorRepo.getDoctors(),
@@ -102,7 +106,8 @@ export const Compensation: React.FC = () => {
           currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.branchId
             ? { branchId: currentUser.branchId }
             : undefined
-        )
+        ),
+        doctorRepo.getDoctorBranchAssignments()
       ]);
 
       let filteredAccruals = aList;
@@ -118,6 +123,7 @@ export const Compensation: React.FC = () => {
       setStaffList(sList);
       setServices(srvList);
       setBranches(bList);
+      setDoctorAssignments(assignmentList);
       setJournals(jList);
     } catch (err) {
       console.error("Error loading compensation data:", err);
@@ -126,6 +132,16 @@ export const Compensation: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.branchId) {
+      setSelectedBranchId(currentUser.branchId);
+    } else if (!selectedBranchId && branches.length > 0) {
+      setSelectedBranchId(branches[0].id);
+    } else if (selectedBranchId && branches.length > 0 && !branches.some((branch) => branch.id === selectedBranchId)) {
+      setSelectedBranchId(branches[0].id);
+    }
+  }, [currentUser, branches, selectedBranchId]);
 
   useEffect(() => {
     if (isAssistant) {
@@ -196,13 +212,23 @@ export const Compensation: React.FC = () => {
 
   // Filtered staff for creation based on current role
   const availableStaff = useMemo(() => {
-    let filteredStaff = [...staffList];
-    let filteredDoctors = [...doctors];
-
-    if (currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.branchId) {
-      filteredStaff = filteredStaff.filter((s) => s.branchId === currentUser.branchId);
-      filteredDoctors = filteredDoctors.filter((d) => d.assignedBranchId === currentUser.branchId);
-    }
+    const branchId = currentUser?.role === UserRole.BRANCH_ADMIN
+      ? currentUser.branchId
+      : selectedBranchId;
+    const filteredStaff = staffList.filter((staff) => !branchId || staff.branchId === branchId);
+    const doctorsAssignedToBranch = new Set(
+      doctorAssignments
+        .filter((assignment) =>
+          (!branchId || assignment.branchId === branchId) &&
+          assignment.active
+        )
+        .map((assignment) => assignment.doctorId)
+    );
+    const filteredDoctors = doctors.filter((doctor) =>
+      !branchId ||
+      doctor.assignedBranchId === branchId ||
+      doctorsAssignedToBranch.has(doctor.id)
+    );
 
     return {
       branchAdmins: filteredStaff.filter((s) => s.position === StaffPosition.BRANCH_ADMIN),
@@ -211,11 +237,18 @@ export const Compensation: React.FC = () => {
       otherStaff: filteredStaff.filter((s) => s.position === StaffPosition.OTHER),
       doctors: filteredDoctors
     };
-  }, [staffList, doctors, currentUser]);
+  }, [staffList, doctors, currentUser, doctorAssignments, selectedBranchId]);
 
   const handleCreateRule = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formStaffId || !formName || formValue <= 0) {
+    if (
+      !formStaffId ||
+      !formName ||
+      !formBranchId ||
+      formValue < 0 ||
+      (formType !== "TAX_PERCENTAGE" && formValue === 0) ||
+      ((formType === "TAX_PERCENTAGE" || formType === "PERCENTAGE") && formValue > 100)
+    ) {
       setFormError("Mohon lengkapi semua field dengan benar");
       return;
     }
@@ -228,7 +261,8 @@ export const Compensation: React.FC = () => {
         name: formName,
         ruleTypeSnapshot: formType,
         valueSnapshot: Number(formValue),
-        serviceId: formServiceId ? formServiceId : null,
+        serviceId: formType === "PERCENTAGE" || formType === "FIXED_PER_TREATMENT" ? formServiceId || null : null,
+        branchId: formBranchId,
         isActive: true
       });
       setShowRuleModal(false);
@@ -328,6 +362,7 @@ export const Compensation: React.FC = () => {
 
   const filteredRules = useMemo(() => {
     return rules.filter((r) => {
+      if (selectedBranchId && r.branchId !== selectedBranchId) return false;
       if (ruleTypeFilter !== "ALL" && r.ruleTypeSnapshot !== ruleTypeFilter) {
         return false;
       }
@@ -341,7 +376,28 @@ export const Compensation: React.FC = () => {
       }
       return true;
     });
-  }, [rules, ruleTypeFilter, searchQuery, staffList, doctors, services]);
+  }, [rules, ruleTypeFilter, searchQuery, staffList, doctors, services, selectedBranchId]);
+
+  const getBranchStaffCount = (branchId: string) => {
+    const staffIds = new Set(
+      staffList
+        .filter((staff) => staff.branchId === branchId && staff.active)
+        .map((staff) => staff.id)
+    );
+    doctors.forEach((doctor) => {
+      const hasAssignment = doctorAssignments.some(
+        (assignment) => assignment.doctorId === doctor.id && assignment.branchId === branchId && assignment.active
+      );
+      if (doctor.active && doctor.isActive && (doctor.assignedBranchId === branchId || hasAssignment)) {
+        staffIds.add(doctor.staffId || doctor.id);
+      }
+    });
+    return staffIds.size;
+  };
+
+  const visibleBranches = branches.filter((branch) =>
+    currentUser?.role !== UserRole.BRANCH_ADMIN || branch.id === currentUser.branchId
+  );
 
   const totalAccruedAmount = accruals.reduce((sum, a) => sum + a.amount, 0);
 
@@ -352,31 +408,32 @@ export const Compensation: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <Award className="w-6 h-6 text-emerald-600" />
-            {isAssistant ? "Insentif Saya" : "Kompensasi, Fee Tindakan & Gaji Pokok"}
+            {isAssistant ? "Insentif Saya" : "Pengaturan Penggajian per Cabang"}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             {isAssistant
               ? "Daftar rincian insentif dan komisi dari pelayanan tindakan medis yang telah Anda kerjakan"
-              : "Atur fee per layanan dan gaji pokok. Kompensasi tindakan baru diakru setelah tindakan selesai dan invoice terkait berstatus LUNAS."}
+              : "Pilih cabang untuk mengatur gaji pokok, sharing dokter, serta insentif admin cabang dan asisten. Setiap cabang menerbitkan slip payrollnya sendiri."}
           </p>
         </div>
 
-        {currentUser?.role === UserRole.SUPER_ADMIN && (
+        {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
           <button
             onClick={() => {
               const defaultStaff = availableDoctorsFirst();
               setFormStaffId(defaultStaff);
               setFormName("");
-              setFormType("PERCENTAGE");
-              setFormValue(35);
+              setFormType("BASE_SALARY");
+              setFormValue(2500000);
               setFormServiceId("");
+              setFormBranchId(currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.branchId || "" : selectedBranchId);
               setFormError("");
               setShowRuleModal(true);
             }}
             className="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-xs font-semibold shadow-sm transition-colors cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            Tambah Aturan Kompensasi
+            Tambah Aturan Penggajian
           </button>
         )}
       </div>
@@ -409,6 +466,62 @@ export const Compensation: React.FC = () => {
             ✕
           </button>
         </div>
+      )}
+
+      {!isAssistant && (
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Kebijakan Penggajian Cabang</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Pilih cabang untuk melihat dan mengatur aturan gaji seluruh karyawan yang bekerja di cabang tersebut.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleBranches.map((branch) => {
+              const activeRuleCount = rules.filter(
+                (rule) => rule.branchId === branch.id && rule.isActive
+              ).length;
+              const staffCount = getBranchStaffCount(branch.id);
+              const isSelected = selectedBranchId === branch.id;
+              return (
+                <button
+                  key={branch.id}
+                  type="button"
+                  onClick={() => setSelectedBranchId(branch.id)}
+                  className={`rounded-xl border p-4 text-left transition-colors ${
+                    isSelected
+                      ? "border-emerald-500 bg-emerald-50/70 shadow-sm ring-1 ring-emerald-200"
+                      : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-bold text-slate-900">{branch.name}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        Pengaturan payroll khusus cabang
+                      </div>
+                    </div>
+                    <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                      isSelected ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
+                    }`}>
+                      {isSelected ? "Dipilih" : "Pilih cabang"}
+                    </span>
+                  </div>
+                  <div className="mt-4 flex items-center gap-5 border-t border-slate-200/70 pt-3">
+                    <div>
+                      <div className="text-base font-bold text-slate-900">{staffCount}</div>
+                      <div className="text-[10px] text-slate-500">dokter & staf</div>
+                    </div>
+                    <div>
+                      <div className="text-base font-bold text-emerald-700">{activeRuleCount}</div>
+                      <div className="text-[10px] text-slate-500">aturan aktif</div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       {/* Summary Cards */}
@@ -510,6 +623,7 @@ export const Compensation: React.FC = () => {
                 <option value="BASE_SALARY">Gaji Pokok (Base Salary)</option>
                 <option value="PERCENTAGE">Persentase (%)</option>
                 <option value="FIXED_PER_TREATMENT">Flat Fee (Rp)</option>
+                <option value="TAX_PERCENTAGE">Pajak Payroll (%)</option>
               </select>
             </div>
           </div>
@@ -524,7 +638,7 @@ export const Compensation: React.FC = () => {
                   <th className="py-3 px-4">Tipe Aturan</th>
                   <th className="py-3 px-4 text-right">Nilai / Nominal</th>
                   <th className="py-3 px-4 text-center">Status</th>
-                  {currentUser?.role === UserRole.SUPER_ADMIN && (
+                  {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
                     <th className="py-3 px-4 text-center">Aksi</th>
                   )}
                 </tr>
@@ -532,13 +646,13 @@ export const Compensation: React.FC = () => {
               <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
                 {loading ? (
                   <tr>
-                    <td colSpan={currentUser?.role === UserRole.SUPER_ADMIN ? 7 : 6} className="py-8 text-center text-slate-400">
+                    <td colSpan={currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN ? 7 : 6} className="py-8 text-center text-slate-400">
                       Memuat data aturan kompensasi...
                     </td>
                   </tr>
                 ) : filteredRules.length === 0 ? (
                   <tr>
-                    <td colSpan={currentUser?.role === UserRole.SUPER_ADMIN ? 7 : 6} className="py-8 text-center text-slate-400">
+                    <td colSpan={currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN ? 7 : 6} className="py-8 text-center text-slate-400">
                       {rules.length === 0
                         ? "Belum ada aturan kompensasi. Tambahkan skema untuk mulai menghitung fee dokter dan staf."
                         : "Tidak ada aturan kompensasi yang sesuai filter."}
@@ -547,6 +661,9 @@ export const Compensation: React.FC = () => {
                 ) : (
                   filteredRules.map((r) => {
                     const info = getStaffInfo(r.staffId);
+                    const canManageRule =
+                      currentUser?.role === UserRole.SUPER_ADMIN ||
+                      (currentUser?.role === UserRole.BRANCH_ADMIN && r.branchId === currentUser.branchId);
                     return (
                       <tr key={r.id} className="hover:bg-slate-50/70 transition-colors">
                         <td className="py-3.5 px-4 font-semibold text-slate-900">
@@ -567,13 +684,15 @@ export const Compensation: React.FC = () => {
                               {info.code}
                             </span>
                             <span>{info.role}</span>
-                            {info.branch && (
-                              <span className="text-slate-400">• {info.branch}</span>
+                            {(getBranchName(r.branchId) || info.branch) && (
+                              <span className="text-slate-400">• {getBranchName(r.branchId) || info.branch}</span>
                             )}
                           </div>
                         </td>
                         <td className="py-3.5 px-4">
-                          {r.serviceId ? (
+                          {r.ruleTypeSnapshot === "TAX_PERCENTAGE" ? (
+                            <span className="text-slate-500 text-[11px] italic">Seluruh penghasilan bruto</span>
+                          ) : r.serviceId ? (
                             <span className="inline-flex items-center gap-1 font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-[11px] border border-emerald-100">
                               <Tag className="w-3 h-3" />
                               {getServiceName(r.serviceId)}
@@ -589,6 +708,10 @@ export const Compensation: React.FC = () => {
                             <span className="inline-flex items-center gap-1 font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded text-[11px] border border-indigo-100">
                               Gaji Pokok (Base Salary)
                             </span>
+                          ) : r.ruleTypeSnapshot === "TAX_PERCENTAGE" ? (
+                            <span className="inline-flex items-center gap-1 font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded text-[11px] border border-rose-100">
+                              Potongan Pajak Payroll
+                            </span>
                           ) : r.ruleTypeSnapshot === "PERCENTAGE" ? (
                             <span className="inline-flex items-center gap-1 font-medium text-teal-700 bg-teal-50 px-2 py-0.5 rounded text-[11px]">
                               Bagi Hasil Persentase
@@ -600,7 +723,7 @@ export const Compensation: React.FC = () => {
                           )}
                         </td>
                         <td className="py-3.5 px-4 text-right font-bold">
-                          {r.ruleTypeSnapshot === "PERCENTAGE" ? (
+                          {r.ruleTypeSnapshot === "PERCENTAGE" || r.ruleTypeSnapshot === "TAX_PERCENTAGE" ? (
                             <span className="text-teal-700 font-mono text-sm">{r.valueSnapshot}%</span>
                           ) : r.ruleTypeSnapshot === "BASE_SALARY" ? (
                             <span className="text-indigo-800 font-mono text-sm">
@@ -623,27 +746,31 @@ export const Compensation: React.FC = () => {
                             {r.isActive ? "Aktif" : "Nonaktif"}
                           </span>
                         </td>
-                        {currentUser?.role === UserRole.SUPER_ADMIN && (
+                        {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
                           <td className="py-3.5 px-4 text-center">
                             <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                onClick={() => handleToggleRuleStatus(r)}
-                                className="text-slate-400 hover:text-slate-700 text-[11px] font-medium"
-                                title={r.isActive ? "Nonaktifkan aturan" : "Aktifkan aturan"}
-                              >
-                                {r.isActive ? (
-                                  <ToggleRight className="w-5 h-5 text-emerald-600 inline" />
-                                ) : (
-                                  <ToggleLeft className="w-5 h-5 text-slate-400 inline" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => setRuleToDelete(r)}
-                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
-                                title="Hapus Aturan Kompensasi"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {canManageRule && (
+                                <button
+                                  onClick={() => handleToggleRuleStatus(r)}
+                                  className="text-slate-400 hover:text-slate-700 text-[11px] font-medium"
+                                  title={r.isActive ? "Nonaktifkan aturan" : "Aktifkan aturan"}
+                                >
+                                  {r.isActive ? (
+                                    <ToggleRight className="w-5 h-5 text-emerald-600 inline" />
+                                  ) : (
+                                    <ToggleLeft className="w-5 h-5 text-slate-400 inline" />
+                                  )}
+                                </button>
+                              )}
+                              {currentUser?.role === UserRole.SUPER_ADMIN && (
+                                <button
+                                  onClick={() => setRuleToDelete(r)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                                  title="Hapus Aturan Kompensasi"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         )}
@@ -865,9 +992,11 @@ export const Compensation: React.FC = () => {
                 <select
                   value={formType}
                   onChange={(e) => {
-                    const nextType = e.target.value as any;
+                    const nextType = e.target.value as "PERCENTAGE" | "FIXED_PER_TREATMENT" | "BASE_SALARY" | "TAX_PERCENTAGE";
                     setFormType(nextType);
-                    if (nextType === "BASE_SALARY" && formValue < 1000000) {
+                    if (nextType === "TAX_PERCENTAGE" && (formValue <= 0 || formValue > 100)) {
+                      setFormValue(2.5);
+                    } else if (nextType === "BASE_SALARY" && formValue < 1000000) {
                       setFormValue(2500000);
                     } else if (nextType === "PERCENTAGE" && formValue > 100) {
                       setFormValue(35);
@@ -880,11 +1009,34 @@ export const Compensation: React.FC = () => {
                   <option value="PERCENTAGE">Bagi Hasil Persentase Tindakan (%)</option>
                   <option value="FIXED_PER_TREATMENT">Nominal Flat Fee per Tindakan (Rp)</option>
                   <option value="BASE_SALARY">Gaji Pokok Tetap Bulanan / Base Salary (Rp)</option>
+                  <option value="TAX_PERCENTAGE">Potongan Pajak Payroll (%)</option>
                 </select>
               </div>
 
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Cabang *
+                </label>
+                <select
+                  value={formBranchId}
+                  onChange={(e) => setFormBranchId(e.target.value)}
+                  required
+                  disabled={currentUser?.role === UserRole.BRANCH_ADMIN}
+                  className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:text-slate-500"
+                >
+                  {branches
+                    .filter((branch) => currentUser?.role !== UserRole.BRANCH_ADMIN || branch.id === currentUser.branchId)
+                    .map((branch) => (
+                      <option key={branch.id} value={branch.id}>{branch.name}</option>
+                    ))}
+                </select>
+                <span className="text-[10px] text-slate-400 mt-1 block">
+                  Aturan payroll dan pajak diterapkan untuk dokter pada cabang yang dipilih.
+                </span>
+              </div>
+
               {/* Service Target (Optional for commissions, disabled for base salary) */}
-              {formType !== "BASE_SALARY" && (
+              {(formType === "PERCENTAGE" || formType === "FIXED_PER_TREATMENT") && (
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
                     Cakupan Layanan Tindakan
@@ -917,6 +1069,8 @@ export const Compensation: React.FC = () => {
                   placeholder={
                     formType === "BASE_SALARY"
                       ? "Contoh: Gaji Pokok Tetap Staff Admin"
+                      : formType === "TAX_PERCENTAGE"
+                      ? "Contoh: Pajak Dokter Cabang Gebang"
                       : "Contoh: Komisi Tindakan Scaling 35%"
                   }
                   value={formName}
@@ -929,7 +1083,9 @@ export const Compensation: React.FC = () => {
               {/* Value Input */}
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                  {formType === "PERCENTAGE"
+                  {formType === "TAX_PERCENTAGE"
+                    ? "Persentase Pajak (%) *"
+                    : formType === "PERCENTAGE"
                     ? "Persentase Komisi (%) *"
                     : formType === "BASE_SALARY"
                     ? "Nominal Gaji Pokok Bulanan (Rp) *"
@@ -937,8 +1093,8 @@ export const Compensation: React.FC = () => {
                 </label>
                 <input
                   type="number"
-                  min="1"
-                  max={formType === "PERCENTAGE" ? 100 : undefined}
+                  min={formType === "TAX_PERCENTAGE" ? "0" : "1"}
+                  max={formType === "PERCENTAGE" || formType === "TAX_PERCENTAGE" ? 100 : undefined}
                   value={formValue}
                   onChange={(e) => setFormValue(parseFloat(e.target.value) || 0)}
                   required
@@ -947,6 +1103,11 @@ export const Compensation: React.FC = () => {
                 {formType === "BASE_SALARY" && (
                   <span className="text-[10px] text-indigo-600 mt-1 block">
                     * Nominal ini akan otomatis ditarik sebagai default gaji pokok saat payroll bulanan di-generate.
+                  </span>
+                )}
+                {formType === "TAX_PERCENTAGE" && (
+                  <span className="text-[10px] text-rose-600 mt-1 block">
+                    Persentase dipotong dari penghasilan bruto dokter pada slip cabang ini; tidak ada porsi pajak yang dibebankan ke klinik.
                   </span>
                 )}
               </div>

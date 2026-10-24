@@ -874,7 +874,8 @@ export interface PayrollRepository {
     month: number,
     year: number,
     baseSalary?: number,
-    preserveExisting?: boolean
+    preserveExisting?: boolean,
+    branchId?: string | null
   ): Promise<MonthlyPayroll>;
   updatePayrollStatus(
     id: string,

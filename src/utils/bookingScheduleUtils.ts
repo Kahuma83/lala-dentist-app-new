@@ -1,40 +1,36 @@
 import { DoctorSchedule } from "../types/domain";
 
-export const DEFAULT_BOOKING_TIME_SLOTS = [
-  "08:00",
-  "09:00",
-  "10:30",
-  "11:00",
-  "13:00",
-  "14:30",
-  "15:00",
-  "16:00",
-  "17:00",
-  "18:30",
-  "19:00",
-  "20:00"
-];
+const SLOT_INTERVAL_MINUTES = 30;
+const DEFAULT_START_MINUTES = 8 * 60;
+const DEFAULT_END_MINUTES = 20 * 60;
+
+const toMinutes = (value: string): number | null => {
+  const match = value.match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  if (hours > 23) return null;
+  return hours * 60 + Number(match[2]);
+};
+
+const createSlots = (startMinutes: number, endMinutes: number): string[] => {
+  if (endMinutes <= startMinutes) return [];
+
+  const firstSlot = Math.ceil(startMinutes / SLOT_INTERVAL_MINUTES) * SLOT_INTERVAL_MINUTES;
+  const slots: string[] = [];
+  for (let minutes = firstSlot; minutes < endMinutes; minutes += SLOT_INTERVAL_MINUTES) {
+    slots.push(`${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`);
+  }
+  return slots;
+};
+
+export const DEFAULT_BOOKING_TIME_SLOTS = createSlots(DEFAULT_START_MINUTES, DEFAULT_END_MINUTES);
 
 export const getScheduledBookingTimeSlots = (schedule?: DoctorSchedule): string[] => {
   if (!schedule) return DEFAULT_BOOKING_TIME_SLOTS;
-  const toMinutes = (value: string): number | null => {
-    const match = value.match(/^(\d{1,2}):([0-5]\d)/);
-    if (!match) return null;
-    const hours = Number(match[1]);
-    if (hours > 23) return null;
-    return hours * 60 + Number(match[2]);
-  };
-  const formatTime = (minutes: number) =>
-    `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+
   const startMinutes = toMinutes(schedule.startTime);
   const endMinutes = toMinutes(schedule.endTime);
-  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return [];
+  if (startMinutes === null || endMinutes === null) return [];
 
-  const filtered = DEFAULT_BOOKING_TIME_SLOTS.filter(
-    (slot) => {
-      const slotMinutes = toMinutes(slot);
-      return slotMinutes !== null && slotMinutes >= startMinutes && slotMinutes < endMinutes;
-    }
-  );
-  return filtered.length > 0 ? filtered : [formatTime(startMinutes)];
+  return createSlots(startMinutes, endMinutes);
 };

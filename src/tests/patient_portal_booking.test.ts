@@ -17,16 +17,31 @@ const schedule: DoctorSchedule = {
 };
 
 describe("patient portal booking time slots", () => {
-  it("only returns standard slots within the doctor's schedule", () => {
-    expect(getScheduledBookingTimeSlots(schedule)).toEqual(["10:30", "11:00", "13:00", "14:30"]);
+  it("returns every 30-minute slot within the doctor's schedule without a lunch break", () => {
+    expect(getScheduledBookingTimeSlots(schedule)).toEqual([
+      "09:30", "10:00", "10:30", "11:00", "11:30", "12:00",
+      "12:30", "13:00", "13:30", "14:00", "14:30"
+    ]);
   });
 
-  it("offers the schedule start when no standard slot falls inside its hours", () => {
-    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "08:15", endTime: "08:45" })).toEqual(["08:15"]);
+  it("aligns slots to the next half hour and returns none when no slot fits", () => {
+    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "08:15", endTime: "08:45" })).toEqual(["08:30"]);
+    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "08:15", endTime: "08:29" })).toEqual([]);
   });
 
   it("normalizes database time values that include seconds", () => {
-    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "09:00:00", endTime: "11:00:00" })).toEqual(["09:00", "10:30"]);
+    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "09:00:00", endTime: "11:00:00" })).toEqual([
+      "09:00", "09:30", "10:00", "10:30"
+    ]);
+  });
+
+  it("generates regular default slots from 08:00 to 20:00", () => {
+    expect(getScheduledBookingTimeSlots()).toEqual([
+      "08:00", "08:30", "09:00", "09:30", "10:00", "10:30",
+      "11:00", "11:30", "12:00", "12:30", "13:00", "13:30",
+      "14:00", "14:30", "15:00", "15:30", "16:00", "16:30",
+      "17:00", "17:30", "18:00", "18:30", "19:00", "19:30"
+    ]);
   });
 
   it("restricts patient inserts to their own pending booking on a valid schedule", () => {

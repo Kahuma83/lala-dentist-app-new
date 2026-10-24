@@ -903,7 +903,7 @@ export interface StaffCompensationRule {
   id: string;
   staffId: string;
   name: string;
-  ruleTypeSnapshot: "PERCENTAGE" | "FIXED_PER_TREATMENT" | "BASE_SALARY" | "DOCTOR_SITTING_FEE";
+  ruleTypeSnapshot: "PERCENTAGE" | "FIXED_PER_TREATMENT" | "BASE_SALARY" | "DOCTOR_SITTING_FEE" | "TAX_PERCENTAGE";
   valueSnapshot: number; // percentage or flat amount
   isActive: boolean;
   serviceId?: string | null;
@@ -917,6 +917,7 @@ export interface StaffCompensationRule {
 export interface CompensationAccrual {
   id: string;
   staffId: string;
+  branchId?: string | null;
   ruleIdSnapshot?: string; // Snapshot Principle
   ruleTypeSnapshot?: string; // Snapshot Principle
   valueSnapshot?: number; // Snapshot Principle

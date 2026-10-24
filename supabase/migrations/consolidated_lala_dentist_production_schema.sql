@@ -774,7 +774,7 @@ CREATE TABLE IF NOT EXISTS public.staff_compensation_rules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   staff_id UUID NOT NULL REFERENCES public.staff(id) ON DELETE RESTRICT,
   name VARCHAR(100) NOT NULL,
-  rule_type_snapshot VARCHAR(50) NOT NULL CHECK (rule_type_snapshot IN ('PERCENTAGE', 'FIXED_PER_TREATMENT', 'BASE_SALARY')),
+  rule_type_snapshot VARCHAR(50) NOT NULL CHECK (rule_type_snapshot IN ('PERCENTAGE', 'FIXED_PER_TREATMENT', 'BASE_SALARY', 'DOCTOR_SITTING_FEE', 'TAX_PERCENTAGE')),
   value_snapshot NUMERIC(12,2) NOT NULL CHECK (value_snapshot >= 0),
   is_active BOOLEAN NOT NULL DEFAULT true,
   service_id UUID REFERENCES public.master_services(id) ON DELETE RESTRICT,
@@ -783,11 +783,16 @@ CREATE TABLE IF NOT EXISTS public.staff_compensation_rules (
   effective_end_date DATE,
   CONSTRAINT staff_compensation_rules_effective_date_check
     CHECK (effective_end_date IS NULL OR effective_start_date IS NULL OR effective_end_date >= effective_start_date),
+  CONSTRAINT staff_compensation_rules_tax_scope_check
+    CHECK (rule_type_snapshot <> 'TAX_PERCENTAGE' OR (branch_id IS NOT NULL AND service_id IS NULL AND value_snapshot BETWEEN 0 AND 100)),
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
 CREATE INDEX IF NOT EXISTS idx_staff_comp_rules_staff ON public.staff_compensation_rules(staff_id, is_active);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_staff_branch_active_payroll_tax
+  ON public.staff_compensation_rules(staff_id, branch_id)
+  WHERE is_active AND rule_type_snapshot = 'TAX_PERCENTAGE';
 
 -- 4.2 Compensation Accruals (Scope: BRANCH-SCOPED)
 CREATE TABLE IF NOT EXISTS public.compensation_accruals (
@@ -882,12 +887,17 @@ CREATE TABLE IF NOT EXISTS public.monthly_payrolls (
   net_salary BIGINT NOT NULL DEFAULT 0,
   status VARCHAR(30) NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'REVIEW', 'APPROVED', 'PAID')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-  CONSTRAINT uq_monthly_payroll UNIQUE (staff_id, month, year)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
 CREATE INDEX IF NOT EXISTS idx_monthly_payrolls_lookup ON public.monthly_payrolls(branch_id, year, month, status);
 CREATE INDEX IF NOT EXISTS idx_monthly_payrolls_staff ON public.monthly_payrolls(staff_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_monthly_payroll_branch_period
+  ON public.monthly_payrolls(staff_id, branch_id, month, year)
+  WHERE branch_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_monthly_payroll_global_period
+  ON public.monthly_payrolls(staff_id, month, year)
+  WHERE branch_id IS NULL;
 
 -- 4.6 Payroll Items (Scope: BRANCH-SCOPED - Snapshot Principle)
 CREATE TABLE IF NOT EXISTS public.payroll_items (
