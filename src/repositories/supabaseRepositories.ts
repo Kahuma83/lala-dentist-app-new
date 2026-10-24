@@ -5136,9 +5136,12 @@ export class SupabaseDoctorRepository implements DoctorRepository {
         const payload: any = { updated_at: new Date().toISOString() };
         if (updates.name) payload.name = updates.name;
         if (updates.fullName) payload.full_name = updates.fullName;
+        if (updates.title !== undefined) payload.title = updates.title || null;
         if (updates.specialization) payload.specialization = updates.specialization;
         if (updates.phone) payload.phone = updates.phone;
         if (updates.email !== undefined) payload.email = updates.email;
+        if (updates.str !== undefined) payload.str = updates.str || null;
+        if (updates.sip !== undefined) payload.sip = updates.sip || null;
         if (updates.assignedBranchId !== undefined) payload.assigned_branch_id = updates.assignedBranchId;
         if (updates.staffId !== undefined) payload.staff_id = updates.staffId || null;
         if (updates.active !== undefined) payload.active = updates.active;

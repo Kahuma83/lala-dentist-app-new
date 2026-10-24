@@ -52,7 +52,7 @@ export const ClinicDentalAssessmentFields: React.FC<ClinicDentalAssessmentFields
     <div>
       <h3 className="text-xs font-bold text-cyan-950">Pemeriksaan Odontogram Klinik</h3>
       <p className="mt-0.5 text-[10px] text-cyan-900">
-        Tambahan sesuai formulir klinik; odontogram gigi di atas tetap tersedia seperti sebelumnya.
+        Isi pilihan dan keterangan sesuai hasil pemeriksaan. Nilainya akan dicetak pada bagian bawah formulir odontogram.
       </p>
     </div>
 

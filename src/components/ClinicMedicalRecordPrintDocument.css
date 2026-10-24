@@ -19,6 +19,10 @@
     -webkit-print-color-adjust: exact;
   }
 
+  body[data-print-document="clinic-medical-record"] #root {
+    display: none !important;
+  }
+
   body[data-print-document="clinic-medical-record"] * {
     visibility: hidden !important;
   }
@@ -31,7 +35,9 @@
   body[data-print-document="clinic-medical-record"] .clinic-medical-print {
     display: block !important;
     page: clinic-medical-record;
-    position: static !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
     width: 192mm !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -102,8 +108,14 @@
 
   .clinic-print-doctors {
     font-size: 7.5pt;
-    line-height: 1.45;
-    white-space: nowrap;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .clinic-print-doctor-label {
+    margin-bottom: 1mm;
+    font-size: 6.5pt;
+    font-weight: 700;
   }
 
   .clinic-print-patient-fields {
@@ -223,12 +235,54 @@
     min-height: 6mm;
   }
 
+  .clinic-print-tooth-notes {
+    width: 132mm;
+    margin-right: auto;
+    margin-left: auto;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 8pt;
+    line-height: 1;
+  }
+
+  .clinic-print-tooth-notes tr {
+    height: 4.5mm;
+    break-inside: avoid;
+  }
+
+  .clinic-print-tooth-notes th,
+  .clinic-print-tooth-notes td {
+    border: 0.25mm solid #222;
+    padding: 0.4mm 1mm;
+  }
+
+  .clinic-print-tooth-notes td {
+    font-size: 6.5pt;
+    text-align: left;
+    vertical-align: middle;
+    overflow-wrap: anywhere;
+  }
+
+  .clinic-print-tooth-notes th {
+    width: 17%;
+    font-weight: 400;
+    text-align: center;
+  }
+
+  .clinic-print-tooth-notes td {
+    width: 33%;
+  }
+
+  .clinic-print-upper-tooth-notes {
+    margin-top: 2mm;
+  }
+
   .clinic-print-tooth-chart {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 7mm;
-    margin: 12mm auto 13mm;
+    gap: 2.5mm;
+    margin: 3mm auto;
   }
 
   .clinic-print-tooth-row {
@@ -272,17 +326,21 @@
     height: 9.5mm;
   }
 
+  .clinic-print-lower-tooth-notes {
+    margin-top: 1mm;
+  }
+
   .clinic-print-assessment-lines {
     margin: 0 auto;
-    width: 155mm;
+    width: 132mm;
     font-size: 8pt;
-    line-height: 1.8;
+    line-height: 1.55;
   }
 
   .clinic-print-assessment-lines > div:not(.clinic-print-dmf) {
     display: grid;
     grid-template-columns: 39mm 4mm 1fr;
-    min-height: 6mm;
+    min-height: 5mm;
     border-bottom: 0.2mm dotted #777;
   }
 
@@ -325,5 +383,16 @@
   .clinic-print-signatures span {
     min-height: 7mm;
     border-bottom: 0.2mm dotted #333;
+  }
+
+  .clinic-print-signatures .clinic-print-signature-space {
+    min-height: 11mm;
+    border-bottom: 0;
+  }
+
+  .clinic-print-signatures small {
+    display: block;
+    font-size: 6.5pt;
+    line-height: 1.3;
   }
 }

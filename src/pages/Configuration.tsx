@@ -131,6 +131,7 @@ export const Configuration: React.FC = () => {
   const [editingDoctor, setEditingDoctor] = useState<DentalDoctor | null>(null);
   const [doctorFormCode, setDoctorFormCode] = useState("");
   const [doctorFormName, setDoctorFormName] = useState("");
+  const [doctorFormFullName, setDoctorFormFullName] = useState("");
   const [doctorFormTitle, setDoctorFormTitle] = useState("");
   const [doctorFormSpecialization, setDoctorFormSpecialization] = useState("Dokter Gigi Umum");
   const [doctorFormPhone, setDoctorFormPhone] = useState("");
@@ -849,6 +850,7 @@ export const Configuration: React.FC = () => {
       setEditingDoctor(doctor);
       setDoctorFormCode(doctor.doctorCode || doctor.id.toUpperCase());
       setDoctorFormName(doctor.name || doctor.fullName || "");
+      setDoctorFormFullName(doctor.fullName || doctor.name || "");
       setDoctorFormTitle(doctor.title || doctor.specialization || "Dokter Gigi Umum");
       setDoctorFormSpecialization(doctor.specialization || "Dokter Gigi Umum");
       setDoctorFormPhone(doctor.phone || "");
@@ -861,6 +863,7 @@ export const Configuration: React.FC = () => {
       setEditingDoctor(null);
       setDoctorFormCode("");
       setDoctorFormName("");
+      setDoctorFormFullName("");
       setDoctorFormTitle("Dokter Gigi Umum");
       setDoctorFormSpecialization("Dokter Gigi Umum");
       setDoctorFormPhone("");
@@ -1059,6 +1062,10 @@ export const Configuration: React.FC = () => {
       setErrorMsg("Nama dokter wajib diisi");
       return;
     }
+    if (!doctorFormFullName.trim()) {
+      setErrorMsg("Nama lengkap dokter wajib diisi untuk identitas pada rekam medis.");
+      return;
+    }
 
     setIsSubmitting(true);
     setErrorMsg("");
@@ -1069,7 +1076,7 @@ export const Configuration: React.FC = () => {
           editingDoctor.id,
           {
             name: doctorFormName.trim(),
-            fullName: doctorFormName.trim(),
+            fullName: doctorFormFullName.trim(),
             title: doctorFormTitle.trim() || doctorFormSpecialization,
             specialization: doctorFormSpecialization,
             phone: doctorFormPhone.trim(),
@@ -1091,7 +1098,7 @@ export const Configuration: React.FC = () => {
           {
             doctorCode: doctorFormCode.trim().toUpperCase() || undefined,
             name: doctorFormName.trim(),
-            fullName: doctorFormName.trim(),
+            fullName: doctorFormFullName.trim(),
             title: doctorFormTitle.trim() || doctorFormSpecialization,
             specialization: doctorFormSpecialization,
             phone: doctorFormPhone.trim(),
@@ -2917,7 +2924,7 @@ export const Configuration: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                    Nama Dokter *
+                    Nama Tampilan Dokter *
                   </label>
                   <input
                     type="text"
@@ -2931,6 +2938,21 @@ export const Configuration: React.FC = () => {
                 </div>
 
                 <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                    Nama Lengkap untuk Rekam Medis *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Nama lengkap beserta gelar profesional"
+                    value={doctorFormFullName}
+                    disabled={currentUser?.role !== UserRole.SUPER_ADMIN}
+                    onChange={(e) => setDoctorFormFullName(e.target.value)}
+                    required
+                    className="w-full text-xs border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-[#c5a059] disabled:bg-slate-50"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
                   <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
                     Gelar / Title Profesional
                   </label>

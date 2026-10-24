@@ -42,13 +42,23 @@ describe("Supabase doctor staff relation persistence", () => {
 
     await repository.updateDoctor(
       "11111111-1111-4111-8111-111111111111",
-      { staffId: "22222222-2222-4222-8222-222222222222" },
+      {
+        staffId: "22222222-2222-4222-8222-222222222222",
+        fullName: "drg. Regina Nama Lengkap",
+        title: "Dokter Gigi Umum",
+        str: "STR-123",
+        sip: "SIP-456"
+      },
       UserRole.SUPER_ADMIN
     );
 
     expect(mocks.from).toHaveBeenCalledWith("dental_doctors");
     expect(mocks.query.update).toHaveBeenCalledWith(expect.objectContaining({
-      staff_id: "22222222-2222-4222-8222-222222222222"
+      staff_id: "22222222-2222-4222-8222-222222222222",
+      full_name: "drg. Regina Nama Lengkap",
+      title: "Dokter Gigi Umum",
+      str: "STR-123",
+      sip: "SIP-456"
     }));
   });
 

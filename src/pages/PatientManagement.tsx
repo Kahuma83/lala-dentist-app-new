@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
 import {
   PatientProfile,
@@ -81,7 +82,20 @@ import {
 import { supabase } from "../lib/supabase";
 
 export const PatientManagement: React.FC = () => {
-  const { currentUser, repos, branches, patients, visits, bookings, treatmentJobs, staff, services, refreshData } = useApp();
+  const {
+    currentUser,
+    repos,
+    branches,
+    doctors,
+    doctorBranchAssignments,
+    patients,
+    visits,
+    bookings,
+    treatmentJobs,
+    staff,
+    services,
+    refreshData
+  } = useApp();
   const { path, navigate } = useRouter();
   const canReadMedicalRecords =
     currentUser?.role === UserRole.DOCTOR || currentUser?.role === UserRole.SUPER_ADMIN;
@@ -1092,10 +1106,29 @@ export const PatientManagement: React.FC = () => {
 
   return (
     <div className="space-y-6" id="patient-management-root">
-      {mrModalOpen && selectedVisitForMR && selectedPatient && canReadMedicalRecords && (
+      {mrModalOpen && selectedVisitForMR && selectedPatient && canReadMedicalRecords && createPortal(
         <ClinicMedicalRecordPrintDocument
           patient={medicalRecordPrintPatient || selectedPatient}
           visit={selectedVisitForMR}
+          branch={branches.find((branch) => branch.id === selectedVisitForMR.branchId)}
+          doctor={doctors.find((doctor) =>
+            doctor.id === (existingMR?.doctorId || selectedVisitForMR.doctorId || currentUser?.doctorId)
+          )}
+          branchDoctors={doctors
+            .filter((doctor) =>
+              (doctor.active ?? doctor.isActive) &&
+              (
+                doctor.assignedBranchId === selectedVisitForMR.branchId ||
+                doctorBranchAssignments.some((assignment) =>
+                  assignment.doctorId === doctor.id &&
+                  assignment.branchId === selectedVisitForMR.branchId &&
+                  assignment.active
+                )
+              )
+            )
+            .sort((first, second) =>
+              (first.fullName || first.name).localeCompare(second.fullName || second.name, "id")
+            )}
           profile={medicalProfile}
           doctorName={existingMR?.doctorNameSnapshot || currentUser?.name || "Dokter"}
           record={{
@@ -1109,7 +1142,8 @@ export const PatientManagement: React.FC = () => {
             odontogram: mrForm.odontogram,
             clinicFormData: mrForm.clinicFormData
           }}
-        />
+        />,
+        document.body
       )}
       {/* Toast Feedback */}
       {formSuccess && (
@@ -2434,7 +2468,8 @@ export const PatientManagement: React.FC = () => {
                         ],
                         ["Jenis Kelamin", selectedPatient.gender === "L" ? "Laki-laki" : selectedPatient.gender === "P" ? "Perempuan" : "Belum diketahui"],
                         ["Pekerjaan", selectedPatient.occupation || "-"],
-                        ["Alamat", selectedPatient.address || "-"]
+                        ["Alamat", selectedPatient.address || "-"],
+                        ["Telepon", selectedPatient.phone || "-"]
                       ].map(([label, value]) => (
                         <div key={label} className="rounded-lg bg-slate-50 px-3 py-2">
                           <div className="text-[10px] font-semibold text-slate-500">{label}</div>
@@ -2446,7 +2481,7 @@ export const PatientManagement: React.FC = () => {
 
                   <section className="space-y-3 rounded-xl border border-rose-100 bg-rose-50/60 p-3.5">
                     <div>
-                      <h3 className="text-xs font-bold text-rose-900">Medical Alert & Riwayat Medis</h3>
+                      <h3 className="text-xs font-bold text-rose-900">Riwayat Medis Pasien</h3>
                       <p className="mt-0.5 text-[10px] text-rose-800">
                         Profil ini berlaku lintas kunjungan dan hanya dapat diubah dokter atau Super Admin.
                       </p>
@@ -2469,7 +2504,29 @@ export const PatientManagement: React.FC = () => {
                       {[
                         ["Alergi obat-obatan", "medicationAllergies", "Contoh: penisilin, lateks, anestesi lokal"],
                         ["Alergi makanan", "foodAllergies", "Tuliskan jenis makanan pemicu alergi"],
-                        ["Penyakit bawaan", "congenitalDiseases", "Tuliskan penyakit bawaan pasien"],
+                        ["Penyakit bawaan", "congenitalDiseases", "Tuliskan penyakit bawaan pasien"]
+                      ].map(([label, key, placeholder]) => (
+                        <label key={key} className="text-[11px] font-semibold text-slate-700">
+                          {label}
+                          <textarea
+                            rows={2}
+                            value={medicalProfile[key as keyof PatientMedicalProfile] as string || ""}
+                            disabled={!canEditMedicalRecords || loadingMR}
+                            onChange={(event) => {
+                              setMedicalProfile((profile) => ({ ...profile, [key]: event.target.value }));
+                              setMedicalProfileSaved(false);
+                            }}
+                            placeholder={placeholder}
+                            className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs disabled:bg-slate-100"
+                          />
+                        </label>
+                      ))}
+                      <details className="sm:col-span-2 rounded-lg border border-rose-100 bg-white p-3">
+                        <summary className="cursor-pointer text-[11px] font-semibold text-rose-900">
+                          Riwayat medis tambahan (opsional)
+                        </summary>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      {[
                         ["Alergi lainnya", "allergies", "Alergi lain yang belum tercatat di atas"],
                         ["Penyakit sistemik", "systemicDiseases", "Contoh: diabetes, hipertensi, penyakit jantung"],
                         ["Obat rutin", "routineMedications", "Nama obat, dosis, dan frekuensi bila diketahui"],
@@ -2491,6 +2548,8 @@ export const PatientManagement: React.FC = () => {
                           />
                         </label>
                       ))}
+                        </div>
+                      </details>
                     </div>
                     {canEditMedicalRecords && (
                       <div className="flex items-center justify-end gap-2">
@@ -2507,11 +2566,11 @@ export const PatientManagement: React.FC = () => {
                     )}
                   </section>
 
-                  <section className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-800">Tanda Vital Kunjungan Ini</h3>
-                      <p className="mt-0.5 text-[10px] text-slate-500">Isi sesuai hasil pengukuran; boleh dikosongkan bila tidak diukur.</p>
-                    </div>
+                  <details className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                    <summary className="cursor-pointer text-xs font-bold text-slate-800">
+                      Tanda vital (opsional; isi jika diukur atau diperlukan)
+                    </summary>
+                    <p className="mt-1 text-[10px] text-slate-500">Bagian ini tidak tercantum pada lembar rekam medis klinik.</p>
                     <div className="grid gap-3 sm:grid-cols-4">
                       {([
                         ["Tekanan darah sistolik", "systolicBloodPressure", "mmHg"],
@@ -2537,7 +2596,7 @@ export const PatientManagement: React.FC = () => {
                         </label>
                       ))}
                     </div>
-                  </section>
+                  </details>
 
                   {/* Linked Treatments Section */}
                   {visitTreatments.length > 0 && (
@@ -2568,10 +2627,19 @@ export const PatientManagement: React.FC = () => {
                   )}
 
                   {canReadMedicalRecords && (
-                    <section className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3.5">
-                      <div>
-                        <h3 className="text-xs font-bold text-indigo-950">Dokumen Informed Consent</h3>
-                        <p className="mt-1 text-[10px] leading-relaxed text-indigo-900">
+                    <details className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3.5">
+                      <summary className="cursor-pointer text-xs font-bold text-indigo-950">
+                        Dokumen informed consent (arsip terpisah)
+                        {consentDocuments.length > 0 && ` · ${consentDocuments.length} dokumen`}
+                        {visitTreatments.some((treatment) =>
+                          services.some((service) => service.id === treatment.serviceId && service.requiresConsent) &&
+                          !consentDocuments.some((document) =>
+                            document.scope === "TREATMENT" && document.treatmentJobId === treatment.id
+                          )
+                        ) && <span className="ml-1 text-amber-700">· consent tindakan belum diunggah</span>}
+                      </summary>
+                      <div className="mt-3 space-y-3">
+                        <p className="text-[10px] leading-relaxed text-indigo-900">
                           Unggah dokumen yang sudah disiapkan dan ditandatangani di luar aplikasi. Aplikasi tidak membuat teks consent atau memverifikasi validitas hukumnya. Format PDF/JPG/PNG, maksimal 10 MB.
                         </p>
                       </div>
@@ -2690,9 +2758,16 @@ export const PatientManagement: React.FC = () => {
                           Belum ada tindakan kunjungan ini yang ditandai wajib consent.
                         </p>
                       )}
-                    </section>
+                    </details>
                   )}
 
+                  <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-3.5">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-800">Anamnesa & Pemeriksaan Fisik</h3>
+                      <p className="mt-0.5 text-[10px] text-slate-500">
+                        Bagian ini mengisi kolom anamnesa dan pemeriksaan fisik pada formulir klinik.
+                      </p>
+                    </div>
                   {/* Keluhan Utama */}
                   <div>
                     <label className="block font-bold text-slate-700 mb-1 text-xs">
@@ -2733,24 +2808,32 @@ export const PatientManagement: React.FC = () => {
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
                   </div>
+                  </section>
 
-                  <Odontogram
-                    value={mrForm.odontogram}
-                    history={existingMR?.odontogramHistory}
-                    disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
-                    onChange={(odontogram) => setMrForm((previous) => ({ ...previous, odontogram }))}
-                  />
+                  <details className="rounded-xl border border-cyan-100 bg-cyan-50/40 p-3.5">
+                    <summary className="cursor-pointer text-xs font-bold text-cyan-950">
+                      Form pemeriksaan odontogram (lembar terpisah)
+                    </summary>
+                    <div className="mt-3 space-y-3">
+                      <Odontogram
+                        value={mrForm.odontogram}
+                        history={existingMR?.odontogramHistory}
+                        disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
+                        onChange={(odontogram) => setMrForm((previous) => ({ ...previous, odontogram }))}
+                      />
 
-                  <ClinicDentalAssessmentFields
-                    value={mrForm.clinicFormData.dentalAssessment || {}}
-                    disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
-                    onChange={(dentalAssessment) =>
-                      setMrForm((previous) => ({
-                        ...previous,
-                        clinicFormData: { ...previous.clinicFormData, dentalAssessment }
-                      }))
-                    }
-                  />
+                      <ClinicDentalAssessmentFields
+                        value={mrForm.clinicFormData.dentalAssessment || {}}
+                        disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
+                        onChange={(dentalAssessment) =>
+                          setMrForm((previous) => ({
+                            ...previous,
+                            clinicFormData: { ...previous.clinicFormData, dentalAssessment }
+                          }))
+                        }
+                      />
+                    </div>
+                  </details>
 
                   {/* Diagnosis */}
                   <div>
@@ -2768,7 +2851,7 @@ export const PatientManagement: React.FC = () => {
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block font-bold text-slate-700 text-xs">
-                      Kode Diagnosis ICD-10 WHO 2019 <span className="font-normal text-slate-400">(opsional, manual)</span>
+                      Kode Diagnosis ICD-10 <span className="font-normal text-slate-400">(opsional)</span>
                       <input
                         type="text"
                         value={mrForm.diagnosisCode}
@@ -2779,8 +2862,13 @@ export const PatientManagement: React.FC = () => {
                         className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-xs font-normal text-slate-800 disabled:bg-slate-100"
                       />
                     </label>
-                    <label className="block font-bold text-slate-700 text-xs">
-                      Kode Prosedur ICD-9-CM <span className="font-normal text-slate-400">(opsional, satu kode per baris)</span>
+                  </div>
+                  <details className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <summary className="cursor-pointer text-[11px] font-semibold text-slate-700">
+                      Kode prosedur ICD-9-CM (tambahan, opsional)
+                    </summary>
+                    <label className="mt-3 block font-bold text-slate-700 text-xs">
+                      Kode Prosedur ICD-9-CM <span className="font-normal text-slate-400">(satu kode per baris)</span>
                       <textarea
                         rows={2}
                         value={mrForm.procedureCodesText}
@@ -2790,14 +2878,14 @@ export const PatientManagement: React.FC = () => {
                         className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-xs font-normal text-slate-800 disabled:bg-slate-100"
                       />
                     </label>
-                  </div>
-                  <p className="text-[10px] leading-relaxed text-amber-800">
-                    Kode diketik manual; aplikasi hanya memeriksa format, bukan validitas klinis. Pilihan kode dan kecocokannya harus diverifikasi dokter.
-                  </p>
+                    <p className="mt-2 text-[10px] leading-relaxed text-amber-800">
+                      Kode diketik manual; aplikasi hanya memeriksa format, bukan validitas klinis. Pilihan kode dan kecocokannya harus diverifikasi dokter.
+                    </p>
+                  </details>
 
                   {/* Rencana / Tindakan */}
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-xs">Rencana / Tindakan</label>
+                    <label className="block font-bold text-slate-700 mb-1 text-xs">Terapi / Tindakan</label>
                     <textarea
                       rows={2}
                       value={mrForm.treatmentPlan}
@@ -2837,18 +2925,20 @@ export const PatientManagement: React.FC = () => {
                     </div>
                   </section>
 
-                  {/* Catatan Dokter */}
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-xs">Catatan Dokter</label>
+                  <details className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <summary className="cursor-pointer text-[11px] font-semibold text-slate-700">
+                      Catatan dokter tambahan (opsional)
+                    </summary>
+                    <label className="mt-3 block font-bold text-slate-700 mb-1 text-xs">Catatan Dokter</label>
                     <textarea
                       rows={2}
                       value={mrForm.doctorNotes}
                       onChange={(e) => setMrForm({ ...mrForm, doctorNotes: e.target.value })}
                       disabled={!canEditMedicalRecords || existingMR?.status === MedicalRecordStatus.FINAL}
-                      placeholder="Catatan edukasi pasien, instruksi pasca tindakan, atau jadwal kontrol..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
+                      placeholder="Edukasi pasien, instruksi pasca tindakan, atau jadwal kontrol..."
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                     />
-                  </div>
+                  </details>
 
                   {/* Status Selection */}
                   {canEditMedicalRecords && existingMR?.status !== MedicalRecordStatus.FINAL && (
