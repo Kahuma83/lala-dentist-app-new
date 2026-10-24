@@ -140,14 +140,57 @@ describe("Inventory service", () => {
       materials: getInventoryTreatmentRecipe("CONSULTATION")!.lines,
       userName: "Dokter"
     };
-    await expect(recordTreatmentInventoryUsage(input)).resolves.toEqual({ alreadyRecorded: false });
-    await expect(recordTreatmentInventoryUsage(input)).resolves.toEqual({ alreadyRecorded: true });
+    await expect(recordTreatmentInventoryUsage(input)).resolves.toEqual({ alreadyRecorded: false, shortages: [] });
+    await expect(recordTreatmentInventoryUsage(input)).resolves.toEqual({ alreadyRecorded: true, shortages: [] });
     await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
       { itemCode: "BT-013", currentStock: 3 },
       { itemCode: "AM-001", currentStock: 4 },
       { itemCode: "AM-002", currentStock: 4 }
     ]);
     await expect(listInventoryMovements({ branchId: "branch-gebang" })).resolves.toHaveLength(6);
+  });
+
+  it("deducts available stock, reports shortages, and does not deduct twice on retry", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => localStorageData.get(key) ?? null,
+      setItem: (key: string, value: string) => localStorageData.set(key, value)
+    });
+    const item = await saveInventoryItem({
+      branchId: "branch-gebang",
+      itemCode: "BT-009",
+      name: "Bahan Tindakan",
+      category: "BAHAN_TINDAKAN",
+      unit: "ml",
+      minimumStock: 0,
+      storageLocation: ""
+    }, "Admin");
+    await recordInventoryMovement({
+      itemId: item.id,
+      movementType: "IN",
+      quantity: 5,
+      userName: "Admin"
+    });
+    const input = {
+      treatmentJobId: "treatment-shortage",
+      patientVisitId: "visit-shortage",
+      branchId: "branch-gebang",
+      serviceName: "Tindakan",
+      materials: [{ itemCode: "BT-009", quantity: 10 }],
+      userName: "Dokter"
+    };
+
+    await expect(recordTreatmentInventoryUsage(input)).resolves.toEqual({
+      alreadyRecorded: false,
+      shortages: [{ itemCode: "BT-009", requested: 10, deducted: 5, shortage: 5 }]
+    });
+    await expect(recordTreatmentInventoryUsage(input)).resolves.toEqual({
+      alreadyRecorded: true,
+      shortages: [{ itemCode: "BT-009", requested: 10, deducted: 5, shortage: 5 }]
+    });
+    await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
+      { id: item.id, currentStock: 0 }
+    ]);
+    await expect(listInventoryMovements({ itemId: item.id })).resolves.toHaveLength(2);
   });
 
   it("provides standard recipes for each treatment, with one selected brace material", () => {
@@ -238,5 +281,12 @@ describe("Inventory service", () => {
     expect(seedMigration).toMatch(/ON CONFLICT \(branch_id, item_code\) DO NOTHING/i);
     expect(seedMigration.match(/\('(AM|BT|OR)-\d{3}'/g)).toHaveLength(16);
     expect(seedMigration).toMatch(/^\s*0,\s*$/m);
+    const shortageMigration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20261223000000_allow_treatment_completion_with_stock_shortage.sql"),
+      "utf8"
+    );
+    expect(shortageMigration).toMatch(/shortage_details JSONB NOT NULL DEFAULT '\[\]'/i);
+    expect(shortageMigration).toMatch(/LEAST\(v_remaining, v_item\.current_stock\)/i);
+    expect(shortageMigration).toMatch(/'shortages', v_shortages/i);
   });
 });

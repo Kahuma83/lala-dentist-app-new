@@ -54,6 +54,53 @@ describe("Lala Dentist Web Admin - Phase 4A Treatment Core Tests", () => {
     expect(treatment.status).toBe(TreatmentJobStatus.BELUM_DIMULAI);
   });
 
+  it("uses the doctor's adjusted price snapshot when creating a treatment", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+
+    const treatment = await treatmentRepo.createTreatmentJob(
+      {
+        visitId: visit.id,
+        serviceId: "service-scaling",
+        doctorId: "doc-syafira",
+        priceSnapshot: 225000
+      },
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira"
+    );
+
+    expect(treatment.priceSnapshot).toBe(225000);
+  });
+
+  it("does not allow non-doctors to override treatment prices", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+
+    await expect(
+      treatmentRepo.createTreatmentJob(
+        {
+          visitId: visit.id,
+          serviceId: "service-scaling",
+          doctorId: "doc-syafira",
+          priceSnapshot: 1
+        },
+        UserRole.DOCTOR_ASSISTANT,
+        "branch-gebang"
+      )
+    ).rejects.toThrow("Hanya dokter yang dapat menyesuaikan harga tindakan.");
+  });
+
   it("2. Visit wajib valid (non-existent visit ID rejected)", async () => {
     await expect(
       treatmentRepo.createTreatmentJob({

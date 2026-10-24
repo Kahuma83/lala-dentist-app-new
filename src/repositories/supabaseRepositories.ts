@@ -2827,6 +2827,7 @@ export class SupabaseBookingRepository implements BookingRepository {
       channel: source,
       rescheduledFromBookingId: row.rescheduled_from_booking_id ?? undefined,
       rescheduleReason: row.reschedule_reason ?? undefined,
+      cancellationReason: row.cancellation_reason ?? undefined,
       status: row.status as BookingStatus,
       enRouteConfirmedAt: row.en_route_confirmed_at ?? undefined,
       lateCheckInRequestedAt: row.late_checkin_requested_at ?? undefined,
@@ -3251,6 +3252,7 @@ export class SupabaseBookingRepository implements BookingRepository {
       if (updates.plannedTreatments !== undefined) dbPayload.planned_treatments = updates.plannedTreatments;
       if (updates.rescheduledFromBookingId !== undefined) dbPayload.rescheduled_from_booking_id = updates.rescheduledFromBookingId;
       if (updates.rescheduleReason !== undefined) dbPayload.reschedule_reason = updates.rescheduleReason;
+      if (updates.cancellationReason !== undefined) dbPayload.cancellation_reason = updates.cancellationReason;
 
       try {
         const executeUpdate = async (requestPayload: any) => {
@@ -3805,6 +3807,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       status: row.status as TreatmentJobStatus,
       serviceNameSnapshot: row.service_name_snapshot,
       doctorNameSnapshot: row.doctor_name_snapshot,
+      priceSnapshot: row.price_snapshot == null ? undefined : Number(row.price_snapshot),
       estimatedDurationMinutes: row.estimated_duration_minutes,
       notes: row.notes ?? undefined,
       assignedDoctorId: row.assigned_doctor_id ?? undefined,
@@ -3884,6 +3887,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       visitId: string;
       serviceId: string;
       doctorId: string;
+      priceSnapshot?: number;
       estimatedDurationMinutes?: number;
       notes?: string;
       customId?: string;
@@ -3910,7 +3914,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     // Look up service and doctor snapshots
     const { data: srv, error: serviceError } = await supabase
       .from("master_services")
-      .select("name, estimated_duration_minutes")
+      .select("name, base_price, estimated_duration_minutes")
       .eq("id", data.serviceId)
       .single();
     if (serviceError || !srv) {
@@ -3928,6 +3932,20 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     const serviceName = srv.name;
     const doctorName = doc.name;
     const estDur = data.estimatedDurationMinutes || srv.estimated_duration_minutes || 30;
+    if (data.priceSnapshot !== undefined && currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat menyesuaikan harga tindakan.");
+    }
+    if (data.priceSnapshot !== undefined && (!Number.isSafeInteger(data.priceSnapshot) || data.priceSnapshot < 0)) {
+      throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
+    }
+    const { data: tariff, error: tariffError } = await supabase
+      .from("branch_service_tariffs")
+      .select("custom_price")
+      .eq("branch_id", branchToUse)
+      .eq("service_id", data.serviceId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (tariffError) throw new Error(`Gagal memuat tarif cabang: ${tariffError.message}`);
 
     const payload: any = {
       visit_id: data.visitId,
@@ -3938,6 +3956,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       status: TreatmentJobStatus.BELUM_DIMULAI,
       service_name_snapshot: serviceName,
       doctor_name_snapshot: doctorName,
+      price_snapshot: data.priceSnapshot ?? Number(tariff?.custom_price ?? srv.base_price),
       estimated_duration_minutes: estDur,
       notes: data.notes || null
     };

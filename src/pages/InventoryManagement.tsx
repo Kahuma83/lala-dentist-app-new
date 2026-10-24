@@ -232,26 +232,28 @@ export const InventoryManagement: React.FC = () => {
         minimumStock,
         storageLocation: form.storageLocation
       }, currentUser?.name || "Pengguna", editingItem?.id);
-      let initialMovementError: string | null = null;
-      if (!editingItem && initialStock > 0) {
+      let stockMovementError: string | null = null;
+      if (initialStock > 0) {
         try {
           await recordInventoryMovement({
             itemId: saved.id,
             movementType: "IN",
             quantity: initialStock,
             userName: currentUser?.name || "Pengguna",
-            reference: "Stok awal",
-            note: "Saldo awal saat barang didaftarkan"
+            reference: editingItem ? "Penambahan stok dari edit barang" : "Stok awal",
+            note: editingItem
+              ? `Penambahan stok melalui edit barang ${saved.itemCode}`
+              : "Saldo awal saat barang didaftarkan"
           });
         } catch (movementError: unknown) {
-          initialMovementError = movementError instanceof Error
+          stockMovementError = movementError instanceof Error
             ? movementError.message
-            : "Kesalahan tidak diketahui saat mencatat saldo awal.";
+            : "Kesalahan tidak diketahui saat mencatat penambahan stok.";
         }
       }
       setShowItemForm(false);
-      setSuccess(initialMovementError
-        ? `Barang berhasil dibuat, tetapi stok awal belum tercatat. Stok tetap 0. Alasan: ${initialMovementError}`
+      setSuccess(stockMovementError
+        ? `Data barang berhasil disimpan, tetapi penambahan stok belum tercatat. Periksa saldo stok dan riwayat. Alasan: ${stockMovementError}`
         : editingItem ? "Data barang berhasil diperbarui." : "Barang inventori berhasil ditambahkan.");
       await loadInventory();
       if (path.endsWith("/new")) navigate(`${rolePrefix}/inventory`);
@@ -495,7 +497,10 @@ export const InventoryManagement: React.FC = () => {
               <label className="space-y-1 text-xs font-semibold text-slate-600">Kategori<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value as InventoryCategory })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm">{categoryOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               <label className="space-y-1 text-xs font-semibold text-slate-600">Satuan<input value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} required maxLength={30} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" placeholder="pcs, kotak, botol" /></label>
               <label className="space-y-1 text-xs font-semibold text-slate-600">Batas Minimum Stok<input type="number" min="0" step="0.01" value={form.minimumStock} onChange={(event) => setForm({ ...form, minimumStock: event.target.value })} required className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" /></label>
-              {!editingItem && <label className="space-y-1 text-xs font-semibold text-slate-600">Stok Awal<input type="number" min="0" step="0.01" value={form.initialStock} onChange={(event) => setForm({ ...form, initialStock: event.target.value })} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" /><span className="block text-[10px] font-normal text-slate-400">Dicatat sebagai transaksi stok masuk.</span></label>}
+              <label className="space-y-1 text-xs font-semibold text-slate-600">{editingItem ? `Tambah Stok (${editingItem.unit})` : "Stok Awal"}
+                <input type="number" min="0" step="0.01" value={form.initialStock} onChange={(event) => setForm({ ...form, initialStock: event.target.value })} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" />
+                <span className="block text-[10px] font-normal text-slate-400">{editingItem ? "Jumlah ini akan ditambahkan ke stok saat ini dan dicatat di riwayat stok masuk. Isi 0 jika tidak menambah stok." : "Dicatat sebagai transaksi stok masuk."}</span>
+              </label>
               <label className="space-y-1 text-xs font-semibold text-slate-600 sm:col-span-2">Lokasi Penyimpanan<input value={form.storageLocation} onChange={(event) => setForm({ ...form, storageLocation: event.target.value })} maxLength={160} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" placeholder="Contoh: Lemari steril lantai 1" /></label>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">

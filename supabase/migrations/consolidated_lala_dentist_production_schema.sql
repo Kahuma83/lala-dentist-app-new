@@ -433,6 +433,7 @@ CREATE TABLE IF NOT EXISTS public.bookings (
   notes TEXT,
   source VARCHAR(30),
   channel VARCHAR(30),
+  cancellation_reason TEXT,
   -- Snapshots for immutable historical representation
   patient_name_snapshot VARCHAR(150),
   doctor_name_snapshot VARCHAR(150),
@@ -643,6 +644,7 @@ CREATE TABLE IF NOT EXISTS public.treatment_jobs (
   -- Snapshots
   service_name_snapshot VARCHAR(150) NOT NULL,
   doctor_name_snapshot VARCHAR(150) NOT NULL,
+  price_snapshot BIGINT CHECK (price_snapshot >= 0),
   estimated_duration_minutes INT,
   notes TEXT,
   -- Model C: Ownership and role separation

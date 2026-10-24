@@ -50,6 +50,7 @@ import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapsho
 import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
 import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate, isActiveQueueStatus } from "../utils/bookingQueueGuards";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
+import { getCheckInCancellationBlockReason } from "../utils/bookingCancellation";
 
 const addCalendarDays = (date: string, days: number) => {
   const value = new Date(`${date}T12:00:00Z`);
@@ -155,6 +156,10 @@ export const BookingManagement: React.FC = () => {
   const [isCheckInSubmitting, setIsCheckInSubmitting] = useState(false);
 
   const [bookingToCancel, setBookingToCancel] = useState<Booking | null>(null);
+  const [bookingToCancelCheckIn, setBookingToCancelCheckIn] = useState<Booking | null>(null);
+  const [checkInCancellationReason, setCheckInCancellationReason] = useState("");
+  const [checkInCancellationError, setCheckInCancellationError] = useState<string | null>(null);
+  const [isCancellingCheckIn, setIsCancellingCheckIn] = useState(false);
   const [isCancellingBooking, setIsCancellingBooking] = useState<boolean>(false);
   const [bookingToClose, setBookingToClose] = useState<Booking | null>(null);
   const [isClosingBooking, setIsClosingBooking] = useState(false);
@@ -728,7 +733,7 @@ export const BookingManagement: React.FC = () => {
   }, [bookings, branchFilter, statusFilter, searchQuery, currentUser, completedBookingIds]);
 
   const calendarDates = useMemo(
-    () => Array.from({ length: 5 }, (_, index) => addCalendarDays(calendarWeekStart, index)),
+    () => Array.from({ length: 7 }, (_, index) => addCalendarDays(calendarWeekStart, index)),
     [calendarWeekStart]
   );
 
@@ -748,7 +753,7 @@ export const BookingManagement: React.FC = () => {
   const calendarWeekStats = useMemo(() => {
     const weekBookings = filteredBookings.filter((booking) => {
       const date = getOperationalDateString(booking.bookingDateTime);
-      return date >= calendarWeekStart && date <= calendarDates[4];
+      return date >= calendarWeekStart && date <= calendarDates[6];
     });
     return {
       total: weekBookings.length,
@@ -861,6 +866,144 @@ export const BookingManagement: React.FC = () => {
       console.error("Gagal membatalkan booking:", err);
     } finally {
       setIsCancellingBooking(false);
+    }
+  };
+
+  const handleCancelCheckInAndBooking = async () => {
+    if (!bookingToCancelCheckIn) return;
+    setIsCancellingCheckIn(true);
+    setCheckInCancellationError(null);
+
+    try {
+      const [latestBooking, latestVisits, latestQueueItems] = await Promise.all([
+        repos.booking.getBookingById(
+          bookingToCancelCheckIn.id,
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        ),
+        repos.visit.getVisits(),
+        repos.queue.getQueueItems()
+      ]);
+      if (!latestBooking) throw new Error("Janji temu tidak ditemukan. Muat ulang halaman dan periksa kembali.");
+      if (!checkInCancellationReason.trim()) {
+        throw new Error("Masukkan alasan pembatalan check-in.");
+      }
+
+      const blockReason = getCheckInCancellationBlockReason(latestBooking, latestVisits, latestQueueItems);
+      if (blockReason) throw new Error(blockReason);
+
+      const linkedVisits = latestVisits.filter(
+        (visit) => visit.bookingId === latestBooking.id && visit.visitStatus !== VisitStatus.CANCELLED
+      );
+      const linkedVisitIds = new Set(linkedVisits.map((visit) => visit.id));
+      const linkedQueueItems = latestQueueItems.filter(
+        (item) => (item.bookingId === latestBooking.id || linkedVisitIds.has(item.visitId)) &&
+          item.status === QueueStatus.WAITING
+      );
+      const changedQueues: Array<{ id: string; status: QueueStatus }> = [];
+      const changedVisits: PatientVisit[] = [];
+
+      try {
+        for (const item of linkedQueueItems) {
+          changedQueues.push({ id: item.id, status: item.status as QueueStatus });
+          await repos.queue.cancelQueuePatient(
+            item.id,
+            currentUser?.role,
+            currentUser?.assignedBranchId,
+            currentUser?.id
+          );
+        }
+        for (const visit of linkedVisits) {
+          changedVisits.push(visit);
+          await repos.visit.updateVisitStatus(
+            visit.id,
+            VisitStatus.CANCELLED,
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+        }
+        await repos.booking.updateBooking(
+          latestBooking.id,
+          {
+            status: BookingStatus.CANCELLED,
+            cancellationReason: checkInCancellationReason.trim()
+          },
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      } catch (updateError) {
+        const rollbackFailures: string[] = [];
+        for (const item of [...changedQueues].reverse()) {
+          try {
+            await repos.queue.restoreQueueStatus(
+              item.id,
+              item.status,
+              currentUser?.role,
+              currentUser?.assignedBranchId,
+              currentUser?.id
+            );
+          } catch (rollbackError) {
+            rollbackFailures.push(item.id);
+            console.error(`Gagal memulihkan antrean ${item.id}:`, rollbackError);
+          }
+        }
+        for (const visit of [...changedVisits].reverse()) {
+          try {
+            await repos.visit.updateVisitStatus(
+              visit.id,
+              visit.visitStatus,
+              currentUser?.role,
+              currentUser?.assignedBranchId
+            );
+          } catch (rollbackError) {
+            rollbackFailures.push(visit.id);
+            console.error(`Gagal memulihkan kunjungan ${visit.id}:`, rollbackError);
+          }
+        }
+        try {
+          await repos.booking.updateBooking(
+            latestBooking.id,
+            { status: latestBooking.status },
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+        } catch (rollbackError) {
+          rollbackFailures.push(latestBooking.id);
+          console.error(`Gagal memulihkan janji temu ${latestBooking.id}:`, rollbackError);
+        }
+        if (rollbackFailures.length > 0) {
+          throw new Error("Pembatalan gagal dan sebagian status mungkin belum pulih. Periksa kembali janji, antrean, dan kunjungan pasien.");
+        }
+        throw updateError;
+      }
+
+      setBookings((current) => current.map((booking) =>
+        booking.id === latestBooking.id ? { ...booking, status: BookingStatus.CANCELLED } : booking
+      ));
+      setVisits((current) => current.map((visit) =>
+        linkedVisitIds.has(visit.id) ? { ...visit, visitStatus: VisitStatus.CANCELLED } : visit
+      ));
+      setQueueItems((current) => current.map((item) =>
+        linkedQueueItems.some((linked) => linked.id === item.id)
+          ? { ...item, status: QueueStatus.CANCELLED }
+          : item
+      ));
+      setSelectedBooking({
+        ...latestBooking,
+        status: BookingStatus.CANCELLED,
+        cancellationReason: checkInCancellationReason.trim()
+      });
+      setBookingToCancelCheckIn(null);
+      setCheckInCancellationReason("");
+      await loadData();
+    } catch (error) {
+      console.error("Gagal membatalkan check-in dan janji:", error);
+      setCheckInCancellationError(
+        error instanceof Error ? error.message : "Gagal membatalkan check-in dan janji."
+      );
+      await loadData();
+    } finally {
+      setIsCancellingCheckIn(false);
     }
   };
 
@@ -1479,7 +1622,7 @@ export const BookingManagement: React.FC = () => {
             Minggu depan
           </button>
           <span className="ml-2 text-sm font-extrabold text-slate-800">
-            {formatCalendarDate(calendarWeekStart, { day: "numeric", month: "short" })} – {formatCalendarDate(calendarDates[4], { day: "numeric", month: "long", year: "numeric" })}
+            {formatCalendarDate(calendarWeekStart, { day: "numeric", month: "short" })} – {formatCalendarDate(calendarDates[6], { day: "numeric", month: "long", year: "numeric" })}
           </span>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1529,7 +1672,7 @@ export const BookingManagement: React.FC = () => {
       )}
 
       {viewMode === "calendar" ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3" id="patient-week-calendar">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3" id="patient-week-calendar">
           {calendarDates.map((date) => {
             const dayBookings = calendarBookingsByDate.get(date) || [];
             const isToday = date === getTodayDateString();
@@ -2386,6 +2529,11 @@ export const BookingManagement: React.FC = () => {
                   Pasien meminta konfirmasi check-in terlambat pada {formatIndonesianDate(getOperationalDateString(selectedBooking.lateCheckInRequestedAt))} pukul {getOperationalTimeString(selectedBooking.lateCheckInRequestedAt)} WIB. Booking tidak dibatalkan otomatis; hubungi pasien atau bantu proses check-in.
                 </div>
               )}
+              {selectedBooking.status === BookingStatus.CANCELLED && selectedBooking.cancellationReason && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                  <span className="font-bold">Alasan pembatalan check-in:</span> {selectedBooking.cancellationReason}
+                </div>
+              )}
               <section className="rounded-2xl border border-amber-200/80 bg-white p-3.5 shadow-sm shadow-amber-900/[0.03]">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -2683,6 +2831,32 @@ export const BookingManagement: React.FC = () => {
                   </p>
                   {checkedInBookingIds.has(selectedBooking.id) &&
                     !completedBookingIds.has(selectedBooking.id) &&
+                    getOperationalDateString(selectedBooking.bookingDateTime) >= getTodayDateString() && (() => {
+                      const cancellationBlockReason = getCheckInCancellationBlockReason(
+                        selectedBooking,
+                        visits,
+                        queueItems
+                      );
+                      return (
+                        <button
+                          type="button"
+                          disabled={Boolean(cancellationBlockReason)}
+                          onClick={() => {
+                            setCheckInCancellationError(null);
+                            setCheckInCancellationReason("Check-in tidak sengaja; pasien belum datang.");
+                            setBookingToCancelCheckIn(selectedBooking);
+                          }}
+                          className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-600 px-4 py-3 text-left text-white shadow-sm transition hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:shadow-none"
+                        >
+                          <span className="block text-xs font-bold">Batalkan Check-In &amp; Janji</span>
+                          <span className={`mt-1 block text-[10px] leading-relaxed ${cancellationBlockReason ? "text-slate-600" : "text-rose-50"}`}>
+                            {cancellationBlockReason || "Batalkan antrean, kunjungan, dan janji secara bersamaan. Riwayat tetap tersimpan."}
+                          </span>
+                        </button>
+                      );
+                    })()}
+                  {checkedInBookingIds.has(selectedBooking.id) &&
+                    !completedBookingIds.has(selectedBooking.id) &&
                     getOperationalDateString(selectedBooking.bookingDateTime) < getTodayDateString() && (() => {
                       const closeBlockReason = getStaleBookingCloseBlockReason(selectedBooking);
                       return (
@@ -2898,6 +3072,69 @@ export const BookingManagement: React.FC = () => {
               );
             })()}
           </div>
+        </div>
+      )}
+      {bookingToCancelCheckIn && (
+        <div
+          className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-checkin-title"
+          onClick={() => !isCancellingCheckIn && setBookingToCancelCheckIn(null)}
+        >
+          <form
+            className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleCancelCheckInAndBooking();
+            }}
+          >
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+              <XCircle className="h-6 w-6" />
+            </div>
+            <h3 id="cancel-checkin-title" className="text-center text-base font-bold text-slate-900">
+              Batalkan Check-In &amp; Janji?
+            </h3>
+            <p className="mt-2 text-center text-xs leading-relaxed text-slate-600">
+              Check-in untuk <strong>{bookingToCancelCheckIn.patientNameSnapshot || "Pasien"}</strong> akan dibatalkan bersama antrean, kunjungan, dan janji temu pada{" "}
+              <strong>{formatIndonesianDate(getOperationalDateString(bookingToCancelCheckIn.bookingDateTime))}</strong>. Riwayat tetap tersimpan dan pasien dapat membuat janji baru.
+            </p>
+            <label className="mt-4 block text-xs font-semibold text-slate-700">
+              Alasan pembatalan
+              <textarea
+                required
+                maxLength={500}
+                rows={3}
+                value={checkInCancellationReason}
+                onChange={(event) => setCheckInCancellationReason(event.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-normal text-slate-800 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
+                placeholder="Contoh: Check-in tidak sengaja; pasien belum datang."
+              />
+            </label>
+            {checkInCancellationError && (
+              <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {checkInCancellationError}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={isCancellingCheckIn}
+                onClick={() => setBookingToCancelCheckIn(null)}
+                className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50"
+              >
+                Kembali
+              </button>
+              <button
+                type="submit"
+                disabled={isCancellingCheckIn || !checkInCancellationReason.trim()}
+                className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-rose-700 disabled:cursor-wait disabled:opacity-50"
+              >
+                {isCancellingCheckIn ? "Membatalkan..." : "Ya, Batalkan"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
       {/* Modal Konfirmasi Batalkan Booking */}

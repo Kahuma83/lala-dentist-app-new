@@ -3242,6 +3242,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
       visitId: string;
       serviceId: string;
       doctorId: string;
+      priceSnapshot?: number;
       estimatedDurationMinutes?: number;
       notes?: string;
       customId?: string;
@@ -3312,6 +3313,16 @@ export class MockTreatmentRepository implements TreatmentRepository {
       throw new Error("Master Service tidak aktif");
     }
 
+    if (data.priceSnapshot !== undefined && currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat menyesuaikan harga tindakan.");
+    }
+    if (data.priceSnapshot !== undefined && (!Number.isSafeInteger(data.priceSnapshot) || data.priceSnapshot < 0)) {
+      throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
+    }
+    const branchTariff = db.tariffs.find(
+      (tariff) => tariff.branchId === visit.branchId && tariff.serviceId === service.id && tariff.isActive
+    );
+
     const now = AppClock.nowISO();
     const newItem: TreatmentJob = {
       id: data.customId || `treatment-job-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -3324,6 +3335,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
       status: TreatmentJobStatus.BELUM_DIMULAI,
       serviceNameSnapshot: service.name,
       doctorNameSnapshot: doctor.name,
+      priceSnapshot: data.priceSnapshot ?? branchTariff?.customPrice ?? service.basePrice,
       estimatedDurationMinutes: data.estimatedDurationMinutes || service.estimatedDurationMinutes || 30,
       notes: data.notes || "",
       createdAt: now,

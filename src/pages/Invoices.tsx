@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { InvoiceDocumentModal } from "../components/documents/InvoiceDocumentModal";
 import { accrueCompensationForPaidInvoice } from "../services/paidInvoiceCompensation";
+import { getTreatmentInvoiceUnitPrice } from "../utils/treatmentPricing";
 
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
@@ -248,7 +249,7 @@ export const Invoices: React.FC = () => {
         serviceId: service.id,
         treatmentJobId: treatment.id,
         descriptionSnapshot: treatment.serviceNameSnapshot || service.name,
-        unitPriceSnapshot: service.basePrice,
+        unitPriceSnapshot: getTreatmentInvoiceUnitPrice(treatment, service),
         quantity: 1
       };
     });

@@ -316,6 +316,7 @@ CREATE TABLE IF NOT EXISTS public.treatment_jobs (
   -- Snapshots
   service_name_snapshot VARCHAR(150) NOT NULL,
   doctor_name_snapshot VARCHAR(150) NOT NULL,
+  price_snapshot BIGINT CHECK (price_snapshot >= 0),
   estimated_duration_minutes INT,
   notes TEXT,
   -- Model C: Ownership and role separation

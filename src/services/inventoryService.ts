@@ -52,6 +52,14 @@ interface StoredInventory {
   items: InventoryItem[];
   movements: InventoryMovement[];
   consumedTreatmentIds?: string[];
+  consumedTreatmentShortages?: Record<string, InventoryTreatmentStockShortage[]>;
+}
+
+export interface InventoryTreatmentStockShortage {
+  itemCode: string;
+  requested: number;
+  deducted: number;
+  shortage: number;
 }
 
 const mockStorageKey = "lala-dentist-inventory-v1";
@@ -280,8 +288,8 @@ export async function recordTreatmentInventoryUsage(input: {
   serviceName: string;
   materials: Array<{ itemCode: string; quantity: number }>;
   userName: string;
-}): Promise<{ alreadyRecorded: boolean }> {
-  if (input.materials.length === 0) return { alreadyRecorded: false };
+}): Promise<{ alreadyRecorded: boolean; shortages: InventoryTreatmentStockShortage[] }> {
+  if (input.materials.length === 0) return { alreadyRecorded: false, shortages: [] };
   if (input.materials.some((material) =>
     !material.itemCode.trim() || !Number.isFinite(material.quantity) || material.quantity <= 0
   )) {
@@ -291,7 +299,12 @@ export async function recordTreatmentInventoryUsage(input: {
   if (!isSupabaseConfigured) {
     const inventory = readMockInventory();
     const consumedTreatmentIds = inventory.consumedTreatmentIds || [];
-    if (consumedTreatmentIds.includes(input.treatmentJobId)) return { alreadyRecorded: true };
+    if (consumedTreatmentIds.includes(input.treatmentJobId)) {
+      return {
+        alreadyRecorded: true,
+        shortages: inventory.consumedTreatmentShortages?.[input.treatmentJobId] || []
+      };
+    }
 
     const deductions = input.materials.map((material) => {
       const item = inventory.items.find((row) =>
@@ -299,27 +312,37 @@ export async function recordTreatmentInventoryUsage(input: {
         && row.itemCode.toUpperCase() === material.itemCode.trim().toUpperCase()
         && row.isActive
       );
-      if (!item) {
-        throw new Error(`Barang kode ${material.itemCode} belum terdaftar di cabang ini.`);
-      }
-      const previouslyUsed = inventory.movements
+      const previouslyUsed = item ? inventory.movements
         .filter((movement) =>
           movement.treatmentJobId === input.treatmentJobId
           && movement.itemId === item.id
           && movement.movementType === "OUT"
         )
-        .reduce((total, movement) => total + movement.quantity, 0);
-      const quantity = Math.max(material.quantity - previouslyUsed, 0);
-      if (item.currentStock < quantity) {
-        throw new Error(`Stok ${item.name} tidak cukup. Tersedia ${item.currentStock} ${item.unit}, dibutuhkan ${quantity} ${item.unit}.`);
-      }
-      return { item, quantity };
+        .reduce((total, movement) => total + movement.quantity, 0) : 0;
+      const remaining = Math.max(material.quantity - previouslyUsed, 0);
+      const available = item?.currentStock || 0;
+      const quantity = Math.min(remaining, available);
+      return {
+        item,
+        itemCode: item?.itemCode || material.itemCode.trim().toUpperCase(),
+        quantity,
+        shortage: Math.max(remaining - quantity, 0),
+        requested: remaining
+      };
     });
+    const shortages = deductions
+      .filter(({ shortage }) => shortage > 0)
+      .map(({ itemCode, requested, quantity, shortage }) => ({
+        itemCode,
+        requested,
+        deducted: quantity,
+        shortage
+      }));
 
     const createdAt = new Date().toISOString();
-    const movements = deductions
-      .filter(({ quantity }) => quantity > 0)
-      .map(({ item, quantity }): InventoryMovement => ({
+    const movements: InventoryMovement[] = deductions.flatMap(({ item, quantity }) => {
+      if (!item || quantity <= 0) return [];
+      return [{
         id: crypto.randomUUID(),
         branchId: item.branchId,
         itemId: item.id,
@@ -334,8 +357,12 @@ export async function recordTreatmentInventoryUsage(input: {
         treatmentJobId: input.treatmentJobId,
         performedByName: input.userName,
         createdAt
-      }));
-    const deductionByItem = new Map(deductions.map(({ item, quantity }) => [item.id, quantity]));
+      }];
+    });
+    const deductionByItem = new Map<string, number>();
+    deductions.forEach(({ item, quantity }) => {
+      if (item) deductionByItem.set(item.id, quantity);
+    });
     inventory.items = inventory.items.map((item) => {
       const quantity = deductionByItem.get(item.id) || 0;
       return quantity > 0
@@ -344,8 +371,12 @@ export async function recordTreatmentInventoryUsage(input: {
     });
     inventory.movements = [...movements, ...inventory.movements];
     inventory.consumedTreatmentIds = [...consumedTreatmentIds, input.treatmentJobId];
+    inventory.consumedTreatmentShortages = {
+      ...inventory.consumedTreatmentShortages,
+      [input.treatmentJobId]: shortages
+    };
     writeMockInventory(inventory);
-    return { alreadyRecorded: false };
+    return { alreadyRecorded: false, shortages };
   }
 
   const { data, error } = await supabase.rpc("record_inventory_treatment_usage", {
@@ -356,7 +387,13 @@ export async function recordTreatmentInventoryUsage(input: {
   if (!data || typeof data.alreadyRecorded !== "boolean") {
     throw new Error("Respons pemakaian otomatis tidak valid. Periksa riwayat inventori sebelum mencoba lagi.");
   }
-  return { alreadyRecorded: data.alreadyRecorded };
+  const shortages = Array.isArray(data.shortages) ? data.shortages.map((shortage: any) => ({
+    itemCode: String(shortage.itemCode),
+    requested: Number(shortage.requested),
+    deducted: Number(shortage.deducted),
+    shortage: Number(shortage.shortage)
+  })) : [];
+  return { alreadyRecorded: data.alreadyRecorded, shortages };
 }
 
 export async function listInventoryMovements(input: {

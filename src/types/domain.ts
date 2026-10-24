@@ -549,6 +549,7 @@ export interface Booking {
   lateCheckInRequestedAt?: string | null;
   rescheduledFromBookingId?: string;
   rescheduleReason?: string;
+  cancellationReason?: string;
   status: BookingStatus;
   scheduleVerified?: boolean;
   createdAt: string;
@@ -658,6 +659,7 @@ export interface TreatmentJob {
   status: TreatmentJobStatus | "BELUM_DIMULAI" | "DALAM_PROSES" | "SELESAI" | "DISERAHKAN";
   serviceNameSnapshot: string;
   doctorNameSnapshot: string;
+  priceSnapshot?: number;
   estimatedDurationMinutes?: number;
   notes?: string;
   createdAt: string;
