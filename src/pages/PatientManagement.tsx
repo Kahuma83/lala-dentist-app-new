@@ -51,7 +51,8 @@ import {
   Hash,
   Sliders,
   Mail,
-  Printer
+  Printer,
+  ScanLine
 } from "lucide-react";
 import { formatRupiah, formatDate, formatDateTime } from "../utils/formatter";
 import { PatientExcelModal } from "../components/PatientExcelModal";
@@ -77,6 +78,7 @@ import {
   RMConfig,
   RMFormatMode
 } from "../utils/rmUtils";
+import { supabase } from "../lib/supabase";
 
 export const PatientManagement: React.FC = () => {
   const { currentUser, repos, branches, patients, visits, bookings, treatmentJobs, staff, services, refreshData } = useApp();
@@ -239,6 +241,18 @@ export const PatientManagement: React.FC = () => {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPatientCardScannerOpen, setIsPatientCardScannerOpen] = useState(false);
+  const [patientCardScanToken, setPatientCardScanToken] = useState("");
+  const [patientCardScanError, setPatientCardScanError] = useState<string | null>(null);
+  const [isVerifyingPatientCard, setIsVerifyingPatientCard] = useState(false);
+  const [verifiedCardPatient, setVerifiedCardPatient] = useState<PatientProfile | null>(null);
+  const [verifiedCardBooking, setVerifiedCardBooking] = useState<{
+    id: string;
+    bookingDateTime: string;
+    timeSlot: string;
+    status: BookingStatus;
+    branchName: string;
+  } | null>(null);
 
   // Patient Deletion State
   const [patientToDelete, setPatientToDelete] = useState<PatientProfile | null>(null);
@@ -637,6 +651,62 @@ export const PatientManagement: React.FC = () => {
     const params = new URLSearchParams({ source: BookingSource.WALK_IN });
     if (p) params.set("patientId", p.id);
     navigate(`${checkInRoutePrefix}/bookings?${params.toString()}`);
+  };
+
+  const handleVerifyPatientCard = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPatientCardScanError(null);
+    setVerifiedCardPatient(null);
+    setVerifiedCardBooking(null);
+    const token = patientCardScanToken.trim();
+    if (!token) {
+      setPatientCardScanError("Pindai QR kartu pasien terlebih dahulu.");
+      return;
+    }
+
+    setIsVerifyingPatientCard(true);
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw new Error(`Gagal memeriksa sesi petugas: ${sessionError.message}`);
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Sesi petugas tidak ditemukan. Silakan masuk kembali.");
+
+      const response = await fetch("/api/patient-card/verify", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ token })
+      });
+      const result = await response.json().catch(() => null) as {
+        message?: string;
+        patient?: { id?: string };
+        booking?: {
+          id: string;
+          bookingDateTime: string;
+          timeSlot: string;
+          status: BookingStatus;
+          branchName: string;
+        } | null;
+      } | null;
+      if (!response.ok) throw new Error(result?.message || "QR pasien gagal diverifikasi.");
+      const patient = patients.find((item) => item.id === result?.patient?.id);
+      if (!patient) {
+        throw new Error("QR valid, tetapi data pasien belum tersedia di daftar. Muat ulang data pasien lalu coba lagi.");
+      }
+      setVerifiedCardPatient(patient);
+      setVerifiedCardBooking(result?.booking || null);
+      setPatientCardScanToken("");
+    } catch (scanError: unknown) {
+      setPatientCardScanError(
+        scanError instanceof Error
+          ? scanError.message
+          : "QR pasien gagal diverifikasi. Silakan coba lagi."
+      );
+    } finally {
+      setIsVerifyingPatientCard(false);
+    }
   };
 
   const handleOpenBookingVisit = () => {
@@ -1077,6 +1147,23 @@ export const PatientManagement: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {checkInRoutePrefix && (
+            <button
+              type="button"
+              onClick={() => {
+                setPatientCardScanToken("");
+                setPatientCardScanError(null);
+                setVerifiedCardPatient(null);
+                setVerifiedCardBooking(null);
+                setIsPatientCardScannerOpen(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2.5 text-xs font-bold text-emerald-800 shadow-2xs transition-all hover:bg-emerald-100 active:scale-95"
+              title="Pindai QR kartu pasien untuk melanjutkan check-in"
+            >
+              <ScanLine className="h-4 w-4 text-emerald-700" />
+              Pindai Kartu Pasien
+            </button>
+          )}
           <button
             onClick={() => {
               setExcelModalTab("export");
@@ -3083,6 +3170,136 @@ export const PatientManagement: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {isPatientCardScannerOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="patient-card-scan-title"
+            className="w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex items-start gap-3 bg-[#17233c] p-5 text-white sm:p-6">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-[#e6c977] ring-1 ring-white/15">
+                <ScanLine className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 id="patient-card-scan-title" className="text-base font-bold">Pindai Kartu Pasien</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-300">
+                  Gunakan pemindai QR 2D mode keyboard/USB untuk membaca QR pada kartu pasien. Booking aktif hari ini di cabang Anda akan ditampilkan bila tersedia.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPatientCardScannerOpen(false)}
+                className="rounded-lg p-1 text-slate-300 transition hover:bg-white/10 hover:text-white"
+                aria-label="Tutup pemindai kartu pasien"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4 p-5 sm:p-6">
+              {!verifiedCardPatient ? (
+                <form onSubmit={(event) => void handleVerifyPatientCard(event)} className="space-y-3">
+                  <label htmlFor="patient-card-scan-token" className="block text-xs font-bold text-slate-700">
+                    QR kartu pasien
+                  </label>
+                  <input
+                    id="patient-card-scan-token"
+                    autoFocus
+                    autoComplete="off"
+                    value={patientCardScanToken}
+                    onChange={(event) => setPatientCardScanToken(event.target.value)}
+                    placeholder="Arahkan pemindai ke QR atau tempel token di sini"
+                    className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-3 font-mono text-xs text-slate-800 outline-none transition placeholder:font-sans placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
+                  />
+                  <p className="text-[11px] leading-5 text-slate-500">
+                    Pastikan pasien membuka kartu digital terbaru. QR akan kedaluwarsa otomatis untuk melindungi identitas pasien.
+                  </p>
+                  {patientCardScanError && (
+                    <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-800">
+                      {patientCardScanError}
+                    </p>
+                  )}
+                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setIsPatientCardScannerOpen(false)}
+                      className="rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isVerifyingPatientCard || !patientCardScanToken.trim()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      {isVerifyingPatientCard ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ShieldAlert className="h-4 w-4" />}
+                      {isVerifyingPatientCard ? "Memverifikasi..." : "Verifikasi QR"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">Identitas terverifikasi</p>
+                      <p className="mt-1 break-words text-sm font-extrabold text-slate-900">{verifiedCardPatient.fullName || verifiedCardPatient.name}</p>
+                      <p className="mt-1 font-mono text-xs font-bold text-slate-600">Kode RM: {verifiedCardPatient.internalPatientCode || verifiedCardPatient.medicalRecordNumber || "Belum tersedia"}</p>
+                    </div>
+                  </div>
+                  {verifiedCardBooking ? (
+                    <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-700">Booking ditemukan hari ini</p>
+                      <p className="mt-1 text-sm font-extrabold text-slate-900">
+                        {verifiedCardBooking.branchName || "Cabang Anda"} · {verifiedCardBooking.timeSlot || formatDateTime(verifiedCardBooking.bookingDateTime)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-600">Status: {verifiedCardBooking.status === BookingStatus.CONFIRMED ? "Dikonfirmasi" : "Menunggu konfirmasi"}</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+                      Tidak ada booking aktif hari ini di cabang Anda. Jika pasien tetap ingin berobat, lanjutkan melalui alur Walk-In.
+                    </div>
+                  )}
+                  <p className="text-xs leading-5 text-slate-600">
+                    Pemindaian hanya memverifikasi identitas dan booking. Kunjungan/antrean belum dibuat sampai petugas melanjutkan check-in.
+                  </p>
+                  <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVerifiedCardPatient(null);
+                        setVerifiedCardBooking(null);
+                        setPatientCardScanToken("");
+                      }}
+                      className="rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
+                    >
+                      Pindai pasien lain
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (verifiedCardBooking) {
+                          const params = new URLSearchParams({ bookingId: verifiedCardBooking.id });
+                          navigateToCheckIn(params);
+                        } else {
+                          handleOpenWalkInSchedule(verifiedCardPatient);
+                        }
+                        setIsPatientCardScannerOpen(false);
+                      }}
+                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-800"
+                    >
+                      {verifiedCardBooking ? "Check-In Booking" : "Lanjutkan Walk-In"}
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       )}
 

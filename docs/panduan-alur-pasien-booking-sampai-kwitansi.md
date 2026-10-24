@@ -54,6 +54,8 @@ Jika pasien meminta perubahan waktu, status **Minta Reschedule** hanya mencatat 
 **Penanggung jawab:** Admin Cabang  
 **Menu utama:** **Alur Pasien → Check-In Pasien**
 
+Pasien dapat menunjukkan QR kartu pasien. Dari **Master Pasien Global → Pindai Kartu Pasien**, admin dapat memverifikasi kode RM bercabang (misalnya `GEB-RM3000`) dan melihat booking aktif hari itu di cabangnya. Jika booking ditemukan, lanjutkan check-in dari booking tersebut; jika tidak, gunakan alur Walk-In. QR/kartu baru tersedia setelah check-in pertama menerbitkan No. RM.
+
 1. Pada halaman **Check-In Pasien**, pilih jadwal pasien atau visit yang akan dilayani.
 2. Untuk Walk-In yang sudah dijadwalkan, pilih jadwal dengan sumber **Walk-In**. Visit lama tanpa booking tetap dapat dipilih sebagai visit.
 3. Periksa dokter dan keluhan/rencana kunjungan.

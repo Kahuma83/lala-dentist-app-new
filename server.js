@@ -9,6 +9,9 @@ import {
   sendMessage as sendDoctorChatMessage,
   updateGroupSubtitle as updateDoctorChatGroupSubtitle
 } from './functions/_shared/doctor-chat.js';
+import { handlePatientCardError } from './functions/_shared/patient-card.js';
+import { onRequestPost as issuePatientCardToken } from './functions/api/patient-card/token.js';
+import { onRequestPost as verifyPatientCardToken } from './functions/api/patient-card/verify.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -64,6 +67,33 @@ app.post(
 app.put('/api/chat/messages/:id/pin', handleDoctorChatFunction(setDoctorChatPinnedMessage));
 app.delete('/api/chat/messages/:id/pin', handleDoctorChatFunction(setDoctorChatPinnedMessage));
 app.get('/api/chat/files/:id', handleDoctorChatFunction(downloadDoctorChatAttachment));
+
+const handlePatientCardFunction = (handler) => async (req, res) => {
+  try {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (Array.isArray(value)) headers.set(name, value.join(', '));
+      else if (value) headers.set(name, value);
+    }
+
+    const request = new Request(new URL(req.originalUrl, `http://localhost:${PORT}`), {
+      method: req.method,
+      headers,
+      ...(req.body !== undefined ? { body: JSON.stringify(req.body) } : {})
+    });
+    const response = await handler({ request, env: process.env, params: req.params });
+    res.status(response.status);
+    response.headers.forEach((value, name) => res.setHeader(name, value));
+    res.send(Buffer.from(await response.arrayBuffer()));
+  } catch (error) {
+    console.error('[server] patient card route failed:', error);
+    const response = handlePatientCardError(error);
+    res.status(response.status).send(Buffer.from(await response.arrayBuffer()));
+  }
+};
+
+app.post('/api/patient-card/token', handlePatientCardFunction(issuePatientCardToken));
+app.post('/api/patient-card/verify', handlePatientCardFunction(verifyPatientCardToken));
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'lala-dentist-booking-api' });

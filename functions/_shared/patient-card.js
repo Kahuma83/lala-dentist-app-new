@@ -112,7 +112,7 @@ export const getPatientCardProfile = async (env, configuration, patientId) => {
     configuration.supabaseUrl,
     serviceHeaders,
     `/rest/v1/patient_profiles?${toQueryString({
-      select: "id,name,full_name,medical_record_number,address,phone",
+      select: "id,name,full_name,date_of_birth,medical_record_number,internal_patient_code,registered_branch_id,address,phone",
       id: `eq.${patientId}`,
       limit: "2"
     })}`
@@ -120,7 +120,100 @@ export const getPatientCardProfile = async (env, configuration, patientId) => {
   if (!Array.isArray(profiles) || profiles.length !== 1) {
     throw new PatientCardApiError("Profil pasien tertaut tidak ditemukan.", 404);
   }
+
+  const profile = profiles[0];
+  if (profile.internal_patient_code) return profile;
+
+  const records = await requestJson(
+    configuration.supabaseUrl,
+    serviceHeaders,
+    `/rest/v1/patient_branch_medical_records?${toQueryString({
+      select: "branch_id,medical_record_number",
+      patient_id: `eq.${patientId}`,
+      order: "created_at.asc",
+      limit: "20"
+    })}`
+  );
+  if (!Array.isArray(records)) {
+    throw new PatientCardApiError("Gagal membaca No. RM cabang pasien.", 502);
+  }
+  const originalRecord = records.find((record) => record.branch_id === profile.registered_branch_id)
+    || records[0];
+  const medicalRecordNumber = profile.medical_record_number || originalRecord?.medical_record_number;
+  const branchId = profile.registered_branch_id || originalRecord?.branch_id;
+  if (!medicalRecordNumber || !branchId) return profile;
+
+  const branches = await requestJson(
+    configuration.supabaseUrl,
+    serviceHeaders,
+    `/rest/v1/dental_branches?${toQueryString({
+      select: "branch_code",
+      id: `eq.${branchId}`,
+      limit: "2"
+    })}`
+  );
+  if (!Array.isArray(branches) || branches.length !== 1 || !branches[0].branch_code) {
+    throw new PatientCardApiError("Kode cabang untuk kartu pasien belum tersedia.", 502);
+  }
+  const cleanRm = String(medicalRecordNumber).trim().toUpperCase();
+  const rmCode = cleanRm.startsWith("RM")
+    ? `RM-${cleanRm.replace(/^RM[- ]*/, "")}`
+    : `RM${cleanRm}`;
+  return {
+    ...profile,
+    medical_record_number: profile.medical_record_number || medicalRecordNumber,
+    internal_patient_code: `${String(branches[0].branch_code).trim().toUpperCase()}-${rmCode}`
+  };
+};
+
+export const getPatientCardProfileByCode = async (env, configuration, patientCode) => {
+  const profiles = await requestJson(
+    configuration.supabaseUrl,
+    getServiceHeaders(env, configuration.serviceKey),
+    `/rest/v1/patient_profiles?${toQueryString({
+      select: "id,name,full_name,medical_record_number,internal_patient_code",
+      internal_patient_code: `eq.${patientCode}`,
+      limit: "2"
+    })}`
+  );
+  if (!Array.isArray(profiles) || profiles.length !== 1) {
+    throw new PatientCardApiError("Kode kartu pasien tidak ditemukan.", 404);
+  }
   return profiles[0];
+};
+
+export const getPatientCardBooking = async (env, configuration, patientId, branchId) => {
+  if (!branchId) return null;
+
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+  const tomorrow = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(Date.parse(`${today}T00:00:00+07:00`) + 24 * 60 * 60 * 1000));
+  const bookings = await requestJson(
+    configuration.supabaseUrl,
+    getServiceHeaders(env, configuration.serviceKey),
+    `/rest/v1/bookings?${toQueryString({
+      select: "id,booking_date_time,time_slot,status,branch_name_snapshot",
+      patient_id: `eq.${patientId}`,
+      branch_id: `eq.${branchId}`,
+      booking_date_time: `gte.${today}T00:00:00+07:00`,
+      and: `(booking_date_time.lt.${tomorrow}T00:00:00+07:00,status.in.(PENDING,CONFIRMED))`,
+      order: "booking_date_time.asc",
+      limit: "10"
+    })}`
+  );
+  if (!Array.isArray(bookings)) {
+    throw new PatientCardApiError("Gagal membaca jadwal booking pasien.", 502);
+  }
+  return bookings[0] || null;
 };
 
 const base64UrlEncode = (value) => {

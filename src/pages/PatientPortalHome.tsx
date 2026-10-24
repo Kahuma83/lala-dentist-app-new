@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
+import html2canvas from "html2canvas";
 import {
   AlertCircle,
   Building2,
@@ -12,7 +13,9 @@ import {
   CircleHelp,
   Clock,
   CreditCard,
+  Download,
   FileText,
+  Heart,
   History,
   Home,
   KeyRound,
@@ -21,6 +24,7 @@ import {
   LogOut,
   MapPin,
   Navigation,
+  Printer,
   Receipt,
   Send,
   ShieldCheck,
@@ -57,7 +61,9 @@ import { supabase } from "../lib/supabase";
 interface PatientCardDetails {
   name: string;
   fullName: string;
+  dateOfBirth: string;
   medicalRecordNumber: string;
+  internalPatientCode: string;
   address: string;
   phone: string;
 }
@@ -187,8 +193,11 @@ export const PatientPortalHome: React.FC = () => {
   const [patientCardProfileError, setPatientCardProfileError] = useState<string | null>(null);
   const [isLoadingPatientCardProfile, setIsLoadingPatientCardProfile] = useState(false);
   const [patientCardQrCode, setPatientCardQrCode] = useState<string | null>(null);
-  const [patientCardTokenExpiresAt, setPatientCardTokenExpiresAt] = useState<number | null>(null);
   const [patientCardRefreshKey, setPatientCardRefreshKey] = useState(0);
+  const [isDownloadingPatientCard, setIsDownloadingPatientCard] = useState(false);
+  const [patientCardDownloadError, setPatientCardDownloadError] = useState<string | null>(null);
+  const patientCardRef = useRef<HTMLElement | null>(null);
+  const portalContentRef = useRef<HTMLDivElement | null>(null);
   const isLoadingBookings = loading;
   const bookingError = loadWarnings.includes("bookings")
     ? "Gagal memuat janji temu pasien. Silakan coba muat ulang."
@@ -199,11 +208,14 @@ export const PatientPortalHome: React.FC = () => {
   const activeBranches = branches.filter((branch) => branch.isActive && branch.active !== false);
 
   useEffect(() => {
+    if (portalContentRef.current) portalContentRef.current.scrollTop = 0;
+  }, [section]);
+
+  useEffect(() => {
     const patientId = currentUser?.patientId;
     if (!patientId) {
       setPatientCardProfile(null);
       setPatientCardQrCode(null);
-      setPatientCardTokenExpiresAt(null);
       setPatientCardProfileError(null);
       setIsLoadingPatientCardProfile(false);
       return;
@@ -234,29 +246,29 @@ export const PatientPortalHome: React.FC = () => {
         } | null;
         if (!response.ok) throw new Error(result?.message || "Gagal membuat QR verifikasi pasien.");
         if (
-          !result?.token ||
+          !result ||
           !result.patient ||
-          typeof result.patient.fullName !== "string" ||
-          typeof result.patient.medicalRecordNumber !== "string"
+          typeof result.patient.medicalRecordNumber !== "string" ||
+          typeof result.patient.internalPatientCode !== "string"
         ) {
           throw new Error("Respons kartu pasien dari server tidak lengkap.");
         }
 
-        const qrCode = await QRCode.toDataURL(result.token, {
-          errorCorrectionLevel: "M",
-          margin: 1,
-          width: 220,
-          color: { dark: "#17233c", light: "#ffffff" }
-        });
+        const qrCode = result.patient.internalPatientCode
+          ? await QRCode.toDataURL(result.patient.internalPatientCode, {
+              errorCorrectionLevel: "M",
+              margin: 1,
+              width: 220,
+              color: { dark: "#17233c", light: "#ffffff" }
+            })
+          : null;
         if (!active) return;
         setPatientCardProfile(result.patient);
         setPatientCardQrCode(qrCode);
-        setPatientCardTokenExpiresAt(Date.now() + (result.expiresInSeconds || 90) * 1000);
       } catch (loadError: unknown) {
         if (!active) return;
         setPatientCardProfile(null);
         setPatientCardQrCode(null);
-        setPatientCardTokenExpiresAt(null);
         setPatientCardProfileError(
           loadError instanceof Error
             ? `Kartu pasien gagal dimuat: ${loadError.message}`
@@ -270,12 +282,60 @@ export const PatientPortalHome: React.FC = () => {
 
     void loadPatientCard();
     const refreshTimer = window.setInterval(() => void loadPatientCard(), 60_000);
-
     return () => {
       active = false;
       window.clearInterval(refreshTimer);
     };
   }, [currentUser?.patientId, patientCardRefreshKey]);
+
+  const handleDownloadPatientCard = async () => {
+    const card = patientCardRef.current;
+    if (!card || !patientCardProfile?.internalPatientCode) return;
+
+    setIsDownloadingPatientCard(true);
+    setPatientCardDownloadError(null);
+    const exportHost = document.createElement("div");
+    exportHost.style.position = "fixed";
+    exportHost.style.left = "-10000px";
+    exportHost.style.top = "0";
+    exportHost.style.width = "720px";
+    exportHost.setAttribute("aria-hidden", "true");
+
+    try {
+      const cardCopy = card.cloneNode(true) as HTMLElement;
+      cardCopy.style.width = "720px";
+      cardCopy.style.maxWidth = "720px";
+      cardCopy.style.height = "454px";
+      cardCopy.style.aspectRatio = "auto";
+      exportHost.append(cardCopy);
+      document.body.append(exportHost);
+      const canvas = await html2canvas(cardCopy, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: "#ffffff",
+        windowWidth: 800
+      });
+      const link = document.createElement("a");
+      link.download = `kartu-pasien-${patientCardProfile.internalPatientCode}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (downloadError: unknown) {
+      setPatientCardDownloadError(
+        downloadError instanceof Error
+          ? `Kartu pasien gagal diunduh: ${downloadError.message}`
+          : "Kartu pasien gagal diunduh. Silakan coba lagi."
+      );
+    } finally {
+      exportHost.remove();
+      setIsDownloadingPatientCard(false);
+    }
+  };
+
+  const handlePrintPatientCard = () => {
+    if (!patientCardProfile?.internalPatientCode) return;
+    window.print();
+  };
 
   const patientVisits = useMemo(
     () => visits.filter((visit) => visit.patientId === currentUser?.patientId),
@@ -693,7 +753,7 @@ export const PatientPortalHome: React.FC = () => {
         .map((part) => part[0]?.toUpperCase())
         .join("") || "D";
       return (
-      <article key={booking.id} className={`${featured ? "patient-portal-upcoming-card h-full bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c]" : "patient-portal-card bg-white"} relative rounded-2xl border border-[#d8c79d] p-5 shadow-sm`}>
+      <article key={booking.id} className={`${featured ? "patient-portal-upcoming-card h-full bg-gradient-to-r from-[var(--patient-gold-deep)] via-[var(--patient-gold-mid-light)] via-[var(--patient-gold-highlight)] to-[var(--patient-gold-deep)]" : "patient-portal-card bg-white"} relative rounded-2xl border border-[var(--patient-gold-edge)] p-5 shadow-sm`}>
         {featured && (
           <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]" aria-hidden="true">
             <div className="absolute inset-0 opacity-40">
@@ -720,13 +780,13 @@ export const PatientPortalHome: React.FC = () => {
               {booking.plannedTreatments?.map((item) => item.serviceNameSnapshot).filter(Boolean).join(", ") || "Perawatan gigi"}
             </h3>
           </div>
-          <span className="rounded-full bg-[#f3e8c9] px-3 py-1 text-[10px] font-bold text-[#775a21]">
+          <span className="rounded-full bg-[var(--patient-gold-light)] px-3 py-1 text-[10px] font-bold text-[var(--patient-gold-ink)]">
             {bookingStatusLabel[booking.status]}
           </span>
         </div>
         <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
           <div className="flex items-start gap-2 text-slate-600">
-            <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+            <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[var(--patient-gold-deep)]" />
             <div>
               <dt className={`font-semibold ${featured ? "text-[#171717]" : "text-slate-400"}`}>Waktu</dt>
               <dd className={`mt-0.5 font-medium ${featured ? "text-[#171717]" : "text-slate-700"}`}>{formatAppointmentDate(booking.bookingDateTime)}</dd>
@@ -734,7 +794,7 @@ export const PatientPortalHome: React.FC = () => {
           </div>
           <div className="flex items-start gap-2 text-slate-600">
             {featured ? (
-              <span className="patient-portal-doctor-photo relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#f1e2bb] text-base font-extrabold text-[#684b16] sm:h-24 sm:w-24">
+              <span className="patient-portal-doctor-photo relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[var(--patient-gold-light)] text-base font-extrabold text-[var(--patient-gold-ink)] sm:h-24 sm:w-24">
                 {doctorInitials}
                 {doctorPhotoUrl && (
                   <img
@@ -749,7 +809,7 @@ export const PatientPortalHome: React.FC = () => {
                 )}
               </span>
             ) : (
-              <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+              <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-[var(--patient-gold-deep)]" />
             )}
             <div>
               <dt className={`font-semibold ${featured ? "text-[#171717]" : "text-slate-400"}`}>{featured ? "Dokter konsultasi" : "Dokter dan cabang"}</dt>
@@ -769,11 +829,11 @@ export const PatientPortalHome: React.FC = () => {
           </div>
         </dl>
         {isOnlineBooking && isActiveBooking && (
-          <div className="mt-4 rounded-xl border border-[#e8dcc2] bg-[#fcfaf5] p-3.5">
+          <div className="mt-4 rounded-xl border border-[var(--patient-gold-edge)] bg-[#fcfaf5] p-3.5">
             <div className="flex items-start gap-2">
-              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-[#987b3b]" />
+              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-[var(--patient-gold-deep)]" />
               <div className="min-w-0">
-                <p className="text-xs font-bold text-[#493919]">
+                <p className="text-xs font-bold text-[var(--patient-gold-ink)]">
                   {estimate
                     ? `Perkiraan dilayani ${formatAppointmentDate(estimate.estimatedServiceAt)}`
                     : "Perkiraan panggilan mengikuti jadwal booking"}
@@ -812,7 +872,7 @@ export const PatientPortalHome: React.FC = () => {
                 type="button"
                 onClick={() => void handleConfirmArrival(booking)}
                 disabled={arrivalConfirmingBookingId === booking.id}
-                className="mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#80602a] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#6f5122] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c5a059] focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70"
+                className="mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[var(--patient-gold-ink)] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[var(--patient-gold-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--patient-gold-edge)] focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70"
               >
                 <Navigation className="h-4 w-4" />
                 {arrivalConfirmingBookingId === booking.id ? "Mengirim konfirmasi..." : "Saya sedang menuju klinik"}
@@ -867,13 +927,13 @@ export const PatientPortalHome: React.FC = () => {
     <article key={item.id} className={`patient-portal-queue-card ${featured ? "patient-portal-queue-featured" : ""} rounded-3xl border p-5 sm:p-6`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#76591f]">{featured ? "Status antrean" : "Antrean klinik"}</p>
-          <h3 className={`${featured ? "mt-2 text-4xl" : "mt-1 text-xl"} font-extrabold tracking-tight text-[#493919]`}>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--patient-gold-ink)]">{featured ? "Status antrean" : "Antrean klinik"}</p>
+          <h3 className={`${featured ? "mt-2 text-4xl" : "mt-1 text-xl"} font-extrabold tracking-tight text-[var(--patient-gold-ink)]`}>
             {featured ? item.queueNumber : `Nomor antrean ${item.queueNumber}`}
           </h3>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full border border-[#b28a3d]/30 bg-white/75 px-3 py-1 text-[10px] font-bold text-[#684b16]">
+          <span className="rounded-full border border-[var(--patient-gold-edge)]/30 bg-white/75 px-3 py-1 text-[10px] font-bold text-[var(--patient-gold-ink)]">
             {queueStatusLabel[item.status] || item.status}
           </span>
           <span
@@ -890,19 +950,19 @@ export const PatientPortalHome: React.FC = () => {
       </div>
       <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
         <div>
-          <dt className="font-semibold text-[#76591f]">Dokter</dt>
-          <dd className="mt-1 font-semibold text-[#493919]">{doctorName}</dd>
+          <dt className="font-semibold text-[var(--patient-gold-ink)]">Dokter</dt>
+          <dd className="mt-1 font-semibold text-[var(--patient-gold-ink)]">{doctorName}</dd>
         </div>
         <div>
-          <dt className="font-semibold text-[#76591f]">Perkiraan giliran</dt>
-          <dd className="mt-1 font-semibold text-[#493919]">
+          <dt className="font-semibold text-[var(--patient-gold-ink)]">Perkiraan giliran</dt>
+          <dd className="mt-1 font-semibold text-[var(--patient-gold-ink)]">
             {item.estimatedServiceAt
               ? formatAppointmentDate(item.estimatedServiceAt)
               : "Menunggu perhitungan antrean"}
           </dd>
         </div>
       </dl>
-      <p className="mt-3 text-[10px] leading-5 text-[#76591f]">
+      <p className="mt-3 text-[10px] leading-5 text-[var(--patient-gold-ink)]">
         Perkiraan giliran dapat berubah mengikuti kondisi pelayanan di klinik.
       </p>
     </article>
@@ -996,7 +1056,7 @@ export const PatientPortalHome: React.FC = () => {
         {invoicePayments.length > 0 && (
           <div className="mt-4 border-t border-slate-100 pt-3">
             <p className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-700">
-              <Receipt className="h-4 w-4 text-[#987b3b]" /> Kuitansi pembayaran
+              <Receipt className="h-4 w-4 text-[var(--patient-gold-deep)]" /> Kuitansi pembayaran
             </p>
             <ul className="space-y-2">
               {invoicePayments.map((payment: PaymentTransaction) => (
@@ -1028,7 +1088,7 @@ export const PatientPortalHome: React.FC = () => {
 
   return (
     <main className="patient-portal-shell min-h-screen w-full min-w-0 pb-28 text-slate-900 md:pb-0">
-      <header className="patient-portal-header sticky top-0 z-10 min-h-20 border-b border-[#916b1c]/40 bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c]">
+      <header className="patient-portal-header sticky top-0 z-10 min-h-20 border-b border-[var(--patient-gold-edge)]/40">
         <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
           <div className="absolute inset-0 opacity-40">
             <svg className="h-full w-full" viewBox="0 0 1000 80" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
@@ -1036,14 +1096,14 @@ export const PatientPortalHome: React.FC = () => {
               <path d="M-50,70 C200,10 400,100 600,30 C800,-40 900,110 1200,50" stroke="url(#patientSilkWhiteGradient)" strokeWidth="1" />
               <defs>
                 <linearGradient id="patientSilkWhiteGradient" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="#ffffff" stopOpacity="0.1" />
-                  <stop offset="50%" stopColor="#ffffff" stopOpacity="0.6" />
-                  <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
+                  <stop offset="0%" stopColor="var(--patient-gold-light)" stopOpacity="0.14" />
+                  <stop offset="50%" stopColor="var(--patient-gold-light)" stopOpacity="0.72" />
+                  <stop offset="100%" stopColor="var(--patient-gold-light)" stopOpacity="0.14" />
                 </linearGradient>
               </defs>
             </svg>
           </div>
-          <div className="absolute inset-y-0 left-1/3 w-1/4 skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+          <div className="absolute inset-y-0 left-1/3 w-1/4 skew-x-12 bg-gradient-to-r from-transparent via-[var(--patient-gold-light)]/25 to-transparent" />
         </div>
         <div className="relative z-[1] mx-auto flex min-h-20 max-w-6xl items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
@@ -1051,8 +1111,8 @@ export const PatientPortalHome: React.FC = () => {
               <LalaLogo src={branding?.logoUrl || "/logo-lala.svg"} className="h-full w-full scale-[1.25]" />
             </div>
             <div className="min-w-0 drop-shadow-[0_1px_2px_rgba(70,50,17,0.25)]">
-              <p className="truncate text-xs font-extrabold tracking-tight text-white sm:text-base">{clinicName}</p>
-              <p className="mt-0.5 text-[8px] font-semibold tracking-wide text-[#fff8e9] sm:text-[10px]">Senyum indah dimulai di Laladentist</p>
+              <p className="truncate text-xs font-extrabold tracking-tight text-[var(--patient-gold-ink)] sm:text-base">{clinicName}</p>
+              <p className="mt-0.5 text-[8px] font-semibold tracking-wide text-[var(--patient-gold-ink)] sm:text-[10px]">Senyum indah dimulai di Laladentist</p>
             </div>
           </div>
           <nav aria-label="Navigasi portal pasien" className="patient-portal-desktop-nav hidden items-center gap-1 rounded-2xl border p-1 md:flex">
@@ -1063,7 +1123,7 @@ export const PatientPortalHome: React.FC = () => {
                 aria-current={section === id ? "page" : undefined}
                 onClick={() => setSection(id)}
                 className={`patient-portal-nav-item inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition ${
-                  section === id ? "patient-portal-nav-active text-[#493919]" : "text-[#69552f] hover:bg-white/60 hover:text-[#493919]"
+                  section === id ? "patient-portal-nav-active text-[var(--patient-gold-ink)]" : "text-[var(--patient-gold-ink)]/80 hover:bg-white/40 hover:text-[var(--patient-gold-ink)]"
                 }`}
               >
                 <Icon className="h-4 w-4" /> {label}
@@ -1072,10 +1132,10 @@ export const PatientPortalHome: React.FC = () => {
           </nav>
           <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/60 bg-white/95 py-1 pl-2 pr-1 shadow-sm sm:gap-2 sm:pl-3 sm:pr-1.5">
             <span className="block max-w-20 text-right sm:max-w-40">
-              <span className="block truncate text-[9px] font-semibold text-[#806b42] sm:text-[10px]">Halo, Kak</span>
-              <span className="block truncate text-[10px] font-semibold text-[#493919] sm:text-xs">{patientName}</span>
+              <span className="block truncate text-[9px] font-semibold text-[var(--patient-gold-ink)] sm:text-[10px]">Halo, Kak</span>
+              <span className="block truncate text-[10px] font-semibold text-[var(--patient-gold-ink)] sm:text-xs">{patientName}</span>
             </span>
-            <span className="patient-portal-avatar flex h-8 w-8 items-center justify-center rounded-full text-xs font-extrabold text-[#684b16] sm:h-9 sm:w-9 sm:text-sm" aria-label={`Inisial ${initials}`}>
+            <span className="patient-portal-avatar flex h-8 w-8 items-center justify-center rounded-full text-xs font-extrabold text-[var(--patient-gold-ink)] sm:h-9 sm:w-9 sm:text-sm" aria-label={`Inisial ${initials}`}>
               {initials}
             </span>
             <button
@@ -1092,7 +1152,7 @@ export const PatientPortalHome: React.FC = () => {
         </div>
       </header>
 
-      <div className="mx-auto w-full min-w-0 max-w-6xl px-3 py-6 sm:px-6 sm:py-9">
+      <div ref={portalContentRef} className="patient-portal-content mx-auto w-full min-w-0 max-w-6xl px-3 py-6 sm:px-6 sm:py-9">
         {error && <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{error}</div>}
         {bookingError && <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{bookingError}</div>}
         {section === "home" && loadWarnings.includes("promotion_media") && (
@@ -1116,7 +1176,6 @@ export const PatientPortalHome: React.FC = () => {
                     alt={activePromotion.title || "Banner promosi Lala Dentist"}
                     className="absolute inset-0 h-full w-full object-cover"
                   />
-                  <div className="patient-portal-promo-overlay absolute inset-0" />
                 </>
               )}
               <div className="absolute -right-10 -top-20 h-64 w-64 rounded-full border border-white/10" />
@@ -1132,7 +1191,13 @@ export const PatientPortalHome: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  null
+                  <>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--patient-gold-soft)]">Portal pasien {clinicName}</p>
+                    <h1 className="mt-1 text-2xl font-extrabold leading-tight sm:text-3xl">Halo, {patientName}</h1>
+                    <p className="mt-1 max-w-xl text-xs leading-5 text-white/85 sm:text-sm">
+                      Atur janji temu, pantau antrean, dan lihat informasi perawatan Anda dari satu tempat.
+                    </p>
+                  </>
                 )}
                 <button
                   type="button"
@@ -1167,41 +1232,220 @@ export const PatientPortalHome: React.FC = () => {
               )}
             </section>
 
+            <nav aria-label="Menu beranda pasien" className="patient-portal-home-menu mt-4 grid grid-cols-4 gap-2 sm:mt-5 sm:gap-3">
+              {patientNavigation.filter(({ id }) => id !== "home").map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setSection(id)}
+                  className="patient-portal-home-menu-item flex min-w-0 flex-col items-center justify-center gap-2 rounded-2xl border border-[var(--patient-gold-edge)] bg-white px-1 py-3 text-center text-[10px] font-semibold text-[var(--patient-gold-ink)] shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--patient-gold-edge)] hover:bg-[var(--patient-gold-light)] sm:gap-2.5 sm:rounded-3xl sm:py-4 sm:text-xs"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[var(--patient-gold-light)] text-[var(--patient-gold-deep)] sm:h-11 sm:w-11">
+                    <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
+                  </span>
+                  <span className="truncate">{label}</span>
+                </button>
+              ))}
+            </nav>
+
+            <section className="patient-portal-home-patient-card mt-5 max-w-3xl" aria-labelledby="home-patient-card-heading">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#17233c] text-[var(--patient-gold-mid)] shadow-sm">
+                    <CreditCard className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <h2 id="home-patient-card-heading" className="text-sm font-bold text-slate-900">Kartu Pasien Digital</h2>
+                    <p className="mt-0.5 text-[10px] text-slate-500">Identitas pasien dan QR verifikasi klinik.</p>
+                  </div>
+                </div>
+                {patientCardProfile?.internalPatientCode && patientCardQrCode && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePrintPatientCard}
+                      aria-label="Cetak kartu pasien"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--patient-gold-edge)] bg-white text-[var(--patient-gold-ink)] shadow-sm transition hover:bg-[var(--patient-gold-light)] sm:h-auto sm:w-auto sm:gap-2 sm:px-3 sm:text-xs sm:font-bold"
+                    >
+                      <Printer className="h-4 w-4" />
+                      <span className="hidden sm:inline">Cetak</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDownloadPatientCard()}
+                      disabled={isDownloadingPatientCard}
+                      aria-label={isDownloadingPatientCard ? "Menyiapkan kartu pasien" : "Unduh kartu pasien"}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--patient-gold-edge)] bg-white text-[var(--patient-gold-ink)] shadow-sm transition hover:bg-[var(--patient-gold-light)] disabled:opacity-60 sm:h-auto sm:w-auto sm:gap-2 sm:px-3 sm:text-xs sm:font-bold"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span className="hidden sm:inline">{isDownloadingPatientCard ? "Menyiapkan..." : "Unduh"}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              {isLoadingPatientCardProfile && !patientCardProfile ? (
+                <div role="status" className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-500 shadow-sm">
+                  Memuat kartu pasien...
+                </div>
+              ) : patientCardProfileError ? (
+                <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+                  <p>{patientCardProfileError}</p>
+                  <button
+                    type="button"
+                    onClick={() => setPatientCardRefreshKey((key) => key + 1)}
+                    className="mt-2 font-bold underline underline-offset-2"
+                  >
+                    Coba muat ulang
+                  </button>
+                </div>
+              ) : patientCardProfile ? (
+                <>
+                  <article id="patient-card-printable" ref={patientCardRef} className="patient-portal-digital-card mx-auto rounded-3xl" aria-label="Kartu identitas pasien digital">
+                    <div className="patient-portal-digital-card-header relative flex h-[30%] items-center gap-2.5 overflow-hidden px-4 sm:gap-3 sm:px-6">
+                      <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white p-1 shadow-sm ring-1 ring-[var(--patient-gold-edge)] sm:h-14 sm:w-14">
+                        <LalaLogo src={branding?.logoUrl || "/logo-lala.svg"} className="h-full w-full" />
+                      </span>
+                      <div className="relative min-w-0 flex-1">
+                        <p className="truncate text-base font-extrabold tracking-wide text-[var(--patient-gold-ink)] sm:text-2xl">{clinicName}</p>
+                        <p className="mt-0.5 truncate text-[7px] font-medium tracking-[0.12em] text-[var(--patient-gold-ink)] sm:text-[10px] sm:tracking-[0.2em]">Senyum indah dimulai di Laladentist</p>
+                      </div>
+                      <div className="relative ml-auto shrink-0 text-right">
+                        <p className="text-[8px] font-extrabold uppercase tracking-[0.16em] text-[var(--patient-gold-deep)] sm:text-xs">Kartu Pasien</p>
+                        <p className="text-[7px] uppercase tracking-[0.18em] text-[var(--patient-gold-deep)] sm:text-[10px]">Patient Card</p>
+                      </div>
+                    </div>
+                    <div className="patient-portal-digital-card-body relative z-[1] grid h-[70%] min-h-0 grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 pb-3 pt-2 sm:gap-4 sm:px-6 sm:pb-5 sm:pt-3">
+                      <div className="flex min-w-0 flex-col justify-between">
+                        <div className="min-w-0">
+                          <p className="text-[8px] font-medium tracking-[0.08em] text-[var(--patient-gold-ink)] sm:text-sm">Nama Pasien</p>
+                          <p className="mt-0.5 break-words text-sm font-bold leading-tight text-[#292722] sm:text-3xl">
+                            {patientCardProfile.fullName || patientCardProfile.name || "Pasien"}
+                          </p>
+                          <div className="mt-2 flex min-w-0 items-start divide-x divide-[var(--patient-gold-edge)] sm:mt-3">
+                            <div className="min-w-0 pr-2 sm:pr-4">
+                              <p className="text-[7px] text-[var(--patient-gold-ink)] sm:text-xs">No. Pasien</p>
+                              <p className="mt-0.5 break-all text-[10px] font-semibold leading-tight text-[#292722] sm:text-xl">
+                                {patientCardProfile.internalPatientCode || "Akan diterbitkan"}
+                              </p>
+                            </div>
+                            <div className="min-w-0 pl-2 sm:pl-4">
+                              <p className="text-[7px] text-[var(--patient-gold-ink)] sm:text-xs">Tanggal Lahir</p>
+                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-[#292722] sm:text-xl">
+                                {patientCardProfile.dateOfBirth
+                                  ? new Intl.DateTimeFormat("id-ID", {
+                                      day: "numeric",
+                                      month: "short",
+                                      year: "numeric"
+                                    }).format(new Date(`${patientCardProfile.dateOfBirth}T00:00:00`))
+                                  : "—"}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="max-w-[150px] pb-0.5 text-[7px] leading-3 tracking-wide text-[var(--patient-gold-ink)] sm:max-w-[220px] sm:text-sm sm:leading-5">
+                          Perawatan terbaik<br />untuk senyum Anda
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-center justify-center gap-2">
+                        {patientCardQrCode ? (
+                          <img
+                            src={patientCardQrCode}
+                            alt="QR kartu pasien berdasarkan kode RM"
+                            className="h-[clamp(3.5rem,18vw,5.5rem)] w-[clamp(3.5rem,18vw,5.5rem)] rounded-xl border border-[var(--patient-gold-edge)] bg-white p-1 sm:h-20 sm:w-20"
+                          />
+                        ) : (
+                          <div className="flex h-[clamp(3.5rem,18vw,5.5rem)] w-[clamp(3.5rem,18vw,5.5rem)] items-center justify-center rounded-xl border border-dashed border-[var(--patient-gold-edge)] bg-white/90 p-1 text-center text-[7px] font-semibold leading-3 text-[var(--patient-gold-ink)] sm:h-20 sm:w-20 sm:text-[8px]">
+                            QR muncul<br />setelah RM<br />diterbitkan
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1.5 text-[var(--patient-gold-ink)] sm:gap-2.5">
+                          <div className="flex flex-col items-center">
+                            <ShieldCheck className="h-3.5 w-3.5 sm:h-6 sm:w-6" />
+                            <span className="mt-0.5 text-[6px] sm:text-[9px]">Profesional</span>
+                          </div>
+                          <span className="h-6 w-px bg-[var(--patient-gold-edge)]/60" />
+                          <div className="flex flex-col items-center">
+                            <Heart className="h-3.5 w-3.5 sm:h-6 sm:w-6" />
+                            <span className="mt-0.5 text-[6px] sm:text-[9px]">Modern</span>
+                          </div>
+                          <span className="h-6 w-px bg-[var(--patient-gold-edge)]/60" />
+                          <div className="flex flex-col items-center">
+                            <CheckCircle2 className="h-3.5 w-3.5 sm:h-6 sm:w-6" />
+                            <span className="mt-0.5 text-[6px] sm:text-[9px]">Terpercaya</span>
+                          </div>
+                        </div>
+                        <a href="https://laladentist.id" target="_blank" rel="noreferrer" className="text-[6px] font-semibold tracking-[0.08em] text-[var(--patient-gold-ink)] sm:text-[9px]">
+                          laladentist.id
+                        </a>
+                      </div>
+                    </div>
+                  </article>
+                  {patientCardProfile.internalPatientCode ? (
+                    <div className="mx-auto mt-3 flex max-w-xl items-start gap-2.5 rounded-2xl border border-emerald-100 bg-emerald-50/80 p-3 text-[10px] leading-4 text-emerald-950 sm:text-xs sm:leading-5">
+                      <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+                      <p>Tunjukkan QR ini kepada petugas klinik saat verifikasi pasien.</p>
+                    </div>
+                  ) : (
+                    <div role="status" className="mx-auto mt-3 flex max-w-xl items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[10px] leading-4 text-amber-900 sm:text-xs sm:leading-5">
+                      <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p>
+                        {patientCardProfile.medicalRecordNumber.trim()
+                          ? "No. RM sudah ada, tetapi kode cabang belum tertaut. Minta admin memeriksa data RM cabang."
+                          : "Kartu akan aktif setelah check-in pertama berhasil menerbitkan No. RM cabang."}
+                        <button
+                          type="button"
+                          onClick={() => setPatientCardRefreshKey((key) => key + 1)}
+                          className="ml-1 font-bold underline underline-offset-2"
+                        >
+                          Periksa lagi
+                        </button>
+                      </p>
+                    </div>
+                  )}
+                  {patientCardDownloadError && (
+                    <p role="alert" className="mx-auto mt-2 max-w-xl text-xs text-rose-700">{patientCardDownloadError}</p>
+                  )}
+                </>
+              ) : (
+                renderLinkNotice("Kartu pasien digital")
+              )}
+            </section>
+
             <section className="patient-portal-home-panels mt-5 grid items-stretch gap-4 md:grid-cols-2" aria-label="Antrean dan konsultasi">
               {loadWarnings.includes("queue_items") ? (
                 <article className="patient-portal-card rounded-3xl border border-rose-200 bg-white p-5 sm:p-6">
-                  <p className="text-xs font-bold uppercase tracking-wider text-[#806326]">Status antrean</p>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[var(--patient-gold-ink)]">Status antrean</p>
                   <p role="alert" className="mt-3 rounded-xl bg-red-50 p-4 text-xs text-red-700">Status antrean gagal dimuat. Muat ulang halaman atau coba kembali nanti.</p>
                 </article>
               ) : activePatientQueue ? (
                 renderQueueStatus(activePatientQueue, true)
               ) : (
-                <article className="patient-portal-queue-panel patient-portal-card overflow-hidden rounded-3xl border border-[#d8c79d] bg-white p-5 sm:p-6">
+                <article className="patient-portal-queue-panel patient-portal-card overflow-hidden rounded-3xl border border-[var(--patient-gold-edge)] bg-white p-5 sm:p-6">
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-wider text-[#806326]">Status antrean</p>
+                      <p className="text-xs font-bold uppercase tracking-wider text-[var(--patient-gold-ink)]">Status antrean</p>
                       <h2 className="mt-1 text-base font-bold text-slate-900">Antrean klinik</h2>
                     </div>
-                    <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[#fbf5e6] to-[#efe0bd] text-[#876a2d]">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--patient-gold-light)] to-[var(--patient-gold-light)] text-[var(--patient-gold-deep)]">
                       <ListOrdered className="h-5 w-5" />
                     </span>
                   </div>
                   {activePatientBooking ? (
                     <div className="patient-portal-queue-preview rounded-2xl border p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-xs font-semibold text-[#76591f]">Nomor antrean</span>
-                        <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-bold text-[#684b16]">Belum check-in</span>
+                        <span className="text-xs font-semibold text-[var(--patient-gold-ink)]">Nomor antrean</span>
+                        <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-bold text-[var(--patient-gold-ink)]">Belum check-in</span>
                       </div>
-                      <p className="mt-1 text-4xl font-extrabold tracking-tight text-[#493919]">—</p>
-                      <p className="mt-2 text-xs font-semibold text-[#493919]">
+                      <p className="mt-1 text-4xl font-extrabold tracking-tight text-[var(--patient-gold-ink)]">—</p>
+                      <p className="mt-2 text-xs font-semibold text-[var(--patient-gold-ink)]">
                         {bookingQueueEstimate
                           ? `Estimasi ${bookingQueueEstimate.patientsAhead} pasien sebelum Anda`
                           : "Nomor resmi diberikan petugas setelah check-in"}
                       </p>
                       {bookingQueueEstimate?.estimatedServiceAt && (
-                        <p className="mt-1 text-[11px] text-[#76591f]">Perkiraan dilayani {formatAppointmentDate(bookingQueueEstimate.estimatedServiceAt)}</p>
+                        <p className="mt-1 text-[11px] text-[var(--patient-gold-ink)]">Perkiraan dilayani {formatAppointmentDate(bookingQueueEstimate.estimatedServiceAt)}</p>
                       )}
-                      <p className="mt-3 border-t border-[#b28a3d]/20 pt-3 text-[10px] leading-5 text-[#76591f]">
+                      <p className="mt-3 border-t border-[var(--patient-gold-edge)]/20 pt-3 text-[10px] leading-5 text-[var(--patient-gold-ink)]">
                         {bookingQueueEstimate
                           ? "Estimasi diperbarui berkala dan dapat berubah mengikuti kondisi klinik."
                           : "Setelah tiba, minta petugas klinik melakukan check-in resmi."}
@@ -1212,8 +1456,8 @@ export const PatientPortalHome: React.FC = () => {
                     </div>
                   ) : currentUser?.patientId ? (
                     <div className="patient-portal-queue-preview rounded-2xl border p-4">
-                      <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-bold text-[#684b16]">Belum ada antrean aktif</span>
-                      <p className="mt-3 text-sm font-semibold text-[#493919]">Nomor antrean tampil setelah check-in di klinik.</p>
+                      <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-bold text-[var(--patient-gold-ink)]">Belum ada antrean aktif</span>
+                      <p className="mt-3 text-sm font-semibold text-[var(--patient-gold-ink)]">Nomor antrean tampil setelah check-in di klinik.</p>
                       <button
                         type="button"
                         onClick={() => setSection("appointments")}
@@ -1230,15 +1474,15 @@ export const PatientPortalHome: React.FC = () => {
 
               <div className="patient-portal-consultation-panel">
                 {isLoadingBookings ? (
-                  <div className="h-full rounded-3xl border border-[#d8c79d] bg-white p-5 text-xs text-slate-500">Memuat janji temu...</div>
+                  <div className="h-full rounded-3xl border border-[var(--patient-gold-edge)] bg-white p-5 text-xs text-slate-500">Memuat janji temu...</div>
                 ) : upcomingBooking || activePatientBooking ? (
                   renderBookingCard(upcomingBooking || activePatientBooking!, true)
                 ) : currentUser?.patientId ? (
                   <article className="patient-portal-upcoming-empty flex h-full min-h-52 flex-col items-start justify-between rounded-3xl border p-5 sm:p-6">
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-wider text-[#806326]">Konsultasi mendatang</p>
-                      <h2 className="mt-2 text-lg font-bold text-[#493919]">Belum ada jadwal konsultasi</h2>
-                      <p className="mt-2 text-xs leading-5 text-[#76591f]">Janji temu yang dikonfirmasi klinik akan tampil di sini.</p>
+                      <p className="text-xs font-bold uppercase tracking-wider text-[var(--patient-gold-ink)]">Konsultasi mendatang</p>
+                      <h2 className="mt-2 text-lg font-bold text-[var(--patient-gold-ink)]">Belum ada jadwal konsultasi</h2>
+                      <p className="mt-2 text-xs leading-5 text-[var(--patient-gold-ink)]">Janji temu yang dikonfirmasi klinik akan tampil di sini.</p>
                     </div>
                     <button
                       type="button"
@@ -1255,7 +1499,7 @@ export const PatientPortalHome: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setSection("appointments")}
-                    className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-[#806326] hover:underline"
+                    className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-[var(--patient-gold-ink)] hover:underline"
                   >
                     Buka semua janji temu <span aria-hidden="true">→</span>
                   </button>
@@ -1264,28 +1508,28 @@ export const PatientPortalHome: React.FC = () => {
             </section>
 
             <section className="mt-4 grid gap-4 lg:grid-cols-[1.35fr_0.85fr]">
-              <article className="patient-portal-card rounded-3xl border border-[#e8dcc2] bg-white p-5 sm:p-6">
+              <article className="patient-portal-card rounded-3xl border border-[var(--patient-gold-edge)] bg-white p-5 sm:p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Aktivitas</p>
                     <h2 className="mt-1 text-lg font-bold text-slate-900">Riwayat perawatan</h2>
                   </div>
-                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#fbf5e6] to-[#efe0bd] text-[#876a2d]">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--patient-gold-light)] to-[var(--patient-gold-light)] text-[var(--patient-gold-deep)]">
                     <History className="h-5 w-5" />
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setSection("history")}
-                  className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-[#806326] hover:underline"
+                  className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-[var(--patient-gold-ink)] hover:underline"
                 >
                   Buka riwayat perawatan <span aria-hidden="true">→</span>
                 </button>
               </article>
 
-              <article className="patient-portal-card rounded-3xl border border-[#e8dcc2] bg-white p-5 sm:p-6">
+              <article className="patient-portal-card rounded-3xl border border-[var(--patient-gold-edge)] bg-white p-5 sm:p-6">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#fbf5e6] to-[#efe0bd] text-[#876a2d]">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--patient-gold-light)] to-[var(--patient-gold-light)] text-[var(--patient-gold-deep)]">
                     <UserRound className="h-5 w-5" />
                   </span>
                   <div>
@@ -1297,16 +1541,16 @@ export const PatientPortalHome: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSection("profile")}
-                className="mt-4 rounded-xl border border-[#ded2b7] px-4 py-2.5 text-xs font-bold text-[#66512b] transition hover:bg-[#faf7ef]"
+                className="mt-4 rounded-xl border border-[var(--patient-gold-edge)] px-4 py-2.5 text-xs font-bold text-[var(--patient-gold-ink)] transition hover:bg-[var(--patient-gold-light)]"
                 >
                   Buka profil
                 </button>
               </article>
             </section>
 
-            <section className="patient-portal-card mt-4 flex flex-col gap-3 rounded-2xl border border-[#d8c79d] bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <section className="patient-portal-card mt-4 flex flex-col gap-3 rounded-2xl border border-[var(--patient-gold-edge)] bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
               <div className="flex items-start gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#f4ebd6] text-[#876a2d]">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--patient-gold-soft)] text-[var(--patient-gold-deep)]">
                   <CircleHelp className="h-5 w-5" />
                 </span>
                 <div>
@@ -1321,10 +1565,10 @@ export const PatientPortalHome: React.FC = () => {
 
         {section === "appointments" && (
           <section>
-            <div className="patient-portal-page-heading mb-6">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a1844d]">Portal pasien</p>
-              <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">Buat Janji</h1>
-              <p className="mt-2 text-sm text-slate-500">Pilih cabang klinik, dokter, tanggal, dan waktu untuk mengajukan janji temu.</p>
+            <div className="patient-portal-page-heading mb-3 sm:mb-6">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--patient-gold-deep)]">Portal pasien</p>
+              <h1 className="mt-0.5 text-xl font-extrabold tracking-tight text-slate-900 sm:mt-1 sm:text-2xl">Buat Janji</h1>
+              <p className="mt-1 text-xs text-slate-500 sm:mt-2 sm:text-sm">Pilih cabang klinik, dokter, tanggal, dan waktu untuk mengajukan janji temu.</p>
             </div>
             {currentUser?.patientId ? (
               <>
@@ -1338,19 +1582,19 @@ export const PatientPortalHome: React.FC = () => {
                   Anda masih memiliki janji temu aktif berstatus <strong>{bookingStatusLabel[activePatientBooking.status]}</strong> pada {formatAppointmentDate(activePatientBooking.bookingDateTime)}. Hubungi klinik untuk menyelesaikan atau membatalkannya sebelum membuat janji temu baru.
                 </p>
               )}
-              <form onSubmit={handleCreatePatientBooking} className="patient-portal-card mb-6 rounded-3xl border border-[#e8dcc2] bg-white p-5 sm:p-6">
-                <div className="mb-5 flex items-start gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#f4ebd6] text-[#876a2d]">
-                    <CalendarPlus className="h-5 w-5" />
+              <form onSubmit={handleCreatePatientBooking} className="patient-portal-card mb-4 rounded-2xl border border-[var(--patient-gold-edge)] bg-white p-3 sm:mb-6 sm:rounded-3xl sm:p-6">
+                <div className="mb-3 flex items-start gap-2.5 sm:mb-5 sm:gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--patient-gold-soft)] text-[var(--patient-gold-deep)] sm:h-10 sm:w-10">
+                    <CalendarPlus className="h-4 w-4 sm:h-5 sm:w-5" />
                   </span>
                   <div>
-                    <h2 className="text-base font-bold text-slate-900">Buat Janji</h2>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">Pilih salah satu cabang aktif. Permintaan akan dikirim ke klinik untuk dikonfirmasi.</p>
+                    <h2 className="text-sm font-bold text-slate-900 sm:text-base">Buat Janji</h2>
+                    <p className="mt-0.5 text-[10px] leading-4 text-slate-500 sm:mt-1 sm:text-xs sm:leading-5">Pilih salah satu cabang aktif. Permintaan akan dikirim ke klinik untuk dikonfirmasi.</p>
                   </div>
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="block text-xs font-semibold text-slate-700">
-                    <span className="mb-1.5 flex items-center gap-2"><Building2 className="h-4 w-4 text-[#987b3b]" /> Cabang klinik</span>
+                <div className="patient-portal-booking-fields grid grid-cols-2 gap-x-2 gap-y-2.5 sm:gap-4">
+                  <label className="block min-w-0 text-[10px] font-semibold text-slate-700 sm:text-xs">
+                    <span className="mb-1 flex min-h-4 items-center gap-1.5 sm:mb-1.5 sm:gap-2"><Building2 className="h-3.5 w-3.5 shrink-0 text-[var(--patient-gold-deep)] sm:h-4 sm:w-4" /> Cabang klinik</span>
                     <select
                       required
                       value={formBranchId}
@@ -1361,14 +1605,14 @@ export const PatientPortalHome: React.FC = () => {
                         setBookingSubmitError(null);
                       }}
                       disabled={activeBranches.length === 0}
-                      className="w-full rounded-xl border border-[#ded2b7] bg-white px-3 py-3 text-sm font-medium text-slate-800 outline-none transition focus:border-[#b3934d] focus:ring-2 focus:ring-[#f5ecd5]"
+                      className="h-10 w-full min-w-0 rounded-lg border border-[var(--patient-gold-edge)] bg-white px-2 py-2 text-xs font-medium text-slate-800 outline-none transition focus:border-[var(--patient-gold-edge)] focus:ring-2 focus:ring-[var(--patient-gold-light)] sm:h-auto sm:rounded-xl sm:px-3 sm:py-3 sm:text-sm"
                     >
                       <option value="">Pilih cabang</option>
                       {activeBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
                     </select>
                   </label>
-                  <label className="block text-xs font-semibold text-slate-700">
-                    <span className="mb-1.5 flex items-center gap-2"><CalendarDays className="h-4 w-4 text-[#987b3b]" /> Tanggal</span>
+                  <label className="block min-w-0 text-[10px] font-semibold text-slate-700 sm:text-xs">
+                    <span className="mb-1 flex min-h-4 items-center gap-1.5 sm:mb-1.5 sm:gap-2"><CalendarDays className="h-3.5 w-3.5 shrink-0 text-[var(--patient-gold-deep)] sm:h-4 sm:w-4" /> Tanggal</span>
                     <input
                       type="date"
                       required
@@ -1380,11 +1624,11 @@ export const PatientPortalHome: React.FC = () => {
                         setFormTimeSlot("");
                         setBookingSubmitError(null);
                       }}
-                      className="w-full rounded-xl border border-[#ded2b7] bg-white px-3 py-3 text-sm font-medium text-slate-800 outline-none transition focus:border-[#b3934d] focus:ring-2 focus:ring-[#f5ecd5]"
+                      className="h-10 w-full min-w-0 rounded-lg border border-[var(--patient-gold-edge)] bg-white px-2 py-2 text-xs font-medium text-slate-800 outline-none transition focus:border-[var(--patient-gold-edge)] focus:ring-2 focus:ring-[var(--patient-gold-light)] sm:h-auto sm:rounded-xl sm:px-3 sm:py-3 sm:text-sm"
                     />
                   </label>
-                  <label className="block text-xs font-semibold text-slate-700">
-                    <span className="mb-1.5 flex items-center gap-2"><Stethoscope className="h-4 w-4 text-[#987b3b]" /> Dokter</span>
+                  <label className="block min-w-0 text-[10px] font-semibold text-slate-700 sm:text-xs">
+                    <span className="mb-1 flex min-h-4 items-center gap-1.5 sm:mb-1.5 sm:gap-2"><Stethoscope className="h-3.5 w-3.5 shrink-0 text-[var(--patient-gold-deep)] sm:h-4 sm:w-4" /> Dokter</span>
                     <select
                       required
                       value={formDoctorId}
@@ -1393,20 +1637,20 @@ export const PatientPortalHome: React.FC = () => {
                         setFormTimeSlot("");
                       }}
                       disabled={!formBranchId || isLoadingSchedules || availableDoctors.length === 0}
-                      className="w-full rounded-xl border border-[#ded2b7] bg-white px-3 py-3 text-sm font-medium text-slate-800 outline-none transition focus:border-[#b3934d] focus:ring-2 focus:ring-[#f5ecd5] disabled:bg-slate-50 disabled:text-slate-400"
+                      className="h-10 w-full min-w-0 rounded-lg border border-[var(--patient-gold-edge)] bg-white px-2 py-2 text-xs font-medium text-slate-800 outline-none transition focus:border-[var(--patient-gold-edge)] focus:ring-2 focus:ring-[var(--patient-gold-light)] disabled:bg-slate-50 disabled:text-slate-400 sm:h-auto sm:rounded-xl sm:px-3 sm:py-3 sm:text-sm"
                     >
                       <option value="">{isLoadingSchedules ? "Memuat dokter..." : "Pilih dokter"}</option>
                       {availableDoctors.map((doctor: DentalDoctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}
                     </select>
                   </label>
-                  <label className="block text-xs font-semibold text-slate-700">
-                    <span className="mb-1.5 flex items-center gap-2"><Clock className="h-4 w-4 text-[#987b3b]" /> Waktu</span>
+                  <label className="block min-w-0 text-[10px] font-semibold text-slate-700 sm:text-xs">
+                    <span className="mb-1 flex min-h-4 items-center gap-1.5 sm:mb-1.5 sm:gap-2"><Clock className="h-3.5 w-3.5 shrink-0 text-[var(--patient-gold-deep)] sm:h-4 sm:w-4" /> Waktu</span>
                     <select
                       required
                       value={formTimeSlot}
                       onChange={(event) => setFormTimeSlot(event.target.value)}
                       disabled={!formDoctorId || availableTimeSlots.length === 0}
-                      className="w-full rounded-xl border border-[#ded2b7] bg-white px-3 py-3 text-sm font-medium text-slate-800 outline-none transition focus:border-[#b3934d] focus:ring-2 focus:ring-[#f5ecd5] disabled:bg-slate-50 disabled:text-slate-400"
+                      className="h-10 w-full min-w-0 rounded-lg border border-[var(--patient-gold-edge)] bg-white px-2 py-2 text-xs font-medium text-slate-800 outline-none transition focus:border-[var(--patient-gold-edge)] focus:ring-2 focus:ring-[var(--patient-gold-light)] disabled:bg-slate-50 disabled:text-slate-400 sm:h-auto sm:rounded-xl sm:px-3 sm:py-3 sm:text-sm"
                     >
                       <option value="">{availableTimeSlots.length ? "Pilih waktu" : "Tidak ada waktu tersedia"}</option>
                       {availableTimeSlots.map((slot) => <option key={slot} value={slot}>{slot} WIB</option>)}
@@ -1426,29 +1670,29 @@ export const PatientPortalHome: React.FC = () => {
                     <Clock className="mt-0.5 h-4 w-4 shrink-0" /> Tidak ada slot waktu mendatang untuk dokter ini pada tanggal tersebut.
                   </p>
                 )}
-                <label className="mt-4 block text-xs font-semibold text-slate-700">
-                  <span className="mb-1.5 flex items-center gap-2"><MapPin className="h-4 w-4 text-[#987b3b]" /> Keluhan atau catatan (opsional)</span>
+                <label className="mt-2.5 block text-[10px] font-semibold text-slate-700 sm:mt-4 sm:text-xs">
+                  <span className="mb-1 flex items-center gap-1.5 sm:mb-1.5 sm:gap-2"><MapPin className="h-3.5 w-3.5 text-[var(--patient-gold-deep)] sm:h-4 sm:w-4" /> Keluhan atau catatan (opsional)</span>
                   <textarea
                     value={formNotes}
                     onChange={(event) => setFormNotes(event.target.value)}
                     maxLength={1000}
-                    rows={3}
+                    rows={2}
                     placeholder="Ceritakan singkat keluhan atau kebutuhan perawatan Anda"
-                    className="w-full resize-y rounded-xl border border-[#ded2b7] bg-white px-3 py-3 text-sm font-medium text-slate-800 outline-none transition placeholder:font-normal placeholder:text-slate-400 focus:border-[#b3934d] focus:ring-2 focus:ring-[#f5ecd5]"
+                    className="min-h-16 w-full resize-y rounded-lg border border-[var(--patient-gold-edge)] bg-white px-2.5 py-2 text-xs font-medium text-slate-800 outline-none transition placeholder:font-normal placeholder:text-slate-400 focus:border-[var(--patient-gold-edge)] focus:ring-2 focus:ring-[var(--patient-gold-light)] sm:min-h-20 sm:rounded-xl sm:px-3 sm:py-3 sm:text-sm"
                   />
                 </label>
-                {bookingSubmitError && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-xs leading-5 text-red-700">{bookingSubmitError}</p>}
+                {bookingSubmitError && <p role="alert" className="mt-2 rounded-xl bg-red-50 p-2.5 text-[11px] leading-4 text-red-700 sm:mt-4 sm:p-3 sm:text-xs sm:leading-5">{bookingSubmitError}</p>}
                 {bookingSubmitSuccess && (
-                  <p role="status" className="mt-4 flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-xs leading-5 text-emerald-800">
+                  <p role="status" className="mt-2 flex items-start gap-2 rounded-xl bg-emerald-50 p-2.5 text-[11px] leading-4 text-emerald-800 sm:mt-4 sm:p-3 sm:text-xs sm:leading-5">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> {bookingSubmitSuccess}
                   </p>
                 )}
-                <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-[11px] leading-5 text-slate-400">Slot dikonfirmasi oleh sistem saat permintaan dikirim. Janji temu Anda berstatus menunggu konfirmasi klinik.</p>
+                <div className="mt-3 flex flex-col gap-2 sm:mt-5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <p className="text-[10px] leading-4 text-slate-400 sm:text-[11px] sm:leading-5">Slot dikonfirmasi oleh sistem saat permintaan dikirim. Janji temu Anda berstatus menunggu konfirmasi klinik.</p>
                   <button
                     type="submit"
                     disabled={isSubmittingBooking || isLoadingBookings || isLoadingSchedules || !currentUser.patientId || activeBranches.length === 0 || !!activePatientBooking}
-                    className="patient-portal-primary inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-5 py-3 text-xs font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                    className="patient-portal-primary inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-50 sm:px-5 sm:py-3"
                   >
                     <Send className="h-4 w-4" /> {isSubmittingBooking ? "Mengirim..." : isLoadingBookings ? "Memeriksa janji..." : "Ajukan janji temu"}
                   </button>
@@ -1464,7 +1708,7 @@ export const PatientPortalHome: React.FC = () => {
               <div className="space-y-3">{bookings.map((booking) => renderBookingCard(booking))}</div>
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-7 text-center">
-                <CalendarClock className="mx-auto h-8 w-8 text-[#987b3b]" />
+                <CalendarClock className="mx-auto h-8 w-8 text-[var(--patient-gold-deep)]" />
                 <h2 className="mt-3 text-sm font-bold text-slate-900">Belum ada janji temu</h2>
                 <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-slate-500">Gunakan formulir di atas untuk mengajukan jadwal kunjungan pertama Anda.</p>
               </div>
@@ -1485,7 +1729,7 @@ export const PatientPortalHome: React.FC = () => {
         {section === "queue" && (
           <section aria-label="Antrean pasien">
             <div className="patient-portal-page-heading mb-6">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a1844d]">Portal pasien</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--patient-gold-deep)]">Portal pasien</p>
               <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">Antrean klinik</h1>
               <p className="mt-2 text-sm text-slate-500">Pantau status dan perkiraan giliran antrean Anda hari ini.</p>
             </div>
@@ -1495,7 +1739,7 @@ export const PatientPortalHome: React.FC = () => {
               renderQueueStatus(activePatientQueue)
             ) : (
               <article className="rounded-2xl border border-dashed border-slate-300 bg-white p-7 text-center">
-                <ListOrdered className="mx-auto h-8 w-8 text-[#987b3b]" />
+                <ListOrdered className="mx-auto h-8 w-8 text-[var(--patient-gold-deep)]" />
                 <h2 className="mt-3 text-sm font-bold text-slate-900">Belum ada antrean aktif</h2>
                 <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-slate-500">
                   Nomor antrean dan estimasi giliran akan tampil setelah Anda check-in di cabang klinik.
@@ -1513,7 +1757,7 @@ export const PatientPortalHome: React.FC = () => {
         {section === "history" && (
           <section>
             <div className="patient-portal-page-heading mb-6">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a1844d]">Portal pasien</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--patient-gold-deep)]">Portal pasien</p>
               <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">Riwayat perawatan</h1>
               <p className="mt-2 text-sm text-slate-500">Kunjungan dan tindakan perawatan di klinik.</p>
             </div>
@@ -1527,7 +1771,7 @@ export const PatientPortalHome: React.FC = () => {
 
                 <section>
                   <div className="mb-3 flex items-center gap-2">
-                    <History className="h-5 w-5 text-[#987b3b]" />
+                    <History className="h-5 w-5 text-[var(--patient-gold-deep)]" />
                     <h2 className="text-base font-bold text-slate-900">Kunjungan</h2>
                   </div>
                   {patientVisits.length ? (
@@ -1541,7 +1785,7 @@ export const PatientPortalHome: React.FC = () => {
 
                 <section>
                   <div className="mb-3 flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-[#987b3b]" />
+                    <FileText className="h-5 w-5 text-[var(--patient-gold-deep)]" />
                     <h2 className="text-base font-bold text-slate-900">Tagihan dan kuitansi</h2>
                   </div>
                   {invoiceItemsError && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">{invoiceItemsError}</p>}
@@ -1551,7 +1795,7 @@ export const PatientPortalHome: React.FC = () => {
                     <p role="alert" className="rounded-xl bg-red-50 p-4 text-xs text-red-700">Tagihan gagal dimuat. Silakan coba lagi nanti.</p>
                   ) : (
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center">
-                      <Receipt className="mx-auto h-7 w-7 text-[#987b3b]" />
+                      <Receipt className="mx-auto h-7 w-7 text-[var(--patient-gold-deep)]" />
                       <p className="mt-2 text-xs text-slate-500">Belum ada tagihan atau kuitansi.</p>
                     </div>
                   )}
@@ -1564,21 +1808,49 @@ export const PatientPortalHome: React.FC = () => {
         {section === "profile" && (
           <section>
             <div className="patient-portal-page-heading mb-6">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a1844d]">Portal pasien</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--patient-gold-deep)]">Portal pasien</p>
               <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900">Profil</h1>
               <p className="mt-2 text-sm text-slate-500">Informasi akun yang digunakan untuk masuk ke portal pasien.</p>
             </div>
-            <section className="mb-5 max-w-2xl" aria-labelledby="patient-card-heading">
-              <div className="mb-3 flex items-center gap-2">
-                <CreditCard className="h-5 w-5 text-[#987b3b]" />
-                <h2 id="patient-card-heading" className="text-base font-bold text-slate-900">Kartu Pasien Digital</h2>
+            <section className="mb-6 max-w-3xl" aria-labelledby="patient-card-heading">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#17233c] text-[var(--patient-gold-mid)] shadow-sm">
+                    <CreditCard className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <h2 id="patient-card-heading" className="text-base font-bold text-slate-900">Kartu Pasien Digital</h2>
+                    <p className="mt-0.5 text-xs text-slate-500">Identitas pasien dan QR untuk verifikasi di klinik.</p>
+                  </div>
+                </div>
+                {patientCardProfile?.internalPatientCode && patientCardQrCode && (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePrintPatientCard}
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[var(--patient-gold-edge)] bg-white px-4 py-2 text-xs font-bold text-[var(--patient-gold-ink)] shadow-sm transition hover:border-[var(--patient-gold-edge)] hover:bg-[var(--patient-gold-light)]"
+                    >
+                      <Printer className="h-4 w-4" />
+                      Cetak kartu
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDownloadPatientCard()}
+                      disabled={isDownloadingPatientCard}
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[var(--patient-gold-edge)] bg-white px-4 py-2 text-xs font-bold text-[var(--patient-gold-ink)] shadow-sm transition hover:border-[var(--patient-gold-edge)] hover:bg-[var(--patient-gold-light)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Download className="h-4 w-4" />
+                      {isDownloadingPatientCard ? "Menyiapkan kartu..." : "Unduh kartu PNG"}
+                    </button>
+                  </div>
+                )}
               </div>
               {isLoadingPatientCardProfile && !patientCardProfile ? (
-                <div role="status" className="rounded-2xl border border-[#e8dcc2] bg-white p-5 text-xs text-slate-500">
+                <div role="status" className="rounded-2xl border border-slate-200 bg-white p-5 text-xs text-slate-500 shadow-sm">
                   Memuat kartu pasien...
                 </div>
               ) : patientCardProfileError ? (
-                <div role="alert" className="rounded-xl bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+                <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
                   <p>{patientCardProfileError}</p>
                   <button
                     type="button"
@@ -1588,64 +1860,117 @@ export const PatientPortalHome: React.FC = () => {
                     Coba muat ulang
                   </button>
                 </div>
-              ) : patientCardProfile && patientCardQrCode ? (
+              ) : patientCardProfile ? (
                 <>
-                  <article className="patient-portal-digital-card mx-auto rounded-2xl" aria-label="Kartu identitas pasien digital">
-                    <div className="patient-portal-digital-card-header relative flex h-[31%] items-center gap-2.5 overflow-hidden px-3.5 sm:gap-3 sm:px-5">
-                      <div className="pointer-events-none absolute -right-7 -top-14 h-32 w-32 rounded-full bg-white/10 blur-2xl" aria-hidden="true" />
-                      <span className="relative flex h-8 w-8 shrink-0 items-center justify-center sm:h-10 sm:w-10">
+                  <article id="patient-card-printable" ref={patientCardRef} className="patient-portal-digital-card mx-auto rounded-3xl" aria-label="Kartu identitas pasien digital">
+                    <div className="patient-portal-digital-card-header relative flex h-[30%] items-center gap-2.5 overflow-hidden px-4 sm:gap-3 sm:px-6">
+                      <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white p-1 shadow-sm ring-1 ring-[var(--patient-gold-edge)] sm:h-14 sm:w-14">
                         <LalaLogo src={branding?.logoUrl || "/logo-lala.svg"} className="h-full w-full" />
                       </span>
-                      <div className="relative min-w-0">
-                        <p className="truncate text-xs font-extrabold tracking-wide text-white drop-shadow sm:text-sm">{clinicName}</p>
-                        <p className="mt-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-white/90 sm:text-[9px]">Kartu Pasien Digital</p>
+                      <div className="relative min-w-0 flex-1">
+                        <p className="truncate text-base font-extrabold tracking-wide text-[var(--patient-gold-ink)] sm:text-2xl">{clinicName}</p>
+                        <p className="mt-0.5 truncate text-[7px] font-medium tracking-[0.12em] text-[var(--patient-gold-ink)] sm:text-[10px] sm:tracking-[0.2em]">Senyum indah dimulai di Laladentist</p>
+                      </div>
+                      <div className="relative ml-auto shrink-0 text-right">
+                        <p className="text-[8px] font-extrabold uppercase tracking-[0.16em] text-[var(--patient-gold-deep)] sm:text-xs">Kartu Pasien</p>
+                        <p className="text-[7px] uppercase tracking-[0.18em] text-[var(--patient-gold-deep)] sm:text-[10px]">Patient Card</p>
                       </div>
                     </div>
-                    <div className="patient-portal-digital-card-body flex h-[69%] min-h-0 items-center gap-2.5 px-3 py-2 sm:gap-4 sm:px-5 sm:py-3">
-                      <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 sm:gap-2">
+                    <div className="patient-portal-digital-card-body relative z-[1] grid h-[70%] min-h-0 grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 pb-3 pt-2 sm:gap-4 sm:px-6 sm:pb-5 sm:pt-3">
+                      <div className="flex min-w-0 flex-col justify-between">
                         <div className="min-w-0">
-                          <p className="text-[7px] font-bold uppercase tracking-[0.12em] text-[#a1844d] sm:text-[8px]">Nama</p>
-                          <p className="line-clamp-2 break-words text-[11px] font-extrabold leading-tight text-[#17233c] sm:text-sm">
-                            {patientCardProfile.fullName || patientCardProfile.name || patientName}
+                          <p className="text-[8px] font-medium tracking-[0.08em] text-[var(--patient-gold-ink)] sm:text-sm">Nama Pasien</p>
+                          <p className="mt-0.5 break-words text-sm font-bold leading-tight text-[#292722] sm:text-3xl">
+                            {patientCardProfile.fullName || patientCardProfile.name || "Pasien"}
                           </p>
+                          <div className="mt-2 flex min-w-0 items-start divide-x divide-[var(--patient-gold-edge)] sm:mt-3">
+                            <div className="min-w-0 pr-2 sm:pr-4">
+                              <p className="text-[7px] text-[var(--patient-gold-ink)] sm:text-xs">No. Pasien</p>
+                              <p className="mt-0.5 break-all text-[10px] font-semibold leading-tight text-[#292722] sm:text-xl">
+                                {patientCardProfile.internalPatientCode || "Akan diterbitkan"}
+                              </p>
+                            </div>
+                            <div className="min-w-0 pl-2 sm:pl-4">
+                              <p className="text-[7px] text-[var(--patient-gold-ink)] sm:text-xs">Tanggal Lahir</p>
+                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-[#292722] sm:text-xl">
+                                {patientCardProfile.dateOfBirth
+                                  ? new Intl.DateTimeFormat("id-ID", {
+                                      day: "numeric",
+                                      month: "short",
+                                      year: "numeric"
+                                    }).format(new Date(`${patientCardProfile.dateOfBirth}T00:00:00`))
+                                  : "—"}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-[7px] font-bold uppercase tracking-[0.12em] text-[#a1844d] sm:text-[8px]">Nomor rekam medis</p>
-                          <p className="break-all font-mono text-[10px] font-extrabold leading-tight text-[#684b16] sm:text-xs">
-                            {patientCardProfile.medicalRecordNumber.trim() || "Belum tersedia"}
-                          </p>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-[7px] font-bold uppercase tracking-[0.12em] text-[#a1844d] sm:text-[8px]">Alamat</p>
-                          <p className="line-clamp-2 break-words text-[8px] leading-tight text-slate-700 sm:text-[10px]">
-                            {patientCardProfile.address.trim() || "Belum tersedia"}
-                          </p>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-[7px] font-bold uppercase tracking-[0.12em] text-[#a1844d] sm:text-[8px]">HP</p>
-                          <p className="truncate text-[8px] leading-tight text-slate-700 sm:text-[10px]">
-                            {patientCardProfile.phone.trim() || "Belum tersedia"}
-                          </p>
-                        </div>
+                        <p className="max-w-[150px] pb-0.5 text-[7px] leading-3 tracking-wide text-[var(--patient-gold-ink)] sm:max-w-[220px] sm:text-sm sm:leading-5">
+                          Perawatan terbaik<br />untuk senyum Anda
+                        </p>
                       </div>
-                      <div className="flex shrink-0 flex-col items-center gap-1">
-                        <img
-                          src={patientCardQrCode}
-                          alt="QR verifikasi kartu pasien"
-                          className="h-[clamp(4.5rem,24vw,7rem)] w-[clamp(4.5rem,24vw,7rem)] rounded-sm bg-white p-1"
-                        />
-                        <span className="text-[7px] font-bold uppercase tracking-wide text-[#684b16] sm:text-[8px]">QR verifikasi</span>
+                      <div className="flex shrink-0 flex-col items-center justify-center gap-2">
+                        {patientCardQrCode ? (
+                          <img
+                            src={patientCardQrCode}
+                            alt="QR kartu pasien berdasarkan kode RM"
+                            className="h-[clamp(3.5rem,18vw,5.5rem)] w-[clamp(3.5rem,18vw,5.5rem)] rounded-xl border border-[var(--patient-gold-edge)] bg-white p-1 sm:h-20 sm:w-20"
+                          />
+                        ) : (
+                          <div className="flex h-[clamp(3.5rem,18vw,5.5rem)] w-[clamp(3.5rem,18vw,5.5rem)] items-center justify-center rounded-xl border border-dashed border-[var(--patient-gold-edge)] bg-white/90 p-1 text-center text-[7px] font-semibold leading-3 text-[var(--patient-gold-ink)] sm:h-20 sm:w-20 sm:text-[8px]">
+                            QR muncul<br />setelah RM<br />diterbitkan
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1.5 text-[var(--patient-gold-ink)] sm:gap-2.5">
+                          <div className="flex flex-col items-center">
+                            <ShieldCheck className="h-3.5 w-3.5 sm:h-6 sm:w-6" />
+                            <span className="mt-0.5 text-[6px] sm:text-[9px]">Profesional</span>
+                          </div>
+                          <span className="h-6 w-px bg-[var(--patient-gold-edge)]/60" />
+                          <div className="flex flex-col items-center">
+                            <Heart className="h-3.5 w-3.5 sm:h-6 sm:w-6" />
+                            <span className="mt-0.5 text-[6px] sm:text-[9px]">Modern</span>
+                          </div>
+                          <span className="h-6 w-px bg-[var(--patient-gold-edge)]/60" />
+                          <div className="flex flex-col items-center">
+                            <CheckCircle2 className="h-3.5 w-3.5 sm:h-6 sm:w-6" />
+                            <span className="mt-0.5 text-[6px] sm:text-[9px]">Terpercaya</span>
+                          </div>
+                        </div>
+                        <a
+                          href="https://laladentist.id"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[6px] font-semibold tracking-[0.08em] text-[var(--patient-gold-ink)] sm:text-[9px]"
+                        >
+                          laladentist.id
+                        </a>
                       </div>
                     </div>
                   </article>
-                  <p className="mt-2 flex items-start gap-1.5 text-[10px] leading-4 text-slate-500">
-                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#987b3b]" />
-                    <span>
-                      QR aktif sampai {patientCardTokenExpiresAt ? new Date(patientCardTokenExpiresAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"} dan diperbarui otomatis. Tunjukkan kepada petugas untuk verifikasi; bukan pengganti identitas resmi.
-                    </span>
-                  </p>
-                  {isLoadingPatientCardProfile && (
-                    <p role="status" className="mt-1 text-[10px] text-slate-400">Memperbarui QR...</p>
+                  {patientCardProfile.internalPatientCode ? (
+                    <div className="mx-auto mt-4 flex max-w-xl items-start gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/80 p-3.5 text-xs leading-5 text-emerald-950">
+                      <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+                      <p>Tunjukkan atau cetak kartu ini. QR berisi kode RM bercabang dan dapat dipindai di cabang lain; petugas akan memeriksa booking hari ini sebelum melanjutkan check-in.</p>
+                    </div>
+                  ) : (
+                    <div role="status" className="mx-auto mt-4 flex max-w-xl items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3.5 text-xs leading-5 text-amber-900">
+                      <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p>
+                        {patientCardProfile.medicalRecordNumber.trim()
+                          ? "No. RM sudah ada, tetapi kode cabang belum tertaut. Minta admin memeriksa data RM cabang."
+                          : "Kartu akan aktif setelah check-in pertama berhasil menerbitkan No. RM cabang."}
+                        <button
+                          type="button"
+                          onClick={() => setPatientCardRefreshKey((key) => key + 1)}
+                          className="ml-1 font-bold underline underline-offset-2"
+                        >
+                          Periksa lagi
+                        </button>
+                      </p>
+                    </div>
+                  )}
+                  {patientCardDownloadError && (
+                    <p role="alert" className="mx-auto mt-2 max-w-xl text-xs text-rose-700">{patientCardDownloadError}</p>
                   )}
                 </>
               ) : (
@@ -1654,7 +1979,7 @@ export const PatientPortalHome: React.FC = () => {
             </section>
             <article className="mt-5 max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
               <div className="flex items-center gap-3 border-b border-slate-100 pb-5">
-                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f2e6c8] text-sm font-bold text-[#775a21]">{initials}</span>
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--patient-gold-light)] text-sm font-bold text-[var(--patient-gold-ink)]">{initials}</span>
                 <div>
                   <h2 className="text-base font-bold text-slate-900">{patientName}</h2>
                   <p className="text-xs text-slate-500">Akun pasien</p>
@@ -1683,7 +2008,7 @@ export const PatientPortalHome: React.FC = () => {
               <form onSubmit={(event) => void handleChangePassword(event)} className="mt-6 space-y-4 border-t border-slate-100 pt-5">
                 <div>
                   <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                    <Lock className="h-4 w-4 text-[#987b3b]" />
+                    <Lock className="h-4 w-4 text-[var(--patient-gold-deep)]" />
                     Ubah Kata Sandi
                   </h3>
                   <p className="mt-1 text-xs leading-5 text-slate-500">Verifikasi dengan kata sandi saat ini sebelum menyimpan yang baru.</p>
@@ -1701,7 +2026,7 @@ export const PatientPortalHome: React.FC = () => {
                       onChange={(event) => setCurrentPassword(event.target.value)}
                       required
                       disabled={isChangingPassword}
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[#987b3b] focus:bg-white"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[var(--patient-gold-deep)] focus:bg-white"
                     />
                   </span>
                 </label>
@@ -1717,7 +2042,7 @@ export const PatientPortalHome: React.FC = () => {
                       onChange={(event) => setNewPassword(event.target.value)}
                       required
                       disabled={isChangingPassword}
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[#987b3b] focus:bg-white"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[var(--patient-gold-deep)] focus:bg-white"
                     />
                   </span>
                 </label>
@@ -1733,7 +2058,7 @@ export const PatientPortalHome: React.FC = () => {
                       onChange={(event) => setConfirmNewPassword(event.target.value)}
                       required
                       disabled={isChangingPassword}
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[#987b3b] focus:bg-white"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm text-slate-800 outline-none transition focus:border-[var(--patient-gold-deep)] focus:bg-white"
                     />
                   </span>
                 </label>
@@ -1750,7 +2075,7 @@ export const PatientPortalHome: React.FC = () => {
           </section>
         )}
 
-        <footer className="py-7 text-center text-[10px] text-slate-400">
+        <footer className="patient-portal-footer py-7 text-center text-[10px] text-slate-400">
           © {new Date().getFullYear()} {clinicName} · Portal Pasien
         </footer>
       </div>
@@ -1764,10 +2089,10 @@ export const PatientPortalHome: React.FC = () => {
               aria-current={section === id ? "page" : undefined}
               onClick={() => setSection(id)}
               className={`patient-portal-nav-item flex min-w-0 flex-1 flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[10px] font-semibold transition ${
-                section === id ? "patient-portal-nav-active text-[#493919]" : "text-[#69552f] hover:bg-white/45 hover:text-[#493919]"
+                section === id ? "patient-portal-nav-active text-[var(--patient-gold-ink)]" : "text-[var(--patient-gold-ink)] hover:bg-white/45 hover:text-[var(--patient-gold-ink)]"
               }`}
             >
-              <Icon className={`h-5 w-5 ${section === id ? "text-[#76551a]" : "text-[#806a42]"}`} />
+              <Icon className={`h-5 w-5 ${section === id ? "text-[var(--patient-gold-ink)]" : "text-[var(--patient-gold-ink)]"}`} />
               {label}
             </button>
           ))}
