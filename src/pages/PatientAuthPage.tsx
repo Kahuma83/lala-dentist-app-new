@@ -175,7 +175,7 @@ export const PatientAuthPage: React.FC<{ installOnly?: boolean }> = ({ installOn
         gender,
         address
       });
-      setMessage("Tautan verifikasi sudah dikirim. Setelah email diverifikasi, akun akan ditautkan ke profil yang cocok atau dibuatkan profil baru. Jika email cocok dengan beberapa profil, klinik perlu memeriksanya. Periksa kotak masuk dan folder spam.");
+      setMessage("Permintaan pendaftaran diproses. Jika akun baru berhasil dibuat, tautan verifikasi akan dikirim. Periksa kotak masuk dan folder spam; jika sudah pernah mendaftar, coba masuk atau kirim ulang tautan verifikasi.");
       setCanResendConfirmation(true);
       setMode("login");
       setPassword("");
@@ -193,7 +193,7 @@ export const PatientAuthPage: React.FC<{ installOnly?: boolean }> = ({ installOn
     setIsSubmitting(true);
     try {
       await AuthService.resendPatientConfirmation(email);
-      setMessage("Jika email memiliki pendaftaran pasien yang belum diverifikasi, tautan verifikasi baru akan dikirim. Periksa kotak masuk dan folder spam.");
+      setMessage("Permintaan kirim ulang diproses. Jika akun masih menunggu verifikasi, periksa kotak masuk dan folder spam.");
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Gagal mengirim ulang tautan verifikasi.");
     } finally {

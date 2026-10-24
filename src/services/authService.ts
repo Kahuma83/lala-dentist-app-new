@@ -77,7 +77,7 @@ export class AuthService {
           gender: patientDetails.gender,
           address: cleanAddress
         },
-        emailRedirectTo: `${window.location.origin}/patient/login?type=signup-confirmed`
+        emailRedirectTo: `${window.location.origin}/patient/confirm`
       }
     });
     if (error) {
@@ -100,7 +100,7 @@ export class AuthService {
       type: "signup",
       email: cleanEmail,
       options: {
-        emailRedirectTo: `${window.location.origin}/patient/login?type=signup-confirmed`
+        emailRedirectTo: `${window.location.origin}/patient/confirm`
       }
     });
     if (error) {
@@ -108,6 +108,26 @@ export class AuthService {
         throw new Error("Terlalu banyak permintaan email verifikasi. Tunggu sebelum meminta tautan baru, lalu periksa kotak masuk dan folder spam.");
       }
       throw new Error(`Gagal mengirim ulang verifikasi: ${error.message}`);
+    }
+  }
+
+  static async confirmPatientSignup(tokenHash: string): Promise<void> {
+    if (!isSupabaseConfigured) {
+      throw new Error("Konfirmasi email pasien memerlukan koneksi Supabase.");
+    }
+
+    const cleanTokenHash = tokenHash.trim();
+    if (!cleanTokenHash) throw new Error("Token konfirmasi email tidak ditemukan.");
+
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash: cleanTokenHash,
+      type: "signup"
+    });
+    if (error) {
+      if (/expired|invalid|otp/i.test(error.message)) {
+        throw new Error("Tautan verifikasi sudah kedaluwarsa atau tidak valid. Kirim ulang tautan verifikasi dari halaman masuk pasien.");
+      }
+      throw new Error(`Verifikasi email gagal: ${error.message}`);
     }
   }
 

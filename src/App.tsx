@@ -19,6 +19,7 @@ import { Accounting } from "./pages/Accounting";
 import { PatientAnalytics } from "./pages/PatientAnalytics";
 import { PatientPortalHome } from "./pages/PatientPortalHome";
 import { PatientAuthPage } from "./pages/PatientAuthPage";
+import { PatientEmailConfirmationPage } from "./pages/PatientEmailConfirmationPage";
 import { HRManagement } from "./pages/HRManagement";
 import { DoctorSchedules } from "./pages/DoctorSchedules";
 import { WebsiteContentManagement } from "./pages/WebsiteContentManagement";
@@ -77,6 +78,7 @@ const AppContent: React.FC = () => {
     .toLowerCase();
   const isPatientPortalHost = !!patientPortalHost && window.location.hostname.toLowerCase() === patientPortalHost;
   const isPatientPortalRoute = isPatientPortalHost || path.startsWith("/patient");
+  const isPatientConfirmationRoute = path === "/patient/confirm";
   const isPatientInstallIntent = isPatientPortalHost && new URLSearchParams(window.location.search).get("install") === "1";
 
   useEffect(() => {
@@ -101,6 +103,10 @@ const AppContent: React.FC = () => {
       document.title = originalTitle;
     };
   }, [isPatientPortalHost]);
+
+  if (isPatientConfirmationRoute) {
+    return <PatientEmailConfirmationPage />;
+  }
 
   if (isPatientPortalHost && path === "/patient-install.html") {
     return <PatientAuthPage installOnly />;

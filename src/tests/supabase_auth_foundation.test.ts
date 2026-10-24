@@ -11,6 +11,7 @@ vi.mock("../lib/supabase", () => {
       signInWithPassword: vi.fn(),
       signUp: vi.fn(),
       resend: vi.fn(),
+      verifyOtp: vi.fn(),
       signOut: vi.fn(),
       getSession: vi.fn(),
       getUser: vi.fn(),
@@ -70,7 +71,7 @@ describe("Lala Dentist Web Admin - Phase 9A Supabase Auth Foundation Tests", () 
           gender: "P",
           address: "Jl. Contoh No. 1"
         },
-        emailRedirectTo: "https://clinic.example/patient/login?type=signup-confirmed"
+        emailRedirectTo: "https://clinic.example/patient/confirm"
       }
     });
   });
@@ -133,9 +134,33 @@ describe("Lala Dentist Web Admin - Phase 9A Supabase Auth Foundation Tests", () 
       type: "signup",
       email: "patient@example.com",
       options: {
-        emailRedirectTo: "https://clinic.example/patient/login?type=signup-confirmed"
+        emailRedirectTo: "https://clinic.example/patient/confirm"
       }
     });
+  });
+
+  it("verifies patient signup only after the confirmation page submits the token hash", async () => {
+    (supabase.auth.verifyOtp as any).mockResolvedValue({
+      data: { user: { id: "patient-auth-id" }, session: { access_token: "token" } },
+      error: null
+    });
+
+    await AuthService.confirmPatientSignup(" signup-token-hash ");
+
+    expect(supabase.auth.verifyOtp).toHaveBeenCalledWith({
+      token_hash: "signup-token-hash",
+      type: "signup"
+    });
+  });
+
+  it("explains when a patient signup confirmation token is expired", async () => {
+    (supabase.auth.verifyOtp as any).mockResolvedValue({
+      data: { user: null, session: null },
+      error: { message: "Token has expired or is invalid" }
+    });
+
+    await expect(AuthService.confirmPatientSignup("expired-token"))
+      .rejects.toThrow("Tautan verifikasi sudah kedaluwarsa atau tidak valid");
   });
 
   // 2. Login success

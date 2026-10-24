@@ -105,3 +105,13 @@ Website publik yang terpisah dari aplikasi staf berada di folder `website/`. Ber
 Pengelolaan hero, promosi, serta artikel tersedia di **Web Admin → Kelola Website** khusus Super Admin. Terapkan migration `20261113000000_public_website_cms.sql` pada project Supabase aplikasi sebelum memakai menu tersebut. Upload gambar CMS memakai bucket publik `clinic-public-media`, yang dibuat oleh migration `20261016000004_create_clinic_public_media_storage.sql`. Pengunjung hanya dapat membaca hero, promosi yang sedang dalam periode tayang, dan artikel yang sudah terbit; draft tetap tersembunyi oleh RLS. Promosi dan artikel mendukung tanggal tayang terjadwal. Jika konten website tidak muncul setelah migration diterapkan, periksa variable Cloudflare dan deployment Pages project website.
 
 Tombol pemasangan di website utama membuka halaman mandiri `/patient-install.html` pada hostname Portal Pasien. Halaman ini memuat manifest sebelum meminta pemasangan; prompt native muncul bila didukung browser. Safari iPhone menampilkan petunjuk **Bagikan → Tambahkan ke Layar Utama**. Setelah prompt diterima, halaman pemasangan tetap terbuka dan menampilkan konfirmasi; login tersedia melalui tautan Login terpisah.
+
+### Konfirmasi email portal pasien
+
+Untuk mencegah pemindai email menghabiskan token konfirmasi saat memeriksa tautan, template **Authentication → Emails → Confirm sign up** harus mengarah langsung ke portal tanpa memakai `{{ .ConfirmationURL }}`. Gunakan tautan:
+
+```html
+<a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&amp;type=signup">Buka halaman konfirmasi email</a>
+```
+
+Pendaftaran dan kirim ulang mengarahkan ke `/patient/confirm`; pasien harus menekan **Konfirmasi email** di halaman tersebut agar token diproses. Atur Supabase Site URL ke `https://pasien.laladentist.id` dan izinkan `https://pasien.laladentist.id/**` di Redirect URLs. Instruksi callback lama `/patient/login?type=signup-confirmed` tidak berlaku untuk alur ini.
