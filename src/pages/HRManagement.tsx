@@ -148,10 +148,14 @@ export const HRManagement: React.FC = () => {
 
   useEffect(() => {
     const tab = getTabFromUrl();
+    if (tab === "schedules" && isSuper) {
+      routerNavigate("/super-admin/schedules");
+      return;
+    }
     if (tab && tab !== activeTab) {
       setActiveTab(tab);
     }
-  }, [currentPath]);
+  }, [currentPath, activeTab, isSuper, routerNavigate]);
 
   const handleTabChange = (tab: HRTab) => {
     setActiveTab(tab);
@@ -1240,18 +1244,20 @@ export const HRManagement: React.FC = () => {
           Master SDM & Staff ({staff.length})
         </button>
 
-        <button
-          onClick={() => handleTabChange("schedules")}
-          className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
-            activeTab === "schedules"
-              ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
-              : "border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300"
-          }`}
-          id="tab-schedules-button"
-        >
-          <CalendarRange className="w-4 h-4" />
-          Jadwal Dokter ({doctorSchedules.length})
-        </button>
+        {!isSuper && (
+          <button
+            onClick={() => handleTabChange("schedules")}
+            className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === "schedules"
+                ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
+                : "border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300"
+            }`}
+            id="tab-schedules-button"
+          >
+            <CalendarRange className="w-4 h-4" />
+            Jadwal Dokter ({doctorSchedules.length})
+          </button>
+        )}
 
         <button
           onClick={() => handleTabChange("shifts")}
@@ -1331,7 +1337,9 @@ export const HRManagement: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => handleTabChange("schedules")}
+              onClick={() => isSuper
+                ? routerNavigate("/super-admin/schedules")
+                : handleTabChange("schedules")}
               className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all shrink-0 cursor-pointer"
             >
               <CalendarRange className="w-4 h-4" />
