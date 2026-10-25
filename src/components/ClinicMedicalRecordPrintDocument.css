@@ -150,10 +150,13 @@
   }
 
   .clinic-print-visit-table {
-    width: 100%;
+    box-sizing: border-box;
+    width: calc(100% - 0.5mm);
     height: 158mm;
     table-layout: fixed;
     border-collapse: collapse;
+    border: 0.25mm solid #222;
+    border-right-width: 0.35mm;
     font-size: 8pt;
   }
 
@@ -164,6 +167,10 @@
     text-align: center;
     vertical-align: top;
     overflow-wrap: anywhere;
+  }
+
+  .clinic-print-visit-table tr > :last-child {
+    border-right: 0.35mm solid #222;
   }
 
   .clinic-print-visit-table th {
@@ -291,19 +298,40 @@
     align-items: center;
   }
 
+  .clinic-print-tooth-midline {
+    display: flex;
+    width: 3mm;
+    height: 9mm;
+    align-items: center;
+    justify-content: center;
+    font-size: 6pt;
+    line-height: 1;
+  }
+
+  .clinic-print-midline-arrows {
+    height: 4mm;
+    color: #222;
+  }
+
+  .clinic-print-midline-arrows svg {
+    width: 2.5mm;
+    height: 4mm;
+    fill: currentColor;
+  }
+
   .clinic-print-permanent {
-    gap: 0.8mm;
+    gap: 0;
   }
 
   .clinic-print-primary {
-    gap: 1.3mm;
+    gap: 0;
   }
 
   .clinic-print-tooth {
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 9.2mm;
+    width: 9mm;
     font-size: 7pt;
   }
 
@@ -312,18 +340,13 @@
   }
 
   .clinic-print-primary .clinic-print-tooth {
-    width: 11mm;
+    width: 9mm;
   }
 
   .clinic-print-tooth svg {
-    width: 8.3mm;
-    height: 8.3mm;
-    margin-top: 0.7mm;
-  }
-
-  .clinic-print-primary .clinic-print-tooth svg {
-    width: 9.5mm;
-    height: 9.5mm;
+    width: 9mm;
+    height: 9mm;
+    margin-top: 0;
   }
 
   .clinic-print-lower-tooth-notes {

@@ -6,12 +6,17 @@ import {
   OdontogramSurface,
   OdontogramTooth
 } from "../types/domain";
+import {
+  ANTERIOR_TOOTH_DIVIDER_PATH,
+  getOdontogramSurfaceShapes,
+  usesAnteriorOdontogramPattern
+} from "./odontogramToothShapes";
 
 const TOOTH_ROWS = [
-  { label: "Rahang atas permanen", teeth: [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28] },
-  { label: "Rahang atas sulung", teeth: [55, 54, 53, 52, 51, 61, 62, 63, 64, 65] },
-  { label: "Rahang bawah sulung", teeth: [85, 84, 83, 82, 81, 71, 72, 73, 74, 75] },
-  { label: "Rahang bawah permanen", teeth: [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38] }
+  { label: "Rahang atas permanen", numberPosition: "top", midline: "down", teeth: [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28] },
+  { label: "Rahang atas sulung", numberPosition: "top", midline: null, teeth: [55, 54, 53, 52, 51, 61, 62, 63, 64, 65] },
+  { label: "Rahang bawah sulung", numberPosition: "top", midline: null, teeth: [85, 84, 83, 82, 81, 71, 72, 73, 74, 75] },
+  { label: "Rahang bawah permanen", numberPosition: "bottom", midline: "up", teeth: [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38] }
 ];
 export const ODONTOGRAM_TOOTH_NUMBERS = TOOTH_ROWS.flatMap((row) => row.teeth);
 
@@ -32,14 +37,6 @@ const SURFACES: Array<{ value: OdontogramSurface | "ALL"; label: string }> = [
   { value: "B", label: "Bukal / labial" },
   { value: "L", label: "Lingual / palatal" }
 ];
-
-const SURFACE_SHAPES: Record<OdontogramSurface, string> = {
-  B: "2,2 38,2 30,12 10,12",
-  D: "38,2 38,38 28,30 28,10",
-  L: "2,38 38,38 30,28 10,28",
-  M: "2,2 12,10 12,30 2,38",
-  O: "12,12 28,12 28,28 12,28"
-};
 
 const CONDITION_LABEL: Record<OdontogramCondition, string> = {
   caries: "Karies",
@@ -62,40 +59,53 @@ interface OdontogramProps {
 }
 
 function ToothDiagram({
+  toothNumber,
   tooth,
   selectedCondition,
   selectedSurface,
   selected
 }: {
+  toothNumber: number;
   tooth?: OdontogramTooth;
   selectedCondition: OdontogramCondition;
   selectedSurface: OdontogramSurface | "ALL";
   selected: boolean;
 }) {
+  const surfaceShapes = getOdontogramSurfaceShapes(toothNumber);
+  const anteriorPattern = usesAnteriorOdontogramPattern(toothNumber);
+
   return (
-    <svg viewBox="0 0 40 40" className="h-8 w-8" aria-hidden="true">
+    <svg viewBox="0 0 40 40" className="h-9 w-9" aria-hidden="true">
+      {(Object.keys(surfaceShapes) as OdontogramSurface[]).map((surface) => {
+          const condition = tooth?.condition || tooth?.surfaces?.[surface];
+          const activeSelection =
+            !tooth && (selectedSurface === "ALL" || selectedSurface === surface);
+          return (
+            <polygon
+              key={surface}
+              points={surfaceShapes[surface]}
+              fill={condition ? CONDITION_COLOR[condition] : activeSelection ? CONDITION_COLOR[selectedCondition] : "white"}
+              fillOpacity={condition ? 0.82 : activeSelection ? 0.08 : 1}
+              stroke={anteriorPattern ? "none" : "#64748b"}
+              strokeWidth="0.9"
+            />
+          );
+        })}
+      {anteriorPattern && (
+        <path
+          d={ANTERIOR_TOOTH_DIVIDER_PATH}
+          fill="none"
+          stroke="#64748b"
+          strokeWidth="0.9"
+          pointerEvents="none"
+        />
+      )}
       <path
-        d="M8 3 Q20 -1 32 3 Q39 8 36 20 Q34 32 27 37 Q20 41 13 37 Q6 32 4 20 Q1 8 8 3Z"
-        fill={tooth?.condition ? CONDITION_COLOR[tooth.condition] : "white"}
-        fillOpacity={tooth?.condition ? 0.28 : 1}
+        d="M0 0 H40 V40 H0 Z"
+        fill="none"
         stroke={selected ? "#0f766e" : "#64748b"}
         strokeWidth={selected ? 2 : 1.25}
       />
-      {(Object.keys(SURFACE_SHAPES) as OdontogramSurface[]).map((surface) => {
-        const condition = tooth?.condition || tooth?.surfaces?.[surface];
-        const activeSelection =
-          !tooth && (selectedSurface === "ALL" || selectedSurface === surface);
-        return (
-          <polygon
-            key={surface}
-            points={SURFACE_SHAPES[surface]}
-            fill={condition ? CONDITION_COLOR[condition] : activeSelection ? CONDITION_COLOR[selectedCondition] : "white"}
-            fillOpacity={condition ? 0.82 : activeSelection ? 0.08 : 1}
-            stroke={selected ? "#0f766e" : "#94a3b8"}
-            strokeWidth="0.8"
-          />
-        );
-      })}
       {tooth?.condition === "missing" && (
         <path d="M10 10 L30 30 M30 10 L10 30" stroke={CONDITION_COLOR.missing} strokeWidth="3" />
       )}
@@ -192,37 +202,60 @@ export const Odontogram: React.FC<OdontogramProps> = ({ value, history = [], dis
       </div>
 
       <div className="space-y-2 overflow-x-auto rounded-lg bg-slate-50 p-3">
-        {TOOTH_ROWS.map((row) => (
-          <div key={row.label}>
-            <p className="mb-1 text-center text-[9px] font-semibold uppercase tracking-wide text-slate-400">{row.label}</p>
-            <div className="flex min-w-max justify-center gap-0.5">
-              {row.teeth.map((toothNumber) => {
-                const tooth = odontogram.teeth[String(toothNumber)];
-                const isSelected = selectedTooth === toothNumber;
-                return (
-                  <button
-                    key={toothNumber}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => markTooth(toothNumber)}
-                    aria-label={`Tandai gigi ${toothNumber} sebagai ${CONDITION_LABEL[condition]}`}
-                    aria-pressed={isSelected}
-                    className={`flex w-9 flex-col items-center rounded-md p-0.5 transition-colors ${
-                      isSelected ? "bg-teal-100" : "hover:bg-white"
-                    } disabled:cursor-not-allowed`}
-                  >
-                    <ToothDiagram
-                      tooth={tooth}
-                      selectedCondition={condition}
-                      selectedSurface={surface}
-                      selected={isSelected}
-                    />
-                    <span className="text-[9px] font-semibold text-slate-600">{toothNumber}</span>
-                  </button>
-                );
-              })}
+        {TOOTH_ROWS.map((row, rowIndex) => (
+          <React.Fragment key={row.label}>
+            {rowIndex === 2 && (
+              <div className="flex h-5 items-center justify-center" aria-hidden="true">
+                <svg viewBox="0 0 12 20" className="h-5 w-3 text-slate-700" fill="currentColor">
+                  <path d="M6 0 2.5 5h2.25v3h2.5V5H9.5L6 0Zm0 20 3.5-5H7.25v-3h-2.5v3H2.5L6 20Z" />
+                </svg>
+              </div>
+            )}
+            <div>
+              <p className="mb-1 text-center text-[9px] font-semibold uppercase tracking-wide text-slate-400">{row.label}</p>
+              <div className="flex min-w-max justify-center gap-0">
+                {row.teeth.map((toothNumber, toothIndex) => {
+                  const tooth = odontogram.teeth[String(toothNumber)];
+                  const isSelected = selectedTooth === toothNumber;
+                  return (
+                    <React.Fragment key={toothNumber}>
+                      {toothIndex === 8 && row.midline && (
+                        <span className={`flex w-3 self-stretch items-center text-[10px] font-bold leading-none text-slate-800 ${
+                          row.midline === "down" ? "items-start pt-3" : "items-end pb-2"
+                        }`} aria-hidden="true">
+                          {row.midline === "down" ? "▼" : "▲"}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => markTooth(toothNumber)}
+                        aria-label={`Tandai gigi ${toothNumber} sebagai ${CONDITION_LABEL[condition]}`}
+                        aria-pressed={isSelected}
+                        className={`flex w-9 flex-col items-center px-0 transition-colors ${
+                          isSelected ? "bg-teal-100" : "hover:bg-white"
+                        } disabled:cursor-not-allowed`}
+                      >
+                        {row.numberPosition === "top" && (
+                          <span className="text-[9px] font-semibold text-slate-600">{toothNumber}</span>
+                        )}
+                        <ToothDiagram
+                          toothNumber={toothNumber}
+                          tooth={tooth}
+                          selectedCondition={condition}
+                          selectedSurface={surface}
+                          selected={isSelected}
+                        />
+                        {row.numberPosition === "bottom" && (
+                          <span className="text-[9px] font-semibold text-slate-600">{toothNumber}</span>
+                        )}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          </React.Fragment>
         ))}
       </div>
 

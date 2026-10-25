@@ -14,6 +14,13 @@ import {
   VisitStatus
 } from "../types/domain";
 import { ODONTOGRAM_TOOTH_NUMBERS } from "../components/Odontogram";
+import {
+  ANTERIOR_TOOTH_DIVIDER_PATH,
+  getOdontogramSurfaceShapes,
+  getOdontogramToothType,
+  usesAnteriorOdontogramPattern,
+  usesTriangularOdontogramPattern
+} from "../components/odontogramToothShapes";
 import { normalizeIcd10WhoCode, parseIcd9CmProcedureCodes } from "../utils/clinicalCodeUtils";
 
 describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
@@ -169,6 +176,38 @@ describe("Phase 9G.1: Clinical Medical Record Core Tests", () => {
     expect(ODONTOGRAM_TOOTH_NUMBERS).toContain(48);
     expect(ODONTOGRAM_TOOTH_NUMBERS).toContain(51);
     expect(ODONTOGRAM_TOOTH_NUMBERS).toContain(85);
+  });
+
+  it("uses distinct tooth shapes for different tooth types in the clinic form", () => {
+    expect(getOdontogramToothType(63)).toBe("canine");
+    expect(getOdontogramToothType(64)).toBe("molar");
+    expect(usesTriangularOdontogramPattern(63)).toBe(true);
+    expect(usesTriangularOdontogramPattern(64)).toBe(false);
+    expect(getOdontogramToothType(14)).toBe("premolar");
+    expect(getOdontogramToothType(11)).toBe("incisor");
+    expect(getOdontogramToothType(16)).toBe("molar");
+  });
+
+  it("draws surface shapes with proportions matching the odontogram chart", () => {
+    expect(getOdontogramSurfaceShapes(18).O).toBe("10,10 30,10 30,30 10,30");
+    expect(getOdontogramSurfaceShapes(18).B).toBe("0,0 40,0 30,10 10,10");
+    expect(getOdontogramSurfaceShapes(43).O).toBe("10,19 30,19 30,21 10,21");
+    expect(getOdontogramSurfaceShapes(43).B).toBe("0,0 40,0 30,20 10,20");
+    expect(ANTERIOR_TOOTH_DIVIDER_PATH).toBe("M0 0 L10 20 L0 40 M40 0 L30 20 L40 40 M10 20 H30");
+  });
+
+  it("uses the matching anterior tooth pattern for the requested permanent and primary teeth", () => {
+    const anteriorTeeth = [
+      51, 52, 53, 61, 62, 63,
+      82, 81, 71, 72, 73,
+      41, 42, 43, 31, 32, 33
+    ];
+
+    for (const toothNumber of anteriorTeeth) {
+      expect(usesTriangularOdontogramPattern(toothNumber), `tooth ${toothNumber}`).toBe(true);
+      expect(usesAnteriorOdontogramPattern(toothNumber), `tooth ${toothNumber}`).toBe(true);
+      expect(getOdontogramSurfaceShapes(toothNumber).O).toBe(getOdontogramSurfaceShapes(51).O);
+    }
   });
 
   it("normalizes manually entered clinical codes and rejects malformed formats", () => {

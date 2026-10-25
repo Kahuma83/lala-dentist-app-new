@@ -12,6 +12,11 @@ import {
 } from "../types/domain";
 import "./ClinicMedicalRecordPrintDocument.css";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
+import {
+  ANTERIOR_TOOTH_DIVIDER_PATH,
+  getOdontogramSurfaceShapes,
+  usesAnteriorOdontogramPattern
+} from "./odontogramToothShapes";
 
 const PERMANENT_UPPER = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28];
 const PRIMARY_UPPER = [55, 54, 53, 52, 51, 61, 62, 63, 64, 65];
@@ -36,13 +41,6 @@ const LOWER_TOOTH_NOTES = [
   ["43 (83)", "(73) 33"],
   ["42 (82)", "(72) 32"],
   ["41 (81)", "(71) 31"]
-];
-const PRINT_SURFACE_SHAPES: Array<{ surface: OdontogramSurface; points: string }> = [
-  { surface: "B", points: "2,2 38,2 30,12 10,12" },
-  { surface: "D", points: "38,2 38,38 28,30 28,10" },
-  { surface: "L", points: "2,38 38,38 30,28 10,28" },
-  { surface: "M", points: "2,2 12,10 12,30 2,38" },
-  { surface: "O", points: "12,12 28,12 28,28 12,28" }
 ];
 const PRINT_CONDITION_COLORS: Record<OdontogramCondition, string> = {
   caries: "#ef4444",
@@ -153,29 +151,49 @@ function ToothMark({
   tooth?: OdontogramTooth;
   labelPosition?: "top" | "bottom";
 }) {
+  const surfaceShapes = getOdontogramSurfaceShapes(number);
+  const anteriorPattern = usesAnteriorOdontogramPattern(number);
+
   return (
     <div className={`clinic-print-tooth${labelPosition === "bottom" ? " clinic-print-tooth-label-bottom" : ""}`}>
       <span className="clinic-print-tooth-number">{number}</span>
       <svg viewBox="0 0 40 40" aria-hidden="true">
-        {PRINT_SURFACE_SHAPES.map(({ surface, points }) => {
-          const condition = tooth?.condition || tooth?.surfaces?.[surface];
-          return (
-            <polygon
-              key={surface}
-              points={points}
-              fill={condition ? PRINT_CONDITION_COLORS[condition] : "white"}
-              fillOpacity={condition ? 0.75 : 1}
-              stroke="#222"
-              strokeWidth="1"
-            />
-          );
-        })}
-        <path d="M2 2 H38 V38 H2 Z" fill="none" stroke="#222" strokeWidth="1.5" />
+          {(Object.keys(surfaceShapes) as OdontogramSurface[]).map((surface) => {
+            const condition = tooth?.condition || tooth?.surfaces?.[surface];
+            return (
+              <polygon
+                key={surface}
+                points={surfaceShapes[surface]}
+                fill={condition ? PRINT_CONDITION_COLORS[condition] : "white"}
+                fillOpacity={condition ? 0.75 : 1}
+                stroke={anteriorPattern ? "none" : "#222"}
+                strokeWidth="1"
+              />
+            );
+          })}
+        {anteriorPattern && (
+          <path
+            d={ANTERIOR_TOOTH_DIVIDER_PATH}
+            fill="none"
+            stroke="#222"
+            strokeWidth="1"
+            pointerEvents="none"
+          />
+        )}
+        <path d="M0 0 H40 V40 H0 Z" fill="none" stroke="#222" strokeWidth="1.5" />
         {tooth?.condition === "missing" && (
           <path d="M8 8 L32 32 M32 8 L8 32" stroke="#222" strokeWidth="2" />
         )}
       </svg>
     </div>
+  );
+}
+
+function ToothMidlineMark({ direction }: { direction: "up" | "down" }) {
+  return (
+    <span className="clinic-print-tooth-midline" aria-hidden="true">
+      {direction === "down" ? "▼" : "▲"}
+    </span>
   );
 }
 
@@ -207,7 +225,7 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
           <img
             className="clinic-print-logo"
             src={branch?.logoUrl || "/logo-lala.svg"}
-            alt={branch?.clinicName || "Lala Dentist"}
+            alt="Lala Dentist"
             onError={(event) => {
               const image = event.currentTarget;
               if (image.getAttribute("src") !== "/logo-lala.svg") {
@@ -216,9 +234,9 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
             }}
           />
           <div className="clinic-print-brand">
-            <h1>{branch?.clinicName || "Praktek Dokter Gigi Bersama"}<br /><strong>{branch?.branchName || branch?.name || "LALA DENTIST"}</strong></h1>
+            <h1>Praktek Dokter Gigi Bersama<br /><strong>LALA DENTIST</strong></h1>
             <p>{branch?.address || "Alamat cabang belum diatur"}</p>
-            <p>Telp: {branch?.phone || "-"}{branch?.whatsapp ? ` · WA: ${branch.whatsapp}` : ""}</p>
+            <p>Telp: {branch?.phone || "-"}</p>
           </div>
           <div className="clinic-print-doctors">
             {branchDoctors.map((branchDoctor) => (
@@ -316,16 +334,31 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
 
         <div className="clinic-print-tooth-chart">
           <div className="clinic-print-tooth-row clinic-print-permanent">
-            {PERMANENT_UPPER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} />)}
+            {PERMANENT_UPPER.map((number, index) => (
+              <React.Fragment key={number}>
+                {index === 8 && <ToothMidlineMark direction="down" />}
+                <ToothMark number={number} tooth={odontogramTeeth[String(number)]} />
+              </React.Fragment>
+            ))}
           </div>
           <div className="clinic-print-tooth-row clinic-print-primary">
             {PRIMARY_UPPER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} />)}
+          </div>
+          <div className="clinic-print-tooth-row clinic-print-midline-arrows" aria-hidden="true">
+            <svg viewBox="0 0 12 20">
+              <path d="M6 0 2.5 5h2.25v3h2.5V5H9.5L6 0Zm0 20 3.5-5H7.25v-3h-2.5v3H2.5L6 20Z" />
+            </svg>
           </div>
           <div className="clinic-print-tooth-row clinic-print-primary">
             {PRIMARY_LOWER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} labelPosition="bottom" />)}
           </div>
           <div className="clinic-print-tooth-row clinic-print-permanent">
-            {PERMANENT_LOWER.map((number) => <ToothMark key={number} number={number} tooth={odontogramTeeth[String(number)]} labelPosition="bottom" />)}
+            {PERMANENT_LOWER.map((number, index) => (
+              <React.Fragment key={number}>
+                {index === 8 && <ToothMidlineMark direction="up" />}
+                <ToothMark number={number} tooth={odontogramTeeth[String(number)]} labelPosition="bottom" />
+              </React.Fragment>
+            ))}
           </div>
         </div>
 
