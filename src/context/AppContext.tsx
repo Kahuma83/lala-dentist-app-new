@@ -960,7 +960,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } else if (authStatus === "unauthenticated" || authStatus === "error") {
       setLoading(false);
     }
-  }, [authStatus, currentUser?.id, currentUser?.role, currentUser?.assignedBranchId, selectedBranchId]);
+  }, [authStatus, currentUser?.id, currentUser?.role, currentUser?.assignedBranchId]);
 
   const refreshDataRef = useRef(refreshData);
   refreshDataRef.current = refreshData;
