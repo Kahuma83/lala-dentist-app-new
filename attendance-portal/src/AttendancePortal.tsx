@@ -10,6 +10,7 @@ import {
   Clock3,
   Download,
   Home,
+  HandCoins,
   KeyRound,
   LogOut,
   MapPin,
@@ -72,7 +73,7 @@ type StaffContext = {
   staffId: string;
   userAccountId: string;
 };
-type PortalTab = "home" | "attendance" | "schedule" | "absence" | "overtime" | "payroll" | "chat" | "profile";
+type PortalTab = "home" | "attendance" | "schedule" | "absence" | "overtime" | "medical-services" | "payroll" | "chat" | "profile";
 type AbsenceRequestType = "SICK" | "LEAVE" | "PERMISSION";
 type PortalAbsenceRequest = {
   id: string;
@@ -128,6 +129,19 @@ type PortalPayrollItem = {
   amount: number;
   type: string;
 };
+type PortalMedicalService = {
+  sourceId: string;
+  serviceName: string;
+  branchName: string;
+  accruedAt: string;
+  amount: number;
+};
+type PortalMedicalServicePage = {
+  totalAmount: number;
+  actionCount: number;
+  rows: PortalMedicalService[];
+  hasMore: boolean;
+};
 type InstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
@@ -152,6 +166,7 @@ const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
   { id: "schedule", label: "Jadwal Saya", icon: CalendarDays },
   { id: "absence", label: "Cuti & Izin", icon: CalendarDays },
   { id: "overtime", label: "Lembur Saya", icon: Timer },
+  { id: "medical-services", label: "Jasa Medis", icon: HandCoins },
   { id: "payroll", label: "Gaji Saya", icon: WalletCards },
   { id: "chat", label: "Chat Grup", icon: MessagesSquare }
 ];
@@ -208,6 +223,58 @@ function formatRupiah(value: number): string {
 
 function friendlyError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseMedicalServicePage(value: unknown): PortalMedicalServicePage {
+  if (!isRecord(value) || !Array.isArray(value.rows) ||
+    typeof value.totalAmount !== "number" || !Number.isFinite(value.totalAmount) ||
+    typeof value.actionCount !== "number" || !Number.isInteger(value.actionCount) ||
+    typeof value.hasMore !== "boolean") {
+    throw new Error("Respons data jasa medis tidak valid.");
+  }
+
+  const rows = value.rows.map((row): PortalMedicalService => {
+    if (!isRecord(row) ||
+      typeof row.sourceId !== "string" ||
+      typeof row.serviceName !== "string" ||
+      typeof row.branchName !== "string" ||
+      typeof row.accruedAt !== "string" ||
+      Number.isNaN(Date.parse(row.accruedAt)) ||
+      typeof row.amount !== "number" ||
+      !Number.isFinite(row.amount)) {
+      throw new Error("Rincian tindakan jasa medis tidak valid.");
+    }
+    return {
+      sourceId: row.sourceId,
+      serviceName: row.serviceName,
+      branchName: row.branchName,
+      accruedAt: row.accruedAt,
+      amount: row.amount
+    };
+  });
+
+  return {
+    totalAmount: value.totalAmount,
+    actionCount: value.actionCount,
+    rows,
+    hasMore: value.hasMore
+  };
+}
+
+function getMedicalServiceDateRange(month: string): { startDate: string; endDate: string } {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) {
+    throw new Error("Bulan jasa medis tidak valid.");
+  }
+  const endDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return {
+    startDate: `${month}-01`,
+    endDate: `${month}-${String(endDay).padStart(2, "0")}`
+  };
 }
 
 async function compressPhoto(file: File): Promise<Blob> {
@@ -295,6 +362,11 @@ export function AttendancePortal() {
     reason: ""
   });
   const [overtimeRows, setOvertimeRows] = useState<PortalOvertime[]>([]);
+  const [medicalServiceMonth, setMedicalServiceMonth] = useState(() => todayWib().slice(0, 7));
+  const [medicalServiceRows, setMedicalServiceRows] = useState<PortalMedicalService[]>([]);
+  const [medicalServiceTotalAmount, setMedicalServiceTotalAmount] = useState(0);
+  const [medicalServiceActionCount, setMedicalServiceActionCount] = useState(0);
+  const [medicalServiceHasMore, setMedicalServiceHasMore] = useState(false);
   const [payrollRows, setPayrollRows] = useState<PortalPayroll[]>([]);
   const [payrollItems, setPayrollItems] = useState<PortalPayrollItem[]>([]);
   const [username, setUsername] = useState("");
@@ -548,6 +620,10 @@ export function AttendancePortal() {
         setAbsenceRows([]);
         setReplacementRows([]);
         setOvertimeRows([]);
+        setMedicalServiceRows([]);
+        setMedicalServiceTotalAmount(0);
+        setMedicalServiceActionCount(0);
+        setMedicalServiceHasMore(false);
         setPayrollRows([]);
         setPayrollItems([]);
         setProfilePhotoUrl(null);
@@ -675,6 +751,10 @@ export function AttendancePortal() {
       setActiveTab("home");
       setScheduleRows([]);
       setOvertimeRows([]);
+      setMedicalServiceRows([]);
+      setMedicalServiceTotalAmount(0);
+      setMedicalServiceActionCount(0);
+      setMedicalServiceHasMore(false);
       setPayrollRows([]);
       setPayrollItems([]);
       setProfilePhotoUrl(null);
@@ -744,7 +824,14 @@ export function AttendancePortal() {
     }
   };
 
-  const handleTabChange = async (tab: PortalTab, requestedWeekStart = scheduleWeekStart) => {
+  const handleTabChange = async (
+    tab: PortalTab,
+    requestedWeekStart = scheduleWeekStart,
+    requestedMedicalServiceMonth = medicalServiceMonth
+  ) => {
+    if ((tab === "overtime" && staffContext?.role === "DOCTOR") ||
+      (tab === "medical-services" && staffContext?.role !== "DOCTOR")) return;
+
     setActiveTab(tab);
     setPanelError(null);
     if (tab === "home" || tab === "attendance" || tab === "chat" || tab === "profile") return;
@@ -863,6 +950,21 @@ export function AttendancePortal() {
         setScheduleRows(nextSchedules
           .map((row) => ({ ...row, branchName: branchNames.get(row.branchId) || "Cabang" }))
           .sort((left, right) => left.date.localeCompare(right.date) || left.startTime.localeCompare(right.startTime)));
+      } else if (tab === "medical-services") {
+        const { startDate, endDate } = getMedicalServiceDateRange(requestedMedicalServiceMonth);
+        const { data, error } = await supabase.rpc("get_own_doctor_medical_services", {
+          p_start_date: startDate,
+          p_end_date: endDate,
+          p_before_accrued_at: null,
+          p_before_source_id: null,
+          p_limit: 30
+        });
+        if (error) throw new Error(`Gagal memuat jasa medis: ${error.message}`);
+        const page = parseMedicalServicePage(data);
+        setMedicalServiceRows(page.rows);
+        setMedicalServiceTotalAmount(page.totalAmount);
+        setMedicalServiceActionCount(page.actionCount);
+        setMedicalServiceHasMore(page.hasMore);
       } else if (tab === "overtime") {
         const { data, error } = await supabase
           .from("overtime_records")
@@ -922,6 +1024,35 @@ export function AttendancePortal() {
       }
     } catch (loadError: unknown) {
       setPanelError(friendlyError(loadError, "Gagal memuat data portal pegawai."));
+    } finally {
+      setIsPanelLoading(false);
+    }
+  };
+
+  const loadMoreMedicalServices = async () => {
+    if (staffContext?.role !== "DOCTOR" || !medicalServiceHasMore || isPanelLoading) return;
+    const cursor = medicalServiceRows[medicalServiceRows.length - 1];
+    if (!cursor) return;
+
+    setPanelError(null);
+    setIsPanelLoading(true);
+    try {
+      const { startDate, endDate } = getMedicalServiceDateRange(medicalServiceMonth);
+      const { data, error } = await supabase.rpc("get_own_doctor_medical_services", {
+        p_start_date: startDate,
+        p_end_date: endDate,
+        p_before_accrued_at: cursor.accruedAt,
+        p_before_source_id: cursor.sourceId,
+        p_limit: 30
+      });
+      if (error) throw new Error(`Gagal memuat tindakan jasa medis berikutnya: ${error.message}`);
+      const page = parseMedicalServicePage(data);
+      setMedicalServiceRows((current) => [...current, ...page.rows]);
+      setMedicalServiceTotalAmount(page.totalAmount);
+      setMedicalServiceActionCount(page.actionCount);
+      setMedicalServiceHasMore(page.hasMore);
+    } catch (loadError: unknown) {
+      setPanelError(friendlyError(loadError, "Gagal memuat tindakan jasa medis berikutnya."));
     } finally {
       setIsPanelLoading(false);
     }
@@ -1318,7 +1449,11 @@ export function AttendancePortal() {
       )}
       {!(activeTab === "chat" && staffContext.role === "DOCTOR") && <nav className="portal-nav" aria-label="Menu portal pegawai">
         {portalTabs
-          .filter(({ id }) => id !== "chat" || staffContext.role === "DOCTOR")
+          .filter(({ id }) =>
+            (id !== "chat" || staffContext.role === "DOCTOR") &&
+            (id !== "overtime" || staffContext.role !== "DOCTOR") &&
+            (id !== "medical-services" || staffContext.role === "DOCTOR")
+          )
           .map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -1361,6 +1496,7 @@ export function AttendancePortal() {
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("attendance")}><BadgeCheck /><span><strong>Absensi Saya</strong><small>Absen masuk, pulang, dan lihat riwayat</small></span></button>
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("schedule")}><CalendarDays /><span><strong>Jadwal Saya</strong><small>Lihat jadwal praktik atau shift</small></span></button>
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("absence")}><CalendarDays /><span><strong>Cuti & Izin</strong><small>Ajukan sakit, cuti, atau izin</small></span></button>
+            {staffContext.role === "DOCTOR" && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("medical-services")}><HandCoins /><span><strong>Jasa Medis</strong><small>Pantau pembagian jasa tindakan</small></span></button>}
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("payroll")}><WalletCards /><span><strong>Gaji Saya</strong><small>Lihat slip yang sudah disetujui</small></span></button>
           </div>
           <p className="portal-footnote">Menu pegawai menampilkan data dari sistem klinik dan hanya untuk akun Anda.</p>
@@ -1554,6 +1690,74 @@ export function AttendancePortal() {
                 })}
               </div>
             </>
+          )}
+        </section>
+      )}
+
+      {activeTab === "medical-services" && staffContext.role === "DOCTOR" && (
+        <section className="portal-panel">
+          <div className="medical-services-heading">
+            <div><p className="eyebrow">PENGHASILAN TINDAKAN</p><h2>Jasa Medis Saya</h2></div>
+            <label className="medical-service-month">
+              Bulan
+              <input
+                aria-label="Pilih bulan jasa medis"
+                type="month"
+                value={medicalServiceMonth}
+                onChange={(event) => {
+                  const nextMonth = event.target.value;
+                  if (nextMonth) {
+                    setMedicalServiceMonth(nextMonth);
+                    setMedicalServiceRows([]);
+                    setMedicalServiceTotalAmount(0);
+                    setMedicalServiceActionCount(0);
+                    setMedicalServiceHasMore(false);
+                    void handleTabChange("medical-services", scheduleWeekStart, nextMonth);
+                  }
+                }}
+                disabled={isPanelLoading}
+              />
+            </label>
+          </div>
+          <div className="summary-grid medical-service-summary">
+            <div className="summary-card"><span>Total jasa medis tercatat</span><strong>{formatRupiah(medicalServiceTotalAmount)}</strong></div>
+            <div className="summary-card"><span>Tindakan dengan pembagian jasa</span><strong>{medicalServiceActionCount.toLocaleString("id-ID")}</strong></div>
+          </div>
+          <p className="medical-service-note">Ringkasan lintas cabang berdasarkan pembagian tindakan yang tercatat. Pembayaran yang sudah disetujui dapat dilihat pada menu Gaji Saya.</p>
+          {isPanelLoading && medicalServiceRows.length === 0
+            ? <p className="empty-state"><RefreshCw className="spin" /> Memuat jasa medis...</p>
+            : panelError
+            ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div>
+            : medicalServiceRows.length === 0
+            ? <p className="empty-state">Belum ada jasa medis yang tercatat pada bulan ini.</p>
+            : (
+              <div className="portal-list">
+                {medicalServiceRows.map((row) => (
+                  <article className="portal-list-row" key={row.sourceId}>
+                    <div>
+                      <strong>{row.serviceName}</strong>
+                      <span>{new Intl.DateTimeFormat("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric"
+                      }).format(new Date(row.accruedAt))} · {row.branchName}</span>
+                    </div>
+                    <div className="portal-list-end"><strong className="portal-list-value">{formatRupiah(row.amount)}</strong></div>
+                  </article>
+                ))}
+              </div>
+            )}
+          {medicalServiceHasMore && (
+            <button
+              className="secondary-button medical-services-more"
+              type="button"
+              onClick={() => void loadMoreMedicalServices()}
+              disabled={isPanelLoading}
+            >
+              {isPanelLoading ? <RefreshCw className="spin" /> : <Download />}
+              {isPanelLoading ? "Memuat..." : "Muat tindakan berikutnya"}
+            </button>
           )}
         </section>
       )}

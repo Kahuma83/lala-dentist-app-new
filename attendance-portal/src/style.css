@@ -174,6 +174,12 @@ h2 { margin-bottom: 5px; font-size: 18px; }
 .panel-heading .eyebrow { margin: 0 0 5px; }
 .panel-heading h2 { margin: 0; }
 .panel-heading .muted { margin: 7px 0 0; }
+.medical-services-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.medical-service-month { display: grid; gap: 6px; color: var(--portal-ink); font-size: 11px; font-weight: 700; }
+.medical-service-month input { min-height: 40px; padding: 0 10px; border: 1px solid #c6d4e9; border-radius: 11px; background: #fff; color: var(--portal-ink); font: inherit; }
+.medical-service-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.medical-service-note { margin: 13px 0 0; color: var(--portal-muted); font-size: 11px; line-height: 1.5; }
+.medical-services-more { display: flex; margin: 15px auto 0; }
 .status-badge { display: inline-flex; align-items: center; padding: 6px 9px; border-radius: 999px; background: #e2edff; color: #234f97; font-size: 10px; font-weight: 750; white-space: nowrap; }
 .status-approved, .status-paid { background: #e8f5ee; color: #286641; }
 .status-rejected { background: #fff1ef; color: #9b352f; }
@@ -291,11 +297,14 @@ h2 { margin-bottom: 5px; font-size: 18px; }
   .portal-nav { flex-wrap: wrap; overflow-x: visible; margin-inline: -1px; }
   .portal-nav-item { min-width: 0; flex: 1 1 calc(33.333% - 6px); flex-direction: column; gap: 4px; padding: 7px 5px; font-size: 10px; }
   .portal-panel { padding: 18px; }
+  .medical-services-heading { align-items: flex-start; }
+  .medical-service-month input { max-width: 155px; }
   .absence-request-form { grid-template-columns: 1fr; padding: 13px; }
   .absence-request-reason, .absence-request-form > button { grid-column: auto; }
   .summary-grid { grid-template-columns: 1fr; }
   .quick-links { grid-template-columns: 1fr; }
   .portal-list-row { align-items: flex-start; }
+  .medical-service-summary { grid-template-columns: 1fr; }
   .portal-list-end { align-items: end; }
   .schedule-heading { flex-direction: column; }
   .schedule-date-range { align-self: flex-end; }
@@ -365,7 +374,8 @@ h1,
 .absence-request-form input,
 .absence-request-form select,
 .absence-request-form textarea,
-.password-form input {
+.password-form input,
+.medical-service-month input {
   border-color: #ffffff30;
   background: #0c2344b5;
   color: #f3f7ff;
@@ -374,8 +384,13 @@ h1,
 .login-form label,
 .branch-picker,
 .absence-request-form label,
-.password-form label {
+.password-form label,
+.medical-service-month {
   color: #dce8fa;
+}
+
+.medical-service-month input {
+  color-scheme: dark;
 }
 
 .login-form input::placeholder,
