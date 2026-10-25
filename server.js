@@ -3,8 +3,12 @@ import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import {
   downloadAttachment as downloadDoctorChatAttachment,
+  getUnreadCount as getDoctorChatUnreadCount,
   handleChatError,
   listMessages as listDoctorChatMessages,
+  markDoctorChatRead,
+  removeDoctorChatPushSubscription,
+  saveDoctorChatPushSubscription,
   setPinnedMessage as setDoctorChatPinnedMessage,
   sendMessage as sendDoctorChatMessage,
   updateGroupSubtitle as updateDoctorChatGroupSubtitle
@@ -36,11 +40,17 @@ const handleDoctorChatFunction = (handler) => async (req, res) => {
       else if (value) headers.set(name, value);
     }
 
+    const requestBody = Buffer.isBuffer(req.body)
+      ? req.body
+      : req.body !== undefined ? JSON.stringify(req.body) : undefined;
     const requestOptions = {
       method: req.method,
       headers,
-      ...(req.method !== 'GET' && req.method !== 'HEAD' && Buffer.isBuffer(req.body)
-        ? { body: req.body, duplex: 'half' }
+      ...(req.method !== 'GET' && req.method !== 'HEAD' && requestBody !== undefined
+        ? {
+            body: requestBody,
+            ...(Buffer.isBuffer(requestBody) ? { duplex: 'half' } : {})
+          }
         : {})
     };
     const request = new Request(new URL(req.originalUrl, `http://localhost:${PORT}`), requestOptions);
@@ -58,6 +68,10 @@ const handleDoctorChatFunction = (handler) => async (req, res) => {
 };
 
 app.get('/api/chat/messages', handleDoctorChatFunction(listDoctorChatMessages));
+app.get('/api/chat/unread', handleDoctorChatFunction(getDoctorChatUnreadCount));
+app.post('/api/chat/unread', handleDoctorChatFunction(markDoctorChatRead));
+app.post('/api/chat/notifications', handleDoctorChatFunction(saveDoctorChatPushSubscription));
+app.delete('/api/chat/notifications', handleDoctorChatFunction(removeDoctorChatPushSubscription));
 app.put('/api/chat/group', handleDoctorChatFunction(updateDoctorChatGroupSubtitle));
 app.post(
   '/api/chat/messages',

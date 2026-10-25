@@ -34,6 +34,11 @@ import {
   isWithinAttendanceGeofence
 } from "../../src/utils/attendanceGeofence";
 import { loadOwnStaffProfilePhoto, uploadStaffProfilePhoto } from "../../src/utils/staffProfilePhoto";
+import {
+  getDoctorChatUnreadCount,
+  markDoctorChatRead,
+  subscribeToDoctorChat
+} from "./doctorChatService";
 import { DoctorGroupChat } from "./DoctorGroupChat";
 
 type StaffRole = "BRANCH_ADMIN" | "DOCTOR" | "DOCTOR_ASSISTANT" | "OB";
@@ -272,7 +277,11 @@ export function AttendancePortal() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState("");
   const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
-  const [activeTab, setActiveTab] = useState<PortalTab>("home");
+  const [activeTab, setActiveTab] = useState<PortalTab>(
+    () => new URLSearchParams(window.location.search).get("tab") === "chat" ? "chat" : "home"
+  );
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
+  const [chatUnreadError, setChatUnreadError] = useState<string | null>(null);
   const [isPanelLoading, setIsPanelLoading] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [scheduleRows, setScheduleRows] = useState<PortalSchedule[]>([]);
@@ -1052,6 +1061,62 @@ export function AttendancePortal() {
     }
   };
 
+  useEffect(() => {
+    if (staffContext?.role !== "DOCTOR") {
+      setChatUnreadCount(0);
+      setChatUnreadError(null);
+      return;
+    }
+
+    let active = true;
+    const syncUnread = async () => {
+      try {
+        const result = await getDoctorChatUnreadCount();
+        if (!active) return;
+        setChatUnreadCount(result.hasMore ? 100 : result.unreadCount);
+        setChatUnreadError(null);
+      } catch (unreadError) {
+        if (!active) return;
+        setChatUnreadError(friendlyError(unreadError, "Gagal memuat jumlah pesan chat yang belum dibaca."));
+      }
+    };
+    const markRead = async () => {
+      try {
+        await markDoctorChatRead();
+        if (!active) return;
+        setChatUnreadCount(0);
+        setChatUnreadError(null);
+      } catch (readError) {
+        if (!active) return;
+        setChatUnreadError(friendlyError(readError, "Gagal menandai chat sebagai sudah dibaca."));
+      }
+    };
+    const unsubscribe = subscribeToDoctorChat(
+      () => {
+        if (activeTab === "chat") void markRead();
+        else void syncUnread();
+      },
+      (status) => {
+        if (active && status === "configuration_error") {
+          setChatUnreadError("Koneksi realtime chat belum dikonfigurasi.");
+        }
+      }
+    );
+    if (activeTab === "chat") void markRead();
+    else void syncUnread();
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [activeTab, staffContext?.role]);
+
+  useEffect(() => {
+    if (staffContext && staffContext.role !== "DOCTOR" && activeTab === "chat") {
+      setActiveTab("home");
+    }
+  }, [activeTab, staffContext]);
+
   if (isLoading) {
     return <main className="center-state"><RefreshCw className="spin" /><span>Memeriksa sesi absensi...</span></main>;
   }
@@ -1248,6 +1313,9 @@ export function AttendancePortal() {
         </div>
       )}
 
+      {!(activeTab === "chat" && staffContext.role === "DOCTOR") && chatUnreadError && staffContext.role === "DOCTOR" && (
+        <p className="chat-unread-error" role="alert">{chatUnreadError}</p>
+      )}
       {!(activeTab === "chat" && staffContext.role === "DOCTOR") && <nav className="portal-nav" aria-label="Menu portal pegawai">
         {portalTabs
           .filter(({ id }) => id !== "chat" || staffContext.role === "DOCTOR")
@@ -1257,6 +1325,9 @@ export function AttendancePortal() {
             type="button"
             className={`portal-nav-item${activeTab === id ? " active" : ""}`}
             aria-current={activeTab === id ? "page" : undefined}
+            aria-label={id === "chat" && chatUnreadCount > 0
+              ? `${label}, ${chatUnreadCount > 99 ? "lebih dari 99" : chatUnreadCount} pesan belum dibaca`
+              : undefined}
             aria-disabled={isPanelLoading}
             onClick={() => {
               if (!isPanelLoading) void handleTabChange(id);
@@ -1264,6 +1335,11 @@ export function AttendancePortal() {
           >
             <Icon />
             <span>{label}</span>
+            {id === "chat" && chatUnreadCount > 0 && (
+              <span className="chat-unread-badge" aria-hidden="true">
+                {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
+              </span>
+            )}
           </button>
           ))}
       </nav>}
@@ -1294,7 +1370,12 @@ export function AttendancePortal() {
       {activeTab === "chat" && staffContext.role === "DOCTOR" && (
         <DoctorGroupChat
           currentUserId={staffContext.userAccountId}
-          onBack={() => setActiveTab("home")}
+          onBack={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("tab");
+            window.history.replaceState(null, "", url);
+            setActiveTab("home");
+          }}
         />
       )}
 

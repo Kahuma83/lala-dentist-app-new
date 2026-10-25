@@ -1,3 +1,5 @@
+import webPush from "web-push";
+
 const CHAT_GROUP_SLUG = "all-doctors";
 const CHAT_BUCKET = "doctor-group-chat-files";
 const STAFF_PHOTO_BUCKET = "staff-profile-photos";
@@ -212,6 +214,212 @@ export async function updateGroupSubtitle({ request, env }) {
     throw new ChatApiError("Subjudul grup chat gagal disimpan.", 500);
   }
   return jsonResponse({ subtitle: rows[0].subtitle });
+}
+
+export async function getUnreadCount({ request, env }) {
+  const { config, group, actor } = await authenticateDoctor(request, env);
+  const receiptQuery = new URLSearchParams({
+    select: "last_read_at",
+    group_id: `eq.${group.id}`,
+    clinic_user_id: `eq.${actor.clinicUserId}`,
+    limit: "1"
+  });
+  let receipts = await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/doctor_chat_read_receipts?${receiptQuery}`
+  });
+  if (!Array.isArray(receipts)) {
+    throw new ChatApiError("Data penanda baca chat tidak valid.", 502);
+  }
+
+  if (receipts.length === 0) {
+    const initialReadAt = new Date().toISOString();
+    await supabaseRequest({
+      url: config.chatUrl,
+      apiKey: config.chatSecret,
+      path: `/rest/v1/doctor_chat_read_receipts?${new URLSearchParams({
+        on_conflict: "group_id,clinic_user_id"
+      })}`,
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+      body: {
+        group_id: group.id,
+        clinic_user_id: actor.clinicUserId,
+        last_read_at: initialReadAt
+      }
+    });
+    receipts = [{ last_read_at: initialReadAt }];
+  }
+
+  const unreadQuery = new URLSearchParams({
+    select: "id",
+    group_id: `eq.${group.id}`,
+    sender_clinic_user_id: `neq.${actor.clinicUserId}`,
+    created_at: `gt.${receipts[0].last_read_at}`,
+    order: "created_at.desc,id.desc",
+    limit: "101"
+  });
+  const unreadMessages = await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/group_chat_messages?${unreadQuery}`
+  });
+  if (!Array.isArray(unreadMessages)) {
+    throw new ChatApiError("Data jumlah pesan belum dibaca tidak valid.", 502);
+  }
+  const count = unreadMessages.length;
+  return jsonResponse({ unreadCount: Math.min(count, 100), hasMore: count > 100 });
+}
+
+export async function markDoctorChatRead({ request, env }) {
+  const { config, group, actor } = await authenticateDoctor(request, env);
+  const lastReadAt = new Date().toISOString();
+  await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/doctor_chat_read_receipts?${new URLSearchParams({
+      on_conflict: "group_id,clinic_user_id"
+    })}`,
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: {
+      group_id: group.id,
+      clinic_user_id: actor.clinicUserId,
+      last_read_at: lastReadAt
+    }
+  });
+  return jsonResponse({ lastReadAt });
+}
+
+async function parsePushSubscription(request) {
+  let subscription;
+  try {
+    subscription = await request.json();
+  } catch {
+    throw new ChatApiError("Data notifikasi tidak valid.", 400);
+  }
+
+  const endpoint = subscription?.endpoint;
+  const p256dh = subscription?.keys?.p256dh;
+  const auth = subscription?.keys?.auth;
+  let parsedEndpoint;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    throw new ChatApiError("Alamat notifikasi tidak valid.", 400);
+  }
+  if (
+    typeof endpoint !== "string" ||
+    parsedEndpoint.protocol !== "https:" ||
+    endpoint.length > 2048 ||
+    typeof p256dh !== "string" ||
+    !/^[A-Za-z0-9_-]{40,100}$/.test(p256dh) ||
+    typeof auth !== "string" ||
+    !/^[A-Za-z0-9_-]{16,64}$/.test(auth)
+  ) {
+    throw new ChatApiError("Data notifikasi tidak lengkap atau tidak valid.", 400);
+  }
+  return { endpoint, p256dh, auth };
+}
+
+export async function saveDoctorChatPushSubscription({ request, env }) {
+  const { config, group, actor } = await authenticateDoctor(request, env);
+  if (!env.CHAT_VAPID_PUBLIC_KEY || !env.CHAT_VAPID_PRIVATE_KEY || !env.CHAT_VAPID_SUBJECT) {
+    throw new ChatApiError("Notifikasi push belum dikonfigurasi di server.", 503);
+  }
+  const subscription = await parsePushSubscription(request);
+  await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/doctor_chat_push_subscriptions?${new URLSearchParams({
+      on_conflict: "endpoint"
+    })}`,
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: {
+      group_id: group.id,
+      clinic_user_id: actor.clinicUserId,
+      endpoint: subscription.endpoint,
+      p256dh: subscription.p256dh,
+      auth: subscription.auth
+    }
+  });
+  return jsonResponse({ saved: true });
+}
+
+export async function removeDoctorChatPushSubscription({ request, env }) {
+  const { config, group, actor } = await authenticateDoctor(request, env);
+  const { endpoint } = await parsePushSubscription(request);
+  const query = new URLSearchParams({
+    group_id: `eq.${group.id}`,
+    clinic_user_id: `eq.${actor.clinicUserId}`,
+    endpoint: `eq.${endpoint}`
+  });
+  await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/doctor_chat_push_subscriptions?${query}`,
+    method: "DELETE"
+  });
+  return jsonResponse({ removed: true });
+}
+
+async function notifyDoctorChatSubscribers(config, env, group, sender) {
+  const publicKey = env.CHAT_VAPID_PUBLIC_KEY;
+  const privateKey = env.CHAT_VAPID_PRIVATE_KEY;
+  const subject = env.CHAT_VAPID_SUBJECT;
+  if (!publicKey || !privateKey || !subject) {
+    console.error("[pages-function] Doctor chat push is not configured; set CHAT_VAPID_PUBLIC_KEY, CHAT_VAPID_PRIVATE_KEY, and CHAT_VAPID_SUBJECT.");
+    return;
+  }
+
+  const query = new URLSearchParams({
+    select: "endpoint,p256dh,auth",
+    group_id: `eq.${group.id}`,
+    clinic_user_id: `neq.${sender.clinicUserId}`
+  });
+  const subscriptions = await supabaseRequest({
+    url: config.chatUrl,
+    apiKey: config.chatSecret,
+    path: `/rest/v1/doctor_chat_push_subscriptions?${query}`
+  });
+  if (!Array.isArray(subscriptions) || subscriptions.length === 0) return;
+
+  webPush.setVapidDetails(subject, publicKey, privateKey);
+  const payload = JSON.stringify({
+    title: group.name || "Chat Grup Dokter",
+    body: `${sender.name} mengirim pesan baru.`,
+    url: "/?tab=chat"
+  });
+  await Promise.all(subscriptions.map(async (subscription) => {
+    try {
+      await webPush.sendNotification({
+        endpoint: subscription.endpoint,
+        keys: { p256dh: subscription.p256dh, auth: subscription.auth }
+      }, payload);
+    } catch (error) {
+      const statusCode = Number(error?.statusCode);
+      if (statusCode === 404 || statusCode === 410) {
+        const staleQuery = new URLSearchParams({
+          group_id: `eq.${group.id}`,
+          endpoint: `eq.${subscription.endpoint}`
+        });
+        try {
+          await supabaseRequest({
+            url: config.chatUrl,
+            apiKey: config.chatSecret,
+            path: `/rest/v1/doctor_chat_push_subscriptions?${staleQuery}`,
+            method: "DELETE"
+          });
+        } catch (cleanupError) {
+          console.error("[pages-function] Failed to remove an expired doctor chat push subscription:", cleanupError);
+        }
+        return;
+      }
+      console.error("[pages-function] Failed to send a doctor chat push notification:", error);
+    }
+  }));
 }
 
 async function createStaffPhotoUrls(config, paths) {
@@ -658,6 +866,12 @@ export async function sendMessage(context) {
   if (!row) {
     if (attachment) await cleanupUploadedAttachment(config, attachment.objectPath);
     throw new ChatApiError("Pesan tersimpan tetapi respons server tidak valid.", 502);
+  }
+
+  try {
+    await notifyDoctorChatSubscribers(config, env, group, actor);
+  } catch (error) {
+    console.error("[pages-function] Doctor chat message was saved, but push notification delivery failed:", error);
   }
 
   return jsonResponse({

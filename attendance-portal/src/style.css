@@ -167,6 +167,8 @@ h2 { margin-bottom: 5px; font-size: 18px; }
 .portal-nav-item svg { width: 16px; height: 16px; }
 .portal-nav-item.active { background: #dce9ff; color: #174b9f; }
 .portal-nav-item:disabled { opacity: .55; }
+.chat-unread-badge { min-width: 19px; height: 19px; display: inline-grid; place-items: center; padding: 0 5px; border-radius: 999px; background: #d92745; color: #fff; font-size: 10px; font-weight: 800; line-height: 1; }
+.chat-unread-error { margin: 0 0 8px; color: #a52637; font-size: 11px; text-align: center; }
 .portal-panel { margin-top: 16px; padding: 24px; border: 1px solid #ffffffed; border-radius: 22px; background: #ffffffed; box-shadow: 0 15px 45px #173b7514; backdrop-filter: blur(14px); }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .panel-heading .eyebrow { margin: 0 0 5px; }
@@ -1230,6 +1232,10 @@ h1,
 
 .chat-title-icon svg { width: 19px; height: 19px; }
 .chat-title { min-width: 0; display: grid; gap: 4px; }
+.chat-notification-button { width: 36px; height: 36px; display: grid; flex: 0 0 auto; place-items: center; margin-left: auto; border: 1px solid #ffffff45; border-radius: 11px; background: #ffffff1c; color: #fff; }
+.chat-notification-button:hover:not(:disabled) { background: #ffffff38; }
+.chat-notification-button:disabled { cursor: wait; opacity: .65; }
+.chat-notification-button svg { width: 17px; height: 17px; }
 .chat-title strong { color: #fff; font-size: 13px; }
 .chat-title > span,
 .chat-subtitle-line > span { color: #e1eaff; font-size: 10px; }

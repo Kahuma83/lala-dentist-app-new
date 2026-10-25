@@ -118,6 +118,94 @@ export async function getDoctorChatMessages(
   return { ...result, pinnedMessage: result.pinnedMessage ?? null } as DoctorChatPage;
 }
 
+export async function getDoctorChatUnreadCount(): Promise<{ unreadCount: number; hasMore: boolean }> {
+  const response = await authorizedFetch("/api/chat/unread");
+  const result = await response.json();
+  if (!Number.isInteger(result?.unreadCount) || result.unreadCount < 0 || typeof result.hasMore !== "boolean") {
+    throw new Error("Respons jumlah pesan belum dibaca tidak valid.");
+  }
+  return result;
+}
+
+export async function markDoctorChatRead(): Promise<void> {
+  const response = await authorizedFetch("/api/chat/unread", { method: "POST" });
+  const result = await response.json();
+  if (typeof result?.lastReadAt !== "string" || Number.isNaN(Date.parse(result.lastReadAt))) {
+    throw new Error("Respons penanda chat dibaca tidak valid.");
+  }
+}
+
+async function savePushSubscription(subscription: PushSubscription): Promise<void> {
+  await authorizedFetch("/api/chat/notifications", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(subscription.toJSON())
+  });
+}
+
+export async function getDoctorChatPushSubscription(): Promise<PushSubscription | null> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+  const existingRegistration = await navigator.serviceWorker.getRegistration();
+  if (!existingRegistration) return null;
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (subscription) await savePushSubscription(subscription);
+  return subscription;
+}
+
+function decodeVapidPublicKey(value: string): ArrayBuffer {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64);
+  const buffer = new ArrayBuffer(raw.length);
+  const bytes = new Uint8Array(buffer);
+  for (let index = 0; index < raw.length; index += 1) {
+    bytes[index] = raw.charCodeAt(index);
+  }
+  return buffer;
+}
+
+export async function enableDoctorChatPushNotifications(): Promise<void> {
+  const publicKey = import.meta.env.VITE_CHAT_VAPID_PUBLIC_KEY;
+  if (!publicKey) throw new Error("Kunci publik VAPID belum dikonfigurasi untuk Portal Pegawai.");
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    throw new Error("Browser ini belum mendukung notifikasi push.");
+  }
+  if (!window.isSecureContext) throw new Error("Notifikasi push hanya dapat diaktifkan melalui koneksi HTTPS.");
+
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Izin notifikasi belum diberikan pada browser.");
+
+  const existingRegistration = await navigator.serviceWorker.getRegistration();
+  if (!existingRegistration) {
+    throw new Error("Service Worker notifikasi belum aktif. Buka Portal Pegawai melalui alamat produksi HTTPS.");
+  }
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription() ||
+    await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: decodeVapidPublicKey(publicKey)
+    });
+  await savePushSubscription(subscription);
+}
+
+export async function disableDoctorChatPushNotifications(): Promise<void> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  if (!await navigator.serviceWorker.getRegistration()) return;
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return;
+
+  await authorizedFetch("/api/chat/notifications", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(subscription.toJSON())
+  });
+  if (!await subscription.unsubscribe()) {
+    throw new Error("Langganan notifikasi browser tidak berhasil dimatikan.");
+  }
+}
+
 export async function setDoctorChatMessagePinned(messageId: string, pinned: boolean): Promise<void> {
   await authorizedFetch(`/api/chat/messages/${encodeURIComponent(messageId)}/pin`, {
     method: pinned ? "PUT" : "DELETE"

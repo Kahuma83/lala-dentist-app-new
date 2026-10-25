@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, Camera, Check, Download, FileText, Image, Images, LoaderCircle, MessageCircle, Paperclip, Pin, PinOff, Plus, Reply, Search, Send, Smile, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Bell, BellOff, Camera, Check, Download, FileText, Image, Images, LoaderCircle, MessageCircle, Paperclip, Pin, PinOff, Plus, Reply, Search, Send, Smile, Trash2, X } from "lucide-react";
 import {
   doctorChatStickers,
   getDoctorChatMessagePreview,
@@ -10,7 +10,10 @@ import {
   DoctorChatMessage,
   DoctorChatRealtimeStatus,
   deleteDoctorChatMessage,
+  disableDoctorChatPushNotifications,
   downloadDoctorChatAttachment,
+  enableDoctorChatPushNotifications,
+  getDoctorChatPushSubscription,
   getDoctorChatMessages,
   setDoctorChatMessagePinned,
   sendDoctorChatMessage,
@@ -191,6 +194,9 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
   const [fileError, setFileError] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [realtimeStatus, setRealtimeStatus] = useState<DoctorChatRealtimeStatus>("connecting");
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushStateReady, setPushStateReady] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -251,6 +257,18 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
 
   useEffect(() => {
     mountedRef.current = true;
+    void getDoctorChatPushSubscription()
+      .then((subscription) => {
+        if (mountedRef.current) setPushEnabled(Boolean(subscription));
+      })
+      .catch((pushError) => {
+        if (mountedRef.current) {
+          setError(pushError instanceof Error ? pushError.message : "Gagal memeriksa status notifikasi.");
+        }
+      })
+      .finally(() => {
+        if (mountedRef.current) setPushStateReady(true);
+      });
     let unsubscribe = () => {};
     void loadMessages(true).then(() => {
       if (!mountedRef.current) return;
@@ -283,6 +301,24 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
       window.removeEventListener("offline", offline);
     };
   }, [loadMessages]);
+
+  const handleTogglePushNotifications = async () => {
+    setPushBusy(true);
+    setError(null);
+    try {
+      if (pushEnabled) {
+        await disableDoctorChatPushNotifications();
+        setPushEnabled(false);
+      } else {
+        await enableDoctorChatPushNotifications();
+        setPushEnabled(true);
+      }
+    } catch (pushError) {
+      setError(pushError instanceof Error ? pushError.message : "Gagal mengubah pengaturan notifikasi.");
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!searchInitializedRef.current) {
@@ -559,6 +595,18 @@ export function DoctorGroupChat({ currentUserId, onBack }: { currentUserId: stri
         <span className={`chat-online${isOnline && realtimeStatus === "connected" ? " online" : ""}`}>
           {!isOnline ? "Offline" : realtimeStatus === "connected" ? "Realtime" : realtimeStatus === "connecting" ? "Menghubungkan" : "Terputus"}
         </span>
+        <button
+          type="button"
+          className="chat-notification-button"
+          onClick={() => void handleTogglePushNotifications()}
+          disabled={pushBusy || !pushStateReady}
+          title={pushEnabled ? "Matikan notifikasi pesan" : "Aktifkan notifikasi saat aplikasi ditutup"}
+          aria-label={pushEnabled ? "Matikan notifikasi pesan" : "Aktifkan notifikasi pesan"}
+        >
+          {pushBusy
+            ? <LoaderCircle className="spin" />
+            : pushEnabled ? <Bell /> : <BellOff />}
+        </button>
       </header>
 
       <div className="chat-tools">

@@ -1,5 +1,5 @@
 const OFFLINE_PAGE = "/offline.html";
-const CACHE_NAME = "lala-attendance-shell-v3";
+const CACHE_NAME = "lala-attendance-shell-v4";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -17,6 +17,41 @@ self.addEventListener("activate", (event) => {
         .map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
+});
+
+self.addEventListener("push", (event) => {
+  let payload;
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (error) {
+    console.error("Payload notifikasi chat tidak valid:", error);
+    return;
+  }
+
+  const title = typeof payload.title === "string" ? payload.title : "Chat Grup Dokter";
+  const body = typeof payload.body === "string" ? payload.body : "Ada pesan baru di grup dokter.";
+  const target = new URL(typeof payload.url === "string" ? payload.url : "/?tab=chat", self.location.origin);
+  const url = target.origin === self.location.origin ? target.href : `${self.location.origin}/?tab=chat`;
+  event.waitUntil(self.registration.showNotification(title, {
+    body,
+    tag: "doctor-group-chat",
+    data: { url }
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || `${self.location.origin}/?tab=chat`;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of windows) {
+      if (client.url.startsWith(self.location.origin) && "focus" in client) {
+        await client.navigate(target);
+        return client.focus();
+      }
+    }
+    return self.clients.openWindow(target);
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
