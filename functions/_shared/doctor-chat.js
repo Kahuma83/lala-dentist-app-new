@@ -1,4 +1,4 @@
-import webPush from "web-push";
+import { sendWebPushNotification } from "./web-push.js";
 
 const CHAT_GROUP_SLUG = "all-doctors";
 const CHAT_BUCKET = "doctor-group-chat-files";
@@ -386,7 +386,6 @@ async function notifyDoctorChatSubscribers(config, env, group, sender) {
   });
   if (!Array.isArray(subscriptions) || subscriptions.length === 0) return;
 
-  webPush.setVapidDetails(subject, publicKey, privateKey);
   const payload = JSON.stringify({
     title: group.name || "Chat Grup Dokter",
     body: `${sender.name} mengirim pesan baru.`,
@@ -394,10 +393,15 @@ async function notifyDoctorChatSubscribers(config, env, group, sender) {
   });
   await Promise.all(subscriptions.map(async (subscription) => {
     try {
-      await webPush.sendNotification({
+      const response = await sendWebPushNotification({
         endpoint: subscription.endpoint,
         keys: { p256dh: subscription.p256dh, auth: subscription.auth }
-      }, payload);
+      }, payload, env);
+      if (!response.ok) {
+        const error = new Error(`Push service returned HTTP ${response.status}.`);
+        error.statusCode = response.status;
+        throw error;
+      }
     } catch (error) {
       const statusCode = Number(error?.statusCode);
       if (statusCode === 404 || statusCode === 410) {
