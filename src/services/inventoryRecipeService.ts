@@ -108,6 +108,9 @@ export async function submitInventoryTreatmentRecipeChange(input: {
   submittedByName: string;
   submittedByRole: string;
 }): Promise<void> {
+  if (input.submittedByRole === "DOCTOR") {
+    throw new Error("Dokter hanya dapat meninjau dan menyetujui usulan resep bahan.");
+  }
   if (input.materials.some((material) =>
     !material.itemCode.trim() || !Number.isFinite(material.quantity) || material.quantity <= 0
   )) {

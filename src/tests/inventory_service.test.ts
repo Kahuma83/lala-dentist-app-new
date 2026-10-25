@@ -238,6 +238,17 @@ describe("Inventory service", () => {
     ]);
   });
 
+  it("does not allow doctors to submit recipe changes", async () => {
+    await expect(submitInventoryTreatmentRecipeChange({
+      branchId: "branch-gebang",
+      serviceCode: "CONSULTATION",
+      materials: [{ itemCode: "AM-001", quantity: 2 }],
+      note: "Usulan dokter",
+      submittedByName: "Dokter",
+      submittedByRole: "DOCTOR"
+    })).rejects.toThrow("Dokter hanya dapat meninjau dan menyetujui usulan resep bahan.");
+  });
+
   it("defines inventory tables, branch policies, and atomic stock locking", () => {
     const migration = fs.readFileSync(
       path.resolve(process.cwd(), "supabase/migrations/20261124000000_branch_inventory.sql"),
@@ -272,6 +283,12 @@ describe("Inventory service", () => {
     expect(recipeReviewMigration).toMatch(/CREATE TABLE IF NOT EXISTS public\.inventory_treatment_recipe_changes/i);
     expect(recipeReviewMigration).toMatch(/v_actor\.role NOT IN \('SUPER_ADMIN', 'DOCTOR'\)/i);
     expect(recipeReviewMigration).toMatch(/Submitted materials do not match the approved recipe/i);
+    const doctorRecipeApprovalMigration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20261224000000_doctor_recipe_approval_only.sql"),
+      "utf8"
+    );
+    expect(doctorRecipeApprovalMigration).toMatch(/prevent_doctor_recipe_submissions/i);
+    expect(doctorRecipeApprovalMigration).toMatch(/NEW\.submitted_by_role_snapshot = 'DOCTOR'/i);
     const seedMigration = fs.readFileSync(
       path.resolve(process.cwd(), "supabase/migrations/20261128000000_seed_treatment_inventory_items.sql"),
       "utf8"

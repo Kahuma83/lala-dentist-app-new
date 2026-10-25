@@ -72,6 +72,7 @@ export const InventoryManagement: React.FC = () => {
   const { currentUser, branches, selectedBranchId, patients, visits, services } = useApp();
   const { path, navigate } = useRouter();
   const isSuper = currentUser?.role === UserRole.SUPER_ADMIN;
+  const isDoctor = currentUser?.role === UserRole.DOCTOR;
   const canManage = isSuper || currentUser?.role === UserRole.BRANCH_ADMIN;
   const rolePrefix = isSuper
     ? "/super-admin"
@@ -106,7 +107,9 @@ export const InventoryManagement: React.FC = () => {
   const [movementReference, setMovementReference] = useState("");
   const [movementNote, setMovementNote] = useState("");
 
-  const activeView = path.endsWith("/history")
+  const activeView = isDoctor
+    ? "recipes"
+    : path.endsWith("/history")
     ? "history"
     : path.endsWith("/low-stock")
       ? "low-stock"
@@ -131,10 +134,10 @@ export const InventoryManagement: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [itemRows, movementRows] = await Promise.all([
-        listInventoryItems(effectiveBranchId, activeView === "history"),
-        listInventoryMovements({ branchId: effectiveBranchId, itemId: historyItemFilter })
-      ]);
+      const itemRows = await listInventoryItems(effectiveBranchId, activeView === "history");
+      const movementRows = isDoctor
+        ? []
+        : await listInventoryMovements({ branchId: effectiveBranchId, itemId: historyItemFilter });
       setItems(itemRows);
       setMovements(movementRows);
     } catch (loadError: unknown) {
@@ -337,8 +340,12 @@ export const InventoryManagement: React.FC = () => {
           <div className="flex items-center gap-2 text-xs font-semibold text-[#9a7a35]">
             <Boxes className="h-4 w-4" /> OPERASIONAL KLINIK
           </div>
-          <h1 className="mt-1 text-2xl font-black text-[#17233C]">Inventori Stok</h1>
-          <p className="mt-1 text-sm text-slate-500">Pantau bahan tindakan dan perlengkapan klinik per cabang.</p>
+          <h1 className="mt-1 text-2xl font-black text-[#17233C]">{isDoctor ? "Persetujuan Resep Bahan Tindakan" : "Inventori Stok"}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {isDoctor
+              ? "Tinjau dan setujui usulan resep bahan sebelum digunakan untuk tindakan."
+              : "Pantau bahan tindakan dan perlengkapan klinik per cabang."}
+          </p>
         </div>
         {canManage && (
           <button type="button" onClick={openCreateForm} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#c5a059] px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#ad873b]">
@@ -347,7 +354,7 @@ export const InventoryManagement: React.FC = () => {
         )}
       </div>
 
-      <nav aria-label="Menu inventori" className="flex gap-2 overflow-x-auto rounded-2xl border border-[#eadfca] bg-white p-2 shadow-sm">
+      {!isDoctor && <nav aria-label="Menu inventori" className="flex gap-2 overflow-x-auto rounded-2xl border border-[#eadfca] bg-white p-2 shadow-sm">
         {sections.map((section) => {
           const Icon = section.icon;
           const active = (section.id === "history" && activeView === "history")
@@ -361,7 +368,7 @@ export const InventoryManagement: React.FC = () => {
             </button>
           );
         })}
-      </nav>
+      </nav>}
 
       {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
       {success && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><Check className="mt-0.5 h-4 w-4 shrink-0" />{success}</div>}
@@ -369,7 +376,7 @@ export const InventoryManagement: React.FC = () => {
       <section className="rounded-2xl border border-[#eadfca] bg-white p-4 shadow-sm sm:p-5">
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="font-bold text-[#17233C]">{activeView === "history" ? "Riwayat Perubahan Stok" : activeView === "low-stock" ? "Barang yang Perlu Segera Dipesan" : activeView === "recipes" ? "Koreksi Resep Bahan Tindakan" : "Daftar Barang"}</h2>
+            <h2 className="font-bold text-[#17233C]">{isDoctor ? "Usulan Resep untuk Ditinjau" : activeView === "history" ? "Riwayat Perubahan Stok" : activeView === "low-stock" ? "Barang yang Perlu Segera Dipesan" : activeView === "recipes" ? "Koreksi Resep Bahan Tindakan" : "Daftar Barang"}</h2>
             <p className="mt-1 text-xs text-slate-500">{selectedBranch?.name || (effectiveBranchId ? "Cabang dipilih" : "Semua cabang")}</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">

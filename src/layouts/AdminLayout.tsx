@@ -267,11 +267,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Antrean Dokter", path: "/doctor/queue", icon: ListOrdered },
         { name: "Pasien & Rekam Medis", path: "/doctor/patients", icon: FileText },
         { name: "Treatment", path: "/doctor/treatments", icon: Activity },
-        { name: "Daftar Stok", path: "/doctor/inventory", icon: Boxes },
-        { name: "Resep Bahan Tindakan", path: "/doctor/inventory/recipes", icon: ClipboardList },
-        { name: "Riwayat Perubahan Stok", path: "/doctor/inventory/history", icon: Clock3 },
-        { name: "Stok Menipis", path: "/doctor/inventory/low-stock", icon: AlertTriangle },
-        { name: "Jadwal Praktik Saya", path: "/doctor/schedules", icon: CalendarRange }
+        { name: "Persetujuan Resep Stok", path: "/doctor/inventory/recipes", icon: ClipboardList }
       ]
     }
   ];

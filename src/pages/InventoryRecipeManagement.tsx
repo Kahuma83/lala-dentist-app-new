@@ -34,7 +34,6 @@ export const InventoryRecipeManagement: React.FC<InventoryRecipeManagementProps>
   const isReviewer = isDoctor || role === UserRole.SUPER_ADMIN;
   const canPropose = role === UserRole.SUPER_ADMIN
     || role === UserRole.BRANCH_ADMIN
-    || role === UserRole.DOCTOR
     || role === UserRole.DOCTOR_ASSISTANT;
   const availableServices = useMemo(
     () => services.filter((service) => service.isActive && service.code),
@@ -179,9 +178,11 @@ export const InventoryRecipeManagement: React.FC<InventoryRecipeManagementProps>
 
       <section className="space-y-4 rounded-2xl border border-[#eadfca] bg-white p-4 shadow-sm sm:p-5">
         <div>
-          <h2 className="font-bold text-[#17233C]">Koreksi Resep Bahan Tindakan</h2>
+          <h2 className="font-bold text-[#17233C]">{isDoctor ? "Resep Bahan Tindakan" : "Koreksi Resep Bahan Tindakan"}</h2>
           <p className="mt-1 text-xs text-slate-500">
-            {branchName || "Cabang terpilih"} · Perubahan diajukan ke Dokter untuk validasi sebelum dipakai.
+            {branchName || "Cabang terpilih"} · {isDoctor
+              ? "Periksa usulan bahan dan setujui hanya jika sudah sesuai."
+              : "Perubahan diajukan ke Dokter untuk validasi sebelum dipakai."}
           </p>
         </div>
 
@@ -192,6 +193,26 @@ export const InventoryRecipeManagement: React.FC<InventoryRecipeManagementProps>
           </select>
         </label>
 
+        {isDoctor ? (
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold text-slate-700">{hasApprovedOverride ? "Resep cabang yang disetujui" : "Resep standar saat ini"}</h3>
+            {materials.length === 0 ? (
+              <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">Belum ada bahan yang digunakan untuk tindakan ini.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {materials.map((line) => {
+                  const item = inventoryItems.find((candidate) => candidate.itemCode === line.itemCode);
+                  return (
+                    <li key={line.itemCode} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                      <span className="font-semibold text-slate-700">{line.itemCode}{item ? ` · ${item.name}` : ""}</span>
+                      <span className="text-slate-600">{line.quantity} {item?.unit || ""} / tindakan</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        ) : (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold text-slate-700">{hasApprovedOverride ? "Resep cabang yang disetujui" : "Resep standar saat ini"}</h3>
@@ -241,6 +262,7 @@ export const InventoryRecipeManagement: React.FC<InventoryRecipeManagementProps>
           )}
           <p className="text-[10px] text-slate-500">Resep yang diajukan belum mengubah pengurangan stok sampai disetujui Dokter.</p>
         </div>
+        )}
       </section>
 
       <section className="rounded-2xl border border-[#eadfca] bg-white p-4 shadow-sm sm:p-5">

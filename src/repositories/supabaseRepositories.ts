@@ -1985,6 +1985,7 @@ export class SupabaseQueueRepository implements QueueRepository {
       id: row.id,
       branchId: row.branch_id || "branch-gebang",
       doctorId: row.doctor_id || "doc-1",
+      externalDoctorId: row.external_doctor_id ?? null,
       visitId: row.visit_id,
       patientId: row.patient_id,
       queueNumber: row.queue_number || "A-01",
@@ -2814,6 +2815,7 @@ export class SupabaseBookingRepository implements BookingRepository {
       patientId: row.patient_id,
       branchId: row.branch_id,
       doctorId: row.doctor_id,
+      externalDoctorId: row.external_doctor_id ?? null,
       serviceId: row.service_id ?? undefined,
       plannedTreatments: Array.isArray(row.planned_treatments) ? row.planned_treatments : [],
       bookingDateTime: row.booking_date_time,
@@ -3558,6 +3560,7 @@ export class SupabaseVisitRepository implements VisitRepository {
       plannedTreatments: Array.isArray(row.planned_treatments) ? row.planned_treatments : [],
       complaint: row.complaint ?? undefined,
       doctorId: row.doctor_id ?? undefined,
+      externalDoctorId: row.external_doctor_id ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -3803,6 +3806,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       patientId: row.patient_id,
       branchId: row.branch_id,
       doctorId: row.doctor_id,
+      externalDoctorId: row.external_doctor_id ?? null,
       serviceId: row.service_id,
       status: row.status as TreatmentJobStatus,
       serviceNameSnapshot: row.service_name_snapshot,
@@ -3887,6 +3891,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       visitId: string;
       serviceId: string;
       doctorId: string;
+      externalDoctorId?: string | null;
       priceSnapshot?: number;
       estimatedDurationMinutes?: number;
       notes?: string;
@@ -3901,11 +3906,28 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     ensureSupabaseConnected();
 
     // Look up visit to ensure valid branch & patient
-    const { data: visit, error: vErr } = await supabase.from("patient_visits").select("branch_id, patient_id").eq("id", data.visitId).single();
+    const { data: visit, error: vErr } = await supabase
+      .from("patient_visits")
+      .select("branch_id, patient_id, doctor_id, external_doctor_id")
+      .eq("id", data.visitId)
+      .single();
     if (vErr || !visit) throw new Error("Visit tidak ditemukan");
 
     const branchToUse = data.branchId || visit.branch_id;
     const patientToUse = data.patientId || visit.patient_id;
+    const externalDoctorId = data.externalDoctorId ?? visit.external_doctor_id ?? null;
+    if (externalDoctorId !== (visit.external_doctor_id ?? null)) {
+      throw new Error("Identitas dokter eksternal harus sesuai dengan penugasan pada kunjungan.");
+    }
+    if (externalDoctorId && currentUserRole === UserRole.DOCTOR) {
+      throw new Error("Tindakan dokter eksternal harus dicatat oleh petugas klinik yang berwenang.");
+    }
+    if (externalDoctorId && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat membuat tindakan untuk dokter eksternal.");
+    }
+    if (externalDoctorId && data.doctorId !== visit.doctor_id) {
+      throw new Error("Dokter referensi tindakan tidak sesuai dengan dokter asal kunjungan.");
+    }
 
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && !isBranchMatch(branchToUse, userBranchId)) {
       throw new Error("Branch Admin tidak dapat membuat treatment untuk cabang lain");
@@ -3920,17 +3942,30 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     if (serviceError || !srv) {
       throw new Error(`Layanan tindakan tidak ditemukan di Supabase: ${serviceError?.message || data.serviceId}`);
     }
-    const { data: doc, error: doctorError } = await supabase
-      .from("dental_doctors")
-      .select("name")
-      .eq("id", data.doctorId)
-      .single();
-    if (doctorError || !doc) {
-      throw new Error(`Dokter penanggung jawab tidak ditemukan di Supabase: ${doctorError?.message || data.doctorId}`);
+    let doctorName: string;
+    if (externalDoctorId) {
+      const { data: externalDoctor, error: doctorError } = await supabase
+        .from("external_doctor_recipients")
+        .select("full_name")
+        .eq("id", externalDoctorId)
+        .single();
+      if (doctorError || !externalDoctor) {
+        throw new Error(`Dokter eksternal tidak ditemukan di Supabase: ${doctorError?.message || externalDoctorId}`);
+      }
+      doctorName = externalDoctor.full_name;
+    } else {
+      const { data: doctor, error: doctorError } = await supabase
+        .from("dental_doctors")
+        .select("name")
+        .eq("id", data.doctorId)
+        .single();
+      if (doctorError || !doctor) {
+        throw new Error(`Dokter penanggung jawab tidak ditemukan di Supabase: ${doctorError?.message || data.doctorId}`);
+      }
+      doctorName = doctor.name;
     }
 
     const serviceName = srv.name;
-    const doctorName = doc.name;
     const estDur = data.estimatedDurationMinutes || srv.estimated_duration_minutes || 30;
     if (data.priceSnapshot !== undefined && currentUserRole !== UserRole.DOCTOR) {
       throw new Error("Hanya dokter yang dapat menyesuaikan harga tindakan.");
@@ -3952,6 +3987,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       patient_id: patientToUse,
       branch_id: branchToUse,
       doctor_id: data.doctorId,
+      external_doctor_id: externalDoctorId,
       service_id: data.serviceId,
       status: TreatmentJobStatus.BELUM_DIMULAI,
       service_name_snapshot: serviceName,
@@ -4022,11 +4058,21 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
-    if (
-      currentUserRole &&
-      currentUserRole !== UserRole.DOCTOR
-    ) {
-      throw new Error("Hanya Dokter yang dapat menyelesaikan tindakan medis");
+    if (currentUserRole && currentUserRole !== UserRole.DOCTOR) {
+      if (currentUserRole !== UserRole.DOCTOR_ASSISTANT && currentUserRole !== UserRole.SUPER_ADMIN) {
+        throw new Error("Hanya Dokter atau petugas berwenang pada tindakan dokter eksternal yang dapat menyelesaikan tindakan.");
+      }
+      const { data: treatment, error: treatmentError } = await supabase
+        .from("treatment_jobs")
+        .select("external_doctor_id")
+        .eq("id", id)
+        .single();
+      if (treatmentError || !treatment) {
+        throw new Error(`Gagal memeriksa penugasan dokter tindakan: ${treatmentError?.message || id}`);
+      }
+      if (!treatment.external_doctor_id) {
+        throw new Error("Hanya Dokter yang dapat menyelesaikan tindakan medis biasa.");
+      }
     }
 
     const { data, error } = await supabase.rpc("complete_treatment_job_secure", {
@@ -4047,11 +4093,21 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
-    if (
-      currentUserRole &&
-      currentUserRole !== UserRole.DOCTOR
-    ) {
-      throw new Error("Hanya Dokter yang dapat menyerahkan tindakan ke kasir");
+    if (currentUserRole && currentUserRole !== UserRole.DOCTOR) {
+      if (currentUserRole !== UserRole.DOCTOR_ASSISTANT && currentUserRole !== UserRole.SUPER_ADMIN) {
+        throw new Error("Role tidak memiliki izin menyerahkan tindakan ke kasir.");
+      }
+      const { data: treatment, error: treatmentError } = await supabase
+        .from("treatment_jobs")
+        .select("external_doctor_id")
+        .eq("id", id)
+        .single();
+      if (treatmentError || !treatment) {
+        throw new Error(`Gagal memeriksa penugasan dokter tindakan: ${treatmentError?.message || id}`);
+      }
+      if (!treatment.external_doctor_id) {
+        throw new Error("Hanya Dokter yang dapat menyerahkan tindakan biasa ke kasir.");
+      }
     }
 
     const now = new Date().toISOString();
@@ -6416,13 +6472,14 @@ export class SupabaseCompensationRepository implements CompensationRepository {
 
     const { data: job, error: jobError } = await supabase
       .from("treatment_jobs")
-      .select("id, doctor_id, pic_assistant_id, service_id, branch_id, visit_id, patient_id, status, completed_at")
+      .select("id, doctor_id, external_doctor_id, pic_assistant_id, service_id, branch_id, visit_id, patient_id, status, completed_at")
       .eq("id", treatmentJobId)
       .single();
     if (jobError || !job) throw new Error(`Gagal memuat tindakan untuk menghitung kompensasi: ${jobError?.message || "data tidak ditemukan"}`);
     if (job.status !== TreatmentJobStatus.SELESAI && job.status !== TreatmentJobStatus.DISERAHKAN) {
       throw new Error("Akrual kompensasi hanya dapat dihitung untuk treatment yang sudah SELESAI atau DISERAHKAN");
     }
+    if (job.external_doctor_id) return [];
 
     const { data: invoices, error: invoicesError } = await supabase
       .from("invoices")
@@ -6877,7 +6934,8 @@ export class SupabasePayrollRepository implements PayrollRepository {
     );
     const dailySalary = Math.round(Math.round(salary) / 25);
     const absenceRows = [...absenceByDate.values()];
-    const absenceDeductions = absenceRows.length * dailySalary;
+    const dailyAbsenceDeduction = isDoctor ? 60000 : dailySalary;
+    const absenceDeductions = absenceRows.length * dailyAbsenceDeduction;
     const grossIncome = Math.round(salary) + totalEarnings + overtimeTotal;
     const taxRate = Number(taxRule?.value_snapshot) || 0;
     const taxAmount = taxRule ? calculatePayrollTax(grossIncome, taxRate) : 0;
@@ -6964,7 +7022,7 @@ export class SupabasePayrollRepository implements PayrollRepository {
       ...absenceRows.map((row: any) => ({
         payroll_id: payrollRow.id,
         description_snapshot: `Potongan Ketidakhadiran (${row.attendance_status} / ${row.date})`,
-        amount_snapshot: dailySalary,
+        amount_snapshot: dailyAbsenceDeduction,
         type: "DEDUCTION",
         source_id: row.id
       })),

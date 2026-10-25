@@ -21,10 +21,10 @@ import { PatientPortalHome } from "./pages/PatientPortalHome";
 import { PatientAuthPage } from "./pages/PatientAuthPage";
 import { PatientEmailConfirmationPage } from "./pages/PatientEmailConfirmationPage";
 import { HRManagement } from "./pages/HRManagement";
-import { DoctorSchedules } from "./pages/DoctorSchedules";
 import { WebsiteContentManagement } from "./pages/WebsiteContentManagement";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { InventoryManagement } from "./pages/InventoryManagement";
+import { DoctorSchedules } from "./pages/DoctorSchedules";
 import { AdminLayout } from "./layouts/AdminLayout";
 import { UserRole } from "./types/domain";
 import { isSupabaseConfigured } from "./lib/supabase";
@@ -257,9 +257,7 @@ const AppContent: React.FC = () => {
       return <UnauthorizedPage />;
     }
     let view = <LiveQueueManagement />;
-    if (path.includes("/schedules")) {
-      view = <DoctorSchedules />;
-    } else if (path.startsWith("/doctor/inventory")) {
+    if (path.startsWith("/doctor/inventory")) {
       view = <InventoryManagement />;
     } else if (path.includes("/treatments")) {
       view = <TreatmentManagement />;

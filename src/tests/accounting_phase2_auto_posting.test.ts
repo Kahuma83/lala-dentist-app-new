@@ -1072,6 +1072,31 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       expect(payment.lines.find((line) => line.accountId === bank?.id)?.credit).toBe(3000000);
     });
 
+    it("posts an idempotent accrual and payment journal for an external doctor payroll entry", async () => {
+      const entry = {
+        id: "external-doctor-payroll-entry",
+        doctorName: "drg. Dokter Eksternal",
+        branchId: "branch-gebang",
+        month: 10,
+        year: 2026,
+        amount: 130_000
+      };
+
+      const payment = await service.postExternalDoctorPayrollPayment(entry);
+      const repeatedPayment = await service.postExternalDoctorPayrollPayment(entry);
+      const doctorPayable = await accountingRepo.getAccountByCode("2020");
+      const bank = await accountingRepo.getAccountByCode("1010");
+      const journals = await accountingRepo.getJournalsBySource(JournalSourceType.PAYROLL, entry.id);
+
+      expect(payment.event).toBe("PAYMENT");
+      expect(payment.id).toBe(repeatedPayment.id);
+      expect(journals.map((journal) => journal.event).sort()).toEqual(["ACCRUAL", "PAYMENT"]);
+      expect(payment.totalDebit).toBe(130_000);
+      expect(payment.totalCredit).toBe(130_000);
+      expect(payment.lines.find((line) => line.accountId === doctorPayable?.id)?.debit).toBe(130_000);
+      expect(payment.lines.find((line) => line.accountId === bank?.id)?.credit).toBe(130_000);
+    });
+
     it("should resolve payroll branch from linked staff when payroll has no branch snapshot", async () => {
       db.staff.push({
         id: "staff-payroll-branch-resolution",

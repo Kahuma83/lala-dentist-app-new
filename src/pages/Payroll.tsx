@@ -42,6 +42,7 @@ import {
   Trash2
 } from "lucide-react";
 import { PayslipDocumentModal } from "../components/documents/PayslipDocumentModal";
+import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
 import { createPayslipWhatsAppMessage, sanitizeWhatsAppPhone } from "../utils/documentUtils";
 import {
@@ -61,6 +62,20 @@ function isDoctorAssignmentActiveForPeriod(
     (!assignment.endDate || assignment.endDate >= periodStart);
 }
 
+type ExternalDoctorPayrollEntry = {
+  id: string;
+  external_doctor_id: string;
+  branch_id: string;
+  payroll_month: number;
+  payroll_year: number;
+  covered_days: number;
+  action_count: number | null;
+  amount_snapshot: number;
+  status: "PENDING_ACTION_COUNT" | "DRAFT" | "APPROVED" | "PAID";
+  external_doctor_recipients: { full_name: string; phone: string } | null;
+  staff_absence_requests: { start_date: string; end_date: string } | null;
+};
+
 export const Payroll: React.FC = () => {
   const {
     currentUser,
@@ -78,6 +93,7 @@ export const Payroll: React.FC = () => {
   const previousPayrollPeriod = getPreviousPayrollPeriod(new Date());
 
   const [payrolls, setPayrolls] = useState<MonthlyPayroll[]>([]);
+  const [externalDoctorPayrollEntries, setExternalDoctorPayrollEntries] = useState<ExternalDoctorPayrollEntry[]>([]);
   const [periodPayrollItems, setPeriodPayrollItems] = useState<PayrollItem[]>([]);
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
   const [staffList, setStaffList] = useState<Staff[]>([]);
@@ -130,7 +146,7 @@ export const Payroll: React.FC = () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [pList, dList, sList, bList, jList, brand, assignments] = await Promise.all([
+      const [pList, dList, sList, bList, jList, brand, assignments, externalPayrollResult] = await Promise.all([
         payrollRepo.getPayrolls(selectedMonth, selectedYear),
         doctorRepo.getDoctors(),
         staffRepo.getStaff(),
@@ -141,10 +157,21 @@ export const Payroll: React.FC = () => {
             : undefined
         ),
         configRepo.getClinicBranding().catch(() => DEFAULT_CLINIC_BRANDING),
-        doctorRepo.getDoctorBranchAssignments()
+        doctorRepo.getDoctorBranchAssignments(),
+        isSupabaseConfigured && currentUser?.role === UserRole.SUPER_ADMIN
+          ? supabase.from("external_doctor_payroll_entries")
+              .select("id,external_doctor_id,branch_id,payroll_month,payroll_year,covered_days,action_count,amount_snapshot,status,external_doctor_recipients(full_name,phone),staff_absence_requests(start_date,end_date)")
+              .eq("payroll_month", selectedMonth)
+              .eq("payroll_year", selectedYear)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null })
       ]);
+      if (externalPayrollResult.error) {
+        throw new Error(`Gagal memuat honor dokter eksternal: ${externalPayrollResult.error.message}`);
+      }
       const items = await payrollRepo.getPayrollItemsByPayrollIds(pList.map((payroll) => payroll.id));
       setPayrolls(pList);
+      setExternalDoctorPayrollEntries((externalPayrollResult.data || []) as ExternalDoctorPayrollEntry[]);
       setPeriodPayrollItems(items);
       setDoctors(dList);
       setStaffList(sList);
@@ -162,7 +189,7 @@ export const Payroll: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, currentUser?.role]);
 
   useEffect(() => {
     const periodKey = `${selectedYear}-${selectedMonth}`;
@@ -784,6 +811,57 @@ export const Payroll: React.FC = () => {
     }
   };
 
+  const reviewExternalDoctorPayroll = async (entry: ExternalDoctorPayrollEntry) => {
+    setSyncingPayrollId(entry.id);
+    setLoadError(null);
+    try {
+      const { error } = await supabase.rpc("review_external_doctor_payroll_entry", {
+        p_entry_id: entry.id,
+        p_approve: true
+      });
+      if (error) throw new Error(error.message);
+      await loadData();
+    } catch (error: unknown) {
+      setLoadError(`Gagal menyetujui honor dokter eksternal: ${error instanceof Error ? error.message : "Kesalahan tidak diketahui."}`);
+    } finally {
+      setSyncingPayrollId(null);
+    }
+  };
+
+  const payExternalDoctorPayroll = async (entry: ExternalDoctorPayrollEntry) => {
+    if (entry.status !== "PAID" && !window.confirm("Pastikan transfer honor dokter eksternal benar-benar berhasil. Konfirmasi ini akan membuat jurnal pembayaran dan menandai honor sebagai PAID.")) {
+      return;
+    }
+    setSyncingPayrollId(entry.id);
+    setLoadError(null);
+    try {
+      await accountingPostingService.postExternalDoctorPayrollPayment(
+        {
+          id: entry.id,
+          doctorName: entry.external_doctor_recipients?.full_name || "Dokter eksternal",
+          branchId: entry.branch_id,
+          month: entry.payroll_month,
+          year: entry.payroll_year,
+          amount: Number(entry.amount_snapshot)
+        },
+        currentUser?.role,
+        currentUser?.branchId,
+        currentUser?.name || "Admin Payroll"
+      );
+      if (entry.status !== "PAID") {
+        const { error } = await supabase.rpc("mark_external_doctor_payroll_paid", {
+          p_entry_id: entry.id
+        });
+        if (error) throw new Error(`Jurnal berhasil dibuat tetapi status pembayaran belum tersimpan: ${error.message}`);
+      }
+      await loadData();
+    } catch (error: unknown) {
+      setLoadError(`Gagal mencatat pembayaran honor dokter eksternal: ${error instanceof Error ? error.message : "Kesalahan tidak diketahui."}`);
+    } finally {
+      setSyncingPayrollId(null);
+    }
+  };
+
   const handleConfirmDeletePayroll = async () => {
     if (!payrollToDelete) return;
     setIsDeletingPayroll(true);
@@ -805,7 +883,10 @@ export const Payroll: React.FC = () => {
     }
   };
 
-  const totalPayrollBudget = payrolls.reduce((sum, p) => sum + p.netSalary, 0);
+  const confirmedExternalDoctorAmount = externalDoctorPayrollEntries
+    .filter((entry) => entry.status !== "PENDING_ACTION_COUNT")
+    .reduce((sum, entry) => sum + Number(entry.amount_snapshot || 0), 0);
+  const totalPayrollBudget = payrolls.reduce((sum, p) => sum + p.netSalary, confirmedExternalDoctorAmount);
   const totalCommissions = payrolls.reduce((sum, p) => sum + p.totalCompensation, 0);
   const paymentSummary = useMemo(
     () => createPayrollPaymentSummary(payrolls, periodPayrollItems, staffList, doctors, selectedMonth, selectedYear),
@@ -858,7 +939,7 @@ export const Payroll: React.FC = () => {
             <DollarSign className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Beban Gaji Bersih</div>
+            <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Payroll Bersih + Honor Eksternal</div>
             <div className="text-base font-bold text-slate-900 mt-0.5">
               Rp {totalPayrollBudget.toLocaleString("id-ID")}
             </div>
@@ -1200,6 +1281,78 @@ export const Payroll: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {currentUser?.role === UserRole.SUPER_ADMIN && (
+        <section className="overflow-hidden rounded-xl border border-indigo-200 bg-white shadow-sm">
+          <div className="border-b border-indigo-100 bg-indigo-50/70 px-4 py-3">
+            <h2 className="text-sm font-bold text-indigo-950">Honor Dokter Eksternal · Periode {selectedMonth}/{selectedYear}</h2>
+            <p className="mt-1 text-[11px] text-indigo-800">Pembayaran penerima non-staf, terpisah dari payroll pegawai. Jurnal dibuat saat pembayaran dikonfirmasi.</p>
+          </div>
+          {externalDoctorPayrollEntries.length === 0 ? (
+            <p className="p-5 text-center text-xs text-slate-500">Belum ada honor dokter eksternal pada periode ini.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50 text-[10px] uppercase text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3">Penerima</th>
+                    <th className="px-4 py-3 text-right">Hari</th>
+                    <th className="px-4 py-3 text-right">Tindakan</th>
+                    <th className="px-4 py-3 text-right">Honor</th>
+                    <th className="px-4 py-3 text-center">Status / Jurnal</th>
+                    <th className="px-4 py-3 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {externalDoctorPayrollEntries.map((entry) => {
+                    const journal = journals.find((item) =>
+                      item.sourceType === JournalSourceType.PAYROLL &&
+                      item.sourceId === entry.id &&
+                      item.event === "PAYMENT" &&
+                      item.status !== "VOID"
+                    );
+                    return (
+                      <tr key={entry.id}>
+                        <td className="px-4 py-3">
+                          <strong className="text-slate-900">{entry.external_doctor_recipients?.full_name || "Dokter eksternal"}</strong>
+                          {entry.external_doctor_recipients?.phone && <div className="mt-0.5 text-[10px] text-slate-500">{entry.external_doctor_recipients.phone}</div>}
+                          <div className="mt-0.5 text-[10px] text-slate-500">
+                            {entry.staff_absence_requests?.start_date || "Tanggal tidak tersedia"}{entry.staff_absence_requests?.end_date && entry.staff_absence_requests.end_date !== entry.staff_absence_requests.start_date ? ` – ${entry.staff_absence_requests.end_date}` : ""}
+                            {" · "}{getBranchName(entry.branch_id) || "Cabang"}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">{entry.covered_days}</td>
+                        <td className="px-4 py-3 text-right">{entry.action_count ?? "—"}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-900">Rp {Number(entry.amount_snapshot).toLocaleString("id-ID")}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`font-bold ${entry.status === "PAID" ? "text-emerald-700" : entry.status === "APPROVED" ? "text-teal-700" : "text-amber-700"}`}>{entry.status}</span>
+                          {journal && <button type="button" onClick={() => navigate(accountingPath)} className="ml-2 inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700"><BookOpen className="h-3 w-3" />{journal.journalNumber}</button>}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {entry.status === "DRAFT" && (
+                            <button type="button" disabled={syncingPayrollId === entry.id} onClick={() => void reviewExternalDoctorPayroll(entry)} className="rounded bg-teal-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">
+                              {syncingPayrollId === entry.id ? "Memproses..." : "Setujui"}
+                            </button>
+                          )}
+                          {entry.status === "APPROVED" && (
+                            <button type="button" disabled={syncingPayrollId === entry.id} onClick={() => void payExternalDoctorPayroll(entry)} className="rounded bg-emerald-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">
+                              {syncingPayrollId === entry.id ? "Memproses..." : "Konfirmasi transfer"}
+                            </button>
+                          )}
+                          {entry.status === "PENDING_ACTION_COUNT" && <span className="text-[10px] text-slate-500">Lengkapi tindakan di Pengajuan Izin/Sakit</span>}
+                          {entry.status === "PAID" && !journal && (
+                            <button type="button" disabled={syncingPayrollId === entry.id} onClick={() => void payExternalDoctorPayroll(entry)} className="rounded border border-slate-200 px-2.5 py-1.5 font-semibold text-slate-700 disabled:opacity-50">Sinkronkan jurnal</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Modal: Generate Payroll */}
       {showGenerateModal && (

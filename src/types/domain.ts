@@ -536,6 +536,7 @@ export interface Booking {
   serviceId?: string;
   plannedTreatments?: PlannedTreatment[];
   doctorId: string;
+  externalDoctorId?: string | null;
   bookingDateTime: string; // ISO date-time (e.g. 2026-09-21T14:30:00Z)
   timeSlot?: string; // Optional time slot string (e.g. "09:00")
   notes?: string;
@@ -589,6 +590,7 @@ export interface PatientVisit {
   plannedTreatments?: PlannedTreatment[];
   complaint?: string;
   doctorId?: string;
+  externalDoctorId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -602,6 +604,7 @@ export interface QueueItem {
   id: string;
   branchId: string;
   doctorId: string;
+  externalDoctorId?: string | null;
   visitId: string;
   bookingId?: string | null;
   patientId?: string;
@@ -655,6 +658,7 @@ export interface TreatmentJob {
   patientId: string;
   branchId: string;
   doctorId: string;
+  externalDoctorId?: string | null;
   serviceId: string;
   status: TreatmentJobStatus | "BELUM_DIMULAI" | "DALAM_PROSES" | "SELESAI" | "DISERAHKAN";
   serviceNameSnapshot: string;

@@ -1060,6 +1060,137 @@ export class AccountingPostingService {
     );
   }
 
+  async postExternalDoctorPayrollPayment(
+    entry: {
+      id: string;
+      doctorName: string;
+      branchId: string;
+      month: number;
+      year: number;
+      amount: number;
+    },
+    currentUserRole: UserRole = UserRole.SUPER_ADMIN,
+    userBranchId: string | null = null,
+    postedBy: string = "System Auto-Post"
+  ): Promise<JournalEntry> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat memposting honor dokter eksternal.");
+    }
+    const amount = Math.round(Number(entry.amount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error("Nominal honor dokter eksternal harus lebih dari nol.");
+    }
+    if (!entry.branchId || !Number.isInteger(entry.month) || !Number.isInteger(entry.year)) {
+      throw new Error("Periode atau cabang honor dokter eksternal tidak valid.");
+    }
+
+    const sourceJournals = await this.accountingRepo.getJournalsBySource(
+      JournalSourceType.PAYROLL,
+      entry.id
+    );
+    const existingPayment = sourceJournals.find((journal) =>
+      journal.status !== JournalStatus.VOID && journal.event === "PAYMENT"
+    );
+    if (existingPayment) {
+      return existingPayment.status === JournalStatus.POSTED
+        ? existingPayment
+        : this.accountingRepo.postJournal(existingPayment.id, postedBy, currentUserRole, userBranchId);
+    }
+
+    const doctorExpense = await AccountingAccountResolver.resolveAccount(
+      this.accountingRepo,
+      "DOCTOR_FEE_EXPENSE"
+    );
+    const doctorPayable = await AccountingAccountResolver.resolveAccount(
+      this.accountingRepo,
+      "DOCTOR_PAYABLE"
+    );
+    let accrual = sourceJournals.find((journal) =>
+      journal.status !== JournalStatus.VOID && journal.event === "ACCRUAL"
+    );
+    if (!accrual) {
+      const draftAccrual = await this.accountingRepo.createDraftJournal(
+        {
+          journalDate: `${entry.year}-${String(entry.month).padStart(2, "0")}-28`,
+          branchId: entry.branchId,
+          description: `Akrual Honor Dokter Eksternal ${entry.doctorName} Periode ${entry.month}/${entry.year}`,
+          sourceType: JournalSourceType.PAYROLL,
+          sourceId: entry.id,
+          event: "ACCRUAL",
+          lines: [
+            {
+              accountId: doctorExpense.id,
+              debit: amount,
+              credit: 0,
+              branchId: entry.branchId,
+              description: `Honor dokter eksternal ${entry.doctorName}`
+            },
+            {
+              accountId: doctorPayable.id,
+              debit: 0,
+              credit: amount,
+              branchId: entry.branchId,
+              description: `Utang honor dokter eksternal ${entry.doctorName}`
+            }
+          ]
+        },
+        postedBy,
+        currentUserRole,
+        userBranchId
+      );
+      accrual = await this.accountingRepo.postJournal(
+        draftAccrual.id,
+        postedBy,
+        currentUserRole,
+        userBranchId
+      );
+    } else if (accrual.status !== JournalStatus.POSTED) {
+      accrual = await this.accountingRepo.postJournal(
+        accrual.id,
+        postedBy,
+        currentUserRole,
+        userBranchId
+      );
+    }
+
+    const bank = await AccountingAccountResolver.resolveAccount(this.accountingRepo, "BANK");
+    const draftPayment = await this.accountingRepo.createDraftJournal(
+      {
+        journalDate: AppClock.nowISO().slice(0, 10),
+        branchId: entry.branchId,
+        description: `Pembayaran Honor Dokter Eksternal ${entry.doctorName} Periode ${entry.month}/${entry.year}`,
+        sourceType: JournalSourceType.PAYROLL,
+        sourceId: entry.id,
+        event: "PAYMENT",
+        lines: [
+          {
+            accountId: doctorPayable.id,
+            debit: amount,
+            credit: 0,
+            branchId: entry.branchId,
+            description: `Pelunasan honor dokter eksternal ${entry.doctorName}`
+          },
+          {
+            accountId: bank.id,
+            debit: 0,
+            credit: amount,
+            branchId: entry.branchId,
+            description: `Transfer honor dokter eksternal ${entry.doctorName}`
+          }
+        ]
+      },
+      postedBy,
+      currentUserRole,
+      userBranchId
+    );
+    return this.accountingRepo.postJournal(
+      draftPayment.id,
+      postedBy,
+      currentUserRole,
+      userBranchId
+    );
+  }
+
   // =========================================================================
   // HELPER & SYNCHRONIZATION ALIASES
   // =========================================================================

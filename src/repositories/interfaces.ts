@@ -622,6 +622,7 @@ export interface TreatmentRepository {
       visitId: string;
       serviceId: string;
       doctorId: string;
+      externalDoctorId?: string | null;
       priceSnapshot?: number;
       estimatedDurationMinutes?: number;
       notes?: string;

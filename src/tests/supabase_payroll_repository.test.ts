@@ -43,6 +43,10 @@ function createQuery(
       call.filters.push(["is", column, value]);
       return query;
     }),
+    or: vi.fn((expression: string) => {
+      call.filters.push(["or", expression, null]);
+      return query;
+    }),
     not: vi.fn((column: string, operator: string, value: unknown) => {
       call.filters.push(["not", `${column}.${operator}`, value]);
       return query;
@@ -473,6 +477,74 @@ describe("Supabase payroll repository", () => {
       "work_confirmed_at.is",
       null
     ]);
+  });
+
+  it("uses the fixed Rp60,000 daily absence deduction for doctor payroll", async () => {
+    const insertedPayroll = {
+      id: "doctor-payroll-1",
+      staff_id: "doctor-staff-1",
+      branch_id: "branch-1",
+      month: 10,
+      year: 2026,
+      base_salary: 2_500_000,
+      total_compensation: 0,
+      total_deductions: 60_000,
+      net_salary: 2_440_000,
+      status: "DRAFT",
+      created_at: "2026-10-01T00:00:00.000Z",
+      updated_at: "2026-10-01T00:00:00.000Z"
+    };
+    vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
+      createQuery(table, calls, (call) => {
+        if (call.table === "staff") {
+          return { data: { id: "doctor-staff-1", branch_id: "branch-1", position: "DOCTOR" }, error: null };
+        }
+        if (call.table === "dental_doctors") {
+          return { data: { id: "doctor-1", staff_id: "doctor-staff-1", assigned_branch_id: "branch-1" }, error: null };
+        }
+        if (call.table === "monthly_payrolls" && call.action === "select") return { data: null, error: null };
+        if (call.table === "monthly_payrolls" && call.action === "insert") return { data: insertedPayroll, error: null };
+        if (call.table === "attendances") {
+          return {
+            data: [{
+              id: "absence-1",
+              staff_id: "doctor-staff-1",
+              branch_id: "branch-1",
+              date: "2026-10-12",
+              attendance_status: "SICK"
+            }],
+            error: null
+          };
+        }
+        if (call.table === "staff_compensation_rules") {
+          return {
+            data: [{
+              id: "base-rule-1",
+              staff_id: "doctor-staff-1",
+              rule_type_snapshot: "BASE_SALARY",
+              value_snapshot: 2_500_000,
+              branch_id: "branch-1",
+              effective_start_date: "2026-01-01",
+              effective_end_date: null
+            }],
+            error: null
+          };
+        }
+        return { data: [], error: null };
+      })) as any);
+
+    const payroll = await payrollRepo.generateMonthlyPayroll("doctor-staff-1", 10, 2026, 2_500_000, false, "branch-1");
+
+    expect(payroll.totalDeductions).toBe(60_000);
+    expect(payroll.netSalary).toBe(2_440_000);
+    expect(calls.find((call) => call.table === "payroll_items" && call.action === "insert")?.payload)
+      .toContainEqual({
+        payroll_id: "doctor-payroll-1",
+        description_snapshot: "Potongan Ketidakhadiran (SICK / 2026-10-12)",
+        amount_snapshot: 60_000,
+        type: "DEDUCTION",
+        source_id: "absence-1"
+      });
   });
 
   it("does not recalculate a payroll that has moved beyond draft", async () => {

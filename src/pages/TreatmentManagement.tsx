@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import { useRouter } from "../components/Router";
 import { isBranchMatch } from "../utils/branchUtils";
+import { supabase } from "../lib/supabase";
 import {
   TreatmentJob,
   TreatmentJobStatus,
@@ -56,6 +57,7 @@ export const TreatmentManagement: React.FC = () => {
   const [visits, setVisits] = useState<PatientVisit[]>([]);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [doctorsList, setDoctorsList] = useState<DentalDoctor[]>([]);
+  const [externalDoctors, setExternalDoctors] = useState<{ id: string; full_name: string }[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -86,7 +88,19 @@ export const TreatmentManagement: React.FC = () => {
   const [approvedRecipeMaterials, setApprovedRecipeMaterials] = useState<InventoryRecipeLine[] | null>(null);
   const canManageTreatment = currentUser?.role === UserRole.DOCTOR
     || currentUser?.role === UserRole.DOCTOR_ASSISTANT;
+  const canCreateTreatment = canManageTreatment || currentUser?.role === UserRole.SUPER_ADMIN;
+  const canStartTreatment = (treatment: TreatmentJob) =>
+    canManageTreatment
+    || (Boolean(treatment.externalDoctorId) && currentUser?.role === UserRole.SUPER_ADMIN);
   const canFinalizeTreatment = currentUser?.role === UserRole.DOCTOR;
+  const canCompleteTreatment = (treatment: TreatmentJob) =>
+    canFinalizeTreatment
+    || (Boolean(treatment.externalDoctorId)
+      && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
+  const canHandOverTreatment = (treatment: TreatmentJob) =>
+    canFinalizeTreatment
+    || (Boolean(treatment.externalDoctorId)
+      && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
 
   const treatmentRepo = repos.treatment;
   const visitRepo = repos.visit;
@@ -117,7 +131,7 @@ export const TreatmentManagement: React.FC = () => {
       }
 
       const branchId = currentUser.assignedBranchId || "branch-gebang";
-      const [trList, docList, queueList] = await Promise.all([
+      const [trList, docList, queueList, externalDoctorResult] = await Promise.all([
         treatmentRepo.listTreatments(
           currentUser.role,
           currentUser.assignedBranchId,
@@ -133,8 +147,14 @@ export const TreatmentManagement: React.FC = () => {
             )
           : currentUser.role === UserRole.SUPER_ADMIN
             ? repos.queue.getQueueItems()
-            : repos.queue.getQueueByBranch(branchId, currentUser.role, currentUser.assignedBranchId)
+            : repos.queue.getQueueByBranch(branchId, currentUser.role, currentUser.assignedBranchId),
+        currentUser.role === UserRole.SUPER_ADMIN
+          ? supabase.from("external_doctor_recipients").select("id,full_name").eq("active", true)
+          : Promise.resolve({ data: [], error: null })
       ]);
+      if (externalDoctorResult.error) {
+        throw new Error(`Gagal memuat dokter eksternal: ${externalDoctorResult.error.message}`);
+      }
       const vList = currentUser.role === UserRole.DOCTOR
         ? (await Promise.all(
             [...new Set(queueList.map((item) => item.visitId))]
@@ -147,6 +167,7 @@ export const TreatmentManagement: React.FC = () => {
           );
 
       setDoctorsList(docList);
+      setExternalDoctors(externalDoctorResult.data || []);
       setTreatments(trList);
       setVisits(vList);
       setQueueItems(queueList);
@@ -194,8 +215,17 @@ export const TreatmentManagement: React.FC = () => {
       setError("Pilih visit, layanan, dan dokter penanggung jawab");
       return;
     }
-    if (!doctorsForVisit.some((doctor) => doctor.id === selectedDoctorId)) {
+    const visitHasExternalDoctor = selectedVisit?.externalDoctorId != null;
+    if (!visitHasExternalDoctor && !doctorsForVisit.some((doctor) => doctor.id === selectedDoctorId)) {
       setError("Pilih dokter yang terjadwal atau dokter penanggung jawab kunjungan ini.");
+      return;
+    }
+    if (visitHasExternalDoctor && currentUser?.role !== UserRole.SUPER_ADMIN) {
+      setError("Hanya Super Admin yang dapat mencatat tindakan atas nama dokter eksternal.");
+      return;
+    }
+    if (!visitHasExternalDoctor && currentUser?.role === UserRole.SUPER_ADMIN) {
+      setError("Super Admin hanya dapat membuat tindakan untuk kunjungan yang ditugaskan kepada dokter eksternal.");
       return;
     }
     if (!Number.isSafeInteger(treatmentPrice) || treatmentPrice < 0) {
@@ -211,6 +241,7 @@ export const TreatmentManagement: React.FC = () => {
           visitId: selectedVisitId,
           serviceId: selectedServiceId,
           doctorId: selectedDoctorId,
+          externalDoctorId: selectedVisit?.externalDoctorId ?? null,
           ...(currentUser?.role === UserRole.DOCTOR ? { priceSnapshot: treatmentPrice } : {}),
           estimatedDurationMinutes: estimatedDuration,
           notes: treatmentNotes
@@ -236,7 +267,8 @@ export const TreatmentManagement: React.FC = () => {
   };
 
   const handleStartTreatment = async (id: string) => {
-    if (!canManageTreatment) return;
+    const treatment = treatments.find((item) => item.id === id);
+    if (!treatment || !canStartTreatment(treatment)) return;
     setError(null);
     try {
       await treatmentRepo.startTreatmentJob(
@@ -259,7 +291,7 @@ export const TreatmentManagement: React.FC = () => {
   };
 
   const handleCompleteTreatment = async (treatment: TreatmentJob) => {
-    if (!canFinalizeTreatment || completingTreatment) return;
+    if (!canCompleteTreatment(treatment) || completingTreatment) return;
     setCompletingTreatment(true);
     setError(null);
     let treatmentCompleted = false;
@@ -307,8 +339,10 @@ export const TreatmentManagement: React.FC = () => {
       treatmentCompleted = true;
       setSelectedTreatment((previous) => previous?.id === completedTreatment.id ? completedTreatment : previous);
       try {
-        const createdAccruals = await repos.compensation.calculateAndAccrueForTreatment(completedTreatment.id);
-        accrualCount = createdAccruals.length;
+        if (!completedTreatment.externalDoctorId) {
+          const createdAccruals = await repos.compensation.calculateAndAccrueForTreatment(completedTreatment.id);
+          accrualCount = createdAccruals.length;
+        }
       } catch (err: any) {
         accrualError = err.message || "Gagal mencatat akrual kompensasi.";
       }
@@ -367,7 +401,8 @@ export const TreatmentManagement: React.FC = () => {
   };
 
   const handleHandOverTreatment = async (id: string) => {
-    if (!canFinalizeTreatment) return;
+    const treatment = treatments.find((item) => item.id === id);
+    if (!treatment || !canHandOverTreatment(treatment)) return;
     setError(null);
     try {
       await treatmentRepo.handOverTreatmentJob(
@@ -599,7 +634,9 @@ export const TreatmentManagement: React.FC = () => {
           </p>
         </div>
 
-        {canManageTreatment && <button
+        {canCreateTreatment
+          && (canManageTreatment || eligibleVisits.some((visit) => Boolean(visit.externalDoctorId)))
+          && <button
           onClick={() => {
             setIsCreateOpen(true);
             if (currentUser?.role === UserRole.DOCTOR) {
@@ -615,7 +652,7 @@ export const TreatmentManagement: React.FC = () => {
 
       {currentUser?.role === UserRole.DOCTOR_ASSISTANT && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800">
-          Asisten dapat memulai dan menjalankan treatment. Penyelesaian tindakan dan penyerahan ke kasir dilakukan oleh Dokter.
+          Asisten dapat memulai treatment. Treatment dokter internal diselesaikan oleh Dokter; treatment yang ditugaskan kepada dokter eksternal dapat diselesaikan dan diserahkan oleh petugas berwenang.
         </div>
       )}
 
@@ -838,7 +875,7 @@ export const TreatmentManagement: React.FC = () => {
 
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {canManageTreatment && tr.status === TreatmentJobStatus.BELUM_DIMULAI && (
+                        {canStartTreatment(tr) && tr.status === TreatmentJobStatus.BELUM_DIMULAI && (
                           <button
                             onClick={() => handleStartTreatment(tr.id)}
                             className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
@@ -848,7 +885,7 @@ export const TreatmentManagement: React.FC = () => {
                           </button>
                         )}
 
-                        {canFinalizeTreatment && tr.status === TreatmentJobStatus.DALAM_PROSES && (
+                        {canCompleteTreatment(tr) && tr.status === TreatmentJobStatus.DALAM_PROSES && (
                           <button
                             onClick={() => setSelectedTreatment(tr)}
                             className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
@@ -858,7 +895,7 @@ export const TreatmentManagement: React.FC = () => {
                           </button>
                         )}
 
-                        {canFinalizeTreatment && tr.status === TreatmentJobStatus.SELESAI && (
+                        {canHandOverTreatment(tr) && tr.status === TreatmentJobStatus.SELESAI && (
                           <button
                             onClick={() => handleHandOverTreatment(tr.id)}
                             className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
@@ -917,7 +954,13 @@ export const TreatmentManagement: React.FC = () => {
                   value={selectedVisitId}
                   onChange={(e) => {
                     setSelectedVisitId(e.target.value);
-                    setSelectedDoctorId("");
+                    const nextVisit = eligibleVisits.find((visit) => visit.id === e.target.value);
+                    const nextQueueItem = queueItems.find((item) => item.visitId === e.target.value);
+                    setSelectedDoctorId(
+                      nextVisit?.externalDoctorId
+                        ? nextVisit.doctorId || nextQueueItem?.doctorId || ""
+                        : ""
+                    );
                     setSelectedServiceId("");
                     setTreatmentPrice(0);
                   }}
@@ -993,21 +1036,33 @@ export const TreatmentManagement: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-700 font-semibold mb-1">Dokter Penanggung Jawab *</label>
-                <select
-                  value={selectedDoctorId}
-                  onChange={(e) => setSelectedDoctorId(e.target.value)}
-                  required
-                  disabled={currentUser?.role === UserRole.DOCTOR}
-                  className="w-full border border-slate-200 rounded-lg p-2 text-xs bg-white text-slate-800 focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100"
-                >
-                  <option value="">-- Pilih Dokter --</option>
-                  {doctorsForVisit.map((d: DentalDoctor) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name} ({d.specialization})
-                    </option>
-                  ))}
-                </select>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  {selectedVisit?.externalDoctorId ? "Dokter Eksternal yang Ditugaskan" : "Dokter Penanggung Jawab *"}
+                </label>
+                {selectedVisit?.externalDoctorId ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    {externalDoctors.find((doctor) => doctor.id === selectedVisit.externalDoctorId)?.full_name
+                      || "Dokter eksternal"}
+                    <div className="mt-1 text-[11px] text-amber-800">
+                      Tindakan akan dicatat atas nama dokter eksternal ini. Identitas dokter internal pada data tindakan hanya menjadi referensi kunjungan.
+                    </div>
+                  </div>
+                ) : (
+                  <select
+                    value={selectedDoctorId}
+                    onChange={(e) => setSelectedDoctorId(e.target.value)}
+                    required
+                    disabled={currentUser?.role === UserRole.DOCTOR}
+                    className="w-full border border-slate-200 rounded-lg p-2 text-xs bg-white text-slate-800 focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100"
+                  >
+                    <option value="">-- Pilih Dokter --</option>
+                    {doctorsForVisit.map((d: DentalDoctor) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} ({d.specialization})
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {selectedVisitId && doctorsForVisit.length === 0 && (
                   <p className="mt-1.5 text-[11px] text-amber-700">
                     Tidak ada dokter yang terjadwal atau terhubung sebagai penanggung jawab kunjungan ini. Periksa data dokter dan jadwal cabang.
@@ -1178,7 +1233,7 @@ export const TreatmentManagement: React.FC = () => {
                   </div>
                 )}
 
-                {selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && canFinalizeTreatment && (
+                {selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && canCompleteTreatment(selectedTreatment) && (
                   <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
                     <div className="flex items-center gap-2 text-xs font-bold text-emerald-800">
                       <PackageMinus className="h-4 w-4" /> Resep Bahan Otomatis
@@ -1209,7 +1264,7 @@ export const TreatmentManagement: React.FC = () => {
                           </p>
                         )}
                         <p className="text-[10px] leading-relaxed text-emerald-800">
-                          Stok resep akan dipotong ketika dokter menyelesaikan tindakan. Bahan yang sudah dicatat manual untuk tindakan ini tidak dipotong dua kali.
+                          Stok resep dipotong ketika tindakan diselesaikan. Bahan yang sudah dicatat manual untuk tindakan ini tidak dipotong dua kali.
                         </p>
                       </>
                     )}
