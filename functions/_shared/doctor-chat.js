@@ -95,7 +95,14 @@ async function supabaseRequest({ url, apiKey, accessToken, path, method = "GET",
   }
 
   if (response.status === 204) return null;
-  return response.json();
+  const responseText = await response.text();
+  if (!responseText.trim()) return null;
+  try {
+    return JSON.parse(responseText);
+  } catch (error) {
+    console.error("[pages-function] Doctor chat Supabase returned invalid JSON:", error);
+    throw new ChatApiError("Layanan chat mengirim respons yang tidak valid.", 502);
+  }
 }
 
 export async function authenticateDoctor(request, env) {

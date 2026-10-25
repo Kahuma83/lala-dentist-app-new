@@ -69,7 +69,7 @@ function createDoctorFetch(unreadMessages: Array<{ id: string }> = []) {
       return new Response(JSON.stringify(unreadMessages), { status: 200 });
     }
     if (url.includes("/rest/v1/doctor_chat_push_subscriptions?")) {
-      return new Response(null, { status: 204 });
+      return new Response(null, { status: 201 });
     }
     throw new Error(`Unexpected chat test request: ${url}`);
   });
