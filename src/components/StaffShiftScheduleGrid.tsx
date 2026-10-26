@@ -146,7 +146,18 @@ export const StaffShiftScheduleGrid: React.FC<StaffShiftScheduleGridProps> = ({
     if (currentUser?.assignedBranchId) setBranchId(currentUser.assignedBranchId);
     else if (selectedBranchId === "ALL" && currentUser?.role === UserRole.SUPER_ADMIN) setBranchId("ALL");
     else if (selectedBranchId) setBranchId(selectedBranchId);
-  }, [currentUser?.assignedBranchId, selectedBranchId]);
+    else {
+      setBranchId((currentBranchId) => {
+        if (currentBranchId === "ALL" && currentUser?.role === UserRole.SUPER_ADMIN) {
+          return currentBranchId;
+        }
+        if (branches.some((branch) => branch.id === currentBranchId && branch.isActive)) {
+          return currentBranchId;
+        }
+        return branches.find((branch) => branch.isActive)?.id || "";
+      });
+    }
+  }, [branches, currentUser?.assignedBranchId, currentUser?.role, selectedBranchId]);
 
   const weekDays = useMemo<WeekDay[]>(() => {
     const names = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"];
