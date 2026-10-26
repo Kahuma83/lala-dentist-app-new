@@ -8,7 +8,13 @@ import { AbsenceRequestManager } from "../components/AbsenceRequestManager";
 import { DoctorSchedulePosterModal } from "../components/poster/DoctorSchedulePosterModal";
 import { DoctorTimetableBoard } from "../components/DoctorTimetableBoard";
 import { DoctorExcelScheduleGrid } from "../components/DoctorExcelScheduleGrid";
+import { DoctorSchedules } from "./DoctorSchedules";
 import { MonthlyStaffRosterPlanner } from "../components/MonthlyStaffRosterPlanner";
+import {
+  StaffShiftCopyOperation,
+  StaffShiftAssignmentPayload,
+  StaffShiftScheduleGrid
+} from "../components/StaffShiftScheduleGrid";
 import { AuthService, AuthenticatedUserContext } from "../services/authService";
 import { uploadStaffProfilePhoto } from "../utils/staffProfilePhoto";
 import {
@@ -43,6 +49,8 @@ import {
   X,
   MapPin,
   CalendarRange,
+  ChevronDown,
+  ChevronUp,
   Phone,
   Mail,
   FileBadge,
@@ -79,28 +87,6 @@ const normalizeShiftTime = (value: string) => {
   return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
 };
 
-const isStandardShiftStaff = (position?: StaffPosition) =>
-  position === StaffPosition.BRANCH_ADMIN || position === StaffPosition.ASSISTANT;
-
-const getAssignmentShiftOptions = (workShifts: WorkShift[], branchId: string, position?: StaffPosition) => {
-  const branchShifts = workShifts.filter((shift) => shift.branchId === branchId);
-  if (!isStandardShiftStaff(position)) return branchShifts;
-  return branchShifts.filter((shift) =>
-    shift.active && standardStaffShiftPresets.some((preset) =>
-      normalizeShiftTime(shift.startTime) === preset.startTime &&
-      normalizeShiftTime(shift.endTime) === preset.endTime
-    )
-  );
-};
-
-const getAssignmentShiftLabel = (shift: WorkShift) => {
-  const preset = standardStaffShiftPresets.find((item) =>
-    normalizeShiftTime(shift.startTime) === item.startTime &&
-    normalizeShiftTime(shift.endTime) === item.endTime
-  );
-  return `${preset?.name || shift.name} (${shift.startTime} - ${shift.endTime})`;
-};
-
 export const HRManagement: React.FC = () => {
   const {
     currentUser,
@@ -124,7 +110,7 @@ export const HRManagement: React.FC = () => {
   const userBranchId = currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId : selectedBranchId;
 
   // URL Query Sync for Active Tab via App's lightweight Router
-  const { path: currentPath, navigate: routerNavigate } = useRouter();
+  const { path: currentPath, navigationVersion, navigate: routerNavigate } = useRouter();
   
   type HRTab = "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "absence" | "overtime";
   const getTabFromUrl = (): HRTab => {
@@ -148,14 +134,10 @@ export const HRManagement: React.FC = () => {
 
   useEffect(() => {
     const tab = getTabFromUrl();
-    if (tab === "schedules" && isSuper) {
-      routerNavigate("/super-admin/schedules");
-      return;
-    }
     if (tab && tab !== activeTab) {
       setActiveTab(tab);
     }
-  }, [currentPath, activeTab, isSuper, routerNavigate]);
+  }, [currentPath, navigationVersion, activeTab]);
 
   const handleTabChange = (tab: HRTab) => {
     setActiveTab(tab);
@@ -742,8 +724,6 @@ export const HRManagement: React.FC = () => {
   const [isDeletingStaff, setIsDeletingStaff] = useState(false);
   const [scheduleToCancel, setScheduleToCancel] = useState<DoctorSchedule | null>(null);
   const [isCancellingSchedule, setIsCancellingSchedule] = useState(false);
-  const [assignmentToRemove, setAssignmentToRemove] = useState<StaffShiftAssignment | null>(null);
-  const [isRemovingAssignment, setIsRemovingAssignment] = useState(false);
 
   const filteredStaff = useMemo(() => {
     return staff.filter((s) => {
@@ -988,50 +968,9 @@ export const HRManagement: React.FC = () => {
   // =========================================================================
   // TAB 4: SHIFT KERJA & PENUGASAN STAFF
   // =========================================================================
-  const [shiftDateFilter, setShiftDateFilter] = useState<string>(new Date().toISOString().split("T")[0]);
   const [shiftBranchFilter, setShiftBranchFilter] = useState<string>(userBranchId || "ALL");
   const [isMonthlyRosterPlannerOpen, setIsMonthlyRosterPlannerOpen] = useState(false);
-  const [isAssignShiftModalOpen, setIsAssignShiftModalOpen] = useState(false);
-  const [assignShiftForm, setAssignShiftForm] = useState({
-    staffId: staff.find((s) => s.active)?.id || "",
-    branchId: userBranchId || "branch-gebang",
-    shiftId: workShifts[0]?.id || "",
-    shiftMode: "standard" as "standard" | "custom",
-    customShiftName: "",
-    customStartTime: "08:00",
-    customEndTime: "17:00",
-    date: new Date().toISOString().split("T")[0],
-    notes: ""
-  });
-
-  const filteredShiftAssignments = useMemo(() => {
-    return staffShiftAssignments.filter((a) => {
-      if (currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.assignedBranchId) {
-        if (a.branchId !== currentUser.assignedBranchId) return false;
-      } else if (shiftBranchFilter !== "ALL") {
-        if (a.branchId !== shiftBranchFilter) return false;
-      }
-
-      if (shiftDateFilter && a.date !== shiftDateFilter) return false;
-      return true;
-    });
-  }, [staffShiftAssignments, currentUser, shiftBranchFilter, shiftDateFilter]);
-
-  const selectedAssignmentStaff = staff.find((item) => item.id === assignShiftForm.staffId);
-  const assignmentShiftOptions = getAssignmentShiftOptions(
-    workShifts,
-    assignShiftForm.branchId,
-    selectedAssignmentStaff?.position
-  );
-  const isCustomShiftValid = Boolean(
-    assignShiftForm.customShiftName.trim() &&
-    /^([01]\d|2[0-3]):[0-5]\d$/.test(assignShiftForm.customStartTime) &&
-    /^([01]\d|2[0-3]):[0-5]\d$/.test(assignShiftForm.customEndTime) &&
-    assignShiftForm.customEndTime > assignShiftForm.customStartTime
-  );
-  const isShiftAssignmentValid = assignShiftForm.shiftMode === "custom"
-    ? isCustomShiftValid
-    : assignmentShiftOptions.some((shift) => shift.id === assignShiftForm.shiftId);
+  const [isMasterShiftCollapsed, setIsMasterShiftCollapsed] = useState(false);
 
   const handleCreateStandardStaffShifts = async () => {
     if (!isSuper) {
@@ -1091,63 +1030,113 @@ export const HRManagement: React.FC = () => {
     }
   };
 
-  const handleSaveShiftAssignment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (assignShiftForm.shiftMode === "custom" && !isCustomShiftValid) {
-      showError("Isi nama shift dan jam yang valid. Jam selesai harus lebih akhir dari jam mulai.");
-      return;
-    }
-    if (assignShiftForm.shiftMode === "standard" && !isShiftAssignmentValid) {
-      showError("Pilih shift kerja yang tersedia untuk cabang ini.");
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      await staffShiftRepo.assignStaffShift(
-        {
-          staffId: assignShiftForm.staffId,
-          branchId: assignShiftForm.branchId,
-          shiftId: assignShiftForm.shiftMode === "custom" ? null : assignShiftForm.shiftId,
-          customShiftName: assignShiftForm.shiftMode === "custom" ? assignShiftForm.customShiftName.trim() : null,
-          customStartTime: assignShiftForm.shiftMode === "custom" ? assignShiftForm.customStartTime : null,
-          customEndTime: assignShiftForm.shiftMode === "custom" ? assignShiftForm.customEndTime : null,
-          date: assignShiftForm.date,
-          active: true,
-          notes: assignShiftForm.notes
-        },
+  const handleSaveGridShiftAssignment = async (
+    assignment: StaffShiftAssignmentPayload,
+    assignmentId?: string
+  ) => {
+    if (assignmentId) {
+      await staffShiftRepo.updateAssignment(
+        assignmentId,
+        assignment,
         currentUser?.role,
         currentUser?.assignedBranchId
       );
-      showSuccess("Penugasan shift staff berhasil dicatat.");
-      setIsAssignShiftModalOpen(false);
-      await refreshData();
-    } catch (err: unknown) {
-      showError(err instanceof Error ? err.message : "Gagal menugaskan shift");
-    } finally {
-      setIsSubmitting(false);
+    } else {
+      const existing = await staffShiftRepo.getAssignments(
+        { branchId: assignment.branchId, staffId: assignment.staffId, date: assignment.date },
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
+      if (existing.length > 1) {
+        throw new Error("Ada jadwal duplikat untuk staf dan tanggal ini. Hapus record duplikat sebelum menambah jadwal.");
+      }
+      if (existing.length === 1) {
+        await staffShiftRepo.updateAssignment(
+          existing[0].id,
+          assignment,
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      } else {
+        await staffShiftRepo.assignStaffShift(
+          assignment,
+          currentUser?.role,
+          currentUser?.assignedBranchId
+        );
+      }
     }
+    await refreshData("staff_shift_assignments");
+    showSuccess("Jadwal shift berhasil disimpan.");
   };
 
-  const handleRemoveShiftAssignment = (id: string) => {
-    const item = staffShiftAssignments.find((a) => a.id === id);
-    if (item) {
-      setAssignmentToRemove(item);
-    }
+  const handleDeleteGridShiftAssignment = async (assignment: StaffShiftAssignment) => {
+    await staffShiftRepo.removeAssignment(
+      assignment.id,
+      currentUser?.role,
+      currentUser?.assignedBranchId
+    );
+    await refreshData("staff_shift_assignments");
+    showSuccess("Jadwal shift berhasil dihapus.");
   };
 
-  const handleConfirmRemoveAssignment = async () => {
-    if (!assignmentToRemove) return;
-    setIsRemovingAssignment(true);
-    try {
-      await staffShiftRepo.removeAssignment(assignmentToRemove.id, currentUser?.role, currentUser?.assignedBranchId);
-      showSuccess("Penugasan shift berhasil dihapus.");
-      setAssignmentToRemove(null);
-      await refreshData();
-    } catch (err: unknown) {
-      showError(err instanceof Error ? err.message : "Gagal menghapus penugasan shift");
-    } finally {
-      setIsRemovingAssignment(false);
+  const handleCopyStaffShiftWeek = async (operations: StaffShiftCopyOperation[]) => {
+    if (!operations.length) return { copied: 0, errors: [] };
+    const branchIds = [...new Set(operations.map(({ source }) => source.branchId))];
+    const currentAssignments = (await Promise.all(branchIds.map((branchId) =>
+      staffShiftRepo.getAssignments(
+        { branchId },
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      )
+    ))).flat();
+    const errors: string[] = [];
+    let copied = 0;
+
+    for (const { source, targetDate } of operations) {
+      const matching = currentAssignments.filter((assignment) =>
+        assignment.branchId === source.branchId &&
+        assignment.staffId === source.staffId &&
+        assignment.date === targetDate
+      );
+      if (matching.length > 1) {
+        errors.push(`${source.staffId} pada ${targetDate}: terdapat jadwal duplikat.`);
+        continue;
+      }
+      const payload: StaffShiftAssignmentPayload = {
+        staffId: source.staffId,
+        branchId: source.branchId,
+        shiftId: source.shiftId,
+        customShiftName: source.customShiftName,
+        customStartTime: source.customStartTime,
+        customEndTime: source.customEndTime,
+        date: targetDate,
+        active: true,
+        notes: source.notes
+      };
+      try {
+        if (matching.length === 1) {
+          await staffShiftRepo.updateAssignment(
+            matching[0].id,
+            payload,
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+        } else {
+          const inserted = await staffShiftRepo.assignStaffShift(
+            payload,
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+          currentAssignments.push(inserted);
+        }
+        copied += 1;
+      } catch (error: unknown) {
+        errors.push(`${source.staffId} pada ${targetDate}: ${error instanceof Error ? error.message : "gagal disimpan."}`);
+      }
     }
+
+    if (copied > 0) await refreshData("staff_shift_assignments");
+    return { copied, errors };
   };
 
   return (
@@ -1244,20 +1233,18 @@ export const HRManagement: React.FC = () => {
           Master SDM & Staff ({staff.length})
         </button>
 
-        {!isSuper && (
-          <button
-            onClick={() => handleTabChange("schedules")}
-            className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
-              activeTab === "schedules"
-                ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
-                : "border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300"
-            }`}
-            id="tab-schedules-button"
-          >
-            <CalendarRange className="w-4 h-4" />
-            Jadwal Dokter ({doctorSchedules.length})
-          </button>
-        )}
+        <button
+          onClick={() => handleTabChange("schedules")}
+          className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
+            activeTab === "schedules"
+              ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
+              : "border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300"
+          }`}
+          id="tab-schedules-button"
+        >
+          <CalendarRange className="w-4 h-4" />
+          Jadwal Dokter ({doctorSchedules.length})
+        </button>
 
         <button
           onClick={() => handleTabChange("shifts")}
@@ -1269,7 +1256,7 @@ export const HRManagement: React.FC = () => {
           id="tab-shifts-button"
         >
           <Clock className="w-4 h-4" />
-          Shift Kerja & Roster Staff
+          Jadwal Admin & Asisten
         </button>
 
         <button
@@ -1883,7 +1870,8 @@ export const HRManagement: React.FC = () => {
       {/* =========================================================================
           TAB 3 CONTENT: JADWAL DOKTER MULTI-CABANG (Timetable & List Views)
       ========================================================================= */}
-      {activeTab === "schedules" && (
+      {activeTab === "schedules" && isSuper && <DoctorSchedules embedded />}
+      {activeTab === "schedules" && !isSuper && (
         <div className="space-y-4" id="schedules-tab-content">
           {/* View Mode Toggle Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
@@ -2173,178 +2161,90 @@ export const HRManagement: React.FC = () => {
         <div className="space-y-6" id="shifts-tab-content">
           {/* Master Shift Information Cards */}
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-emerald-600" />
-              Master Shift Kerja Klinik Lala Dentist
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {workShifts.map((ws) => {
-                const br = branches.find((b) => b.id === ws.branchId);
-                return (
-                  <div key={ws.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-slate-900 text-xs">{ws.name}</span>
-                      <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                        {ws.startTime} - {ws.endTime}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-1">
-                      <Building2 className="w-3 h-3 text-slate-400" />
-                      {br?.name || ws.branchId}
-                    </div>
-                    {ws.notes && <div className="text-[10px] text-slate-400 italic mt-1">{ws.notes}</div>}
-                  </div>
-                );
-              })}
-            </div>
-            {isSuper && (
-              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-slate-100 pt-4">
-                <p className="text-[11px] text-slate-500">
-                  Shift standar pegawai: Pagi 08.00–14.00 dan Sore 14.00–21.00.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm("Tambahkan Shift Pagi dan Shift Sore standar pada cabang aktif yang belum memilikinya?")) {
-                      void handleCreateStandardStaffShifts();
-                    }
-                  }}
-                  disabled={isSubmitting}
-                  className="flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-100 disabled:opacity-50"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  {isSubmitting ? "Menyiapkan shift..." : "Siapkan Shift Pagi & Sore"}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Roster Controls */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-              <div className="flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                <input
-                  type="date"
-                  value={shiftDateFilter}
-                  onChange={(e) => setShiftDateFilter(e.target.value)}
-                  className="text-xs border border-slate-200 rounded-lg px-2.5 py-2 bg-white focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              {isSuper && (
-                <select
-                  value={shiftBranchFilter}
-                  onChange={(e) => setShiftBranchFilter(e.target.value)}
-                  className="text-xs border border-slate-200 rounded-lg px-2.5 py-2 bg-white focus:outline-none focus:border-emerald-600"
-                >
-                  <option value="ALL">Semua Cabang</option>
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-emerald-600" />
+                Master Shift Kerja Klinik Lala Dentist
+              </h3>
               <button
                 type="button"
-                onClick={() => setIsMonthlyRosterPlannerOpen(true)}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-800 shadow-sm transition-colors hover:bg-blue-100"
-                id="monthly-staff-roster-button"
+                onClick={() => setIsMasterShiftCollapsed((collapsed) => !collapsed)}
+                aria-expanded={!isMasterShiftCollapsed}
+                aria-controls="master-staff-shifts-content"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                <CalendarRange className="h-4 w-4" />
-                Isi Jadwal Otomatis 1 Bulan
+                {isMasterShiftCollapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+                {isMasterShiftCollapsed ? "Tampilkan" : "Minimalkan"}
               </button>
-              <button
-                onClick={() => {
-                  const activeStaff = staff.find((s) => s.active);
-                  const branchId = userBranchId || activeStaff?.branchId || branches[0]?.id || "";
-                  const staffId = activeStaff?.id || "";
-                  const availableShifts = getAssignmentShiftOptions(workShifts, branchId, activeStaff?.position);
-                  setAssignShiftForm({
-                    staffId,
-                    branchId,
-                    shiftId: availableShifts[0]?.id || "",
-                    shiftMode: "standard",
-                    customShiftName: "",
-                    customStartTime: "08:00",
-                    customEndTime: "17:00",
-                    date: shiftDateFilter || new Date().toISOString().split("T")[0],
-                    notes: ""
-                  });
-                  setIsAssignShiftModalOpen(true);
-                }}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-sm transition-colors"
-                id="assign-shift-button"
-              >
-                <Plus className="w-4 h-4" />
-                Tugaskan Shift ke Staff
-              </button>
+            </div>
+            <div id="master-staff-shifts-content" hidden={isMasterShiftCollapsed} className="mt-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {workShifts.map((ws) => {
+                  const br = branches.find((b) => b.id === ws.branchId);
+                  return (
+                    <div key={ws.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-slate-900 text-xs">{ws.name}</span>
+                        <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                          {ws.startTime} - {ws.endTime}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-1">
+                        <Building2 className="w-3 h-3 text-slate-400" />
+                        {br?.name || ws.branchId}
+                      </div>
+                      {ws.notes && <div className="text-[10px] text-slate-400 italic mt-1">{ws.notes}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              {isSuper && (
+                <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-slate-100 pt-4">
+                  <p className="text-[11px] text-slate-500">
+                    Shift standar pegawai: Pagi 08.00–14.00 dan Sore 14.00–21.00.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm("Tambahkan Shift Pagi dan Shift Sore standar pada cabang aktif yang belum memilikinya?")) {
+                        void handleCreateStandardStaffShifts();
+                      }
+                    }}
+                    disabled={isSubmitting}
+                    className="flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-100 disabled:opacity-50"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    {isSubmitting ? "Menyiapkan shift..." : "Siapkan Shift Pagi & Sore"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Shift Assignments Table */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-700">
-                <thead className="bg-slate-50 border-b border-slate-200 font-semibold text-slate-600">
-                  <tr>
-                    <th className="px-4 py-3">Tanggal</th>
-                    <th className="px-4 py-3">Nama Staff</th>
-                    <th className="px-4 py-3">Jabatan</th>
-                    <th className="px-4 py-3">Shift Ditugaskan</th>
-                    <th className="px-4 py-3">Cabang</th>
-                    <th className="px-4 py-3">Catatan</th>
-                    <th className="px-4 py-3 text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredShiftAssignments.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
-                        Tidak ada penugasan shift pada tanggal / filter ini.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredShiftAssignments.map((a) => {
-                      const st = staff.find((s) => s.id === a.staffId);
-                      const ws = workShifts.find((w) => w.id === a.shiftId);
-                      const br = branches.find((b) => b.id === a.branchId);
-
-                      return (
-                        <tr key={a.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="px-4 py-3 font-medium text-slate-900">{a.date}</td>
-                          <td className="px-4 py-3">
-                            <div className="font-semibold text-slate-900">{st?.fullName || a.staffId}</div>
-                            <div className="text-[10px] font-mono text-slate-400">{st?.employeeCode}</div>
-                          </td>
-                          <td className="px-4 py-3 text-slate-600">{st?.position}</td>
-                          <td className="px-4 py-3">
-                            <span className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded text-[11px] border border-emerald-200">
-                              {a.customShiftName || ws?.name || "Shift"} ({a.customStartTime || ws?.startTime || "-"} - {a.customEndTime || ws?.endTime || "-"})
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-slate-700">{br?.name || a.branchId}</td>
-                          <td className="px-4 py-3 text-slate-400">{a.notes || "-"}</td>
-                          <td className="px-4 py-3 text-right">
-                            <button
-                              onClick={() => handleRemoveShiftAssignment(a.id)}
-                              className="text-rose-600 hover:text-rose-800 font-medium text-[11px] hover:underline"
-                            >
-                              Hapus
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setIsMonthlyRosterPlannerOpen(true)}
+              className="flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-800 shadow-sm transition-colors hover:bg-blue-100"
+              id="monthly-staff-roster-button"
+            >
+              <CalendarRange className="h-4 w-4" />
+              Isi Jadwal Otomatis 1 Bulan
+            </button>
           </div>
+
+          <StaffShiftScheduleGrid
+            staff={staff}
+            branches={branches}
+            workShifts={workShifts}
+            assignments={staffShiftAssignments}
+            currentUser={currentUser}
+            selectedBranchId={shiftBranchFilter === "ALL" ? selectedBranchId : shiftBranchFilter}
+            onBranchChange={setShiftBranchFilter}
+            onSave={handleSaveGridShiftAssignment}
+            onDelete={handleDeleteGridShiftAssignment}
+            onCopyWeek={handleCopyStaffShiftWeek}
+          />
           {isMonthlyRosterPlannerOpen && (
             <MonthlyStaffRosterPlanner
               initialBranchId={
@@ -3142,192 +3042,6 @@ export const HRManagement: React.FC = () => {
         </div>
       )}
 
-      {/* 5. Modal Penugasan Shift ke Staff */}
-      {isAssignShiftModalOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-slate-200 shadow-xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm">Tugaskan Shift ke Staff</h3>
-                <p className="text-xs text-slate-500">Pilih shift standar atau atur jam custom untuk staff/admin</p>
-              </div>
-              <button onClick={() => setIsAssignShiftModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveShiftAssignment} className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Pilih Staff *</label>
-                <select
-                  value={assignShiftForm.staffId}
-                  onChange={(e) => {
-                    const staffId = e.target.value;
-                    const selectedStaff = staff.find((item) => item.id === staffId);
-                    const availableShifts = getAssignmentShiftOptions(workShifts, assignShiftForm.branchId, selectedStaff?.position);
-                    setAssignShiftForm({
-                      ...assignShiftForm,
-                      staffId,
-                      shiftId: availableShifts[0]?.id || "",
-                      shiftMode: assignShiftForm.shiftMode === "custom" ? "custom" : "standard"
-                    });
-                  }}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
-                >
-                  {staff
-                    .filter((s) => s.active && s.employmentStatus !== EmploymentStatus.INACTIVE)
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.fullName} ({s.position} - {s.employeeCode})
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Cabang Tugas *</label>
-                <select
-                  value={assignShiftForm.branchId}
-                  onChange={(e) => {
-                    const branchId = e.target.value;
-                    const availableShifts = getAssignmentShiftOptions(workShifts, branchId, selectedAssignmentStaff?.position);
-                    setAssignShiftForm({
-                      ...assignShiftForm,
-                      branchId,
-                      shiftId: availableShifts[0]?.id || "",
-                      shiftMode: assignShiftForm.shiftMode === "custom" ? "custom" : "standard"
-                    });
-                  }}
-                  disabled={currentUser?.role === UserRole.BRANCH_ADMIN}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white disabled:bg-slate-100"
-                >
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Pilih Shift Kerja *</label>
-                <select
-                  value={assignShiftForm.shiftMode === "custom" ? "__custom__" : assignShiftForm.shiftId}
-                  onChange={(e) => setAssignShiftForm({
-                    ...assignShiftForm,
-                    shiftMode: e.target.value === "__custom__" ? "custom" : "standard",
-                    shiftId: e.target.value === "__custom__" ? "" : e.target.value
-                  })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
-                >
-                  <option value="__custom__">Custom - atur jam manual</option>
-                  {assignmentShiftOptions.length === 0 && (
-                    <option value="" disabled>
-                      {isStandardShiftStaff(selectedAssignmentStaff?.position)
-                        ? "Shift Pagi/Sore belum tersedia"
-                        : "Belum ada shift pada cabang ini"}
-                    </option>
-                  )}
-                  {assignmentShiftOptions.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {getAssignmentShiftLabel(w)}
-                    </option>
-                  ))}
-                </select>
-                {assignShiftForm.shiftMode === "custom" && (
-                  <div className="mt-3 space-y-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
-                    <div>
-                      <label className="block text-slate-600 font-semibold mb-1">Nama Jadwal *</label>
-                      <input
-                        type="text"
-                        required
-                        value={assignShiftForm.customShiftName}
-                        onChange={(e) => setAssignShiftForm({ ...assignShiftForm, customShiftName: e.target.value })}
-                        placeholder="Contoh: Shift Khusus"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-slate-600 font-semibold mb-1">Jam Mulai *</label>
-                        <input
-                          type="time"
-                          required
-                          value={assignShiftForm.customStartTime}
-                          onChange={(e) => setAssignShiftForm({ ...assignShiftForm, customStartTime: e.target.value })}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-600 font-semibold mb-1">Jam Selesai *</label>
-                        <input
-                          type="time"
-                          required
-                          value={assignShiftForm.customEndTime}
-                          onChange={(e) => setAssignShiftForm({ ...assignShiftForm, customEndTime: e.target.value })}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-white"
-                        />
-                      </div>
-                    </div>
-                    {!isCustomShiftValid && (
-                      <p className="text-[10px] text-amber-700">
-                        Jam selesai harus lebih akhir dari jam mulai dan nama jadwal wajib diisi.
-                      </p>
-                    )}
-                  </div>
-                )}
-                {assignmentShiftOptions.length === 0 && assignShiftForm.shiftMode !== "custom" && (
-                  <p className="mt-1 text-[10px] text-amber-700">
-                    {isStandardShiftStaff(selectedAssignmentStaff?.position)
-                      ? "Shift standar belum tersedia. Super Admin dapat menambahkannya melalui tombol “Siapkan Shift Pagi & Sore”."
-                      : "Belum ada shift untuk cabang ini. Super Admin perlu mengatur master shift sebelum membuat penugasan."}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Tanggal Tugas *</label>
-                <input
-                  type="date"
-                  required
-                  value={assignShiftForm.date}
-                  onChange={(e) => setAssignShiftForm({ ...assignShiftForm, date: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Catatan Tambahan</label>
-                <input
-                  type="text"
-                  value={assignShiftForm.notes}
-                  onChange={(e) => setAssignShiftForm({ ...assignShiftForm, notes: e.target.value })}
-                  placeholder="Contoh: Bertugas di Poli Bedah Mulut"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsAssignShiftModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 font-medium"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !isShiftAssignmentValid}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold"
-                >
-                  {isSubmitting ? "Menyimpan..." : "Tugaskan Shift"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Modal Konfirmasi Hapus Dokter */}
       {doctorToDelete && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
@@ -3429,43 +3143,6 @@ export const HRManagement: React.FC = () => {
                 className="px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
               >
                 {isCancellingSchedule ? "Membatalkan..." : "Ya, Batalkan Jadwal"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Konfirmasi Hapus Penugasan Shift */}
-      {assignmentToRemove && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-4">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <h3 className="text-base font-bold text-slate-900 text-center">
-              Hapus Penugasan Shift
-            </h3>
-            <p className="text-xs text-slate-600 text-center mt-2 leading-relaxed">
-              Apakah Anda yakin ingin menghapus penugasan shift staff{" "}
-              <strong>{staff.find((s) => s.id === assignmentToRemove.staffId)?.fullName || "Staff"}</strong>{" "}
-              pada tanggal <strong>{assignmentToRemove.date}</strong>?
-            </p>
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                disabled={isRemovingAssignment}
-                onClick={() => setAssignmentToRemove(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                disabled={isRemovingAssignment}
-                onClick={handleConfirmRemoveAssignment}
-                className="px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-              >
-                {isRemovingAssignment ? "Menghapus..." : "Ya, Hapus Shift"}
               </button>
             </div>
           </div>

@@ -8134,7 +8134,8 @@ export class SupabaseStaffShiftAssignmentRepository implements StaffShiftAssignm
   }
   async removeAssignment(id: string): Promise<void> {
     ensureSupabaseConnected();
-    await supabase.from("staff_shift_assignments").delete().eq("id", id);
+    const { error } = await supabase.from("staff_shift_assignments").delete().eq("id", id);
+    if (error) throw new Error(`Gagal menghapus assignment: ${error.message}`);
   }
 
   async getRotationTemplates(branchId: string): Promise<StaffShiftRotationTemplate[]> {

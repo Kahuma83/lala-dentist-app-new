@@ -34,7 +34,11 @@ const getWeekRange = (anchor: Date) => {
 };
 
 
-export const DoctorSchedules: React.FC = () => {
+interface DoctorSchedulesProps {
+  embedded?: boolean;
+}
+
+export const DoctorSchedules: React.FC<DoctorSchedulesProps> = ({ embedded = false }) => {
   const {
     currentUser,
     selectedBranchId,
@@ -336,7 +340,7 @@ export const DoctorSchedules: React.FC = () => {
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
+    <div className={embedded ? "w-full space-y-4" : "p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto"}>
       {/* Toast Notification */}
       {toastMessage && (
         <div
@@ -356,14 +360,14 @@ export const DoctorSchedules: React.FC = () => {
       )}
 
       {/* 1. Header Page Title & Quick Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
+      <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs ${embedded ? "p-3.5" : "p-6"}`}>
         <div>
           <div className="flex items-center gap-2.5">
             <div className="p-2.5 bg-[#faf6ec] text-[#8a6f27] rounded-xl border border-[#ebd4a8]/50">
               <CalendarRange className="w-6 h-6 text-[#c5a059]" />
             </div>
             <div>
-              <h1 className="text-xl sm:text-2xl font-black text-[#17233C] tracking-tight">
+              <h1 className={`${embedded ? "text-base" : "text-xl sm:text-2xl"} font-black text-[#17233C] tracking-tight`}>
                 Jadwal Praktik Dokter
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -395,7 +399,7 @@ export const DoctorSchedules: React.FC = () => {
           </button>
 
           {/* Poster Button */}
-          {isSuper && (
+          {isSuper && !embedded && (
             <button
               onClick={() => setIsPosterModalOpen(true)}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
@@ -408,12 +412,14 @@ export const DoctorSchedules: React.FC = () => {
       </div>
 
       {/* 2. Quick Tips Bar */}
-      <div className="bg-[#faf6ec]/70 border border-[#ebd4a8]/50 rounded-xl px-4 py-3 flex items-center gap-3 text-xs text-[#8a6f27]">
-        <Info className="w-4 h-4 text-[#c5a059] shrink-0" />
-        <div className="flex-1">
-          <span className="font-bold">Tips Cepat:</span> Klik langsung pada sel hari di bawah untuk menambahkan atau mengubah jam praktik dokter. Data otomatis tersimpan dan diperbarui.
+      {!embedded && (
+        <div className="bg-[#faf6ec]/70 border border-[#ebd4a8]/50 rounded-xl px-4 py-3 flex items-center gap-3 text-xs text-[#8a6f27]">
+          <Info className="w-4 h-4 text-[#c5a059] shrink-0" />
+          <div className="flex-1">
+            <span className="font-bold">Tips Cepat:</span> Klik langsung pada sel hari di bawah untuk menambahkan atau mengubah jam praktik dokter. Data otomatis tersimpan dan diperbarui.
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 3. The Excel-Style Schedule Grid Component */}
       <DoctorExcelScheduleGrid

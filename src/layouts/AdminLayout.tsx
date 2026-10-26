@@ -44,11 +44,24 @@ import {
   Boxes,
   ClipboardList,
   Plus,
-  Clock3
+  Clock3,
+  type LucideIcon
 } from "lucide-react";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
+}
+
+interface SidebarMenuItem {
+  name: string;
+  path: string;
+  icon: LucideIcon;
+  children?: SidebarMenuItem[];
+}
+
+interface SidebarMenuGroup {
+  title: string;
+  items: SidebarMenuItem[];
 }
 
 export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
@@ -70,6 +83,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [expandedMenuPaths, setExpandedMenuPaths] = useState<string[]>([]);
 
   if (!currentUser) {
     return (
@@ -120,7 +134,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const displayTagline = branding?.tagline || "Senyum Indah dimulai di Laladentist";
 
   // Super Admin sees the patient workflow first, followed by administration.
-  const superAdminMenu = [
+  const superAdminMenu: SidebarMenuGroup[] = [
     {
       title: "DASHBOARD",
       items: [{ name: "Dashboard", path: "/super-admin/dashboard", icon: LayoutDashboard }]
@@ -145,11 +159,18 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "INVENTORI STOK",
       items: [
-        { name: "Daftar Stok", path: "/super-admin/inventory", icon: Boxes },
-        { name: "Tambah Barang", path: "/super-admin/inventory/new", icon: Plus },
-        { name: "Resep Bahan Tindakan", path: "/super-admin/inventory/recipes", icon: ClipboardList },
-        { name: "Riwayat Perubahan", path: "/super-admin/inventory/history", icon: Clock3 },
-        { name: "Stok Menipis", path: "/super-admin/inventory/low-stock", icon: AlertTriangle }
+        {
+          name: "Inventori Stok",
+          path: "/super-admin/inventory",
+          icon: Boxes,
+          children: [
+            { name: "Daftar Stok", path: "/super-admin/inventory", icon: Boxes },
+            { name: "Tambah Barang", path: "/super-admin/inventory/new", icon: Plus },
+            { name: "Resep Bahan Tindakan", path: "/super-admin/inventory/recipes", icon: ClipboardList },
+            { name: "Riwayat Perubahan", path: "/super-admin/inventory/history", icon: Clock3 },
+            { name: "Stok Menipis", path: "/super-admin/inventory/low-stock", icon: AlertTriangle }
+          ]
+        }
       ]
     },
     {
@@ -169,7 +190,15 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "SDM",
       items: [
-        { name: "Manajemen SDM", path: "/super-admin/hr", icon: Users },
+        {
+          name: "Manajemen SDM",
+          path: "/super-admin/hr",
+          icon: Users,
+          children: [
+            { name: "Jadwal Dokter", path: "/super-admin/hr?tab=schedules", icon: CalendarRange },
+            { name: "Jadwal Admin & Asisten", path: "/super-admin/hr?tab=shifts", icon: Clock3 }
+          ]
+        },
         { name: "Payroll", path: "/super-admin/payroll", icon: DollarSign },
         { name: "Kompensasi Dokter", path: "/super-admin/compensation", icon: Percent }
       ]
@@ -191,7 +220,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       title: "MASTER DATA",
       items: [
         { name: "Data Pasien", path: "/super-admin/patients", icon: Users },
-        { name: "Jadwal Dokter", path: "/super-admin/schedules", icon: CalendarRange },
         { name: "Cabang Klinik", path: "/super-admin/configuration?tab=branches", icon: Building2 },
         { name: "Dokter", path: "/super-admin/configuration?tab=doctors", icon: UserCheck },
         { name: "Layanan & Tindakan", path: "/super-admin/configuration?tab=services", icon: Briefcase },
@@ -201,7 +229,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   ];
 
   // Branch Admin is ordered around a patient's visit and checkout.
-  const branchAdminMenu = [
+  const branchAdminMenu: SidebarMenuGroup[] = [
     {
       title: "BERANDA",
       items: [{ name: "Dashboard", path: "/branch-admin/dashboard", icon: LayoutDashboard }]
@@ -226,11 +254,18 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "INVENTORI STOK",
       items: [
-        { name: "Daftar Stok", path: "/branch-admin/inventory", icon: Boxes },
-        { name: "Tambah Barang", path: "/branch-admin/inventory/new", icon: Plus },
-        { name: "Resep Bahan Tindakan", path: "/branch-admin/inventory/recipes", icon: ClipboardList },
-        { name: "Riwayat Perubahan", path: "/branch-admin/inventory/history", icon: Clock3 },
-        { name: "Stok Menipis", path: "/branch-admin/inventory/low-stock", icon: AlertTriangle }
+        {
+          name: "Inventori Stok",
+          path: "/branch-admin/inventory",
+          icon: Boxes,
+          children: [
+            { name: "Daftar Stok", path: "/branch-admin/inventory", icon: Boxes },
+            { name: "Tambah Barang", path: "/branch-admin/inventory/new", icon: Plus },
+            { name: "Resep Bahan Tindakan", path: "/branch-admin/inventory/recipes", icon: ClipboardList },
+            { name: "Riwayat Perubahan", path: "/branch-admin/inventory/history", icon: Clock3 },
+            { name: "Stok Menipis", path: "/branch-admin/inventory/low-stock", icon: AlertTriangle }
+          ]
+        }
       ]
     },
     {
@@ -260,7 +295,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     }
   ];
 
-  const doctorMenu = [
+  const doctorMenu: SidebarMenuGroup[] = [
     {
       title: "PRAKTIK DOKTER",
       items: [
@@ -272,22 +307,29 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     }
   ];
 
-  const assistantMenu = [
+  const assistantMenu: SidebarMenuGroup[] = [
     {
       title: "ASISTEN DOKTER",
       items: [
         { name: "Antrean Klinik", path: "/assistant/queue", icon: ListOrdered },
         { name: "Pasien", path: "/assistant/patients", icon: Users },
         { name: "Treatment", path: "/assistant/treatments", icon: Activity },
-        { name: "Daftar Stok", path: "/assistant/inventory", icon: Boxes },
-        { name: "Usulan Resep Bahan", path: "/assistant/inventory/recipes", icon: ClipboardList },
-        { name: "Riwayat Perubahan Stok", path: "/assistant/inventory/history", icon: Clock3 },
-        { name: "Stok Menipis", path: "/assistant/inventory/low-stock", icon: AlertTriangle }
+        {
+          name: "Inventori Stok",
+          path: "/assistant/inventory",
+          icon: Boxes,
+          children: [
+            { name: "Daftar Stok", path: "/assistant/inventory", icon: Boxes },
+            { name: "Usulan Resep Bahan", path: "/assistant/inventory/recipes", icon: ClipboardList },
+            { name: "Riwayat Perubahan Stok", path: "/assistant/inventory/history", icon: Clock3 },
+            { name: "Stok Menipis", path: "/assistant/inventory/low-stock", icon: AlertTriangle }
+          ]
+        }
       ]
     }
   ];
 
-  const patientMenu = [
+  const patientMenu: SidebarMenuGroup[] = [
     {
       title: "PORTAL PASIEN",
       items: [{ name: "Antrean Saya", path: "/patient/queue", icon: ListOrdered }]
@@ -301,6 +343,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   else if (currentUser.role === UserRole.PATIENT) activeMenu = patientMenu;
 
   const currentBranchName = branches.find((b) => b.id === selectedBranchId)?.name || "Semua Cabang";
+  const isMenuItemActive = (item: SidebarMenuItem) => {
+    if (item.path.includes("?tab=")) {
+      const [basePath, queryStr] = item.path.split("?");
+      return path === basePath && window.location.search.includes(queryStr);
+    }
+    return path === item.path;
+  };
 
   return (
     <div className="min-h-screen bg-[#fafaf8] text-slate-800 font-sans flex flex-col" id="app-container">
@@ -515,31 +564,66 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 )}
                 <ul className="space-y-0.5">
                   {group.items.map((item, itemIdx) => {
-                    const isSrvTab = item.path.includes("?tab=");
-                    let isActive = false;
-                    if (isSrvTab) {
-                      const [basePath, queryStr] = item.path.split("?");
-                      isActive = path === basePath && window.location.search.includes(queryStr);
-                    } else {
-                      isActive = path === item.path;
-                    }
+                    const childIsActive = item.children?.some(isMenuItemActive) || false;
+                    const isActive = isMenuItemActive(item) || childIsActive;
+                    const isExpanded = expandedMenuPaths.includes(item.path) || childIsActive;
 
                     return (
                       <li key={itemIdx}>
-                        <Link
-                          to={item.path}
-                          className={`flex items-center gap-3 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all relative group
-                            ${isActive
-                              ? "bg-[#faf6ec] text-[#8a6f27] border-l-4 border-[#c5a059]"
-                              : "text-[#5f6673] hover:bg-[#faf6ec]/50 hover:text-[#17233C]"
-                            }
-                          `}
-                          title={item.name}
-                          onClick={() => setIsSidebarOpen(false)}
-                        >
-                          <item.icon className={`w-4 h-4 shrink-0 ${isActive ? "text-[#c5a059]" : "text-slate-400 group-hover:text-[#c5a059] transition-colors"}`} />
-                          {!isCollapsed && <span className="truncate">{item.name}</span>}
-                        </Link>
+                        <div className="flex items-center">
+                          <Link
+                            to={item.path}
+                            className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all relative group
+                              ${isActive
+                                ? "bg-[#faf6ec] text-[#8a6f27] border-l-4 border-[#c5a059]"
+                                : "text-[#5f6673] hover:bg-[#faf6ec]/50 hover:text-[#17233C]"
+                              }
+                            `}
+                            title={item.name}
+                            onClick={() => setIsSidebarOpen(false)}
+                          >
+                            <item.icon className={`w-4 h-4 shrink-0 ${isActive ? "text-[#c5a059]" : "text-slate-400 group-hover:text-[#c5a059] transition-colors"}`} />
+                            {!isCollapsed && <span className="truncate">{item.name}</span>}
+                          </Link>
+                          {item.children && !isCollapsed && (
+                            <button
+                              type="button"
+                              aria-label={`${isExpanded ? "Tutup" : "Buka"} submenu ${item.name}`}
+                              aria-expanded={isExpanded}
+                              onClick={() => setExpandedMenuPaths((current) => isExpanded
+                                ? current.filter((menuPath) => menuPath !== item.path)
+                                : [...current, item.path])}
+                              className="mr-1 rounded p-1 text-slate-400 hover:bg-[#faf6ec] hover:text-[#8a6f27]"
+                            >
+                              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                            </button>
+                          )}
+                        </div>
+                        {item.children && isExpanded && !isCollapsed && (
+                          <ul className="ml-5 mt-0.5 space-y-0.5 border-l border-slate-200 pl-2">
+                            {item.children.map((child) => {
+                              const isChildActive = isMenuItemActive(child);
+                              return (
+                                <li key={child.path}>
+                                  <Link
+                                    to={child.path}
+                                    className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-[10px] font-semibold transition-colors
+                                      ${isChildActive
+                                        ? "bg-[#faf6ec] text-[#8a6f27]"
+                                        : "text-[#5f6673] hover:bg-[#faf6ec]/50 hover:text-[#17233C]"
+                                      }
+                                    `}
+                                    title={child.name}
+                                    onClick={() => setIsSidebarOpen(false)}
+                                  >
+                                    <child.icon className={`h-3.5 w-3.5 shrink-0 ${isChildActive ? "text-[#c5a059]" : "text-slate-400"}`} />
+                                    <span className="truncate">{child.name}</span>
+                                  </Link>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
                       </li>
                     );
                   })}

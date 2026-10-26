@@ -536,7 +536,7 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
 
         {/* The Matrix Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[900px]">
+          <table className="w-full text-left border-collapse min-w-[1100px]">
             
             {/* Table Header: Days of the Week */}
             <thead>
@@ -556,7 +556,7 @@ export const DoctorExcelScheduleGrid: React.FC<DoctorExcelScheduleGridProps> = (
                 {weekDays.map((day) => (
                   <th
                     key={day.dateStr}
-                    className={`py-3 px-3 text-center border-r border-slate-200 last:border-r-0 transition-colors ${
+                    className={`min-w-28 py-3 px-2 text-center border-r border-slate-200 last:border-r-0 transition-colors ${
                       day.isToday ? "bg-emerald-100/70 text-emerald-950 font-black" : ""
                     }`}
                   >

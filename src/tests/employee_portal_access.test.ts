@@ -93,13 +93,14 @@ describe("employee portal navigation and row-level access", () => {
 
   it("provides standard morning and afternoon shifts for branch admins and assistants", () => {
     const hrManagement = fs.readFileSync(path.resolve(process.cwd(), "src/pages/HRManagement.tsx"), "utf-8");
+    const staffShiftGrid = fs.readFileSync(path.resolve(process.cwd(), "src/components/StaffShiftScheduleGrid.tsx"), "utf-8");
     expect(hrManagement).toContain('name: "Shift Pagi", startTime: "08:00", endTime: "14:00"');
     expect(hrManagement).toContain('name: "Shift Sore", startTime: "14:00", endTime: "21:00"');
-    expect(hrManagement).toContain("position === StaffPosition.BRANCH_ADMIN || position === StaffPosition.ASSISTANT");
+    expect(staffShiftGrid).toContain("person.position === StaffPosition.BRANCH_ADMIN || person.position === StaffPosition.ASSISTANT");
+    expect(staffShiftGrid).toContain('normalizeTime(shift.startTime) === "08:00"');
+    expect(staffShiftGrid).toContain('normalizeTime(shift.startTime) === "14:00"');
     expect(hrManagement).toContain("await workShiftRepo.createShift({");
     expect(hrManagement).toContain("normalizeShiftTime(shift.startTime) === preset.startTime");
-    expect(hrManagement).toContain("if (!isStandardShiftStaff(position)) return branchShifts");
-    expect(hrManagement).toContain("getAssignmentShiftOptions(workShifts, assignShiftForm.branchId, selectedStaff?.position)");
     expect(hrManagement).toContain("Siapkan Shift Pagi & Sore");
   });
 

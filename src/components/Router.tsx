@@ -2,6 +2,7 @@ import React, { useState, useEffect, createContext, useContext } from "react";
 
 interface RouterContextType {
   path: string;
+  navigationVersion: number;
   navigate: (newPath: string) => void;
 }
 
@@ -13,11 +14,13 @@ export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const initial = window.location.pathname;
     return initial === "/" || !initial ? "/login" : initial;
   });
+  const [navigationVersion, setNavigationVersion] = useState(0);
 
   useEffect(() => {
     const handlePopState = () => {
       const current = window.location.pathname;
       setPath(current === "/" ? "/login" : current);
+      setNavigationVersion((version) => version + 1);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -27,10 +30,11 @@ export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const destination = new URL(newPath, window.location.origin);
     window.history.pushState({}, "", destination);
     setPath(destination.pathname);
+    setNavigationVersion((version) => version + 1);
   };
 
   return (
-    <RouterContext.Provider value={{ path, navigate }}>
+    <RouterContext.Provider value={{ path, navigationVersion, navigate }}>
       {children}
     </RouterContext.Provider>
   );
