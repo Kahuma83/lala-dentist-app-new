@@ -53,7 +53,7 @@ describe("Accounting Phase 1: Chart of Accounts, Journal Engine & General Ledger
 
   it("Test 3: Create a new Liability account with CREDIT normal balance", async () => {
     const acc = await accountingRepo.createAccount({
-      code: "2050",
+      code: "2070",
       name: "Hutang PPh 21 Dokter",
       accountType: AccountType.LIABILITY,
       accountCategory: AccountCategory.TAX_PAYABLE,
@@ -62,14 +62,14 @@ describe("Accounting Phase 1: Chart of Accounts, Journal Engine & General Ledger
       isActive: true
     });
 
-    expect(acc.code).toBe("2050");
+    expect(acc.code).toBe("2070");
     expect(acc.accountType).toBe(AccountType.LIABILITY);
     expect(acc.normalBalance).toBe(NormalBalance.CREDIT);
   });
 
   it("Test 4: Create a new Expense account with DEBIT normal balance", async () => {
     const acc = await accountingRepo.createAccount({
-      code: "5070",
+      code: "5080",
       name: "Beban Pelatihan & Seminar Dokter",
       accountType: AccountType.EXPENSE,
       accountCategory: AccountCategory.OTHER_OPERATING_EXPENSE,
@@ -78,7 +78,7 @@ describe("Accounting Phase 1: Chart of Accounts, Journal Engine & General Ledger
       isActive: true
     });
 
-    expect(acc.code).toBe("5070");
+    expect(acc.code).toBe("5080");
     expect(acc.accountType).toBe(AccountType.EXPENSE);
     expect(acc.normalBalance).toBe(NormalBalance.DEBIT);
   });

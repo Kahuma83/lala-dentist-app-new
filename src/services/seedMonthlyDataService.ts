@@ -157,6 +157,7 @@ export async function resetMonthlyDummyData(): Promise<void> {
   const db = MockDatabase.getInstance();
 
   const isDemo = (id?: string) => id && id.startsWith(DEMO_PREFIX);
+  const demoInvoiceIds = new Set(db.invoices.filter(invoice => isDemo(invoice.id)).map(invoice => invoice.id));
 
   // Filter out demo items
   db.patients = db.patients.filter(p => !isDemo(p.id));
@@ -167,7 +168,7 @@ export async function resetMonthlyDummyData(): Promise<void> {
   db.treatmentJobs = db.treatmentJobs.filter(t => !isDemo(t.id));
   db.treatmentActivities = db.treatmentActivities.filter(a => !isDemo(a.id));
   db.invoices = db.invoices.filter(i => !isDemo(i.id));
-  db.invoiceItems = db.invoiceItems.filter(item => !isDemo(item.id));
+  db.invoiceItems = db.invoiceItems.filter(item => !isDemo(item.id) && !demoInvoiceIds.has(item.invoiceId));
   db.payments = db.payments.filter(p => !isDemo(p.id));
   db.accruals = db.accruals.filter(a => !isDemo(a.id) && !a.sourceId?.startsWith(DEMO_PREFIX));
   db.payrolls = db.payrolls.filter(p => !isDemo(p.id) && !(p.month === 9 && p.year === 2026));
@@ -571,13 +572,6 @@ export async function seedMonthlyDummyData(): Promise<SeedMonthlyReport> {
         timestamp: `${dateStr}T${String(hour).padStart(2, "0")}:42:00Z`
       };
       db.treatmentActivities.push(actAssistant);
-
-      // Trigger automatic compensation accruals for Doctor and Assistant!
-      try {
-        await compRepo.calculateAndAccrueForTreatment(jobId);
-      } catch {
-        // Fallback manual accrual if strict validation requires specific preconditions
-      }
     }
   }
 
@@ -607,6 +601,7 @@ export async function seedMonthlyDummyData(): Promise<SeedMonthlyReport> {
       items: [
         {
           serviceId: service.id,
+          treatmentJobId: treatment.id,
           descriptionSnapshot: service.name,
           unitPriceSnapshot: unitPrice,
           quantity: 1,
@@ -684,6 +679,11 @@ export async function seedMonthlyDummyData(): Promise<SeedMonthlyReport> {
           } catch {}
         }
       }
+    }
+
+    const settledInvoice = await invoiceRepo.getInvoiceById(createdInv.id);
+    if (settledInvoice?.status === InvoiceStatus.PAID) {
+      await compRepo.calculateAndAccrueForTreatment(treatment.id);
     }
   }
 

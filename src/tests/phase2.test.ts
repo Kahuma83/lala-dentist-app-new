@@ -458,6 +458,6 @@ describe("Lala Dentist Web Admin - Phase 2 Booking & H-1 Confirmation Tests", ()
         doctorId: "doc-syafira",
         bookingDateTime: "2026-10-15T14:00:00Z"
       })
-    ).rejects.toThrow("Dokter sudah memiliki jadwal booking aktif pada slot waktu tersebut");
+    ).rejects.toThrow(/Jadwal dokter bertabrakan dengan booking aktif/);
   });
 });

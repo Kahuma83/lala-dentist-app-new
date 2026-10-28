@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MockDatabase } from "../data/mockData";
+import { AppClock } from "../utils/clock";
 import { MockQueueRepository, MockTreatmentRepository, MockPatientRepository, MockCompensationRepository } from "../repositories/mockRepositories";
 import { UserRole, QueueStatus, TreatmentActivityType, TreatmentJobStatus, ScheduleStatus } from "../types/domain";
 
@@ -12,6 +13,7 @@ describe("PHASE 9F — DOCTOR UI, ASSISTANT CONTROL & DYNAMIC TREATMENT TIME", (
 
   beforeEach(() => {
     MockDatabase.resetInstance();
+    AppClock.setFixedTime("2026-09-24T08:00:00Z");
     db = MockDatabase.getInstance();
     queueRepo = new MockQueueRepository();
     treatmentRepo = new MockTreatmentRepository();
