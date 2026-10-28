@@ -4839,22 +4839,6 @@ export class SupabasePaymentRepository implements PaymentRepository {
         throw new Error("Pembayaran tidak dapat disimpan: invoice atau staf yang valid tidak ditemukan.");
       }
 
-      const { data: invoiceSnapshot, error: invoiceSnapshotError } = await supabase
-        .from("invoices")
-        .select("net_amount, paid_amount, outstanding_amount")
-        .eq("id", data.invoiceId)
-        .maybeSingle();
-
-      if (invoiceSnapshotError) {
-        throw new Error(`Gagal memuat status invoice untuk snapshot pembayaran: ${invoiceSnapshotError.message}`);
-      }
-
-      const prevNet = Number(invoiceSnapshot?.net_amount ?? 0);
-      const prevPaid = Number(invoiceSnapshot?.paid_amount ?? 0);
-      const prevOutstanding = Number(invoiceSnapshot?.outstanding_amount ?? Math.max(0, prevNet - prevPaid));
-      const nextPaid = prevPaid + data.amount;
-      const nextOutstanding = Math.max(0, prevNet - nextPaid);
-
       const { data: created, error } = await supabase.rpc("record_invoice_payment_atomic", {
         p_invoice_id: data.invoiceId,
         p_amount: data.amount,
@@ -4862,10 +4846,7 @@ export class SupabasePaymentRepository implements PaymentRepository {
         p_reference_number: data.referenceNumber || null,
         p_staff_id: data.staffId,
         p_payment_id: data.customId && isValidUUID(data.customId) ? data.customId : null,
-        p_receipt_number: data.customReceiptNumber || null,
-        p_invoice_net_amount_snapshot: prevNet,
-        p_invoice_paid_amount_snapshot: nextPaid,
-        p_invoice_outstanding_amount_snapshot: nextOutstanding
+        p_receipt_number: data.customReceiptNumber || null
       });
       if (error) {
         throw new Error(`Gagal menyimpan pembayaran di Supabase: ${error.message}`);
