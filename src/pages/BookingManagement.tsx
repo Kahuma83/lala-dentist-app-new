@@ -134,8 +134,10 @@ export const BookingManagement: React.FC = () => {
   const [isPatientSaving, setIsPatientSaving] = useState(false);
   const [patientEditError, setPatientEditError] = useState<string | null>(null);
   const [patientEditSuccess, setPatientEditSuccess] = useState<string | null>(null);
+  const [patientEditInitialRM, setPatientEditInitialRM] = useState("");
   const [patientEditDraft, setPatientEditDraft] = useState({
     fullName: "",
+    medicalRecordNumber: "",
     phone: "",
     identityDocumentType: "NIK" as "NIK" | "PASSPORT",
     identityDocumentNumber: "",
@@ -616,6 +618,7 @@ export const BookingManagement: React.FC = () => {
     if (!selectedBooking) return;
     setPatientEditError(null);
     setPatientEditSuccess(null);
+    setPatientEditInitialRM("");
     setIsPatientEditorOpen(true);
     setIsPatientLoading(true);
     try {
@@ -625,8 +628,11 @@ export const BookingManagement: React.FC = () => {
         currentUser?.assignedBranchId
       );
       if (!patient) throw new Error("Profil pasien tidak ditemukan.");
+      const branchRM = getPatientMedicalRecordNumber(patient, selectedBooking.branchId);
+      setPatientEditInitialRM(branchRM);
       setPatientEditDraft({
         fullName: patient.fullName || patient.name || "",
+        medicalRecordNumber: branchRM,
         phone: patient.phone || "",
         identityDocumentType: patient.identityDocumentType || "NIK",
         identityDocumentNumber: patient.identityDocumentNumber || "",
@@ -667,6 +673,20 @@ export const BookingManagement: React.FC = () => {
 
     setIsPatientSaving(true);
     try {
+      const medicalRecordNumber = patientEditDraft.medicalRecordNumber.trim();
+      if (
+        medicalRecordNumber &&
+        !patientEditInitialRM &&
+        (currentUser?.role === UserRole.BRANCH_ADMIN || currentUser?.role === UserRole.SUPER_ADMIN)
+      ) {
+        await repos.patient.registerPatientBranchMedicalRecordNumber(
+          selectedBooking.patientId,
+          selectedBooking.branchId,
+          medicalRecordNumber,
+          currentUser.role,
+          currentUser.assignedBranchId
+        );
+      }
       await repos.patient.updatePatient(
         selectedBooking.patientId,
         {
@@ -2557,6 +2577,24 @@ export const BookingManagement: React.FC = () => {
                       <p className="py-3 text-center text-xs text-slate-500">Memuat data pasien...</p>
                     ) : (
                       <>
+                        {(currentUser?.role === UserRole.BRANCH_ADMIN || currentUser?.role === UserRole.SUPER_ADMIN) && (
+                          <label className="block text-[10px] font-semibold text-slate-700">
+                            Nomor Rekam Medis (No. RM)
+                            <input
+                              type="text"
+                              value={patientEditDraft.medicalRecordNumber}
+                              onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, medicalRecordNumber: event.target.value }))}
+                              placeholder="Isi No. RM pasien"
+                              aria-label="Nomor Rekam Medis pasien"
+                              maxLength={50}
+                              readOnly={Boolean(patientEditInitialRM)}
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 text-xs read-only:bg-slate-100"
+                            />
+                            <span className="mt-1 block font-normal text-slate-500">
+                              No. RM yang sudah terdaftar di cabang tidak dapat diganti.
+                            </span>
+                          </label>
+                        )}
                         <input
                           type="text"
                           value={patientEditDraft.fullName}
