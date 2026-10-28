@@ -1547,6 +1547,18 @@ export const MOCK_CHART_OF_ACCOUNTS: ChartOfAccount[] = [
     updatedAt: "2026-01-01T00:00:00Z"
   },
   {
+    id: "coa-5080",
+    code: "5080",
+    name: "Beban Dokter Pengganti",
+    accountType: AccountType.EXPENSE,
+    accountCategory: AccountCategory.DOCTOR_REPLACEMENT_EXPENSE,
+    normalBalance: NormalBalance.DEBIT,
+    isActive: true,
+    description: "Honor harian dan insentif tindakan dokter pengganti eksternal",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z"
+  },
+  {
     id: "coa-5020",
     code: "5020",
     name: "Beban Insentif Staff (Incentive Expense)",

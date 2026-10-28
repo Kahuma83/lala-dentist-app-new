@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { calculatePayrollTax } from "../utils/payrollTax";
 import { MockDatabase } from "../data/mockData";
 import { MockPayrollRepository } from "../repositories/mockRepositories";
-import { StaffCompensationRule } from "../types/domain";
+import { AttendanceStatus, StaffCompensationRule } from "../types/domain";
 
 describe("calculatePayrollTax", () => {
   it("calculates flexible percentage deductions from gross income", () => {
@@ -85,5 +85,64 @@ describe("calculatePayrollTax", () => {
     expect(kampusItems.some((item) => item.sourceId === "sharing-gebang")).toBe(false);
     expect(gebangTax?.amountSnapshot).toBe(Math.round(gebangGross * 0.025));
     expect(kampusTax?.amountSnapshot).toBe(Math.round(kampusGross * 0.05));
+  });
+
+  it("counts doctor sitting-fee attendance only for the payroll branch", async () => {
+    const db = MockDatabase.resetInstance();
+    const payrollRepo = new MockPayrollRepository();
+    const staffId = "staff-doc-syafira";
+    const doctor = db.doctors.find((candidate) => candidate.staffId === staffId)!;
+    db.doctorSchedules = db.doctorSchedules.filter((schedule) => schedule.doctorId !== doctor.id);
+    db.attendances = db.attendances.filter((attendance) =>
+      attendance.staffId !== staffId && attendance.staffId !== doctor.id
+    );
+    db.rules = db.rules.filter((rule) =>
+      rule.staffId !== staffId && rule.staffId !== doctor.id
+    );
+    db.rules.push(
+      {
+        id: "sitting-gebang",
+        staffId,
+        name: "Sitting Gebang",
+        ruleTypeSnapshot: "DOCTOR_SITTING_FEE",
+        valueSnapshot: 10_000,
+        isActive: true,
+        branchId: "branch-gebang",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      },
+      {
+        id: "sitting-kampus",
+        staffId,
+        name: "Sitting Kampus",
+        ruleTypeSnapshot: "DOCTOR_SITTING_FEE",
+        valueSnapshot: 20_000,
+        isActive: true,
+        branchId: "branch-kampus",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      }
+    );
+    const attendanceTemplate = db.attendances[0];
+    for (const [index, branchId] of ["branch-gebang", "branch-gebang", "branch-kampus"].entries()) {
+      db.attendances.push({
+        ...attendanceTemplate,
+        id: `sitting-attendance-${index}`,
+        staffId,
+        branchId,
+        date: `2026-10-${String(index + 1).padStart(2, "0")}`,
+        attendanceStatus: AttendanceStatus.PRESENT
+      });
+    }
+
+    const gebang = await payrollRepo.generateMonthlyPayroll(staffId, 10, 2026, 1_000_000, false, "branch-gebang");
+    const kampus = await payrollRepo.generateMonthlyPayroll(staffId, 10, 2026, 1_000_000, false, "branch-kampus");
+    const gebangSittingFee = (await payrollRepo.getPayrollItems(gebang.id))
+      .find((item) => item.descriptionSnapshot.includes("Sitting Fee"));
+    const kampusSittingFee = (await payrollRepo.getPayrollItems(kampus.id))
+      .find((item) => item.descriptionSnapshot.includes("Sitting Fee"));
+
+    expect(gebangSittingFee?.amountSnapshot).toBe(20_000);
+    expect(kampusSittingFee?.amountSnapshot).toBe(20_000);
   });
 });

@@ -6559,7 +6559,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
 
     const { data: invoices, error: invoicesError } = await supabase
       .from("invoices")
-      .select("id, patient_id, net_amount, total_amount, updated_at")
+      .select("id, patient_id, net_amount, total_amount, discount_amount, updated_at")
       .eq("visit_id", job.visit_id)
       .eq("status", "PAID");
     if (invoicesError) throw new Error(`Gagal memeriksa pelunasan invoice tindakan: ${invoicesError.message}`);
@@ -6578,7 +6578,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
 
     const allocations = allocateInvoiceNetToLines(
       (invoiceItems || []).map((item: any) => ({ id: item.id, amount: Number(item.amount) || 0 })),
-      Number(invoice.net_amount) || 0
+      Math.max(0, (Number(invoice.total_amount) || 0) - (Number(invoice.discount_amount) || 0))
     );
     const baseAmount = allocations.get(linkedItems[0].id) || 0;
 
@@ -6852,6 +6852,7 @@ export class SupabasePayrollRepository implements PayrollRepository {
       }
     }
     if (!staff) throw new Error("Karyawan tidak ditemukan untuk payroll.");
+    const isDoctor = staff.position === StaffPosition.DOCTOR || Boolean(doctor);
 
     let branchId = requestedBranchId || staff.branch_id || null;
     if (!branchId) {
@@ -6951,7 +6952,7 @@ export class SupabasePayrollRepository implements PayrollRepository {
       candidateIds.has(row.staff_id) && (!branchId || row.branch_id === branchId)
     );
     const overtimes = (overtimeResult.data || []).filter((row: any) =>
-      candidateIds.has(row.staff_id) && (!branchId || row.branch_id === branchId)
+      !isDoctor && candidateIds.has(row.staff_id) && (!branchId || row.branch_id === branchId)
     );
     const absenceByDate = new Map<string, any>();
     for (const row of attendanceResult.data || []) {
@@ -6981,7 +6982,6 @@ export class SupabasePayrollRepository implements PayrollRepository {
       throw new Error("Draft tidak dibuat: tidak ada aturan gaji pokok aktif untuk periode ini.");
     }
     const salary = Number(baseSalary ?? baseRule?.value_snapshot ?? 0);
-    const isDoctor = staff.position === StaffPosition.DOCTOR || Boolean(doctor);
     if (!Number.isFinite(salary) || salary < 0) {
       throw new Error("Gaji pokok harus berupa nominal nol atau lebih.");
     }
@@ -7033,37 +7033,13 @@ export class SupabasePayrollRepository implements PayrollRepository {
       updated_at: now
     };
 
-    let payrollRow = existing;
-    if (existing) {
-      const { error: clearItemsError } = await supabase.from("payroll_items").delete().eq("payroll_id", existing.id);
-      if (clearItemsError) throw new Error(`Gagal memperbarui rincian payroll lama: ${clearItemsError.message}`);
-      const { data, error } = await supabase
-        .from("monthly_payrolls")
-        .update(payrollPayload)
-        .eq("id", existing.id)
-        .select("*")
-        .single();
-      if (error) throw new Error(`Gagal memperbarui payroll: ${error.message}`);
-      payrollRow = data;
-    } else {
-      const { data, error } = await supabase
-        .from("monthly_payrolls")
-        .insert({ ...payrollPayload, created_at: now })
-        .select("*")
-        .single();
-      if (error) throw new Error(`Gagal membuat payroll: ${error.message}`);
-      payrollRow = data;
-    }
-
     const payrollItems = [
       {
-        payroll_id: payrollRow.id,
         description_snapshot: `Gaji Pokok Periode ${month}/${year}`,
         amount_snapshot: Math.round(salary),
         type: "EARNING"
       },
       ...accruals.map((row: any) => ({
-        payroll_id: payrollRow.id,
         description_snapshot: row.rule_type_snapshot === "ADMIN_REFERRAL"
           ? `Insentif Referral Admin (#${row.source_id || row.id})`
           : isDoctor
@@ -7074,13 +7050,11 @@ export class SupabasePayrollRepository implements PayrollRepository {
         source_id: row.id
       })),
       ...(sittingFeeAmount > 0 ? [{
-        payroll_id: payrollRow.id,
         description_snapshot: `Sharing Dokter - Doctor Sitting Fee (${sittingFeeSessionCount} sesi)`,
         amount_snapshot: sittingFeeAmount,
         type: "EARNING"
       }] : []),
       ...replacementAssignments.map((row: any) => ({
-        payroll_id: payrollRow.id,
         description_snapshot: `Upah Pengganti (${row.covered_date}; gaji pegawai digantikan Rp${(Number(row.absent_base_salary_snapshot) || 0).toLocaleString("id-ID")} ÷ 25)`,
         amount_snapshot: Number(row.amount_snapshot) || 0,
         type: "EARNING",
@@ -7089,41 +7063,43 @@ export class SupabasePayrollRepository implements PayrollRepository {
       ...overtimes
         .filter((row: any) => Number(row.overtime_amount_snapshot) > 0)
         .map((row: any) => ({
-          payroll_id: payrollRow.id,
           description_snapshot: `Lembur Disetujui (${Number(row.overtime_hours) || 0} jam / ${row.date})`,
           amount_snapshot: Number(row.overtime_amount_snapshot),
           type: "EARNING",
           source_id: row.id
         })),
       ...absenceRows.map((row: any) => ({
-        payroll_id: payrollRow.id,
         description_snapshot: `Potongan Ketidakhadiran (${row.attendance_status} / ${row.date})`,
         amount_snapshot: dailyAbsenceDeduction,
         type: "DEDUCTION",
         source_id: row.id
       })),
       ...(taxRule ? [{
-        payroll_id: payrollRow.id,
         description_snapshot: `Potongan Pajak (${taxRate}% dari bruto)`,
         amount_snapshot: taxAmount,
         type: "DEDUCTION"
       }] : [])
     ];
-    const { error: itemsError } = await supabase.from("payroll_items").insert(payrollItems);
-    if (itemsError) {
-      if (!existing) {
-        const { error: cleanupError } = await supabase.from("monthly_payrolls").delete().eq("id", payrollRow.id);
-        if (cleanupError) {
-          throw new Error(`Payroll tersimpan tetapi rincian gagal disimpan (${itemsError.message}) dan pembersihan gagal (${cleanupError.message}).`);
-        }
-      }
-      throw new Error(`Payroll dihitung tetapi rincian slip gagal disimpan: ${itemsError.message}`);
-    }
+    const { data: payrollRow, error: saveError } = await supabase.rpc("save_draft_payroll_with_items", {
+      p_payroll_id: existing?.id || null,
+      p_payroll_payload: payrollPayload,
+      p_payroll_items: payrollItems
+    });
+    if (saveError) throw new Error(`Gagal menyimpan payroll dan rincian slip secara konsisten: ${saveError.message}`);
+    if (!payrollRow) throw new Error("Payroll tidak dapat disimpan: server tidak mengembalikan data payroll.");
 
     return this.mapPayrollFromDb(payrollRow);
   }
   async updatePayrollStatus(id: string, status: PayrollStatus): Promise<MonthlyPayroll> {
     ensureSupabaseConnected();
+    if (status === PayrollStatus.PAID) {
+      const { data, error } = await supabase.rpc("mark_payroll_paid_and_overtime", {
+        p_payroll_id: id
+      });
+      if (error) throw new Error(`Gagal menandai payroll dan lembur terkait sebagai PAID: ${error.message}`);
+      if (!data) throw new Error("Payroll tidak ditemukan atau tidak dapat ditandai PAID.");
+      return this.mapPayrollFromDb(data);
+    }
     const { data, error } = await supabase
       .from("monthly_payrolls")
       .update({ status, updated_at: AppClock.nowISO() })
@@ -8578,6 +8554,15 @@ export class SupabaseOvertimeRepository implements OvertimeRepository {
     const item = await this.getById(id);
     if (!item) throw new Error("Catatan lembur tidak ditemukan.");
     if (item.status !== OvertimeStatus.SUBMITTED) throw new Error("Hanya catatan SUBMITTED yang dapat disetujui.");
+    const { data: staff, error: staffError } = await supabase
+      .from("staff")
+      .select("position")
+      .eq("id", item.staffId)
+      .maybeSingle();
+    if (staffError) throw new Error(`Gagal memeriksa jabatan staf untuk persetujuan lembur: ${staffError.message}`);
+    if (!staff || ![StaffPosition.BRANCH_ADMIN, StaffPosition.ASSISTANT].includes(staff.position)) {
+      throw new Error("Lembur hanya dapat disetujui untuk Asisten Dokter dan Admin Cabang.");
+    }
     const payableMinutes = approvedOvertimeMinutes ?? item.overtimeMinutes;
     if (!Number.isInteger(payableMinutes) || payableMinutes <= 0 || payableMinutes > item.overtimeMinutes) {
       throw new Error("Durasi lembur yang disetujui harus berupa menit positif dan tidak boleh melebihi durasi aktual.");

@@ -115,7 +115,9 @@ export const Expenses: React.FC = () => {
       const isPayrollOrComp =
         code === "5000" ||
         code === "5010" ||
+        code === "5080" ||
         code === "5020" ||
+        a.accountCategory === AccountCategory.DOCTOR_REPLACEMENT_EXPENSE ||
         nameLower.includes("gaji") ||
         nameLower.includes("insentif") ||
         nameLower.includes("biaya dokter") ||

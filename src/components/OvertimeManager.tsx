@@ -196,8 +196,9 @@ export const OvertimeManager: React.FC = () => {
     const submitted = list.filter(o => o.status === OvertimeStatus.SUBMITTED).reduce((acc, o) => acc + o.overtimeMinutes, 0);
     const approved = list.filter(o => o.status === OvertimeStatus.APPROVED).reduce((acc, o) => acc + (o.approvedOvertimeMinutes ?? o.overtimeMinutes), 0);
     const rejected = list.filter(o => o.status === OvertimeStatus.REJECTED).reduce((acc, o) => acc + o.overtimeMinutes, 0);
+    const paid = list.filter(o => o.status === OvertimeStatus.PAID).reduce((acc, o) => acc + (o.approvedOvertimeMinutes ?? o.overtimeMinutes), 0);
 
-    return { detected, submitted, approved, rejected };
+    return { detected, submitted, approved, rejected, paid };
   }, [overtimes, isBranchAdmin, userBranchId]);
 
   return (
@@ -249,7 +250,7 @@ export const OvertimeManager: React.FC = () => {
       )}
 
       {/* Summary Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-4">
           <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
             <Clock className="w-5 h-5" />
@@ -297,6 +298,18 @@ export const OvertimeManager: React.FC = () => {
             </h4>
           </div>
         </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Paid (Sudah Dibayar)</p>
+            <h4 className="text-lg font-bold text-slate-900 mt-0.5">
+              {(summary.paid / 60).toFixed(1)} <span className="text-xs font-normal text-slate-500">Jam ({summary.paid} mnt)</span>
+            </h4>
+          </div>
+        </div>
       </div>
 
       {/* Filters & Search */}
@@ -314,6 +327,7 @@ export const OvertimeManager: React.FC = () => {
               <option value={OvertimeStatus.DETECTED}>Detected</option>
               <option value={OvertimeStatus.SUBMITTED}>Submitted</option>
               <option value={OvertimeStatus.APPROVED}>Approved</option>
+              <option value={OvertimeStatus.PAID}>Paid</option>
               <option value={OvertimeStatus.REJECTED}>Rejected</option>
             </select>
           </div>
@@ -421,6 +435,11 @@ export const OvertimeManager: React.FC = () => {
                             <CheckCircle2 className="w-3 h-3" /> APPROVED
                           </span>
                         )}
+                        {ot.status === OvertimeStatus.PAID && (
+                          <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200/60 px-2.5 py-1 rounded-full font-semibold text-[11px]">
+                            <CheckCircle2 className="w-3 h-3" /> PAID
+                          </span>
+                        )}
                         {ot.status === OvertimeStatus.REJECTED && (
                           <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-200/60 px-2.5 py-1 rounded-full font-semibold text-[11px]">
                             <XCircle className="w-3 h-3" /> REJECTED
@@ -431,6 +450,13 @@ export const OvertimeManager: React.FC = () => {
                         {ot.status === OvertimeStatus.APPROVED && (
                           <div className="text-[11px]">
                             <span className="font-semibold text-emerald-800">Oleh: {ot.approvedBy}</span>
+                            <div>{ot.approvedOvertimeMinutes ?? ot.overtimeMinutes} menit × Rp{(ot.hourlyRateSnapshot || 0).toLocaleString("id-ID")}/jam</div>
+                            <div>Total: Rp{(ot.overtimeAmountSnapshot || 0).toLocaleString("id-ID")}{ot.isNationalHoliday ? " · Tanggal merah" : ""}</div>
+                          </div>
+                        )}
+                        {ot.status === OvertimeStatus.PAID && (
+                          <div className="text-[11px]">
+                            <span className="font-semibold text-blue-800">Dibayar melalui payroll</span>
                             <div>{ot.approvedOvertimeMinutes ?? ot.overtimeMinutes} menit × Rp{(ot.hourlyRateSnapshot || 0).toLocaleString("id-ID")}/jam</div>
                             <div>Total: Rp{(ot.overtimeAmountSnapshot || 0).toLocaleString("id-ID")}{ot.isNationalHoliday ? " · Tanggal merah" : ""}</div>
                           </div>
@@ -487,6 +513,11 @@ export const OvertimeManager: React.FC = () => {
                           {ot.status === OvertimeStatus.APPROVED && (
                             <span className="text-emerald-600 font-semibold text-[11px] flex items-center gap-1">
                               <ShieldCheck className="w-3.5 h-3.5" /> Selesai
+                            </span>
+                          )}
+                          {ot.status === OvertimeStatus.PAID && (
+                            <span className="text-blue-600 font-semibold text-[11px] flex items-center gap-1">
+                              <ShieldCheck className="w-3.5 h-3.5" /> Dibayar
                             </span>
                           )}
                         </div>

@@ -203,6 +203,28 @@ describe("HR-3: Overtime Engine & Approval - Comprehensive Test Suite", () => {
     expect(ot.overtimeAmountSnapshot).toBe(15000);
   });
 
+  it("does not allow approval of overtime assigned to a doctor", async () => {
+    AppClock.setFixedTime("2026-09-28T08:00:00Z");
+    const att = await attendanceRepo.checkIn({
+      staffId: "staff-ast-clary",
+      branchId: "branch-gebang",
+      date: "2026-09-28",
+      scheduledStartAt: "08:00",
+      scheduledEndAt: "16:00",
+      actorRole: UserRole.SUPER_ADMIN
+    });
+    AppClock.setFixedTime("2026-09-28T10:00:00Z");
+    await attendanceRepo.checkOut({ attendanceId: att.id, actorRole: UserRole.SUPER_ADMIN });
+
+    const overtime = await overtimeRepo.detectFromAttendance(att.id, UserRole.SUPER_ADMIN);
+    await overtimeRepo.submit(overtime!.id, UserRole.SUPER_ADMIN);
+    db.overtimes.find((record) => record.id === overtime!.id)!.staffId = "staff-doc-syafira";
+
+    await expect(
+      overtimeRepo.approve(overtime!.id, "Super Admin", UserRole.SUPER_ADMIN)
+    ).rejects.toThrow("Lembur hanya dapat disetujui untuk Asisten Dokter dan Admin Cabang.");
+  });
+
   it("calculates Sunday holiday overtime from approved minutes at Rp30,000 per hour", async () => {
     AppClock.setFixedTime("2026-10-04T08:00:00Z");
     const att = await attendanceRepo.checkIn({

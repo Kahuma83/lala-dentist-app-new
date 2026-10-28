@@ -395,7 +395,7 @@ export const AbsenceRequestManager: React.FC = () => {
 
       <div className="border-t border-slate-200 pt-5">
         <h3 className="text-sm font-bold text-slate-900">Honor Dokter Eksternal · Konfirmasi Tindakan</h3>
-        <p className="mt-1 text-xs text-slate-500">Masukkan total tindakan selesai untuk seluruh rentang penggantian. Honor masuk ke payroll pada bulan tanggal terakhir penggantian.</p>
+        <p className="mt-1 text-xs text-slate-500">Masukkan jumlah tindakan selesai untuk cabang dan periode yang tercantum di setiap entri. Honor dan insentif dicatat sebagai beban pada cabang tersebut.</p>
         {externalPayrollEntries.length === 0 ? <p className="py-5 text-center text-xs text-slate-500">Belum ada honor dokter eksternal.</p> : (
           <div className="mt-3 grid gap-2">
             {externalPayrollEntries.map((entry) => {
@@ -406,7 +406,7 @@ export const AbsenceRequestManager: React.FC = () => {
                     <strong>{doctor?.full_name || "Dokter eksternal"}</strong>
                     <div className="mt-1 text-slate-600">
                       {entry.staff_absence_requests?.[0]?.start_date || "Tanggal tidak tersedia"}{entry.staff_absence_requests?.[0]?.end_date && entry.staff_absence_requests[0].end_date !== entry.staff_absence_requests[0].start_date ? ` – ${entry.staff_absence_requests[0].end_date}` : ""}
-                      {" · "}{entry.covered_days} hari · {branchById.get(entry.branch_id) || "Cabang"} · Payroll {entry.payroll_month}/{entry.payroll_year} · Total {entry.action_count ?? "—"} tindakan · {money(Number(entry.amount_snapshot))}
+                      {" · "}{entry.covered_days} hari · {branchById.get(entry.branch_id) || "Cabang"} · Periode {entry.payroll_month}/{entry.payroll_year} · {entry.action_count ?? "—"} tindakan · {money(Number(entry.amount_snapshot))}
                     </div>
                     <span className="mt-1 inline-block font-semibold text-slate-500">{entry.status}</span>
                   </div>

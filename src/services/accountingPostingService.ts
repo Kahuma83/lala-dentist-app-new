@@ -45,6 +45,7 @@ export type StandardAccountKey =
   | "INCENTIVE_EXPENSE"
   | "INCENTIVE_PAYABLE"
   | "DOCTOR_FEE_EXPENSE"
+  | "DOCTOR_REPLACEMENT_EXPENSE"
   | "DOCTOR_PAYABLE"
   | "TAX_PAYABLE";
 
@@ -66,6 +67,7 @@ export class AccountingAccountResolver {
     INCENTIVE_EXPENSE: ["5020"],
     INCENTIVE_PAYABLE: ["2030"],
     DOCTOR_FEE_EXPENSE: ["5010"],
+    DOCTOR_REPLACEMENT_EXPENSE: ["5080"],
     DOCTOR_PAYABLE: ["2020"],
     TAX_PAYABLE: ["2040"]
   };
@@ -82,6 +84,7 @@ export class AccountingAccountResolver {
     INCENTIVE_EXPENSE: AccountCategory.INCENTIVE_EXPENSE,
     INCENTIVE_PAYABLE: AccountCategory.INCENTIVE_PAYABLE,
     DOCTOR_FEE_EXPENSE: AccountCategory.DOCTOR_FEE_EXPENSE,
+    DOCTOR_REPLACEMENT_EXPENSE: AccountCategory.DOCTOR_REPLACEMENT_EXPENSE,
     DOCTOR_PAYABLE: AccountCategory.DOCTOR_PAYABLE,
     TAX_PAYABLE: AccountCategory.TAX_PAYABLE
   };
@@ -1060,7 +1063,7 @@ export class AccountingPostingService {
     );
   }
 
-  async postExternalDoctorPayrollPayment(
+  async postExternalDoctorReplacementExpense(
     entry: {
       id: string;
       doctorName: string;
@@ -1068,126 +1071,80 @@ export class AccountingPostingService {
       month: number;
       year: number;
       amount: number;
+      coveredDays: number;
+      actionCount: number;
+      paymentAccountId: string;
     },
     currentUserRole: UserRole = UserRole.SUPER_ADMIN,
     userBranchId: string | null = null,
     postedBy: string = "System Auto-Post"
   ): Promise<JournalEntry> {
     if (currentUserRole !== UserRole.SUPER_ADMIN) {
-      throw new Error("Hanya Super Admin yang dapat memposting honor dokter eksternal.");
+      throw new Error("Hanya Super Admin yang dapat mencatat beban dokter pengganti eksternal.");
     }
     const amount = Math.round(Number(entry.amount));
     if (!Number.isFinite(amount) || amount <= 0) {
-      throw new Error("Nominal honor dokter eksternal harus lebih dari nol.");
+      throw new Error("Nominal beban dokter pengganti harus lebih dari nol.");
     }
-    if (!entry.branchId || !Number.isInteger(entry.month) || !Number.isInteger(entry.year)) {
-      throw new Error("Periode atau cabang honor dokter eksternal tidak valid.");
+    if (
+      !entry.branchId ||
+      !entry.paymentAccountId ||
+      !Number.isInteger(entry.month) ||
+      !Number.isInteger(entry.year) ||
+      !Number.isInteger(entry.coveredDays) ||
+      entry.coveredDays <= 0 ||
+      !Number.isInteger(entry.actionCount) ||
+      entry.actionCount < 0
+    ) {
+      throw new Error("Rincian atau akun pembayaran beban dokter pengganti tidak valid.");
     }
 
-    const sourceJournals = await this.accountingRepo.getJournalsBySource(
+    const expenseJournals = await this.accountingRepo.getJournalsBySource(
+      JournalSourceType.EXPENSE,
+      entry.id
+    );
+    const existingExpense = expenseJournals.find((journal) => journal.status !== JournalStatus.VOID);
+    if (existingExpense) {
+      return existingExpense.status === JournalStatus.POSTED
+        ? existingExpense
+        : this.accountingRepo.postJournal(existingExpense.id, postedBy, currentUserRole, userBranchId);
+    }
+
+    const legacyJournals = await this.accountingRepo.getJournalsBySource(
       JournalSourceType.PAYROLL,
       entry.id
     );
-    const existingPayment = sourceJournals.find((journal) =>
+    const legacyPayment = legacyJournals.find((journal) =>
       journal.status !== JournalStatus.VOID && journal.event === "PAYMENT"
     );
-    if (existingPayment) {
-      return existingPayment.status === JournalStatus.POSTED
-        ? existingPayment
-        : this.accountingRepo.postJournal(existingPayment.id, postedBy, currentUserRole, userBranchId);
+    if (legacyPayment) {
+      return legacyPayment.status === JournalStatus.POSTED
+        ? legacyPayment
+        : this.accountingRepo.postJournal(legacyPayment.id, postedBy, currentUserRole, userBranchId);
     }
-
-    const doctorExpense = await AccountingAccountResolver.resolveAccount(
-      this.accountingRepo,
-      "DOCTOR_FEE_EXPENSE"
-    );
-    const doctorPayable = await AccountingAccountResolver.resolveAccount(
-      this.accountingRepo,
-      "DOCTOR_PAYABLE"
-    );
-    let accrual = sourceJournals.find((journal) =>
-      journal.status !== JournalStatus.VOID && journal.event === "ACCRUAL"
-    );
-    if (!accrual) {
-      const draftAccrual = await this.accountingRepo.createDraftJournal(
-        {
-          journalDate: `${entry.year}-${String(entry.month).padStart(2, "0")}-28`,
-          branchId: entry.branchId,
-          description: `Akrual Honor Dokter Eksternal ${entry.doctorName} Periode ${entry.month}/${entry.year}`,
-          sourceType: JournalSourceType.PAYROLL,
-          sourceId: entry.id,
-          event: "ACCRUAL",
-          lines: [
-            {
-              accountId: doctorExpense.id,
-              debit: amount,
-              credit: 0,
-              branchId: entry.branchId,
-              description: `Honor dokter eksternal ${entry.doctorName}`
-            },
-            {
-              accountId: doctorPayable.id,
-              debit: 0,
-              credit: amount,
-              branchId: entry.branchId,
-              description: `Utang honor dokter eksternal ${entry.doctorName}`
-            }
-          ]
-        },
-        postedBy,
-        currentUserRole,
-        userBranchId
-      );
-      accrual = await this.accountingRepo.postJournal(
-        draftAccrual.id,
-        postedBy,
-        currentUserRole,
-        userBranchId
-      );
-    } else if (accrual.status !== JournalStatus.POSTED) {
-      accrual = await this.accountingRepo.postJournal(
-        accrual.id,
-        postedBy,
-        currentUserRole,
-        userBranchId
+    if (legacyJournals.some((journal) => journal.status !== JournalStatus.VOID)) {
+      throw new Error(
+        "Ditemukan jurnal akrual lama untuk honor ini tanpa jurnal pembayaran. Rekonsiliasikan jurnal lama sebelum membuat beban langsung agar biaya tidak tercatat dua kali."
       );
     }
 
-    const bank = await AccountingAccountResolver.resolveAccount(this.accountingRepo, "BANK");
-    const draftPayment = await this.accountingRepo.createDraftJournal(
+    const replacementExpense = await AccountingAccountResolver.resolveAccount(
+      this.accountingRepo,
+      "DOCTOR_REPLACEMENT_EXPENSE"
+    );
+    return this.postBranchExpense(
       {
-        journalDate: AppClock.nowISO().slice(0, 10),
         branchId: entry.branchId,
-        description: `Pembayaran Honor Dokter Eksternal ${entry.doctorName} Periode ${entry.month}/${entry.year}`,
-        sourceType: JournalSourceType.PAYROLL,
-        sourceId: entry.id,
-        event: "PAYMENT",
-        lines: [
-          {
-            accountId: doctorPayable.id,
-            debit: amount,
-            credit: 0,
-            branchId: entry.branchId,
-            description: `Pelunasan honor dokter eksternal ${entry.doctorName}`
-          },
-          {
-            accountId: bank.id,
-            debit: 0,
-            credit: amount,
-            branchId: entry.branchId,
-            description: `Transfer honor dokter eksternal ${entry.doctorName}`
-          }
-        ]
+        expenseAccountId: replacementExpense.id,
+        paymentAccountId: entry.paymentAccountId,
+        amount,
+        date: AppClock.nowISO().slice(0, 10),
+        description: `Honor dokter pengganti eksternal ${entry.doctorName} (${entry.coveredDays} hari, ${entry.actionCount} tindakan)`,
+        referenceNumber: entry.id
       },
-      postedBy,
       currentUserRole,
-      userBranchId
-    );
-    return this.accountingRepo.postJournal(
-      draftPayment.id,
-      postedBy,
-      currentUserRole,
-      userBranchId
+      userBranchId,
+      postedBy
     );
   }
 

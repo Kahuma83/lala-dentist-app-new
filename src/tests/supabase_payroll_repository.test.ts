@@ -5,7 +5,7 @@ import {
   SupabasePayrollRepository
 } from "../repositories/supabaseRepositories";
 import * as supabaseLib from "../lib/supabase";
-import { JournalSourceType, UserRole } from "../types/domain";
+import { JournalSourceType, PayrollStatus, UserRole } from "../types/domain";
 
 interface QueryCall {
   table: string;
@@ -102,6 +102,29 @@ describe("Supabase payroll repository", () => {
     await expect(
       payrollRepo.deletePayroll("00000000-0000-4000-8000-000000000001", UserRole.SUPER_ADMIN)
     ).rejects.toThrow(/Payroll memiliki riwayat jurnal/);
+  });
+
+  it("marks payroll and included overtime paid through one guarded database function", async () => {
+    const payrollRow = {
+      id: "00000000-0000-4000-8000-000000000001",
+      staff_id: "00000000-0000-4000-8000-000000000002",
+      month: 9,
+      year: 2026,
+      base_salary: 2500000,
+      total_compensation: 0,
+      total_deductions: 0,
+      net_salary: 2500000,
+      status: "PAID",
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-20T00:00:00.000Z"
+    };
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({ data: payrollRow, error: null } as any);
+
+    await expect(payrollRepo.updatePayrollStatus(payrollRow.id, PayrollStatus.PAID))
+      .resolves.toMatchObject({ id: payrollRow.id, status: "PAID" });
+    expect(rpc).toHaveBeenCalledWith("mark_payroll_paid_and_overtime", {
+      p_payroll_id: payrollRow.id
+    });
   });
 
   it("reopens a reviewed payroll through the guarded correction function", async () => {
@@ -306,7 +329,11 @@ describe("Supabase payroll repository", () => {
       };
       vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
         createQuery(table, calls, (call) => ({
-          data: call.action === "update" ? { ...record, ...(call.payload as Record<string, unknown>) } : record,
+          data: table === "staff"
+            ? { position: "ASSISTANT" }
+            : call.action === "update"
+              ? { ...record, ...(call.payload as Record<string, unknown>) }
+              : record,
           error: null
         }))) as any);
 
@@ -333,6 +360,35 @@ describe("Supabase payroll repository", () => {
           hourly_rate_snapshot: 30000,
           overtime_amount_snapshot: 32500
         });
+    });
+
+    it("rejects approval when the overtime record belongs to a doctor", async () => {
+      const record = {
+        id: "overtime-1",
+        staff_id: "doctor-1",
+        branch_id: "branch-1",
+        attendance_id: "attendance-1",
+        date: "2026-10-04",
+        scheduled_end_at: "16:00",
+        actual_end_at: "17:20",
+        overtime_minutes: 80,
+        overtime_hours: 1.33,
+        status: "SUBMITTED"
+      };
+      vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) =>
+        createQuery(table, calls, (call) => ({
+          data: table === "staff"
+            ? { position: "DOCTOR" }
+            : call.action === "update"
+              ? { ...record, ...(call.payload as Record<string, unknown>) }
+              : record,
+          error: null
+        }))) as any);
+
+      await expect(
+        overtimeRepo.approve("overtime-1", "Super Admin", UserRole.SUPER_ADMIN)
+      ).rejects.toThrow("Lembur hanya dapat disetujui untuk Asisten Dokter dan Admin Cabang.");
+      expect(calls.some((call) => call.table === "overtime_records" && call.action === "update")).toBe(false);
     });
 
     it("rejects approval from anyone other than Super Admin", async () => {
@@ -402,7 +458,6 @@ describe("Supabase payroll repository", () => {
       createQuery(table, calls, (call) => {
         if (call.table === "staff") return { data: { id: "staff-1", branch_id: "branch-1" }, error: null };
         if (call.table === "monthly_payrolls" && call.action === "select") return { data: null, error: null };
-        if (call.table === "monthly_payrolls" && call.action === "insert") return { data: insertedPayroll, error: null };
         if (call.table === "compensation_accruals") {
           return {
             data: [{
@@ -444,6 +499,7 @@ describe("Supabase payroll repository", () => {
         }
         return { data: null, error: null };
       })) as any);
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({ data: insertedPayroll, error: null } as any);
 
     const payroll = await payrollRepo.generateMonthlyPayroll("staff-1", 10, 2026, 2_500_000);
 
@@ -453,9 +509,17 @@ describe("Supabase payroll repository", () => {
       totalCompensation: 90_000,
       netSalary: 2_615_000
     });
-    expect(calls.find((call) => call.table === "monthly_payrolls" && call.action === "insert")?.payload)
-      .toMatchObject({ staff_id: "staff-1", branch_id: "branch-1", total_compensation: 90_000, net_salary: 2_615_000 });
-    expect(calls.find((call) => call.table === "payroll_items" && call.action === "insert")?.payload)
+    expect(rpc).toHaveBeenCalledWith("save_draft_payroll_with_items", expect.objectContaining({
+      p_payroll_id: null,
+      p_payroll_payload: expect.objectContaining({
+        staff_id: "staff-1",
+        branch_id: "branch-1",
+        total_compensation: 90_000,
+        net_salary: 2_615_000
+      })
+    }));
+    const savedItems = rpc.mock.calls[0][1]?.p_payroll_items as Array<Record<string, unknown>>;
+    expect(savedItems)
       .toMatchObject([
         { description_snapshot: "Gaji Pokok Periode 10/2026", amount_snapshot: 2_500_000, type: "EARNING" },
         { description_snapshot: "Insentif Kompensasi Tindakan (#treatment-1)", amount_snapshot: 50_000, source_id: "accrual-1" },
@@ -503,7 +567,6 @@ describe("Supabase payroll repository", () => {
           return { data: { id: "doctor-1", staff_id: "doctor-staff-1", assigned_branch_id: "branch-1" }, error: null };
         }
         if (call.table === "monthly_payrolls" && call.action === "select") return { data: null, error: null };
-        if (call.table === "monthly_payrolls" && call.action === "insert") return { data: insertedPayroll, error: null };
         if (call.table === "attendances") {
           return {
             data: [{
@@ -532,14 +595,15 @@ describe("Supabase payroll repository", () => {
         }
         return { data: [], error: null };
       })) as any);
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({ data: insertedPayroll, error: null } as any);
 
     const payroll = await payrollRepo.generateMonthlyPayroll("doctor-staff-1", 10, 2026, 2_500_000, false, "branch-1");
 
     expect(payroll.totalDeductions).toBe(60_000);
     expect(payroll.netSalary).toBe(2_440_000);
-    expect(calls.find((call) => call.table === "payroll_items" && call.action === "insert")?.payload)
+    const savedItems = rpc.mock.calls[0][1]?.p_payroll_items as Array<Record<string, unknown>>;
+    expect(savedItems)
       .toContainEqual({
-        payroll_id: "doctor-payroll-1",
         description_snapshot: "Potongan Ketidakhadiran (SICK / 2026-10-12)",
         amount_snapshot: 60_000,
         type: "DEDUCTION",

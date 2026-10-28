@@ -7,6 +7,14 @@ describe("Doctor replacement compensation migration", () => {
     path.resolve(process.cwd(), "supabase/migrations/20261225000000_doctor_replacement_compensation.sql"),
     "utf-8"
   );
+  const expenseMigration = fs.readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/20270103000000_external_doctor_replacement_expense.sql"),
+    "utf-8"
+  );
+  const branchSplitMigration = fs.readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/20270104000000_split_external_doctor_expenses_by_branch.sql"),
+    "utf-8"
+  );
 
   it("keeps external doctors in a Super Admin-managed non-staff roster", () => {
     expect(migration).toMatch(/CREATE TABLE IF NOT EXISTS public\.external_doctor_recipients/i);
@@ -19,7 +27,7 @@ describe("Doctor replacement compensation migration", () => {
     expect(migration).toMatch(/p_replacement_doctor_id IS NOT NULL[\s\S]*?amount_snapshot[\s\S]*?60000/i);
   });
 
-  it("stores external daily/action rates and places the payout in the month of the final covered date", () => {
+  it("stores external daily/action rates and the coverage period", () => {
     expect(migration).toMatch(/daily_fee_snapshot BIGINT NOT NULL DEFAULT 100000/i);
     expect(migration).toMatch(/action_fee_snapshot BIGINT NOT NULL DEFAULT 10000/i);
     expect(migration).toMatch(/EXTRACT\(MONTH FROM v_last_covered_date\)/i);
@@ -38,5 +46,22 @@ describe("Doctor replacement compensation migration", () => {
     expect(migration).toMatch(/confirm_external_doctor_action_count[\s\S]*?public\.is_super_admin\(\)/i);
     expect(migration).toMatch(/review_external_doctor_payroll_entry[\s\S]*?public\.is_super_admin\(\)/i);
     expect(migration).toMatch(/mark_external_doctor_payroll_paid[\s\S]*?public\.is_super_admin\(\)/i);
+  });
+
+  it("adds a dedicated chart-of-accounts category for direct replacement expenses", () => {
+    expect(expenseMigration).toMatch(/'5080'\s*,\s*'Beban Dokter Pengganti'/i);
+    expect(expenseMigration).toMatch(/'DOCTOR_REPLACEMENT_EXPENSE'/i);
+    expect(expenseMigration).toMatch(/ON CONFLICT \(code\) DO UPDATE/i);
+  });
+
+  it("splits external doctor expense entries by branch and service month", () => {
+    expect(branchSplitMigration).toMatch(/DROP CONSTRAINT IF EXISTS external_doctor_payroll_entries_absence_request_id_key/i);
+    expect(branchSplitMigration).toMatch(/uq_external_doctor_payroll_request_branch_period/i);
+    expect(branchSplitMigration).toMatch(/GROUP BY[\s\S]*assignment\.branch_id[\s\S]*EXTRACT\(YEAR FROM assignment\.covered_date\)[\s\S]*EXTRACT\(MONTH FROM assignment\.covered_date\)/i);
+    expect(branchSplitMigration).toMatch(/CREATE TRIGGER split_external_doctor_payroll_entry_by_branch/i);
+    expect(branchSplitMigration).toMatch(/branch_period\.covered_days \* NEW\.daily_fee_snapshot/i);
+    expect(branchSplitMigration).toMatch(/IF pg_trigger_depth\(\) > 1 THEN[\s\S]*RETURN NEW/i);
+    expect(branchSplitMigration).toMatch(/entry\.status <> 'PENDING_ACTION_COUNT' OR entry\.action_count IS NOT NULL/i);
+    expect(branchSplitMigration).toMatch(/entry\.status <> 'PAID'[\s\S]*DELETE FROM public\.external_doctor_payroll_entries/i);
   });
 });

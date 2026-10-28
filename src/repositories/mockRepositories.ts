@@ -4444,7 +4444,7 @@ export class MockCompensationRepository implements CompensationRepository {
     if (linkedItems.length > 1) throw new Error("Tindakan tertaut ke lebih dari satu baris invoice.");
     const allocations = allocateInvoiceNetToLines(
       invoiceItems.map((item: InvoiceItem) => ({ id: item.id, amount: item.amount })),
-      invoice.netAmount
+      Math.max(0, invoice.totalAmount - invoice.discountAmount)
     );
     const baseAmount = allocations.get(linkedItems[0].id) || 0;
     const now = invoice.updatedAt || AppClock.nowISO();
@@ -4718,6 +4718,7 @@ export class MockPayrollRepository implements PayrollRepository {
 
       const monthlyAttendances = (db.attendances || []).filter((att: Attendance) => {
         if (att.staffId !== staffId && att.staffId !== staff?.id && att.staffId !== doctor?.staffId && att.staffId !== doctor?.id) return false;
+        if (staffBranchId && att.branchId !== staffBranchId) return false;
         if (att.attendanceStatus !== AttendanceStatus.PRESENT) return false;
         const [aYear, aMonth] = att.date.split("-").map(n => parseInt(n, 10));
         return aYear === year && aMonth === month;
@@ -4733,7 +4734,7 @@ export class MockPayrollRepository implements PayrollRepository {
     // PHASE HR-4: Fetch APPROVED overtime records for this staff in this month/year period
     const approvedOvertimes = db.overtimes.filter((o: OvertimeRecord) => {
       const matchesStaff = o.staffId === staffId || (staff && o.staffId === staff.id) || (doctor && (o.staffId === doctor.id || o.staffId === doctor.staffId));
-      if (!matchesStaff || o.status !== OvertimeStatus.APPROVED || (staffBranchId && o.branchId !== staffBranchId)) {
+      if (isDoctor || !matchesStaff || o.status !== OvertimeStatus.APPROVED || (staffBranchId && o.branchId !== staffBranchId)) {
         return false;
       }
       const parts = o.date.split("-");
@@ -4771,7 +4772,8 @@ export class MockPayrollRepository implements PayrollRepository {
     }
     const dailySalary = Math.round(effectiveBaseSalary / 25);
     const absenceRecords = [...absenceByDate.values()];
-    const absenceDeductions = absenceRecords.length * dailySalary;
+    const dailyAbsenceDeduction = isDoctor ? 60000 : dailySalary;
+    const absenceDeductions = absenceRecords.length * dailyAbsenceDeduction;
     const grossIncome = effectiveBaseSalary + totalCompensation + totalOvertimeAmount;
     const taxRate = taxRule?.valueSnapshot || 0;
     const taxAmount = taxRule ? calculatePayrollTax(grossIncome, taxRate) : 0;
@@ -4873,7 +4875,7 @@ export class MockPayrollRepository implements PayrollRepository {
         id: `item-${payrollId}-absence-${attendance.id}`,
         payrollId,
         descriptionSnapshot: `Potongan Ketidakhadiran (${attendance.attendanceStatus} / ${attendance.date})`,
-        amountSnapshot: dailySalary,
+        amountSnapshot: dailyAbsenceDeduction,
         type: "DEDUCTION",
         sourceId: attendance.id
       });
@@ -4909,6 +4911,20 @@ export class MockPayrollRepository implements PayrollRepository {
     // Trigger Accounting Integration
     if (oldStatus !== status) {
       await this.handlePayrollAccounting(p);
+    }
+    if (status === PayrollStatus.PAID && oldStatus !== PayrollStatus.PAID) {
+      const overtimeIds = new Set(
+        db.payrollItems
+          .filter((item) => item.payrollId === p.id && item.descriptionSnapshot.startsWith("Lembur Disetujui"))
+          .map((item) => item.sourceId)
+          .filter((sourceId): sourceId is string => Boolean(sourceId))
+      );
+      db.overtimes.forEach((overtime) => {
+        if (overtimeIds.has(overtime.id) && overtime.status === OvertimeStatus.APPROVED) {
+          overtime.status = OvertimeStatus.PAID;
+          overtime.updatedAt = AppClock.nowISO();
+        }
+      });
     }
 
     return { ...p };
@@ -7120,6 +7136,10 @@ export class MockOvertimeRepository implements OvertimeRepository {
     if (!record) {
       throw new Error("OvertimeRecord tidak ditemukan");
     }
+    const overtimeStaff = db.staff.find((staff) => staff.id === record.staffId);
+    if (!overtimeStaff || ![StaffPosition.BRANCH_ADMIN, StaffPosition.ASSISTANT].includes(overtimeStaff.position)) {
+      throw new Error("Lembur hanya berlaku untuk Asisten Dokter dan Admin Cabang.");
+    }
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && record.branchId !== userBranchId) {
       throw new Error("Akses ditolak: Branch Admin hanya dapat submit overtime cabang sendiri");
     }
@@ -7149,6 +7169,10 @@ export class MockOvertimeRepository implements OvertimeRepository {
     const record = db.overtimes.find(o => o.id === id);
     if (!record) {
       throw new Error("OvertimeRecord tidak ditemukan");
+    }
+    const overtimeStaff = db.staff.find((staff) => staff.id === record.staffId);
+    if (!overtimeStaff || ![StaffPosition.BRANCH_ADMIN, StaffPosition.ASSISTANT].includes(overtimeStaff.position)) {
+      throw new Error("Lembur hanya dapat disetujui untuk Asisten Dokter dan Admin Cabang.");
     }
     if (record.status !== OvertimeStatus.SUBMITTED) {
       throw new Error(`Overtime record dengan status ${record.status} tidak dapat diapprove (harus SUBMITTED)`);
@@ -7215,7 +7239,7 @@ export class MockOvertimeRepository implements OvertimeRepository {
       totalSubmittedMinutes: items.filter(o => o.status === OvertimeStatus.SUBMITTED).reduce((acc, o) => acc + o.overtimeMinutes, 0),
       totalApprovedMinutes: items.filter(o => o.status === OvertimeStatus.APPROVED).reduce((acc, o) => acc + (o.approvedOvertimeMinutes ?? o.overtimeMinutes), 0),
       totalRejectedMinutes: items.filter(o => o.status === OvertimeStatus.REJECTED).reduce((acc, o) => acc + o.overtimeMinutes, 0),
-      totalPaidMinutes: items.filter(o => o.status === OvertimeStatus.PAID).reduce((acc, o) => acc + o.overtimeMinutes, 0),
+      totalPaidMinutes: items.filter(o => o.status === OvertimeStatus.PAID).reduce((acc, o) => acc + (o.approvedOvertimeMinutes ?? o.overtimeMinutes), 0),
     };
     return summary;
   }

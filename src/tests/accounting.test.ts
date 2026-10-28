@@ -69,7 +69,7 @@ describe("Accounting Phase 1: Chart of Accounts, Journal Engine & General Ledger
 
   it("Test 4: Create a new Expense account with DEBIT normal balance", async () => {
     const acc = await accountingRepo.createAccount({
-      code: "5080",
+      code: "5081",
       name: "Beban Pelatihan & Seminar Dokter",
       accountType: AccountType.EXPENSE,
       accountCategory: AccountCategory.OTHER_OPERATING_EXPENSE,
@@ -78,7 +78,7 @@ describe("Accounting Phase 1: Chart of Accounts, Journal Engine & General Ledger
       isActive: true
     });
 
-    expect(acc.code).toBe("5080");
+    expect(acc.code).toBe("5081");
     expect(acc.accountType).toBe(AccountType.EXPENSE);
     expect(acc.normalBalance).toBe(NormalBalance.DEBIT);
   });

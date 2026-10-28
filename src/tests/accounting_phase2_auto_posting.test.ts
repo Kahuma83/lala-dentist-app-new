@@ -1072,29 +1072,33 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       expect(payment.lines.find((line) => line.accountId === bank?.id)?.credit).toBe(3000000);
     });
 
-    it("posts an idempotent accrual and payment journal for an external doctor payroll entry", async () => {
+    it("posts an idempotent direct branch expense for an external doctor replacement", async () => {
       const entry = {
         id: "external-doctor-payroll-entry",
         doctorName: "drg. Dokter Eksternal",
         branchId: "branch-gebang",
         month: 10,
         year: 2026,
-        amount: 130_000
+        amount: 130_000,
+        coveredDays: 1,
+        actionCount: 3,
+        paymentAccountId: "coa-1000"
       };
 
-      const payment = await service.postExternalDoctorPayrollPayment(entry);
-      const repeatedPayment = await service.postExternalDoctorPayrollPayment(entry);
-      const doctorPayable = await accountingRepo.getAccountByCode("2020");
-      const bank = await accountingRepo.getAccountByCode("1010");
-      const journals = await accountingRepo.getJournalsBySource(JournalSourceType.PAYROLL, entry.id);
+      const expense = await service.postExternalDoctorReplacementExpense(entry);
+      const repeatedExpense = await service.postExternalDoctorReplacementExpense(entry);
+      const replacementExpenseAccount = await accountingRepo.getAccountByCode("5080");
+      const cash = await accountingRepo.getAccountByCode("1000");
+      const journals = await accountingRepo.getJournalsBySource(JournalSourceType.EXPENSE, entry.id);
 
-      expect(payment.event).toBe("PAYMENT");
-      expect(payment.id).toBe(repeatedPayment.id);
-      expect(journals.map((journal) => journal.event).sort()).toEqual(["ACCRUAL", "PAYMENT"]);
-      expect(payment.totalDebit).toBe(130_000);
-      expect(payment.totalCredit).toBe(130_000);
-      expect(payment.lines.find((line) => line.accountId === doctorPayable?.id)?.debit).toBe(130_000);
-      expect(payment.lines.find((line) => line.accountId === bank?.id)?.credit).toBe(130_000);
+      expect(expense.sourceType).toBe(JournalSourceType.EXPENSE);
+      expect(expense.id).toBe(repeatedExpense.id);
+      expect(journals).toHaveLength(1);
+      expect(expense.totalDebit).toBe(130_000);
+      expect(expense.totalCredit).toBe(130_000);
+      expect(expense.lines.find((line) => line.accountId === replacementExpenseAccount?.id)?.debit).toBe(130_000);
+      expect(expense.lines.find((line) => line.accountId === cash?.id)?.credit).toBe(130_000);
+      expect(expense.description).toContain("1 hari, 3 tindakan");
     });
 
     it("should resolve payroll branch from linked staff when payroll has no branch snapshot", async () => {

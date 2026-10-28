@@ -9,6 +9,8 @@ import {
 } from "../repositories/mockRepositories";
 import {
   AttendanceStatus,
+  OvertimeStatus,
+  OvertimeType,
   PayrollStatus,
   TreatmentJobStatus,
   UserRole
@@ -112,6 +114,76 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     const assistantAccrual = accruals.find((a) => a.staffId === "assistant-clary");
     expect(assistantAccrual).toBeDefined();
     expect(assistantAccrual?.amount).toBe(15000);
+  });
+
+  it("calculates sharing from service revenue after discount without including tax", async () => {
+    const db = MockDatabase.getInstance();
+    const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
+    await treatmentRepo.completeTreatmentJob(treatment.id);
+    await createPaidInvoiceForTreatment(treatment.id);
+
+    const invoice = db.invoices.find((candidate) => candidate.visitId === treatment.visitId)!;
+    const targetItem = db.invoiceItems.find((item) => item.invoiceId === invoice.id && item.treatmentJobId === treatment.id)!;
+    db.invoiceItems = db.invoiceItems.filter((item) => item.invoiceId !== invoice.id || item.id === targetItem.id);
+    targetItem.amount = 150_000;
+    targetItem.unitPriceSnapshot = 150_000;
+    db.invoiceItems.push({
+      id: "discount-allocation-extra-line",
+      invoiceId: invoice.id,
+      serviceId: treatment.serviceId,
+      descriptionSnapshot: "Layanan lain",
+      unitPriceSnapshot: 50_000,
+      quantity: 1,
+      amount: 50_000,
+      createdAt: invoice.createdAt
+    });
+    invoice.totalAmount = 200_000;
+    invoice.discountAmount = 20_000;
+    invoice.taxAmount = 30_000;
+    invoice.netAmount = 210_000;
+    db.accruals = db.accruals.filter((accrual) => accrual.sourceId !== treatment.id);
+
+    const accruals = await compRepo.calculateAndAccrueForTreatment(treatment.id);
+    const assistantAccrual = accruals.find((accrual) => accrual.staffId === "assistant-clary");
+
+    expect(assistantAccrual?.baseAmountSnapshot).toBe(135_000);
+    expect(assistantAccrual?.amount).toBe(13_500);
+  });
+
+  it("uses the fixed doctor absence deduction and excludes doctor overtime from payroll", async () => {
+    const db = MockDatabase.getInstance();
+    const doctorAttendance = db.attendances.find((attendance) => attendance.staffId === "staff-doc-syafira")!;
+    const absenceId = "test-doctor-absence";
+    db.attendances.push({
+      ...doctorAttendance,
+      id: absenceId,
+      date: "2026-09-11",
+      attendanceStatus: AttendanceStatus.ABSENT
+    });
+    db.overtimes.push({
+      id: "test-doctor-overtime",
+      staffId: "staff-doc-syafira",
+      branchId: "branch-gebang",
+      attendanceId: absenceId,
+      date: "2026-09-12",
+      scheduledEndAt: "14:00",
+      actualEndAt: "15:00",
+      overtimeMinutes: 60,
+      approvedOvertimeMinutes: 60,
+      overtimeHours: 1,
+      overtimeType: OvertimeType.AFTER_SHIFT,
+      status: OvertimeStatus.APPROVED,
+      hourlyRateSnapshot: 15_000,
+      overtimeAmountSnapshot: 15_000,
+      createdAt: "2026-09-12T15:00:00Z",
+      updatedAt: "2026-09-12T15:00:00Z"
+    });
+
+    const payroll = await payrollRepo.generateMonthlyPayroll("staff-doc-syafira", 9, 2026, 2_500_000);
+    const items = await payrollRepo.getPayrollItems(payroll.id);
+
+    expect(items.find((item) => item.sourceId === absenceId)?.amountSnapshot).toBe(60_000);
+    expect(items.some((item) => item.descriptionSnapshot.includes("Lembur Disetujui"))).toBe(false);
   });
 
   it("records one admin referral accrual only after a completed treatment invoice is paid", async () => {
@@ -223,6 +295,24 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
   });
 
   it("Test 8: Payroll status lifecycle updates properly", async () => {
+    const db = MockDatabase.getInstance();
+    db.overtimes.push({
+      id: "paid-with-payroll-overtime",
+      staffId: "assistant-clary",
+      branchId: "branch-gebang",
+      attendanceId: "paid-with-payroll-attendance",
+      date: "2026-09-10",
+      scheduledEndAt: "16:00",
+      actualEndAt: "17:00",
+      overtimeMinutes: 60,
+      approvedOvertimeMinutes: 45,
+      overtimeHours: 0.75,
+      overtimeType: OvertimeType.AFTER_SHIFT,
+      status: OvertimeStatus.APPROVED,
+      overtimeAmountSnapshot: 11_250,
+      createdAt: "2026-09-10T17:00:00Z",
+      updatedAt: "2026-09-10T17:00:00Z"
+    });
     const payroll = await payrollRepo.generateMonthlyPayroll("assistant-clary", 9, 2026);
     expect(payroll.status).toBe(PayrollStatus.DRAFT);
 
@@ -234,6 +324,8 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
 
     const paid = await payrollRepo.updatePayrollStatus(payroll.id, PayrollStatus.PAID);
     expect(paid.status).toBe(PayrollStatus.PAID);
+    expect(db.overtimes.find((overtime) => overtime.id === "paid-with-payroll-overtime")?.status)
+      .toBe(OvertimeStatus.PAID);
   });
 
   it("Test 9: Configuration Repository manages Master Services and custom Branch Tariffs", async () => {

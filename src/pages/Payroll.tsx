@@ -8,6 +8,9 @@ import {
   UserRole,
   JournalEntry,
   JournalSourceType,
+  AccountCategory,
+  AccountType,
+  ChartOfAccount,
   StaffPosition,
   Staff,
   DentalDoctor,
@@ -100,6 +103,8 @@ export const Payroll: React.FC = () => {
   const [branches, setBranches] = useState<DentalBranch[]>([]);
   const [doctorAssignments, setDoctorAssignments] = useState<DoctorBranchAssignment[]>([]);
   const [journals, setJournals] = useState<JournalEntry[]>([]);
+  const [accountList, setAccountList] = useState<ChartOfAccount[]>([]);
+  const [paymentAccountIdByEntry, setPaymentAccountIdByEntry] = useState<Record<string, string>>({});
   const [branding, setBranding] = useState<ClinicBranding>(DEFAULT_CLINIC_BRANDING);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -141,12 +146,24 @@ export const Payroll: React.FC = () => {
     () => Array.from({ length: Math.max(1, currentYear - 2019) }, (_, index) => currentYear - index),
     [currentYear]
   );
+  const externalDoctorPaymentAccounts = useMemo(
+    () => accountList.filter((account) =>
+      account.isActive &&
+      account.accountType === AccountType.ASSET &&
+      [AccountCategory.CASH, AccountCategory.BANK].includes(account.accountCategory)
+    ),
+    [accountList]
+  );
+  const defaultExternalDoctorPaymentAccountId =
+    externalDoctorPaymentAccounts.find((account) => account.code === "1000")?.id ||
+    externalDoctorPaymentAccounts[0]?.id ||
+    "";
 
   const loadData = async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [pList, dList, sList, bList, jList, brand, assignments, externalPayrollResult] = await Promise.all([
+      const [pList, dList, sList, bList, jList, brand, assignments, aList, externalPayrollResult] = await Promise.all([
         payrollRepo.getPayrolls(selectedMonth, selectedYear),
         doctorRepo.getDoctors(),
         staffRepo.getStaff(),
@@ -158,6 +175,7 @@ export const Payroll: React.FC = () => {
         ),
         configRepo.getClinicBranding().catch(() => DEFAULT_CLINIC_BRANDING),
         doctorRepo.getDoctorBranchAssignments(),
+        accountingRepo.getAccounts(),
         isSupabaseConfigured && currentUser?.role === UserRole.SUPER_ADMIN
           ? supabase.from("external_doctor_payroll_entries")
               .select("id,external_doctor_id,branch_id,payroll_month,payroll_year,covered_days,action_count,amount_snapshot,status,external_doctor_recipients(full_name,phone),staff_absence_requests(start_date,end_date)")
@@ -178,6 +196,7 @@ export const Payroll: React.FC = () => {
       setBranches(bList);
       setDoctorAssignments(assignments);
       setJournals(jList);
+      setAccountList(aList);
       if (brand) setBranding(brand);
     } catch (err) {
       console.error("Error loading payroll:", err);
@@ -828,21 +847,33 @@ export const Payroll: React.FC = () => {
     }
   };
 
-  const payExternalDoctorPayroll = async (entry: ExternalDoctorPayrollEntry) => {
-    if (entry.status !== "PAID" && !window.confirm("Pastikan transfer honor dokter eksternal benar-benar berhasil. Konfirmasi ini akan membuat jurnal pembayaran dan menandai honor sebagai PAID.")) {
+  const payExternalDoctorPayroll = async (entry: ExternalDoctorPayrollEntry, paymentAccountId: string) => {
+    if (!paymentAccountId) {
+      setLoadError("Pilih akun kas/bank yang digunakan untuk membayar honor dokter pengganti.");
+      return;
+    }
+    const paymentAccountName = externalDoctorPaymentAccounts.find((account) => account.id === paymentAccountId)?.name;
+    if (!paymentAccountName) {
+      setLoadError("Akun pembayaran dokter pengganti tidak valid atau tidak aktif.");
+      return;
+    }
+    if (entry.status !== "PAID" && !window.confirm(`Pastikan pembayaran honor dokter pengganti benar-benar berhasil melalui ${paymentAccountName}. Konfirmasi ini akan mencatat Beban Dokter Pengganti dan menandai honor sebagai PAID.`)) {
       return;
     }
     setSyncingPayrollId(entry.id);
     setLoadError(null);
     try {
-      await accountingPostingService.postExternalDoctorPayrollPayment(
+      await accountingPostingService.postExternalDoctorReplacementExpense(
         {
           id: entry.id,
           doctorName: entry.external_doctor_recipients?.full_name || "Dokter eksternal",
           branchId: entry.branch_id,
           month: entry.payroll_month,
           year: entry.payroll_year,
-          amount: Number(entry.amount_snapshot)
+          amount: Number(entry.amount_snapshot),
+          coveredDays: entry.covered_days,
+          actionCount: entry.action_count ?? 0,
+          paymentAccountId
         },
         currentUser?.role,
         currentUser?.branchId,
@@ -856,7 +887,7 @@ export const Payroll: React.FC = () => {
       }
       await loadData();
     } catch (error: unknown) {
-      setLoadError(`Gagal mencatat pembayaran honor dokter eksternal: ${error instanceof Error ? error.message : "Kesalahan tidak diketahui."}`);
+      setLoadError(`Gagal mencatat pengeluaran Beban Dokter Pengganti: ${error instanceof Error ? error.message : "Kesalahan tidak diketahui."}`);
     } finally {
       setSyncingPayrollId(null);
     }
@@ -1285,8 +1316,8 @@ export const Payroll: React.FC = () => {
       {currentUser?.role === UserRole.SUPER_ADMIN && (
         <section className="overflow-hidden rounded-xl border border-indigo-200 bg-white shadow-sm">
           <div className="border-b border-indigo-100 bg-indigo-50/70 px-4 py-3">
-            <h2 className="text-sm font-bold text-indigo-950">Honor Dokter Eksternal · Periode {selectedMonth}/{selectedYear}</h2>
-            <p className="mt-1 text-[11px] text-indigo-800">Pembayaran penerima non-staf, terpisah dari payroll pegawai. Jurnal dibuat saat pembayaran dikonfirmasi.</p>
+            <h2 className="text-sm font-bold text-indigo-950">Beban Dokter Pengganti Eksternal · Periode {selectedMonth}/{selectedYear}</h2>
+            <p className="mt-1 text-[11px] text-indigo-800">Pembayaran langsung dicatat sebagai Beban Dokter Pengganti pada cabang terkait, bukan sebagai utang payroll.</p>
           </div>
           {externalDoctorPayrollEntries.length === 0 ? (
             <p className="p-5 text-center text-xs text-slate-500">Belum ada honor dokter eksternal pada periode ini.</p>
@@ -1298,7 +1329,7 @@ export const Payroll: React.FC = () => {
                     <th className="px-4 py-3">Penerima</th>
                     <th className="px-4 py-3 text-right">Hari</th>
                     <th className="px-4 py-3 text-right">Tindakan</th>
-                    <th className="px-4 py-3 text-right">Honor</th>
+                    <th className="px-4 py-3 text-right">Total Beban</th>
                     <th className="px-4 py-3 text-center">Status / Jurnal</th>
                     <th className="px-4 py-3 text-right">Aksi</th>
                   </tr>
@@ -1306,11 +1337,13 @@ export const Payroll: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {externalDoctorPayrollEntries.map((entry) => {
                     const journal = journals.find((item) =>
-                      item.sourceType === JournalSourceType.PAYROLL &&
+                      (item.sourceType === JournalSourceType.EXPENSE || item.sourceType === JournalSourceType.PAYROLL) &&
                       item.sourceId === entry.id &&
-                      item.event === "PAYMENT" &&
+                      (item.sourceType === JournalSourceType.EXPENSE || item.event === "PAYMENT") &&
                       item.status !== "VOID"
                     );
+                    const selectedPaymentAccountId =
+                      paymentAccountIdByEntry[entry.id] || defaultExternalDoctorPaymentAccountId;
                     return (
                       <tr key={entry.id}>
                         <td className="px-4 py-3">
@@ -1335,13 +1368,39 @@ export const Payroll: React.FC = () => {
                             </button>
                           )}
                           {entry.status === "APPROVED" && (
-                            <button type="button" disabled={syncingPayrollId === entry.id} onClick={() => void payExternalDoctorPayroll(entry)} className="rounded bg-emerald-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">
-                              {syncingPayrollId === entry.id ? "Memproses..." : "Konfirmasi transfer"}
-                            </button>
+                            <div className="flex min-w-48 flex-col items-end gap-1.5">
+                              <select
+                                aria-label={`Akun pembayaran ${entry.external_doctor_recipients?.full_name || "dokter eksternal"}`}
+                                value={selectedPaymentAccountId}
+                                onChange={(event) => setPaymentAccountIdByEntry((current) => ({ ...current, [entry.id]: event.target.value }))}
+                                disabled={syncingPayrollId === entry.id || externalDoctorPaymentAccounts.length === 0}
+                                className="max-w-56 rounded border border-slate-200 bg-white px-2 py-1 text-[10px]"
+                              >
+                                {externalDoctorPaymentAccounts.map((account) => (
+                                  <option key={account.id} value={account.id}>{account.name}</option>
+                                ))}
+                              </select>
+                              <button type="button" disabled={syncingPayrollId === entry.id || !selectedPaymentAccountId} onClick={() => void payExternalDoctorPayroll(entry, selectedPaymentAccountId)} className="rounded bg-emerald-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">
+                                {syncingPayrollId === entry.id ? "Memproses..." : "Catat pengeluaran"}
+                              </button>
+                            </div>
                           )}
                           {entry.status === "PENDING_ACTION_COUNT" && <span className="text-[10px] text-slate-500">Lengkapi tindakan di Pengajuan Izin/Sakit</span>}
                           {entry.status === "PAID" && !journal && (
-                            <button type="button" disabled={syncingPayrollId === entry.id} onClick={() => void payExternalDoctorPayroll(entry)} className="rounded border border-slate-200 px-2.5 py-1.5 font-semibold text-slate-700 disabled:opacity-50">Sinkronkan jurnal</button>
+                            <div className="flex min-w-48 flex-col items-end gap-1.5">
+                              <select
+                                aria-label={`Akun pembayaran ${entry.external_doctor_recipients?.full_name || "dokter eksternal"}`}
+                                value={selectedPaymentAccountId}
+                                onChange={(event) => setPaymentAccountIdByEntry((current) => ({ ...current, [entry.id]: event.target.value }))}
+                                disabled={syncingPayrollId === entry.id || externalDoctorPaymentAccounts.length === 0}
+                                className="max-w-56 rounded border border-slate-200 bg-white px-2 py-1 text-[10px]"
+                              >
+                                {externalDoctorPaymentAccounts.map((account) => (
+                                  <option key={account.id} value={account.id}>{account.name}</option>
+                                ))}
+                              </select>
+                              <button type="button" disabled={syncingPayrollId === entry.id || !selectedPaymentAccountId} onClick={() => void payExternalDoctorPayroll(entry, selectedPaymentAccountId)} className="rounded border border-slate-200 px-2.5 py-1.5 font-semibold text-slate-700 disabled:opacity-50">Sinkronkan pengeluaran</button>
+                            </div>
                           )}
                         </td>
                       </tr>
