@@ -311,7 +311,9 @@ export const InventoryManagement: React.FC = () => {
       setMovementCost("");
       setMovementReference("");
       setMovementNote("");
-      setSuccess(movementType === "IN" ? "Stok masuk berhasil dicatat." : "Pemakaian stok berhasil dicatat.");
+      setSuccess(movementType === "IN"
+        ? "Stok masuk berhasil dicatat. Kekurangan pemakaian resep tindakan yang tertunda akan dipotong otomatis dari stok masuk ini."
+        : "Pemakaian stok berhasil dicatat.");
       await loadInventory();
     } catch (movementError: unknown) {
       setError(movementError instanceof Error ? movementError.message : "Gagal mencatat pergerakan stok.");

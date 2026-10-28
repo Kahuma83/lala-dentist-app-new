@@ -193,6 +193,184 @@ describe("Inventory service", () => {
     await expect(listInventoryMovements({ itemId: item.id })).resolves.toHaveLength(2);
   });
 
+  it("reconciles treatment shortages automatically from later stock receipts", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => localStorageData.get(key) ?? null,
+      setItem: (key: string, value: string) => localStorageData.set(key, value)
+    });
+    const item = await saveInventoryItem({
+      branchId: "branch-gebang",
+      itemCode: "BT-010",
+      name: "Bahan tindakan tertunda",
+      category: "BAHAN_TINDAKAN",
+      unit: "ml",
+      minimumStock: 0,
+      storageLocation: ""
+    }, "Admin");
+    const input = {
+      treatmentJobId: "treatment-pending-shortage",
+      patientVisitId: "visit-pending-shortage",
+      branchId: "branch-gebang",
+      serviceName: "Tindakan",
+      materials: [{ itemCode: "BT-010", quantity: 4 }],
+      userName: "Dokter"
+    };
+    const laterTreatmentInput = {
+      ...input,
+      treatmentJobId: "treatment-later-shortage",
+      patientVisitId: "visit-later-shortage",
+      materials: [{ itemCode: "BT-010", quantity: 3 }]
+    };
+
+    await expect(recordTreatmentInventoryUsage(input)).resolves.toMatchObject({
+      alreadyRecorded: false,
+      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 0, shortage: 4 }]
+    });
+    await expect(recordTreatmentInventoryUsage(laterTreatmentInput)).resolves.toMatchObject({
+      alreadyRecorded: false,
+      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 0, shortage: 3 }]
+    });
+
+    await recordInventoryMovement({
+      itemId: item.id,
+      movementType: "IN",
+      quantity: 2,
+      userName: "Admin",
+      reference: "PO-002"
+    });
+    await expect(recordTreatmentInventoryUsage(input)).resolves.toMatchObject({
+      alreadyRecorded: true,
+      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 2, shortage: 2 }]
+    });
+    await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
+      { id: item.id, currentStock: 0 }
+    ]);
+
+    await recordInventoryMovement({
+      itemId: item.id,
+      movementType: "IN",
+      quantity: 3,
+      userName: "Admin",
+      reference: "PO-003"
+    });
+    await expect(recordTreatmentInventoryUsage(input)).resolves.toMatchObject({
+      alreadyRecorded: true,
+      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 4, shortage: 0 }]
+    });
+    await expect(recordTreatmentInventoryUsage(laterTreatmentInput)).resolves.toMatchObject({
+      alreadyRecorded: true,
+      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 1, shortage: 2 }]
+    });
+    await recordInventoryMovement({
+      itemId: item.id,
+      movementType: "IN",
+      quantity: 3,
+      userName: "Admin",
+      reference: "PO-004"
+    });
+    await expect(recordTreatmentInventoryUsage(laterTreatmentInput)).resolves.toMatchObject({
+      alreadyRecorded: true,
+      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 3, shortage: 0 }]
+    });
+    await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
+      { id: item.id, currentStock: 1 }
+    ]);
+    await expect(listInventoryMovements({ itemId: item.id })).resolves.toMatchObject([
+      {
+        movementType: "OUT",
+        quantity: 2,
+        patientVisitId: "visit-later-shortage",
+        treatmentJobId: "treatment-later-shortage"
+      },
+      { movementType: "IN", quantity: 3, reference: "PO-004" },
+      {
+        movementType: "OUT",
+        quantity: 2,
+        patientVisitId: "visit-pending-shortage",
+        treatmentJobId: "treatment-pending-shortage"
+      },
+      {
+        movementType: "OUT",
+        quantity: 1,
+        patientVisitId: "visit-later-shortage",
+        treatmentJobId: "treatment-later-shortage"
+      },
+      { movementType: "IN", quantity: 3, reference: "PO-003" },
+      {
+        movementType: "OUT",
+        quantity: 2,
+        patientVisitId: "visit-pending-shortage",
+        treatmentJobId: "treatment-pending-shortage"
+      },
+      { movementType: "IN", quantity: 2, reference: "PO-002" }
+    ]);
+  });
+
+  it("does not reconcile shortages across branches with matching item codes", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => localStorageData.get(key) ?? null,
+      setItem: (key: string, value: string) => localStorageData.set(key, value)
+    });
+    const items = await Promise.all(["branch-gebang", "branch-sambiroto"].map((branchId) =>
+      saveInventoryItem({
+        branchId,
+        itemCode: "BT-011",
+        name: "Bahan tindakan",
+        category: "BAHAN_TINDAKAN",
+        unit: "ml",
+        minimumStock: 0,
+        storageLocation: ""
+      }, "Admin")
+    ));
+    for (const [index, branchId] of ["branch-gebang", "branch-sambiroto"].entries()) {
+      await recordTreatmentInventoryUsage({
+        treatmentJobId: `treatment-${branchId}`,
+        patientVisitId: `visit-${branchId}`,
+        branchId,
+        serviceName: "Tindakan",
+        materials: [{ itemCode: "BT-011", quantity: 2 }],
+        userName: "Dokter"
+      });
+      expect(items[index].branchId).toBe(branchId);
+    }
+
+    await recordInventoryMovement({
+      itemId: items[0].id,
+      movementType: "IN",
+      quantity: 2,
+      userName: "Admin"
+    });
+
+    await expect(recordTreatmentInventoryUsage({
+      treatmentJobId: "treatment-branch-gebang",
+      patientVisitId: "visit-branch-gebang",
+      branchId: "branch-gebang",
+      serviceName: "Tindakan",
+      materials: [{ itemCode: "BT-011", quantity: 2 }],
+      userName: "Dokter"
+    })).resolves.toMatchObject({
+      alreadyRecorded: true,
+      shortages: [{ shortage: 0 }]
+    });
+    await expect(recordTreatmentInventoryUsage({
+      treatmentJobId: "treatment-branch-sambiroto",
+      patientVisitId: "visit-branch-sambiroto",
+      branchId: "branch-sambiroto",
+      serviceName: "Tindakan",
+      materials: [{ itemCode: "BT-011", quantity: 2 }],
+      userName: "Dokter"
+    })).resolves.toMatchObject({
+      alreadyRecorded: true,
+      shortages: [{ shortage: 2 }]
+    });
+    await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
+      { currentStock: 0 }
+    ]);
+    await expect(listInventoryItems("branch-sambiroto")).resolves.toMatchObject([
+      { currentStock: 0 }
+    ]);
+  });
+
   it("provides standard recipes for each treatment, with one selected brace material", () => {
     const serviceCodes = [
       "CONSULTATION", "SCALING", "FILLING_PERMANENT", "EXTRACTION", "BLEACHING",
@@ -305,5 +483,13 @@ describe("Inventory service", () => {
     expect(shortageMigration).toMatch(/shortage_details JSONB NOT NULL DEFAULT '\[\]'/i);
     expect(shortageMigration).toMatch(/LEAST\(v_remaining, v_item\.current_stock\)/i);
     expect(shortageMigration).toMatch(/'shortages', v_shortages/i);
+    const shortageReconciliationMigration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270105000000_reconcile_inventory_shortages_on_stock_in.sql"),
+      "utf8"
+    );
+    expect(shortageReconciliationMigration).toMatch(/movement_type = 'IN' THEN[\s\S]*inventory_treatment_consumptions/i);
+    expect(shortageReconciliationMigration).toMatch(/ORDER BY consumption\.created_at, consumption\.treatment_job_id/i);
+    expect(shortageReconciliationMigration).toMatch(/Rekonsiliasi kekurangan resep tindakan/i);
+    expect(shortageReconciliationMigration).toMatch(/shortage_details = v_updated_shortages/i);
   });
 });

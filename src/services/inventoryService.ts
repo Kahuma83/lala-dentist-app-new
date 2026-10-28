@@ -53,6 +53,8 @@ interface StoredInventory {
   movements: InventoryMovement[];
   consumedTreatmentIds?: string[];
   consumedTreatmentShortages?: Record<string, InventoryTreatmentStockShortage[]>;
+  consumedTreatmentVisits?: Record<string, string>;
+  consumedTreatmentBranches?: Record<string, string>;
 }
 
 export interface InventoryTreatmentStockShortage {
@@ -247,6 +249,61 @@ export async function recordInventoryMovement(input: {
       row.id === item.id ? { ...row, currentStock: newStock, updatedAt: movement.createdAt } : row
     );
     inventory.movements = [movement, ...inventory.movements];
+    if (input.movementType === "IN") {
+      let availableStock = newStock;
+      const consumedTreatmentIds = inventory.consumedTreatmentIds || [];
+      const consumedTreatmentShortages = inventory.consumedTreatmentShortages || {};
+      const reconciledMovements: InventoryMovement[] = [];
+
+      for (const treatmentJobId of consumedTreatmentIds) {
+        if (inventory.consumedTreatmentBranches?.[treatmentJobId] !== item.branchId) continue;
+        const shortages = consumedTreatmentShortages[treatmentJobId] || [];
+        const updatedShortages = shortages.map((shortage) => {
+          if (
+            availableStock <= 0 ||
+            shortage.shortage <= 0 ||
+            shortage.itemCode.trim().toUpperCase() !== item.itemCode.toUpperCase()
+          ) {
+            return shortage;
+          }
+
+          const quantity = Math.min(shortage.shortage, availableStock);
+          const previousStockForReconciliation = availableStock;
+          availableStock -= quantity;
+          reconciledMovements.push({
+            id: crypto.randomUUID(),
+            branchId: item.branchId,
+            itemId: item.id,
+            movementType: "OUT",
+            quantity,
+            previousStock: previousStockForReconciliation,
+            newStock: availableStock,
+            unitCost: null,
+            reference: movement.id,
+            note: `Rekonsiliasi kekurangan resep tindakan ${treatmentJobId}`,
+            patientVisitId: inventory.consumedTreatmentVisits?.[treatmentJobId] || null,
+            treatmentJobId,
+            performedByName: input.userName,
+            createdAt: new Date().toISOString()
+          });
+          return {
+            ...shortage,
+            deducted: shortage.deducted + quantity,
+            shortage: shortage.shortage - quantity
+          };
+        });
+        consumedTreatmentShortages[treatmentJobId] = updatedShortages;
+        if (availableStock <= 0) break;
+      }
+
+      if (availableStock !== newStock) {
+        inventory.items = inventory.items.map((row) =>
+          row.id === item.id ? { ...row, currentStock: availableStock } : row
+        );
+        inventory.movements = [...reconciledMovements, ...inventory.movements];
+        inventory.consumedTreatmentShortages = consumedTreatmentShortages;
+      }
+    }
     writeMockInventory(inventory);
     return movement;
   }
@@ -374,6 +431,14 @@ export async function recordTreatmentInventoryUsage(input: {
     inventory.consumedTreatmentShortages = {
       ...inventory.consumedTreatmentShortages,
       [input.treatmentJobId]: shortages
+    };
+    inventory.consumedTreatmentVisits = {
+      ...inventory.consumedTreatmentVisits,
+      [input.treatmentJobId]: input.patientVisitId
+    };
+    inventory.consumedTreatmentBranches = {
+      ...inventory.consumedTreatmentBranches,
+      [input.treatmentJobId]: input.branchId
     };
     writeMockInventory(inventory);
     return { alreadyRecorded: false, shortages };
