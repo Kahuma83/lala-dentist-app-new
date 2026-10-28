@@ -115,6 +115,7 @@ export const BookingManagement: React.FC = () => {
   const [showNewPatientForm, setShowNewPatientForm] = useState(false);
   const [newPatientForm, setNewPatientForm] = useState({
     fullName: "",
+    medicalRecordNumber: "",
     phone: "",
     identityDocumentType: "NIK" as "NIK" | "PASSPORT",
     identityDocumentNumber: "",
@@ -523,6 +524,7 @@ export const BookingManagement: React.FC = () => {
 
   const handleCreatePatientForSchedule = async () => {
     const fullName = newPatientForm.fullName.trim();
+    const medicalRecordNumber = newPatientForm.medicalRecordNumber.trim();
     const phone = newPatientForm.phone.trim();
     const documentNumber = newPatientForm.identityDocumentNumber.trim().replace(/\s/g, "");
     if (!fullName || !documentNumber || !newPatientForm.placeOfBirth.trim() || !newPatientForm.dateOfBirth || !newPatientForm.gender) {
@@ -570,6 +572,7 @@ export const BookingManagement: React.FC = () => {
         {
           name: fullName,
           fullName,
+          medicalRecordNumber: medicalRecordNumber || undefined,
           phone,
           email: "",
           identityDocumentType: newPatientForm.identityDocumentType,
@@ -596,7 +599,7 @@ export const BookingManagement: React.FC = () => {
       setPatientSearch("");
       setShowNewPatientForm(false);
       setNewPatientForm({
-        fullName: "", phone: "", identityDocumentType: "NIK", identityDocumentNumber: "",
+        fullName: "", medicalRecordNumber: "", phone: "", identityDocumentType: "NIK", identityDocumentNumber: "",
         placeOfBirth: "", dateOfBirth: "", gender: "", address: "", occupation: "",
         religion: "", maritalStatus: "", education: ""
       });
@@ -1165,37 +1168,20 @@ export const BookingManagement: React.FC = () => {
         throw new Error("Jadwal ini sudah tidak aktif dan tidak dapat di-check-in.");
       }
 
-      const existingVisit = visits.find((visit) =>
-        visit.bookingId === b.id &&
-        visit.patientId === b.patientId &&
-        visit.visitStatus !== VisitStatus.CANCELLED &&
-        visit.visitStatus !== VisitStatus.COMPLETED
-      );
-      const visit = existingVisit || await repos.visit.createVisit({
-        patientId: b.patientId,
-        branchId: b.branchId,
-        visitType: VisitType.BOOKING,
-        bookingId: b.id,
-        doctorId: b.doctorId,
-        complaint: b.notes || b.complaint || "Konsultasi Booking",
-        plannedTreatments: b.plannedTreatments || []
-      });
-
-      await repos.booking.updateBooking(
-        b.id,
-        { status: BookingStatus.CONFIRMED },
-        currentUser?.role,
-        currentUser?.assignedBranchId
-      );
       await repos.queue.checkInVisitToQueue(
-        visit.id,
+        null,
         currentUser?.role,
         currentUser?.assignedBranchId,
         {
           estimatedDurationMinutes: getPlannedTreatmentDurationMinutes(b.plannedTreatments),
           plannedTreatments: b.plannedTreatments || [],
           doctorId: b.doctorId,
-          bookingTimeSnapshot: b.bookingDateTime
+          bookingTimeSnapshot: b.bookingDateTime,
+          bookingId: b.id,
+          branchId: b.branchId,
+          patientId: b.patientId,
+          patientNameSnapshot: b.patientNameSnapshot,
+          doctorNameSnapshot: b.doctorNameSnapshot
         }
       );
 
@@ -2129,6 +2115,18 @@ export const BookingManagement: React.FC = () => {
                           className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
                           required
                         />
+                        <div>
+                          <input
+                            type="text"
+                            value={newPatientForm.medicalRecordNumber}
+                            onChange={(event) => setNewPatientForm((form) => ({ ...form, medicalRecordNumber: event.target.value }))}
+                            placeholder="No. RM pasien lama (opsional)"
+                            aria-label="Nomor rekam medis pasien"
+                            maxLength={50}
+                            className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
+                          />
+                          <p className="mt-1 text-[10px] text-slate-500">Isi jika pasien sudah memiliki No. RM; jika kosong, sistem akan mengaturnya saat check-in.</p>
+                        </div>
                         <div className="grid grid-cols-[110px_1fr] gap-2">
                           <select
                             value={newPatientForm.identityDocumentType}

@@ -145,4 +145,53 @@ describe("Supabase Invoice & Payment Resilience", () => {
     expect(invoiceAfter?.outstandingAmount).toBe(inv.outstandingAmount);
     expect(paymentsAfter).toHaveLength(paymentBefore.length);
   });
+
+  it("should accept the doctor-selected treatment price within a price range", async () => {
+    const visitId = `visit-doctor-price-${Date.now()}`;
+    const invoice = await invoiceRepo.createInvoice({
+      visitId,
+      patientId: "pat-3",
+      branchId: "branch-kampus",
+      items: [
+        {
+          serviceId: "service-crown",
+          descriptionSnapshot: "Mahkota Gigi",
+          unitPriceSnapshot: 150000,
+          quantity: 2,
+          amount: 999999
+        }
+      ]
+    });
+
+    expect(invoice.totalAmount).toBe(999999);
+    expect(invoice.netAmount).toBe(999999);
+    expect(invoice.items?.[0].amount).toBe(999999);
+  });
+
+  it("should preserve payment snapshot values for historical receipt reprints", async () => {
+    const inv = await invoiceRepo.createInvoice({
+      visitId: `visit-receipt-snapshot-${Date.now()}`,
+      patientId: "pat-4",
+      branchId: "branch-gebang",
+      items: [
+        {
+          serviceId: "service-scaling",
+          descriptionSnapshot: "Scaling & Polishing",
+          unitPriceSnapshot: 180000,
+          quantity: 1
+        }
+      ]
+    });
+
+    const payment = await paymentRepo.createPayment({
+      invoiceId: inv.id,
+      amount: 60000,
+      paymentMethod: PaymentMethod.CASH,
+      staffId: "staff-1"
+    });
+
+    expect(payment.invoiceNetAmountSnapshot).toBe(180000);
+    expect(payment.invoicePaidAmountSnapshot).toBe(60000);
+    expect(payment.invoiceOutstandingAmountSnapshot).toBe(120000);
+  });
 });

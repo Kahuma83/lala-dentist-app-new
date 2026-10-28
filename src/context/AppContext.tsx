@@ -59,6 +59,7 @@ import {
 } from "../repositories/repositoryFactory";
 import { AccountingPostingService } from "../services/accountingPostingService";
 import { isSupabaseConfigured } from "../lib/supabase";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 import { AuthService } from "../services/authService";
 import { useRealtimeSync, RealtimeSyncStatus } from "../hooks/useRealtimeSync";
 import { getOperationalDateString } from "../utils/dateUtils";
@@ -354,12 +355,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
 
   const [authStatus, setAuthStatus] = useState<"loading" | "authenticated" | "unauthenticated" | "error">(
-    isSupabaseConfigured ? "loading" : "error"
+    isLocalPatientDemoEnabled ? "unauthenticated" : isSupabaseConfigured ? "loading" : "error"
   );
   const [authError, setAuthError] = useState<string | null>(
-    isSupabaseConfigured ? null : "Supabase belum dikonfigurasi. Aplikasi hanya berjalan dengan database Supabase."
+    isSupabaseConfigured || isLocalPatientDemoEnabled ? null : "Supabase belum dikonfigurasi. Aplikasi hanya berjalan dengan database Supabase."
   );
-  const [authLoading, setAuthLoading] = useState<boolean>(isSupabaseConfigured);
+  const [authLoading, setAuthLoading] = useState<boolean>(isSupabaseConfigured && !isLocalPatientDemoEnabled);
 
   const [branches, setBranches] = useState<DentalBranch[]>([]);
   const [patients, setPatients] = useState<PatientProfile[]>([]);
@@ -835,6 +836,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let active = true;
 
     const bootstrapAuth = async () => {
+      if (isLocalPatientDemoEnabled) {
+        setCurrentUser(null);
+        setAuthStatus("unauthenticated");
+        setAuthLoading(false);
+        setLoading(false);
+        return;
+      }
+
       if (!isSupabaseConfigured) {
         setCurrentUser(null);
         setAuthStatus("error");
@@ -894,7 +903,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     bootstrapAuth();
 
     let subscription: { unsubscribe: () => void } | null = null;
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && !isLocalPatientDemoEnabled) {
       subscription = AuthService.onAuthStateChange(async (event, session) => {
         if (!active) return;
         if (event === "SIGNED_IN" && session?.user) {
@@ -953,7 +962,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Load initial data
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    if (!isSupabaseConfigured || isLocalPatientDemoEnabled) {
       refreshData();
     } else if (authStatus === "authenticated" && currentUser?.id) {
       refreshData();
@@ -973,7 +982,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ? (currentUser.assignedBranchId ?? currentUser.branchId ?? null)
     : selectedBranchId;
   const realtimeSyncStatus = useRealtimeSync({
-    enabled: isSupabaseConfigured && authStatus === "authenticated",
+    enabled: isSupabaseConfigured && !isLocalPatientDemoEnabled && authStatus === "authenticated",
     branchId: realtimeBranchId,
     tables: currentUser?.role === UserRole.PATIENT
       ? PATIENT_REALTIME_TABLES

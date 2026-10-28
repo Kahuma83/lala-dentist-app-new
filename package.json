@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:demo": "concurrently -k \"npm run dev:server\" \"vite --port=3000 --host=0.0.0.0 --mode patient-demo\"",
+    "dev:patient": "concurrently -k \"npm run dev:server\" \"vite --port=3000 --host=0.0.0.0 --mode patient-demo\"",
     "dev:client": "vite --port=3000 --host=0.0.0.0",
     "dev:server": "node server.js",
     "build": "vite build",

@@ -63,6 +63,7 @@ import {
   PatientMedicalProfile,
   PromotionMedia
 } from "../types/domain";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 
 // ==========================================
 // MOCK DATABASE STORE (In-Memory)
@@ -3499,37 +3500,42 @@ export const MOCK_PROMOTIONS: PromotionMedia[] = [
 ];
 
 const isRunningTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || Boolean(process.env.VITEST));
+const useMockSeedData = isRunningTestEnv || isLocalPatientDemoEnabled;
+const mockDatabaseStorageKey = isLocalPatientDemoEnabled ? "lala_patient_demo_db_v1" : "lala_dentist_db_v1";
+const initialMockBookings = () => JSON.parse(JSON.stringify(
+  isLocalPatientDemoEnabled ? MOCK_BOOKINGS.filter((booking) => booking.patientId !== "patient-1") : MOCK_BOOKINGS
+));
 
 // Helper database object to easily export everything and allow CRUD in simulation
 export class MockDatabase {
   userAccounts: UserAccount[] = JSON.parse(JSON.stringify(MOCK_USER_ACCOUNTS));
   branches = JSON.parse(JSON.stringify(MOCK_BRANCHES));
-  patients: PatientProfile[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_PATIENTS)) : [];
+  patients: PatientProfile[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PATIENTS)) : [];
   doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
   services = JSON.parse(JSON.stringify(MOCK_SERVICES));
   tariffs = JSON.parse(JSON.stringify(MOCK_BRANCH_TARIFFS));
-  bookings: Booking[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_BOOKINGS)) : [];
-  confirmations: BookingConfirmationH1[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_CONFIRMATIONS)) : [];
-  visits: PatientVisit[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_VISITS)) : [];
-  queueItems: QueueItem[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_QUEUE_ITEMS)) : [];
-  treatmentJobs: TreatmentJob[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_TREATMENT_JOBS)) : [];
-  treatmentActivities: TreatmentActivity[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_TREATMENT_ACTIVITIES)) : [];
-  invoices: Invoice[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_INVOICES)) : [];
-  invoiceItems: InvoiceItem[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_INVOICE_ITEMS)) : [];
-  payments: PaymentTransaction[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_PAYMENTS)) : [];
+  bookings: Booking[] = useMockSeedData ? initialMockBookings() : [];
+  confirmations: BookingConfirmationH1[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_CONFIRMATIONS)) : [];
+  visits: PatientVisit[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_VISITS)) : [];
+  queueItems: QueueItem[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_QUEUE_ITEMS)) : [];
+  treatmentJobs: TreatmentJob[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_TREATMENT_JOBS)) : [];
+  treatmentActivities: TreatmentActivity[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_TREATMENT_ACTIVITIES)) : [];
+  invoices: Invoice[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_INVOICES)) : [];
+  invoiceItems: InvoiceItem[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_INVOICE_ITEMS)) : [];
+  payments: PaymentTransaction[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PAYMENTS)) : [];
   rules = JSON.parse(JSON.stringify(MOCK_RULES));
-  accruals: CompensationAccrual[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_ACCRUALS)) : [];
-  payrolls = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_PAYROLLS)) : [];
-  payrollItems = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_PAYROLL_ITEMS)) : [];
+  accruals: CompensationAccrual[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_ACCRUALS)) : [];
+  payrolls = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PAYROLLS)) : [];
+  payrollItems = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PAYROLL_ITEMS)) : [];
   accounts = JSON.parse(JSON.stringify(MOCK_CHART_OF_ACCOUNTS));
-  journals = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_JOURNAL_ENTRIES)) : [];
+  journals = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_JOURNAL_ENTRIES)) : [];
   staff = JSON.parse(JSON.stringify(MOCK_STAFF));
   doctorBranchAssignments = JSON.parse(JSON.stringify(MOCK_DOCTOR_BRANCH_ASSIGNMENTS));
   doctorSchedules = [...JSON.parse(JSON.stringify(MOCK_DOCTOR_SCHEDULES)), ...generateCurrentWeekDoctorSchedules()];
   workShifts = JSON.parse(JSON.stringify(MOCK_WORK_SHIFTS));
   staffShiftAssignments = JSON.parse(JSON.stringify(MOCK_STAFF_SHIFT_ASSIGNMENTS));
   staffShiftRotationTemplates: StaffShiftRotationTemplate[] = [];
-  attendances: Attendance[] = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_ATTENDANCES)) : [];
+  attendances: Attendance[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_ATTENDANCES)) : [];
   overtimes: OvertimeRecord[] = [];
   replacementAssignments: StaffReplacementAssignment[] = [];
   medicalRecords: MedicalRecord[] = [];
@@ -3552,7 +3558,7 @@ export class MockDatabase {
       return;
     }
     try {
-      const dataStr = window.localStorage.getItem("lala_dentist_db_v1");
+      const dataStr = window.localStorage.getItem(mockDatabaseStorageKey);
       if (dataStr) {
         const stored = JSON.parse(dataStr);
         if (Array.isArray(stored.rules)) this.rules = stored.rules;
@@ -3587,7 +3593,13 @@ export class MockDatabase {
             p.id === "patient-1" || p.id === "patient-2" || p.id === "patient-3" || p.id === "patient-4" ||
             p.name === "Amanda Lestari" || p.name === "Budi Setiawan" || p.name === "Charles Christian" || p.name === "Diana Putri"
           );
-          if (isOnlyDefaultDummy && !isRunningTestEnv) {
+          if (isLocalPatientDemoEnabled) {
+            const patientsById = new Map(MOCK_PATIENTS.map((patient) => [patient.id, patient]));
+            stored.patients.forEach((patient: PatientProfile) => {
+              patientsById.set(patient.id, { ...patientsById.get(patient.id), ...patient });
+            });
+            this.patients = Array.from(patientsById.values());
+          } else if (isOnlyDefaultDummy && !isRunningTestEnv) {
             this.patients = [];
           } else {
             this.patients = stored.patients;
@@ -3695,7 +3707,7 @@ export class MockDatabase {
         promotions: this.promotions,
         clinicBranding: this.clinicBranding,
       };
-      window.localStorage.setItem("lala_dentist_db_v1", JSON.stringify(dataToSave));
+      window.localStorage.setItem(mockDatabaseStorageKey, JSON.stringify(dataToSave));
     } catch (e) {
       console.warn("Could not save to localStorage:", e);
     }
@@ -3707,18 +3719,18 @@ export class MockDatabase {
     }
     if (typeof window !== "undefined" && window.localStorage) {
       try {
-        window.localStorage.removeItem("lala_dentist_db_v1");
+        window.localStorage.removeItem(mockDatabaseStorageKey);
       } catch {
         // ignore
       }
     }
     this.instance.userAccounts = JSON.parse(JSON.stringify(MOCK_USER_ACCOUNTS));
     this.instance.branches = JSON.parse(JSON.stringify(MOCK_BRANCHES));
-    this.instance.patients = isRunningTestEnv ? JSON.parse(JSON.stringify(MOCK_PATIENTS)) : [];
+    this.instance.patients = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PATIENTS)) : [];
     this.instance.doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
     this.instance.services = JSON.parse(JSON.stringify(MOCK_SERVICES));
     this.instance.tariffs = JSON.parse(JSON.stringify(MOCK_BRANCH_TARIFFS));
-    this.instance.bookings = JSON.parse(JSON.stringify(MOCK_BOOKINGS));
+    this.instance.bookings = initialMockBookings();
     this.instance.confirmations = JSON.parse(JSON.stringify(MOCK_CONFIRMATIONS));
     this.instance.visits = JSON.parse(JSON.stringify(MOCK_VISITS));
     this.instance.queueItems = JSON.parse(JSON.stringify(MOCK_QUEUE_ITEMS));

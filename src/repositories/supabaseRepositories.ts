@@ -1558,7 +1558,7 @@ export class SupabaseQueueRepository implements QueueRepository {
   }
 
   async checkInVisitToQueue(
-    visitId: string,
+    visitId: string | null,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     options?: {
@@ -1573,18 +1573,28 @@ export class SupabaseQueueRepository implements QueueRepository {
       patientNameSnapshot?: string;
       doctorNameSnapshot?: string;
       bookingTimeSnapshot?: string;
+      complaint?: string;
     }
   ): Promise<QueueItem> {
     ensureSupabaseConnected();
 
-    if (!useRepositoryTestFallbacks() && !isValidUUID(visitId)) {
-      throw new Error("ID kunjungan bukan ID Supabase yang valid. Muat ulang data booking/kunjungan lalu coba lagi.");
+    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Check-in hanya dapat dilakukan Admin Cabang atau Super Admin");
     }
 
-    // Check-in callers may pass the branch and patient from the visit they just loaded/created.
+    if (!useRepositoryTestFallbacks() &&
+      ((!visitId && !options?.bookingId) ||
+        (visitId !== null && !isValidUUID(visitId)) ||
+        (options?.bookingId && !isValidUUID(options.bookingId)))) {
+      throw new Error("ID kunjungan atau booking bukan ID Supabase yang valid. Muat ulang data lalu coba lagi.");
+    }
+    if (useRepositoryTestFallbacks() && !visitId) {
+      throw new Error("Check-in booking memerlukan transaksi Supabase; gunakan repository mock untuk pengujian lokal.");
+    }
+
     const visitRepo = new SupabaseVisitRepository();
-    const suppliedVisitContext = Boolean(options?.branchId && options?.patientId);
-    const visit = suppliedVisitContext ? null : await visitRepo.getVisitById(visitId);
+    const suppliedVisitContext = Boolean(options?.bookingId || (options?.branchId && options?.patientId));
+    const visit = suppliedVisitContext || !visitId ? null : await visitRepo.getVisitById(visitId);
 
     const branchId = options?.branchId || visit?.branchId || "";
     const patientId = options?.patientId || visit?.patientId || "";
@@ -1604,61 +1614,63 @@ export class SupabaseQueueRepository implements QueueRepository {
     // Check existing active queue item to avoid duplicate entries
     const fallbackItems = this.getFallbackQueue();
     const existingActive = fallbackItems.find(
-      (q) => q.visitId === visitId && q.status !== QueueStatus.SKIPPED && q.status !== QueueStatus.COMPLETED && q.status !== "CANCELLED"
+      (q) => visitId !== null && q.visitId === visitId && q.status !== QueueStatus.SKIPPED && q.status !== QueueStatus.COMPLETED && q.status !== "CANCELLED"
     );
     if (existingActive) {
       return existingActive;
     }
 
-    if (hasActiveQueueForPatientOnDate(fallbackItems, patientId, branchId, now, visitId)) {
+    if (!options?.bookingId && hasActiveQueueForPatientOnDate(fallbackItems, patientId, branchId, now, visitId || undefined)) {
       throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain");
     }
 
-    try {
-      const { data: duplicateRemote, error: duplicateRemoteError } = await supabase
-        .from("queue_items")
-        .select()
-        .eq("visit_id", visitId)
-        .neq("status", QueueStatus.SKIPPED)
-        .neq("status", QueueStatus.COMPLETED)
-        .neq("status", "CANCELLED")
-        .limit(1);
+    if (visitId) {
+      try {
+        const { data: duplicateRemote, error: duplicateRemoteError } = await supabase
+          .from("queue_items")
+          .select()
+          .eq("visit_id", visitId)
+          .neq("status", QueueStatus.SKIPPED)
+          .neq("status", QueueStatus.COMPLETED)
+          .neq("status", "CANCELLED")
+          .limit(1);
 
-      if (!duplicateRemoteError && duplicateRemote && duplicateRemote.length > 0) {
-        const existingRemote = this.mapQueueFromDb(duplicateRemote[0]);
-        const currentList = this.getFallbackQueue();
-        const idx = currentList.findIndex((q) => q.id === existingRemote.id);
-        if (idx >= 0) currentList[idx] = existingRemote;
-        else currentList.unshift(existingRemote);
-        this.saveFallbackQueue(currentList);
-        return existingRemote;
-      }
+        if (!duplicateRemoteError && duplicateRemote && duplicateRemote.length > 0) {
+          const existingRemote = this.mapQueueFromDb(duplicateRemote[0]);
+          const currentList = this.getFallbackQueue();
+          const idx = currentList.findIndex((q) => q.id === existingRemote.id);
+          if (idx >= 0) currentList[idx] = existingRemote;
+          else currentList.unshift(existingRemote);
+          this.saveFallbackQueue(currentList);
+          return existingRemote;
+        }
 
-      const dayStart = new Date(`${today}T00:00:00.000+07:00`).toISOString();
-      const nextDayStart = new Date(new Date(dayStart).getTime() + 24 * 60 * 60 * 1000).toISOString();
-      const { data: patientQueue, error: patientQueueError } = await supabase
-        .from("queue_items")
-        .select("id, visit_id, status, arrival_at, patient_id, branch_id")
-        .eq("patient_id", patientId)
-        .eq("branch_id", branchId)
-        .in("status", [QueueStatus.WAITING, QueueStatus.IN_PREPARATION, QueueStatus.IN_CONSULTATION, "CALLING"])
-        .gte("arrival_at", dayStart)
-        .lt("arrival_at", nextDayStart);
+        const dayStart = new Date(`${today}T00:00:00.000+07:00`).toISOString();
+        const nextDayStart = new Date(new Date(dayStart).getTime() + 24 * 60 * 60 * 1000).toISOString();
+        const { data: patientQueue, error: patientQueueError } = await supabase
+          .from("queue_items")
+          .select("id, visit_id, status, arrival_at, patient_id, branch_id")
+          .eq("patient_id", patientId)
+          .eq("branch_id", branchId)
+          .in("status", [QueueStatus.WAITING, QueueStatus.IN_PREPARATION, QueueStatus.IN_CONSULTATION, "CALLING"])
+          .gte("arrival_at", dayStart)
+          .lt("arrival_at", nextDayStart);
 
-      if (patientQueueError) {
-        throw new Error(`Gagal memeriksa antrean aktif pasien: ${patientQueueError.message}`);
+        if (patientQueueError) {
+          throw new Error(`Gagal memeriksa antrean aktif pasien: ${patientQueueError.message}`);
+        }
+        if (patientQueue?.some((item) => item.visit_id !== visitId)) {
+          throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain");
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith("Gagal memeriksa antrean aktif pasien:")) {
+          throw err;
+        }
+        if (err instanceof Error && err.message.startsWith("Pasien ini sudah berada di antrean aktif")) {
+          throw err;
+        }
+        console.warn("[SupabaseQueueRepository] duplicate queue check failed, continuing with create flow:", err);
       }
-      if (patientQueue?.some((item) => item.visit_id !== visitId)) {
-        throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain");
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message.startsWith("Gagal memeriksa antrean aktif pasien:")) {
-        throw err;
-      }
-      if (err instanceof Error && err.message.startsWith("Pasien ini sudah berada di antrean aktif")) {
-        throw err;
-      }
-      console.warn("[SupabaseQueueRepository] duplicate queue check failed, continuing with create flow:", err);
     }
 
     if (!useRepositoryTestFallbacks() && !isValidUUID(doctorId)) {
@@ -1690,7 +1702,7 @@ export class SupabaseQueueRepository implements QueueRepository {
       id: newId,
       branchId,
       doctorId,
-      visitId,
+      visitId: visitId || "",
       bookingId: options?.bookingId || visit?.bookingId || null,
       patientId,
       queueNumber,
@@ -1708,16 +1720,8 @@ export class SupabaseQueueRepository implements QueueRepository {
     };
 
     // If visit status is not yet WAITING, update it
-    if (visit && visit.visitStatus !== VisitStatus.WAITING) {
-      try {
-        await visitRepo.updateVisitStatus(visit.id, VisitStatus.WAITING, currentUserRole, userBranchId);
-      } catch (err: any) {
-        console.warn("[SupabaseQueueRepository] visit status sync note:", err?.message);
-      }
-    }
-
     // Attempt remote Supabase insert if IDs are valid UUID and remote accessible
-    if (isValidUUID(branchId) && isValidUUID(visitId)) {
+    if (isValidUUID(branchId) && (visitId === null || isValidUUID(visitId))) {
       try {
         const { data, error } = await supabase.rpc("check_in_visit_to_queue", {
           p_queue_id: isValidUUID(newId) ? newId : null,
@@ -1731,7 +1735,8 @@ export class SupabaseQueueRepository implements QueueRepository {
           p_estimated_duration_minutes: options?.estimatedDurationMinutes ?? getPlannedTreatmentDurationMinutes(options?.plannedTreatments || visit?.plannedTreatments),
           p_booking_time_snapshot: options?.bookingTimeSnapshot || null,
           p_patient_name_snapshot: options?.patientNameSnapshot || null,
-          p_doctor_name_snapshot: options?.doctorNameSnapshot || null
+          p_doctor_name_snapshot: options?.doctorNameSnapshot || null,
+          p_complaint: options?.complaint || null
         });
         if (error) {
           throw new Error(error.message);
@@ -1796,10 +1801,6 @@ export class SupabaseQueueRepository implements QueueRepository {
   async removeQueuePatient(queueId: string): Promise<void> {
     const fallbackList = this.getFallbackQueue();
     const idx = fallbackList.findIndex((q) => q.id === queueId);
-    if (idx >= 0) {
-      fallbackList.splice(idx, 1);
-      this.saveFallbackQueue(fallbackList);
-    }
 
     if (isValidUUID(queueId)) {
       try {
@@ -1809,11 +1810,17 @@ export class SupabaseQueueRepository implements QueueRepository {
             throw new Error(`Gagal menghapus antrean di Supabase: ${error.message}`);
           }
           console.warn("[Supabase] removeQueuePatient remote delete failed:", error.message);
+        } else {
+          if (idx >= 0) {
+            fallbackList.splice(idx, 1);
+            this.saveFallbackQueue(fallbackList);
+          }
+          return;
         }
-        return;
       } catch (err: any) {
         if (isSupabaseConfigured) {
-          throw new Error(`Gagal menghubungi server Supabase saat menghapus antrean: ${err?.message || "Koneksi bermasalah"}.`);
+          const message = err instanceof Error ? err.message : "Kesalahan tidak diketahui";
+          throw new Error(`Gagal menghapus antrean di Supabase: ${message}`);
         }
         console.warn("[Supabase] removeQueuePatient remote call failed:", err?.message);
       }
@@ -1824,6 +1831,8 @@ export class SupabaseQueueRepository implements QueueRepository {
     if (idx === -1) {
       throw new Error(`Queue item ${queueId} tidak ditemukan`);
     }
+    fallbackList.splice(idx, 1);
+    this.saveFallbackQueue(fallbackList);
   }
 
   async updateEstimatedDuration(
@@ -1915,7 +1924,9 @@ export class SupabaseQueueRepository implements QueueRepository {
     // 1. Update fallback list
     const fallbackList = this.getFallbackQueue();
     const idx = fallbackList.findIndex((q) => q.id === id);
+    const previousFallback = idx >= 0 ? { ...fallbackList[idx] } : null;
     let updatedFallback: QueueItem | null = null;
+    let remoteStatusPersisted = false;
     if (idx >= 0) {
       const extra: Partial<QueueItem> = {};
       if (status === QueueStatus.IN_CONSULTATION) {
@@ -1953,6 +1964,7 @@ export class SupabaseQueueRepository implements QueueRepository {
 
         if (!error && data) {
           const mapped = this.mapQueueFromDb(data);
+          remoteStatusPersisted = true;
           if (idx >= 0) {
             fallbackList[idx] = mapped;
             this.saveFallbackQueue(fallbackList);
@@ -1968,7 +1980,14 @@ export class SupabaseQueueRepository implements QueueRepository {
         }
       } catch (err: any) {
         if (isSupabaseConfigured) {
-          throw new Error(`Gagal menghubungi server Supabase saat memperbarui status antrean: ${err?.message || "Koneksi bermasalah"}.`);
+          if (!remoteStatusPersisted && idx >= 0 && previousFallback) {
+            fallbackList[idx] = previousFallback;
+            this.saveFallbackQueue(fallbackList);
+          }
+          const message = err instanceof Error ? err.message : "Kesalahan tidak diketahui";
+          throw new Error(remoteStatusPersisted
+            ? `Status antrean berhasil diperbarui, tetapi estimasi gagal dihitung ulang: ${message}`
+            : `Gagal memperbarui status antrean di Supabase: ${message}.`);
         }
         console.warn("[Supabase] updateStatus remote failed:", err?.message);
       }
@@ -2919,6 +2938,21 @@ export class SupabaseBookingRepository implements BookingRepository {
       if (targetBranch) return b.branchId === targetBranch;
       return true;
     });
+  }
+
+  async getPatientAvailableBookingSlots(branchId: string, doctorId: string, operationalDate: string): Promise<string[]> {
+    ensureSupabaseConnected();
+    if (useRepositoryTestFallbacks()) return [];
+
+    const { data, error } = await supabase.rpc("get_patient_available_booking_slots", {
+      p_branch_id: branchId,
+      p_doctor_id: doctorId,
+      p_operational_date: operationalDate
+    });
+    if (error) {
+      throw new Error(`Gagal memuat slot booking yang tersedia: ${error.message}`);
+    }
+    return (data || []).map((row: { slot_time: string }) => row.slot_time);
   }
 
   async confirmPatientEnRoute(bookingId: string): Promise<string> {
@@ -4430,7 +4464,25 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
     }
 
     const now = AppClock.nowISO();
-    const totalAmt = data.items.reduce((sum, item) => sum + (item.amount || item.unitPriceSnapshot * item.quantity), 0);
+    const normalizedItems = data.items.map((item) => {
+      const quantity = Number(item.quantity || 0);
+      const unitPriceSnapshot = Number(item.unitPriceSnapshot || 0);
+      const expectedAmount = quantity * unitPriceSnapshot;
+      const explicitAmount = item.amount !== undefined ? Number(item.amount) : expectedAmount;
+
+      if (!Number.isFinite(explicitAmount) || explicitAmount < 0) {
+        throw new Error("Nominal item invoice tidak valid.");
+      }
+
+      return {
+        ...item,
+        quantity,
+        unitPriceSnapshot,
+        amount: explicitAmount
+      };
+    });
+
+    const totalAmt = normalizedItems.reduce((sum, item) => sum + item.amount, 0);
     const disc = data.discountAmount || 0;
     const tax = data.taxAmount || 0;
     const netAmt = Math.max(0, totalAmt - disc + tax);
@@ -4444,8 +4496,8 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
     const existingInvoices = this.getFallbackInvoices();
     const invoiceNumber = data.customInvoiceNumber || generateInvoiceNumber(data.branchId, now, existingInvoices, MOCK_BRANCHES);
 
-    const fallbackItems: InvoiceItem[] = data.items.map((i, index) => {
-      const itemAmount = i.amount !== undefined ? i.amount : i.quantity * i.unitPriceSnapshot;
+    const fallbackItems: InvoiceItem[] = normalizedItems.map((i, index) => {
+      const itemAmount = i.amount;
       return {
         id: (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
           ? crypto.randomUUID()
@@ -4493,6 +4545,10 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
 
     if (isSupabaseConfigured && supabase && isVisitUUID && isPatientUUID && isBranchUUID) {
       try {
+        const hasInvalidItemTotals = normalizedItems.some((item) => item.amount !== item.quantity * item.unitPriceSnapshot);
+        if (hasInvalidItemTotals) {
+          throw new Error("Total item invoice tidak konsisten dengan harga satuan dan kuantitas yang dikirim oleh client.");
+        }
         const payload: any = {
           visit_id: data.visitId,
           patient_id: data.patientId,
@@ -4686,6 +4742,9 @@ export class SupabasePaymentRepository implements PaymentRepository {
       invoiceId: row.invoice_id,
       branchId: row.branch_id,
       amount: Number(row.amount || 0),
+      invoiceNetAmountSnapshot: row.invoice_net_amount_snapshot != null ? Number(row.invoice_net_amount_snapshot) : undefined,
+      invoicePaidAmountSnapshot: row.invoice_paid_amount_snapshot != null ? Number(row.invoice_paid_amount_snapshot) : undefined,
+      invoiceOutstandingAmountSnapshot: row.invoice_outstanding_amount_snapshot != null ? Number(row.invoice_outstanding_amount_snapshot) : undefined,
       paymentMethod: row.payment_method as PaymentMethod,
       referenceNumber: row.reference_number ?? undefined,
       transactionDateTime: row.transaction_date_time,
@@ -4780,6 +4839,22 @@ export class SupabasePaymentRepository implements PaymentRepository {
         throw new Error("Pembayaran tidak dapat disimpan: invoice atau staf yang valid tidak ditemukan.");
       }
 
+      const { data: invoiceSnapshot, error: invoiceSnapshotError } = await supabase
+        .from("invoices")
+        .select("net_amount, paid_amount, outstanding_amount")
+        .eq("id", data.invoiceId)
+        .maybeSingle();
+
+      if (invoiceSnapshotError) {
+        throw new Error(`Gagal memuat status invoice untuk snapshot pembayaran: ${invoiceSnapshotError.message}`);
+      }
+
+      const prevNet = Number(invoiceSnapshot?.net_amount ?? 0);
+      const prevPaid = Number(invoiceSnapshot?.paid_amount ?? 0);
+      const prevOutstanding = Number(invoiceSnapshot?.outstanding_amount ?? Math.max(0, prevNet - prevPaid));
+      const nextPaid = prevPaid + data.amount;
+      const nextOutstanding = Math.max(0, prevNet - nextPaid);
+
       const { data: created, error } = await supabase.rpc("record_invoice_payment_atomic", {
         p_invoice_id: data.invoiceId,
         p_amount: data.amount,
@@ -4787,7 +4862,10 @@ export class SupabasePaymentRepository implements PaymentRepository {
         p_reference_number: data.referenceNumber || null,
         p_staff_id: data.staffId,
         p_payment_id: data.customId && isValidUUID(data.customId) ? data.customId : null,
-        p_receipt_number: data.customReceiptNumber || null
+        p_receipt_number: data.customReceiptNumber || null,
+        p_invoice_net_amount_snapshot: prevNet,
+        p_invoice_paid_amount_snapshot: nextPaid,
+        p_invoice_outstanding_amount_snapshot: nextOutstanding
       });
       if (error) {
         throw new Error(`Gagal menyimpan pembayaran di Supabase: ${error.message}`);
@@ -4825,6 +4903,9 @@ export class SupabasePaymentRepository implements PaymentRepository {
     const paymentId = data.customId || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `pmt-${Date.now()}`);
     const existingPayments = this.getFallbackPayments();
     const receiptNumber = data.customReceiptNumber || generateReceiptNumber(invoiceBranchId, now, existingPayments, MOCK_BRANCHES);
+    const invoiceNetAmountSnapshot = Number(targetInv.netAmount || 0);
+    const invoicePaidAmountSnapshot = Number(newPaid || 0);
+    const invoiceOutstandingAmountSnapshot = Number(newOutstanding || 0);
 
     const fallbackPayment: PaymentTransaction = {
       id: paymentId,
@@ -4832,6 +4913,9 @@ export class SupabasePaymentRepository implements PaymentRepository {
       invoiceId: data.invoiceId,
       branchId: invoiceBranchId,
       amount: data.amount,
+      invoiceNetAmountSnapshot,
+      invoicePaidAmountSnapshot,
+      invoiceOutstandingAmountSnapshot,
       paymentMethod: data.paymentMethod,
       referenceNumber: data.referenceNumber,
       notes: data.notes,
@@ -4869,13 +4953,20 @@ export class SupabasePaymentRepository implements PaymentRepository {
     // Delete remotely if UUID
     if (isValidUUID(id)) {
       try {
-        const { data: pmt } = await supabase.from("payment_transactions").select("*").eq("id", id).single();
+        const { data: pmt, error: fetchError } = await supabase.from("payment_transactions").select("*").eq("id", id).single();
+        if (fetchError) {
+          throw new Error(fetchError.message);
+        }
         if (pmt) {
           invoiceId = pmt.invoice_id;
-          await supabase.from("payment_transactions").delete().eq("id", id);
+          const { error: deleteError } = await supabase.from("payment_transactions").delete().eq("id", id);
+          if (deleteError) {
+            throw new Error(deleteError.message);
+          }
         }
       } catch (e: any) {
         console.warn("[Supabase] deletePayment remote error:", e?.message);
+        return false;
       }
     }
 
@@ -4909,14 +5000,18 @@ export class SupabasePaymentRepository implements PaymentRepository {
         // Update remote invoice if UUID
         if (isValidUUID(invoiceId)) {
           try {
-            await supabase.from("invoices").update({
+            const { error: updateError } = await supabase.from("invoices").update({
               paid_amount: newPaid,
               outstanding_amount: newOutstanding,
               status: newStatus,
               updated_at: AppClock.nowISO()
             }).eq("id", invoiceId);
+            if (updateError) {
+              throw new Error(updateError.message);
+            }
           } catch (e: any) {
             console.warn("[Supabase] deletePayment update remote invoice error:", e?.message);
+            return false;
           }
         }
       }

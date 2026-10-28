@@ -414,6 +414,7 @@ export interface BookingRepository {
   getBookingsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
   getBookingsByPatient(patientId: string): Promise<Booking[]>;
   getBookingsByDate(dateStr: string, branchId?: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
+  getPatientAvailableBookingSlots(branchId: string, doctorId: string, operationalDate: string): Promise<string[]>;
   confirmPatientEnRoute(bookingId: string): Promise<string>;
   getPatientQueueEstimate(bookingId: string): Promise<PatientBookingQueueEstimate>;
   requestLateCheckInConfirmation(bookingId: string): Promise<string>;
@@ -503,7 +504,7 @@ export interface QueueRepository {
     currentUserId?: string | null
   ): Promise<LiveQueueSnapshot | null>;
   checkInVisitToQueue(
-    visitId: string,
+    visitId: string | null,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     options?: {
@@ -518,6 +519,7 @@ export interface QueueRepository {
       patientNameSnapshot?: string;
       doctorNameSnapshot?: string;
       bookingTimeSnapshot?: string;
+      complaint?: string;
     }
   ): Promise<QueueItem>;
   callQueuePatient(

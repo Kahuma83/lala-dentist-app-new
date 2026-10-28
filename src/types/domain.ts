@@ -895,6 +895,9 @@ export interface PaymentTransaction {
   invoiceId: string;
   branchId?: string;
   amount: number; // integer (Payment != Payroll)
+  invoiceNetAmountSnapshot?: number;
+  invoicePaidAmountSnapshot?: number;
+  invoiceOutstandingAmountSnapshot?: number;
   paymentMethod: PaymentMethod;
   referenceNumber?: string;
   notes?: string;

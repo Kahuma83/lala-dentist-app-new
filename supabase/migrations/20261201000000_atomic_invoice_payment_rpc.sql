@@ -5,7 +5,10 @@ CREATE OR REPLACE FUNCTION public.record_invoice_payment_atomic(
   p_reference_number TEXT DEFAULT NULL,
   p_staff_id UUID DEFAULT NULL,
   p_payment_id UUID DEFAULT NULL,
-  p_receipt_number TEXT DEFAULT NULL
+  p_receipt_number TEXT DEFAULT NULL,
+  p_invoice_net_amount_snapshot BIGINT DEFAULT NULL,
+  p_invoice_paid_amount_snapshot BIGINT DEFAULT NULL,
+  p_invoice_outstanding_amount_snapshot BIGINT DEFAULT NULL
 )
 RETURNS public.payment_transactions
 LANGUAGE plpgsql
@@ -93,6 +96,9 @@ BEGIN
     invoice_id,
     branch_id,
     amount,
+    invoice_net_amount_snapshot,
+    invoice_paid_amount_snapshot,
+    invoice_outstanding_amount_snapshot,
     payment_method,
     reference_number,
     receipt_number,
@@ -104,6 +110,9 @@ BEGIN
     v_invoice.id,
     v_invoice.branch_id,
     p_amount,
+    coalesce(p_invoice_net_amount_snapshot, v_invoice.net_amount),
+    coalesce(p_invoice_paid_amount_snapshot, v_invoice.paid_amount),
+    coalesce(p_invoice_outstanding_amount_snapshot, greatest(v_invoice.net_amount - v_invoice.paid_amount, 0)),
     p_payment_method,
     p_reference_number,
     p_receipt_number,
@@ -124,5 +133,5 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.record_invoice_payment_atomic(UUID, BIGINT, TEXT, TEXT, UUID, UUID, TEXT) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.record_invoice_payment_atomic(UUID, BIGINT, TEXT, TEXT, UUID, UUID, TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.record_invoice_payment_atomic(UUID, BIGINT, TEXT, TEXT, UUID, UUID, TEXT, BIGINT, BIGINT, BIGINT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.record_invoice_payment_atomic(UUID, BIGINT, TEXT, TEXT, UUID, UUID, TEXT, BIGINT, BIGINT, BIGINT) TO authenticated;

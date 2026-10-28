@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 import { MockDatabase } from "../data/mockData";
 import { UserRole, UserAccount } from "../types/domain";
 import { createClient } from "@supabase/supabase-js";
@@ -33,6 +34,9 @@ export class AuthService {
     name: string,
     patientDetails: PatientRegistrationDetails
   ): Promise<void> {
+    if (isLocalPatientDemoEnabled) {
+      throw new Error("Pendaftaran tidak tersedia di mode demo lokal.");
+    }
     if (!isSupabaseConfigured) {
       throw new Error("Pendaftaran akun pasien memerlukan koneksi Supabase.");
     }
@@ -89,6 +93,9 @@ export class AuthService {
   }
 
   static async resendPatientConfirmation(email: string): Promise<void> {
+    if (isLocalPatientDemoEnabled) {
+      throw new Error("Verifikasi email tidak digunakan di mode demo lokal.");
+    }
     if (!isSupabaseConfigured) {
       throw new Error("Pengiriman ulang verifikasi memerlukan koneksi Supabase.");
     }
@@ -112,6 +119,9 @@ export class AuthService {
   }
 
   static async confirmPatientSignup(tokenHash: string): Promise<void> {
+    if (isLocalPatientDemoEnabled) {
+      throw new Error("Konfirmasi email tidak digunakan di mode demo lokal.");
+    }
     if (!isSupabaseConfigured) {
       throw new Error("Konfirmasi email pasien memerlukan koneksi Supabase.");
     }
@@ -328,7 +338,8 @@ export class AuthService {
   }
 
   static async signIn(emailOrUsername: string, password?: string): Promise<{ session: any; user: any; context: AuthenticatedUserContext }> {
-    if (!isSupabaseConfigured && !(typeof process !== "undefined" && process.env.VITEST)) {
+    const useMockAuth = isLocalPatientDemoEnabled || !isSupabaseConfigured;
+    if (!isSupabaseConfigured && !isLocalPatientDemoEnabled && !(typeof process !== "undefined" && process.env.VITEST)) {
       throw new Error("Supabase belum dikonfigurasi. Login lokal/demo dinonaktifkan.");
     }
     if (!emailOrUsername || emailOrUsername.trim() === "") {
@@ -351,7 +362,7 @@ export class AuthService {
     let matchingAccount: UserAccount | undefined;
     let accountLoginMetadata: Pick<UserAccount, "email" | "active"> | undefined;
 
-    if (!isSupabaseConfigured && typeof process !== "undefined" && process.env.VITEST) {
+    if (useMockAuth && typeof process !== "undefined" && process.env.VITEST) {
       matchingAccount = this.findMatchingUserAccount(cleanInput);
     } else if (isEmailInput) {
       // Patient or Super Admin login using Email + Password
@@ -360,16 +371,16 @@ export class AuthService {
       // Staff login using Username + Password
       const normalizedUser = this.normalizeUsername(cleanInput);
 
-      if (!matchingAccount && !isSupabaseConfigured) {
+      if (!matchingAccount && useMockAuth) {
         matchingAccount = this.findMatchingUserAccount(normalizedUser);
       }
 
-      if (!matchingAccount && isSupabaseConfigured) {
+      if (!matchingAccount && !useMockAuth) {
         accountLoginMetadata = await this.lookupUserAccountFromServer(normalizedUser);
       }
 
       // Check if username is registered
-      const accountForLogin = isSupabaseConfigured ? accountLoginMetadata : matchingAccount;
+      const accountForLogin = useMockAuth ? matchingAccount : accountLoginMetadata;
       if (!accountForLogin) {
         throw new Error(`Username '${emailOrUsername}' tidak terdaftar di sistem`);
       }
@@ -382,7 +393,7 @@ export class AuthService {
       resolvedEmail = accountForLogin.email || this.usernameToInternalEmail(normalizedUser);
     }
 
-    if (isSupabaseConfigured) {
+    if (!useMockAuth) {
       if (!password || password.trim() === "") {
         throw new Error("Password tidak boleh kosong");
       }
@@ -481,14 +492,25 @@ export class AuthService {
       // Bind simulated authUserId
       account.authUserId = mockUser.id;
 
+      const demoDb = isLocalPatientDemoEnabled ? MockDatabase.getInstance() : null;
+      const demoAssignedBranchId = isLocalPatientDemoEnabled
+        ? account.branchId ||
+          (account.doctorId
+            ? demoDb?.doctors.find((doctor) => doctor.id === account.doctorId)?.assignedBranchId
+            : null) ||
+          (account.staffId
+            ? demoDb?.staff.find((staff) => staff.id === account.staffId)?.branchId
+            : null)
+        : account.branchId;
       const context: AuthenticatedUserContext = {
         authUserId: mockUser.id,
         userAccountId: account.id,
         role: account.role,
         staffId: account.staffId,
         patientId: account.role === UserRole.PATIENT ? account.id : null,
-        assignedBranchId: account.branchId,
-        doctorId: account.doctorId || null
+        assignedBranchId: demoAssignedBranchId,
+        doctorId: account.doctorId || null,
+        isMockFallback: isLocalPatientDemoEnabled
       };
 
       return { session: mockSession, user: mockUser, context };
@@ -499,7 +521,7 @@ export class AuthService {
    * Signs out the currently authenticated user.
    */
   static async signOut(): Promise<void> {
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && !isLocalPatientDemoEnabled) {
       await supabase.auth.signOut();
     }
   }
@@ -508,7 +530,7 @@ export class AuthService {
    * Retrieves the current Supabase session.
    */
   static async getCurrentSession(): Promise<any> {
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && !isLocalPatientDemoEnabled) {
       const { data, error } = await supabase.auth.getSession();
       if (error) {
         throw new Error(`Gagal membaca sesi Supabase: ${error.message}`);
@@ -522,7 +544,7 @@ export class AuthService {
    * Retrieves the currently logged-in user object.
    */
   static async getCurrentUser(): Promise<any> {
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && !isLocalPatientDemoEnabled) {
       const { data, error } = await supabase.auth.getUser();
       if (error) {
         throw new Error(`Gagal membaca pengguna Supabase: ${error.message}`);
@@ -536,7 +558,7 @@ export class AuthService {
    * Listens for auth state changes.
    */
   static onAuthStateChange(callback: (event: string, session: any) => void): { unsubscribe: () => void } {
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && !isLocalPatientDemoEnabled) {
       const { data } = supabase.auth.onAuthStateChange((event, session) => {
         callback(event, session);
       });
@@ -575,7 +597,7 @@ export class AuthService {
       throw new Error("Email akun tidak tersedia. Silakan keluar dan masuk kembali sebelum mengubah kata sandi.");
     }
 
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && !isLocalPatientDemoEnabled) {
       await changeAuthenticatedPassword(newPassword, currentPassword, email);
       return;
     }
@@ -600,6 +622,9 @@ export class AuthService {
    * Requests a password reset email via Supabase Auth.
    */
   static async requestPasswordReset(email: string, redirectTo?: string): Promise<void> {
+    if (isLocalPatientDemoEnabled) {
+      throw new Error("Pemulihan kata sandi tidak tersedia di mode demo lokal.");
+    }
     if (!email || email.trim() === "") {
       throw new Error("Email wajib diisi");
     }
@@ -624,6 +649,9 @@ export class AuthService {
    * Completes password reset when user accesses the app with a recovery token/session.
    */
   static async resetPassword(newPassword: string): Promise<void> {
+    if (isLocalPatientDemoEnabled) {
+      throw new Error("Pengaturan ulang kata sandi tidak tersedia di mode demo lokal.");
+    }
     if (!newPassword || newPassword.trim() === "") {
       throw new Error("Password baru tidak boleh kosong");
     }

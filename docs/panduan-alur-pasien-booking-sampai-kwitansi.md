@@ -8,8 +8,9 @@ Panduan ini menjelaskan alur operasional di Lala Dentist Web Admin, mulai dari m
 |---|---|
 | Pasien | Portal Pasien untuk mengirim permintaan booking dan memeriksa status antrean. |
 | Admin Cabang | Jadwal Pasien, Check-In Pasien, Antrean Klinik, Daftar Treatment, Invoice & Tagihan, Riwayat Pembayaran & Kwitansi, lalu Follow Up & Tindak Lanjut. Admin Cabang juga menjalankan fungsi kasir dalam alur ini. |
-| Dokter | Antrean Dokter, Pasien & Rekam Medis, Treatment. |
-| Asisten Dokter | Antrean Klinik, Pasien, Treatment. Insentif asisten dikelola di Portal Pegawai, bukan di aplikasi ini. Asisten dapat membantu memulai treatment, tetapi bukan pihak yang menyelesaikan atau menyerahkan treatment ke kasir. |
+| Super Admin | Dapat membantu check-in lintas cabang dan mengelola alur operasional sesuai kewenangannya. |
+| Dokter | Antrean Dokter, Pasien & Rekam Medis, Treatment. Dokter tidak melakukan check-in pasien. |
+| Asisten Dokter | Antrean Klinik, Pasien, Treatment. Asisten tidak melakukan check-in pasien; ia membantu memulai treatment, tetapi bukan pihak yang menyelesaikan atau menyerahkan treatment ke kasir. Insentif asisten dikelola di Portal Pegawai, bukan di aplikasi ini. |
 
 > Aplikasi tidak memiliki jabatan atau akun Kasir yang terpisah dalam alur ini. Penerimaan pembayaran dilakukan Admin Cabang melalui menu Invoice & Tagihan; riwayat pembayaran dan kwitansi tersedia di Riwayat Pembayaran & Kwitansi.
 
@@ -36,7 +37,7 @@ Booking juga dapat dibuat sendiri oleh pasien dari HP melalui alur **Online**. P
 
 ### 2. Konfirmasi jadwal H-1 (disarankan)
 
-**Penanggung jawab:** Admin Cabang  
+**Penanggung jawab:** Admin Cabang pada cabangnya masing-masing; Super Admin dapat membantu lintas cabang. Dokter dan Asisten Dokter tidak memiliki kewenangan check-in.
 **Menu:** **Follow Up & Tindak Lanjut → Konfirmasi Booking H-1**
 
 1. Buka daftar konfirmasi H-1 untuk tanggal operasional yang ditampilkan.
@@ -64,6 +65,7 @@ Pasien dapat menunjukkan QR kartu pasien. Dari **Master Pasien Global → Pindai
 6. Pastikan muncul pesan berhasil dan pasien tercantum pada **Antrean Klinik**.
 
 Tombol **Check-In** dari detail jadwal pasien mengarahkan petugas ke alur check-in yang sama. Gunakan satu jadwal saja untuk kedatangan yang sama; jangan membuat jadwal Walk-In baru jika pasien sudah mempunyai jadwal aktif.
+Booking hanya dapat di-check-in pada tanggal operasional yang sama dengan jadwalnya (WIB). Check-in membuat atau menggunakan kunjungan, mengonfirmasi booking, dan membuat antrean sebagai satu transaksi server; bila validasi gagal, perubahan tersebut dibatalkan bersama-sama. Untuk booking, lakukan check-in melalui booking asalnya, bukan dengan memilih atau membuat kunjungan booking secara terpisah.
 
 ### 4. Panggil pasien dan mulai konsultasi
 
@@ -71,8 +73,8 @@ Tombol **Check-In** dari detail jadwal pasien mengarahkan petugas ke alur check-
 **Menu:** Dokter membuka **Antrean Dokter**; Asisten membuka **Antrean Klinik**. Admin Cabang dapat memantau/mengelola antrean melalui **Antrean Klinik**.
 
 1. Cari nomor dan nama pasien yang sesuai di antrean cabang/dokter.
-2. Petugas antrean dapat klik **Panggil** untuk memanggil pasien/persiapan.
-3. Dokter atau Asisten klik **Mulai Konsultasi** saat konsultasi dimulai.
+2. Dokter atau Asisten dapat klik **Panggil** untuk memanggil pasien/persiapan. Hanya satu pasien per dokter yang boleh berada dalam ruang tindakan; pasien berikutnya belum dapat dipanggil selama kunjungan sebelumnya masih aktif.
+3. Dokter atau Asisten klik **Mulai Konsultasi** saat konsultasi dimulai. Sistem menolak pemanggilan atau mulai konsultasi untuk pasien lain sebelum seluruh treatment pasien sebelumnya berstatus selesai/diserahkan dan kunjungan sebelumnya ditutup.
 4. Dokter dapat membuka pasien dari antrean dan melengkapi pemeriksaan di **Pasien & Rekam Medis**.
 5. Jika waktu tindakan berubah, gunakan **+ Waktu** atau ubah estimasi sesuai kebutuhan operasional.
 

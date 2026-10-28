@@ -53,10 +53,10 @@ import {
   UserRole
 } from "../types/domain";
 import { getTodayDateString, getTomorrowDateString, getOperationalDateString, toOperationalDateTime } from "../utils/dateUtils";
-import { getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
 import { getVisitStatusForQueueStatus } from "../utils/bookingQueueGuards";
 import { getVisiblePromotions } from "../utils/promotionUtils";
 import { supabase } from "../lib/supabase";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 
 interface PatientCardDetails {
   name: string;
@@ -166,8 +166,11 @@ export const PatientPortalHome: React.FC = () => {
   const [formTimeSlot, setFormTimeSlot] = useState("");
   const [formNotes, setFormNotes] = useState("");
   const [activeSchedules, setActiveSchedules] = useState<DoctorSchedule[]>([]);
+  const [availableTimeSlots, setAvailableTimeSlots] = useState<string[]>([]);
   const [isLoadingSchedules, setIsLoadingSchedules] = useState(false);
+  const [isLoadingAvailableTimeSlots, setIsLoadingAvailableTimeSlots] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [slotAvailabilityError, setSlotAvailabilityError] = useState<string | null>(null);
   const [bookingSubmitError, setBookingSubmitError] = useState<string | null>(null);
   const [bookingSubmitSuccess, setBookingSubmitSuccess] = useState<string | null>(null);
   const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
@@ -213,6 +216,13 @@ export const PatientPortalHome: React.FC = () => {
 
   useEffect(() => {
     const patientId = currentUser?.patientId;
+    if (isLocalPatientDemoEnabled) {
+      setPatientCardProfile(null);
+      setPatientCardQrCode(null);
+      setPatientCardProfileError(null);
+      setIsLoadingPatientCardProfile(false);
+      return;
+    }
     if (!patientId) {
       setPatientCardProfile(null);
       setPatientCardQrCode(null);
@@ -455,11 +465,44 @@ export const PatientPortalHome: React.FC = () => {
       || scheduleDoctorId.replace(/^doc-/, "") === doctorId.replace(/^doc-/, "")
       || (!!doctorCode && scheduleDoctorId === doctorCode);
   });
-  const availableTimeSlots = getScheduledBookingTimeSlots(selectedSchedule).filter((slot) => {
-    if (!formDate) return false;
-    const slotDateTime = new Date(`${formDate}T${slot}:00+07:00`);
-    return !Number.isNaN(slotDateTime.getTime()) && slotDateTime.getTime() > Date.now();
-  });
+  useEffect(() => {
+    let active = true;
+    let hasLoaded = false;
+
+    const loadAvailableTimeSlots = async () => {
+      if (!currentUser?.patientId || !formBranchId || !formDate || !formDoctorId || !selectedSchedule) {
+        setAvailableTimeSlots([]);
+        setSlotAvailabilityError(null);
+        setIsLoadingAvailableTimeSlots(false);
+        return;
+      }
+
+      if (!hasLoaded) setIsLoadingAvailableTimeSlots(true);
+      try {
+        const slots = await bookingRepo.getPatientAvailableBookingSlots(formBranchId, formDoctorId, formDate);
+        if (active) {
+          setAvailableTimeSlots(slots);
+          setSlotAvailabilityError(null);
+        }
+      } catch (loadError) {
+        if (active) {
+          setAvailableTimeSlots([]);
+          setSlotAvailabilityError(loadError instanceof Error ? loadError.message : "Gagal memuat slot booking yang tersedia.");
+        }
+      } finally {
+        hasLoaded = true;
+        if (active) setIsLoadingAvailableTimeSlots(false);
+      }
+    };
+
+    void loadAvailableTimeSlots();
+    const refreshTimer = window.setInterval(() => void loadAvailableTimeSlots(), 30_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, [currentUser?.patientId, formBranchId, formDate, formDoctorId, selectedSchedule?.id, bookingRepo]);
 
   useEffect(() => {
     if (!availableDoctors.some((doctor) => doctor.id === formDoctorId)) {
@@ -681,6 +724,12 @@ export const PatientPortalHome: React.FC = () => {
       setBookingSubmitError("Tanggal booking tidak boleh di masa lalu.");
       return;
     }
+
+      const currentAvailableSlots = await bookingRepo.getPatientAvailableBookingSlots(formBranchId, formDoctorId, formDate);
+      if (!currentAvailableSlots.includes(formTimeSlot)) {
+        setAvailableTimeSlots(currentAvailableSlots);
+        throw new Error("Slot ini baru saja tidak tersedia. Silakan pilih jam lain.");
+      }
 
     let bookingDateTime: string;
     try {
@@ -1649,10 +1698,16 @@ export const PatientPortalHome: React.FC = () => {
                       required
                       value={formTimeSlot}
                       onChange={(event) => setFormTimeSlot(event.target.value)}
-                      disabled={!formDoctorId || availableTimeSlots.length === 0}
+                      disabled={!formDoctorId || isLoadingAvailableTimeSlots || availableTimeSlots.length === 0 || Boolean(slotAvailabilityError)}
                       className="h-10 w-full min-w-0 rounded-lg border border-[var(--patient-gold-edge)] bg-white px-2 py-2 text-xs font-medium text-slate-800 outline-none transition focus:border-[var(--patient-gold-edge)] focus:ring-2 focus:ring-[var(--patient-gold-light)] disabled:bg-slate-50 disabled:text-slate-400 sm:h-auto sm:rounded-xl sm:px-3 sm:py-3 sm:text-sm"
                     >
-                      <option value="">{availableTimeSlots.length ? "Pilih waktu" : "Tidak ada waktu tersedia"}</option>
+                      <option value="">
+                        {isLoadingAvailableTimeSlots
+                          ? "Memuat slot tersedia..."
+                          : availableTimeSlots.length
+                            ? "Pilih waktu"
+                            : "Tidak ada waktu tersedia"}
+                      </option>
                       {availableTimeSlots.map((slot) => <option key={slot} value={slot}>{slot} WIB</option>)}
                     </select>
                   </label>
@@ -1665,7 +1720,10 @@ export const PatientPortalHome: React.FC = () => {
                 {scheduleError && (
                   <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-xs leading-5 text-red-700">{scheduleError}</p>
                 )}
-                {formDoctorId && availableTimeSlots.length === 0 && !isLoadingSchedules && (
+                {slotAvailabilityError && (
+                  <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-xs leading-5 text-red-700">{slotAvailabilityError}</p>
+                )}
+                {formDoctorId && availableTimeSlots.length === 0 && !isLoadingSchedules && !isLoadingAvailableTimeSlots && !slotAvailabilityError && (
                   <p className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">
                     <Clock className="mt-0.5 h-4 w-4 shrink-0" /> Tidak ada slot waktu mendatang untuk dokter ini pada tanggal tersebut.
                   </p>

@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 import { RealtimeChannel } from "@supabase/supabase-js";
 
 export interface RealtimeSyncOptions {
@@ -105,7 +106,7 @@ export function useRealtimeSync(options: RealtimeSyncOptions = {}): RealtimeSync
   );
 
   useEffect(() => {
-    if (options.enabled === false || !isSupabaseConfigured || !supabase) {
+    if (options.enabled === false || isLocalPatientDemoEnabled || !isSupabaseConfigured || !supabase) {
       setStatus({
         isConnected: false,
         channelName: null,

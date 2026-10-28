@@ -9,6 +9,7 @@
  */
 
 import { isSupabaseConfigured } from "../lib/supabase";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 import {
   PatientRepository,
   BranchRepository,
@@ -139,9 +140,9 @@ export function isTestEnv(): boolean {
 export function getRuntimeDataSourceInfo(): RuntimeDataSourceInfo {
   const testMode = isTestEnv();
   return {
-    activeDataSource: !testMode ? "SUPABASE" : "MOCK",
+    activeDataSource: !testMode && !isLocalPatientDemoEnabled ? "SUPABASE" : "MOCK",
     isSupabaseConfigured,
-    isTestEnvironment: testMode
+    isTestEnvironment: testMode || isLocalPatientDemoEnabled
   };
 }
 
@@ -151,7 +152,7 @@ export function getRuntimeDataSourceInfo(): RuntimeDataSourceInfo {
  */
 export function createRepositorySuite(forceMock = false): RepositoryContainer {
   const isTest = isTestEnv();
-  const useMock = isTest ? (forceMock || isTest) : false;
+  const useMock = isLocalPatientDemoEnabled || (isTest ? (forceMock || isTest) : false);
 
   if (useMock) {
     return {

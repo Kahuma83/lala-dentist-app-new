@@ -36,8 +36,10 @@ export const ReceiptDocument: React.FC<ReceiptDocumentProps> = ({
 }) => {
   const receiptNumber = payment.receiptNumber || "Nomor kwitansi belum tersedia";
   const invoiceNumber = invoice?.invoiceNumber || "Nomor invoice belum tersedia";
-  const remainingOutstanding = invoice ? invoice.outstandingAmount : 0;
-  const isFullySettled = invoice ? invoice.outstandingAmount === 0 : true;
+  const snapshotNetAmount = payment.invoiceNetAmountSnapshot ?? invoice?.netAmount ?? 0;
+  const snapshotPaidAmount = payment.invoicePaidAmountSnapshot ?? invoice?.paidAmount ?? 0;
+  const remainingOutstanding = payment.invoiceOutstandingAmountSnapshot ?? invoice?.outstandingAmount ?? 0;
+  const isFullySettled = remainingOutstanding === 0;
 
   return (
     <div
@@ -132,11 +134,11 @@ export const ReceiptDocument: React.FC<ReceiptDocumentProps> = ({
           <div className="grid grid-cols-3 gap-3">
             <div>
               <span className="text-slate-500 block text-[10px]">Total Tagihan Bersih:</span>
-              <span className="font-mono font-bold text-slate-800 text-[11px]">{formatRupiah(invoice.netAmount)}</span>
+              <span className="font-mono font-bold text-slate-800 text-[11px]">{formatRupiah(snapshotNetAmount)}</span>
             </div>
             <div>
               <span className="text-slate-500 block text-[10px]">Total Telah Dibayar:</span>
-              <span className="font-mono font-bold text-emerald-700 text-[11px]">{formatRupiah(invoice.paidAmount)}</span>
+              <span className="font-mono font-bold text-emerald-700 text-[11px]">{formatRupiah(snapshotPaidAmount)}</span>
             </div>
             <div>
               <span className="text-slate-500 block text-[10px]">Sisa Tagihan Sekarang:</span>

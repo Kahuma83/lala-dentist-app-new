@@ -15,6 +15,7 @@ import { UserRole, CurrentUser } from "../types/domain";
 import { LalaLogo } from "../components/common/LalaLogo";
 import { AuthService } from "../services/authService";
 import { isSupabaseConfigured } from "../lib/supabase";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 
 export const Login: React.FC = () => {
   const { setCurrentUser, branding, configRepo, setBranding } = useApp();
@@ -115,6 +116,7 @@ export const Login: React.FC = () => {
         role: context.role,
         assignedBranchId: context.assignedBranchId ?? null,
         branchId: context.assignedBranchId ?? null,
+        patientId: context.patientId ?? null,
         staffId: context.staffId ?? null,
         doctorId: context.doctorId ?? null,
         isMockFallback: context.isMockFallback,
@@ -206,10 +208,61 @@ export const Login: React.FC = () => {
         {/* EMAIL & PASSWORD AUTH FORM */}
         {viewMode === "login" && (
         <form onSubmit={handleLogin} className="space-y-4" id="real-login-form">
-          {!isSupabaseConfigured && (
+          {!isSupabaseConfigured && !isLocalPatientDemoEnabled && (
             <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-xs text-amber-900 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <p>Supabase belum dikonfigurasi. Login demo dan penyimpanan lokal dinonaktifkan.</p>
+            </div>
+          )}
+          {isLocalPatientDemoEnabled && (
+            <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-xs text-emerald-900 space-y-2">
+              <p className="font-semibold">Mode demo lokal aktif. Data tidak dikirim ke Supabase.</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail("amanda@laladentist.com");
+                    setPassword("laladentist123");
+                    setLoginError(null);
+                  }}
+                  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-semibold hover:bg-emerald-100"
+                >
+                  Isi akun demo pasien
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail("siska_gebang");
+                    setPassword("laladentist123");
+                    setLoginError(null);
+                  }}
+                  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-semibold hover:bg-emerald-100"
+                >
+                  Isi akun demo Admin Cabang (Gebang)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail("syafira_doc");
+                    setPassword("laladentist123");
+                    setLoginError(null);
+                  }}
+                  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-semibold hover:bg-emerald-100"
+                >
+                  Isi akun demo Dokter (Gebang)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail("clary_assistant");
+                    setPassword("laladentist123");
+                    setLoginError(null);
+                  }}
+                  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-semibold hover:bg-emerald-100"
+                >
+                  Isi akun demo Asisten (Gebang)
+                </button>
+              </div>
             </div>
           )}
           <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-xs text-slate-700">
@@ -279,7 +332,7 @@ export const Login: React.FC = () => {
 
           <button
             type="submit"
-            disabled={loginLoading || !isSupabaseConfigured}
+            disabled={loginLoading || (!isSupabaseConfigured && !isLocalPatientDemoEnabled)}
             className="w-full bg-[#17233C] hover:bg-slate-800 text-white font-semibold py-3 px-4 rounded-xl text-sm transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 mt-2 cursor-pointer"
           >
             {loginLoading ? (

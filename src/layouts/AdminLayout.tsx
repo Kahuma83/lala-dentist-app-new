@@ -6,6 +6,7 @@ import { UserRole } from "../types/domain";
 import { AuthService } from "../services/authService";
 import { ProfileSecurityModal } from "../components/ProfileSecurityModal";
 import { isSupabaseConfigured } from "../lib/supabase";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 import {
   LayoutDashboard,
   Users,
@@ -469,7 +470,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             </span>
           )}
 
-          {isSupabaseConfigured && (
+          {isLocalPatientDemoEnabled ? (
+            <span className="text-[10px] text-white/90 bg-white/5 px-2.5 py-1 rounded-md border border-white/15 font-bold">
+              DEMO LOKAL
+            </span>
+          ) : isSupabaseConfigured && (
             <span
               title={realtimeSyncStatus.error || realtimeSyncStatus.channelName || "Menunggu koneksi realtime Supabase"}
               className="text-[10px] text-white/90 bg-white/5 px-2.5 py-1 rounded-md border border-white/15 flex items-center gap-1.5 font-bold"

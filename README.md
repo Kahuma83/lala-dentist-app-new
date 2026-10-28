@@ -6,6 +6,25 @@ Aplikasi web klinik dengan Supabase sebagai database dan autentikasi.
 
 Prerequisite: Node.js dan akses ke project Supabase.
 
+### Uji alur dengan akun demo lokal
+
+Untuk mencoba alur tanpa menulis atau membaca data Supabase, jalankan:
+
+```powershell
+npm run dev:demo
+```
+
+Buka `http://localhost:3000`. Mode ini menyimpan perubahan hanya di penyimpanan lokal browser dan menampilkan tombol pengisian akun demo untuk setiap peran:
+
+| Peran | Akun demo | Kata sandi |
+|---|---|---|
+| Pasien | `amanda@laladentist.com` | `laladentist123` |
+| Admin Cabang Gebang | `siska_gebang` | `laladentist123` |
+| Dokter Gebang | `syafira_doc` | `laladentist123` |
+| Asisten Gebang | `clary_assistant` | `laladentist123` |
+
+Alur yang disarankan: pasien membuat booking, Admin Cabang melakukan check-in, lalu Dokter/Asisten menguji antrean dan treatment. Dokter dan Asisten sengaja tidak memiliki kewenangan check-in; gunakan tombol akun mereka untuk memverifikasi penolakan. Perintah lama `npm run dev:patient` tetap tersedia sebagai alias mode demo lokal.
+
 1. Pasang dependencies:
 
    ```powershell

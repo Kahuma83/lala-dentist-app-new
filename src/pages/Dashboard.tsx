@@ -110,9 +110,13 @@ export const Dashboard: React.FC = () => {
 
   // 5. PASIEN TERBARU (Source: visits with valid timestamp, sorted newest, linked to PatientProfile)
   const recentPatientsList = useMemo(() => {
+    const patientMap = new Map(patients.map((p) => [p.id, p]));
     const branchVisits = visits.filter((v) => {
       if (effectiveBranchId && v.branchId !== effectiveBranchId) return false;
-      return !!v.visitDateTime;
+      if (!v.visitDateTime) return false;
+      const patient = patientMap.get(v.patientId);
+      const patientName = patient?.fullName || patient?.name || "";
+      return !/^pasien percobaan(?:\s|$)/i.test(patientName);
     });
 
     // Sort newest visit first
@@ -120,7 +124,6 @@ export const Dashboard: React.FC = () => {
       return (b.visitDateTime || "").localeCompare(a.visitDateTime || "");
     });
 
-    const patientMap = new Map(patients.map((p) => [p.id, p]));
     const branchMap = new Map(branches.map((b) => [b.id, b]));
 
     return sortedVisits.slice(0, 5).map((v) => {

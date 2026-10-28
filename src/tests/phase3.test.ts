@@ -12,7 +12,8 @@ import {
   VisitType,
   VisitStatus,
   QueueStatus,
-  BookingStatus
+  BookingStatus,
+  TreatmentJobStatus
 } from "../types/domain";
 import { AppClock } from "../utils/clock";
 
@@ -126,6 +127,57 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
     const allBranchQueue = await queueRepo.getQueueByBranch("branch-gebang");
     const countForVisit = allBranchQueue.filter((q) => q.visitId === visit.id).length;
     expect(countForVisit).toBe(1);
+  });
+
+  it("6a. checks in a booking atomically and reuses its visit and queue on retry", async () => {
+    const db = MockDatabase.getInstance();
+    db.bookings = [];
+    db.visits = [];
+    db.queueItems = [];
+    const booking = await new MockBookingRepository().createBooking({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      doctorId: "doc-syafira",
+      bookingDateTime: "2026-09-21T09:00:00Z",
+      status: BookingStatus.PENDING
+    });
+
+    const options = {
+      bookingId: booking.id,
+      branchId: booking.branchId,
+      patientId: booking.patientId,
+      doctorId: booking.doctorId
+    };
+    const queueItem = await queueRepo.checkInVisitToQueue(null, undefined, undefined, options);
+    const retry = await queueRepo.checkInVisitToQueue(null, undefined, undefined, options);
+
+    expect(db.bookings.find((item) => item.id === booking.id)?.status).toBe(BookingStatus.CONFIRMED);
+    expect(db.visits.filter((item) => item.bookingId === booking.id)).toHaveLength(1);
+    expect(retry.id).toBe(queueItem.id);
+    expect(db.queueItems.filter((item) => item.visitId === queueItem.visitId)).toHaveLength(1);
+  });
+
+  it("6a1. rejects booking check-in outside its operational date without creating a visit", async () => {
+    const db = MockDatabase.getInstance();
+    db.bookings = [];
+    db.visits = [];
+    const booking = await new MockBookingRepository().createBooking({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      doctorId: "doc-syafira",
+      bookingDateTime: "2026-09-22T09:00:00Z",
+      status: BookingStatus.PENDING
+    });
+
+    await expect(queueRepo.checkInVisitToQueue(null, undefined, undefined, {
+      bookingId: booking.id,
+      branchId: booking.branchId,
+      patientId: booking.patientId,
+      doctorId: booking.doctorId
+    })).rejects.toThrow("tanggal operasional yang sama");
+
+    expect(db.visits.filter((item) => item.bookingId === booking.id)).toHaveLength(0);
+    expect(db.bookings.find((item) => item.id === booking.id)?.status).toBe(BookingStatus.PENDING);
   });
 
   it("6b. should not create duplicate visit entries when the same booking is checked in twice", async () => {
@@ -262,12 +314,20 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
 
   it("12. should maintain separate fields for bookingDateTime, estimatedServiceAt, actualServiceStartAt, actualServiceEndAt", async () => {
     AppClock.setFixedTime("2026-09-21T09:00:00Z");
+    MockDatabase.getInstance().bookings = [];
+    const booking = await new MockBookingRepository().createBooking({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      doctorId: "doc-syafira",
+      bookingDateTime: "2026-09-21T09:00:00Z",
+      status: BookingStatus.CONFIRMED
+    });
 
     const visit = await visitRepo.createVisit({
       patientId: "patient-1",
       branchId: "branch-gebang",
       visitType: VisitType.BOOKING,
-      bookingId: "booking-1",
+      bookingId: booking.id,
       doctorId: "doc-syafira"
     });
 
@@ -407,6 +467,112 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
     const skipped = await queueRepo.skipQueuePatient(item.id);
 
     expect(skipped.status).toBe(QueueStatus.SKIPPED);
+  });
+
+  it("19a. should restore a skipped patient to the waiting queue", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+
+    const item = await queueRepo.checkInVisitToQueue(visit.id);
+    await queueRepo.skipQueuePatient(item.id);
+
+    const restored = await queueRepo.restoreQueueStatus(item.id, QueueStatus.WAITING);
+    const snapshot = await queueRepo.getLiveQueueSnapshot("branch-gebang", "2026-09-21", "doc-syafira");
+
+    expect(restored.status).toBe(QueueStatus.WAITING);
+    expect(snapshot?.waitingQueue).toHaveLength(1);
+    expect(snapshot?.skippedQueue).toHaveLength(0);
+  });
+
+  it("19b. should not call another patient while the previous patient is still in preparation", async () => {
+    const visit1 = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const visit2 = await visitRepo.createVisit({
+      patientId: "patient-2",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const item1 = await queueRepo.checkInVisitToQueue(visit1.id);
+    const item2 = await queueRepo.checkInVisitToQueue(visit2.id);
+
+    await queueRepo.prepareQueuePatient(item1.id);
+
+    await expect(queueRepo.prepareQueuePatient(item2.id)).rejects.toThrow(
+      "Pasien lain masih berada di ruang tindakan"
+    );
+    await expect(queueRepo.startService(item2.id)).rejects.toThrow(
+      "Pasien lain masih berada di ruang tindakan"
+    );
+  });
+
+  it("19c. should require unfinished treatments to finish before calling the next patient", async () => {
+    const visit1 = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const visit2 = await visitRepo.createVisit({
+      patientId: "patient-2",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const item1 = await queueRepo.checkInVisitToQueue(visit1.id);
+    const item2 = await queueRepo.checkInVisitToQueue(visit2.id);
+    const now = AppClock.nowISO();
+    MockDatabase.getInstance().treatmentJobs.push({
+      id: "unfinished-treatment-for-visit-1",
+      visitId: visit1.id,
+      patientId: visit1.patientId,
+      branchId: visit1.branchId,
+      doctorId: "doc-syafira",
+      serviceId: "service-scaling",
+      status: TreatmentJobStatus.BELUM_DIMULAI,
+      serviceNameSnapshot: "Scaling",
+      doctorNameSnapshot: "drg. Syafira",
+      createdAt: now,
+      updatedAt: now
+    });
+
+    await queueRepo.prepareQueuePatient(item1.id);
+
+    await expect(queueRepo.prepareQueuePatient(item2.id)).rejects.toThrow(
+      "Treatment pasien sebelumnya belum selesai"
+    );
+  });
+
+  it("19d. should not allow skipping a patient already in the treatment room", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const item = await queueRepo.checkInVisitToQueue(visit.id);
+    await queueRepo.prepareQueuePatient(item.id);
+
+    await expect(queueRepo.skipQueuePatient(item.id)).rejects.toThrow(
+      "Pasien yang sudah berada di ruang tindakan tidak dapat dilewati"
+    );
+    await expect(queueRepo.removeQueuePatient(item.id)).rejects.toThrow(
+      "Pasien yang sudah berada di ruang tindakan tidak dapat dihapus"
+    );
   });
 
   // ==========================================
@@ -662,16 +828,24 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
   });
 
   it("27. should capture booking time snapshot when checking in booking visit", async () => {
+    MockDatabase.getInstance().bookings = [];
+    const booking = await new MockBookingRepository().createBooking({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      doctorId: "doc-syafira",
+      bookingDateTime: "2026-09-21T09:00:00Z",
+      status: BookingStatus.CONFIRMED
+    });
     const visit = await visitRepo.createVisit({
       patientId: "patient-1",
       branchId: "branch-gebang",
       visitType: VisitType.BOOKING,
-      bookingId: "booking-1",
+      bookingId: booking.id,
       doctorId: "doc-syafira"
     });
 
     const queueItem = await queueRepo.checkInVisitToQueue(visit.id);
-    expect(queueItem.bookingId).toBe("booking-1");
+    expect(queueItem.bookingId).toBe(booking.id);
   });
 
   it("28. should reject estimated duration <= 0 minutes", async () => {

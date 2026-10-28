@@ -64,7 +64,6 @@ import { ClinicMedicalRecordPrintDocument } from "../components/ClinicMedicalRec
 import { ImportPatientExecutionResult } from "../utils/excelPatientUtils";
 import { useRouter } from "../components/Router";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
-import { hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 import { getOperationalDateString } from "../utils/dateUtils";
 import { canViewPatientPhone as isPatientPhoneVisible } from "../utils/patientPrivacy";
 import { normalizeIcd10WhoCode, parseIcd9CmProcedureCodes } from "../utils/clinicalCodeUtils";
@@ -731,6 +730,10 @@ export const PatientManagement: React.FC = () => {
   const handleSubmitBookingVisit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    if (currentUser?.role !== UserRole.SUPER_ADMIN && currentUser?.role !== UserRole.BRANCH_ADMIN) {
+      setFormError("Check-in hanya dapat dilakukan Admin Cabang atau Super Admin.");
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -743,49 +746,19 @@ export const PatientManagement: React.FC = () => {
         throw new Error("Data booking tidak ditemukan.");
       }
 
-      const branchQueue = await repos.queue.getQueueByBranch(
-        targetBooking.branchId,
-        currentUser?.role,
-        currentUser?.assignedBranchId
-      );
-      if (hasActiveQueueForPatientOnDate(branchQueue, targetBooking.patientId, targetBooking.branchId, new Date().toISOString())) {
-        throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain.");
-      }
-
-      // Create BOOKING Visit (bookingId MUST be valid)
-      const createdVisit = await repos.visit.createVisit(
-        {
-          patientId: targetBooking.patientId,
-          branchId: targetBooking.branchId,
-          visitType: VisitType.BOOKING,
-          visitStatus: VisitStatus.WAITING,
-          bookingId: targetBooking.id,
-          complaint: bookingVisitForm.complaint || targetBooking.notes || "Kunjungan terkonfirmasi booking",
-          doctorId: targetBooking.doctorId,
-          plannedTreatments: targetBooking.plannedTreatments || [],
-          visitDateTime: new Date().toISOString()
-        },
-        currentUser?.role,
-        currentUser?.assignedBranchId
-      );
-
-      // Automatically check-in booking visit into live queue
       await repos.queue.checkInVisitToQueue(
-        createdVisit.id,
+        null,
         currentUser?.role,
         currentUser?.assignedBranchId,
         {
+          bookingId: targetBooking.id,
+          branchId: targetBooking.branchId,
+          patientId: targetBooking.patientId,
           doctorId: targetBooking.doctorId,
           estimatedDurationMinutes: getPlannedTreatmentDurationMinutes(targetBooking.plannedTreatments),
-          plannedTreatments: targetBooking.plannedTreatments || []
+          plannedTreatments: targetBooking.plannedTreatments || [],
+          complaint: bookingVisitForm.complaint
         }
-      );
-
-      await repos.booking.updateBooking(
-        targetBooking.id,
-        { status: BookingStatus.CONFIRMED },
-        currentUser?.role,
-        currentUser?.assignedBranchId
       );
 
       await refreshData();

@@ -19,6 +19,7 @@ import {
   AlertCircle,
   Plus,
   RefreshCw,
+  RotateCcw,
   Edit2,
   X
 } from "lucide-react";
@@ -26,7 +27,6 @@ import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { useRouter } from "../components/Router";
 import { isBranchMatch } from "../utils/branchUtils";
 import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
-import { hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 
 export const LiveQueueManagement: React.FC = () => {
   const { currentUser, repos, branches, doctors, doctorSchedules, refreshData } = useApp();
@@ -39,6 +39,7 @@ export const LiveQueueManagement: React.FC = () => {
   const isDoctor = currentUser?.role === UserRole.DOCTOR;
   const isAssistant = currentUser?.role === UserRole.DOCTOR_ASSISTANT;
   const isPatient = currentUser?.role === UserRole.PATIENT;
+  const canCheckIn = isSuper || isBranchAdmin;
   const checkInParams = new URLSearchParams(window.location.search);
   const requestedBookingId = isCheckInPage ? checkInParams.get("bookingId") : null;
 
@@ -308,7 +309,7 @@ export const LiveQueueManagement: React.FC = () => {
       // Bookings eligible for check-in: matching branch, not cancelled, not already completed or queued
       const eligibleBookings = allBookings.filter((b) => {
         if (branchId && b.branchId && b.branchId !== branchId) return false;
-        if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.COMPLETED) return false;
+        if (b.status !== BookingStatus.PENDING && b.status !== BookingStatus.CONFIRMED) return false;
         if (filteredItems.some((q) => q.bookingId === b.id)) return false;
         return true;
       });
@@ -424,6 +425,32 @@ export const LiveQueueManagement: React.FC = () => {
     }
   };
 
+  const handleRestoreSkippedQueue = async (queueId: string) => {
+    if (queueActionLoadingId) return;
+    const confirmed = window.confirm("Kembalikan pasien ke antrean menunggu? Estimasi waktu layanan akan dihitung ulang.");
+    if (!confirmed) return;
+
+    try {
+      setActionError(null);
+      setActionSuccess(null);
+      setQueueActionLoadingId(queueId);
+      await repos.queue.restoreQueueStatus(
+        queueId,
+        QueueStatus.WAITING,
+        currentUser?.role,
+        currentUser?.assignedBranchId,
+        currentUser?.id
+      );
+      setActionSuccess("Pasien dikembalikan ke antrean menunggu");
+      await loadQueueData();
+      await refreshData();
+    } catch (err: any) {
+      setActionError(err.message || "Gagal mengembalikan pasien ke antrean");
+    } finally {
+      setQueueActionLoadingId(null);
+    }
+  };
+
   const handleRemoveQueue = async (queueId: string) => {
     if (queueActionLoadingId) return;
     const confirmed = window.confirm("Apakah Anda yakin ingin menghapus antrean ini? Pasien akan dikeluarkan dari daftar tunggu.");
@@ -472,6 +499,11 @@ export const LiveQueueManagement: React.FC = () => {
   };
 
   const handleOpenCheckInModal = () => {
+    if (!canCheckIn) {
+      setActionError("Check-in hanya dapat dilakukan Admin Cabang atau Super Admin.");
+      return;
+    }
+
     const selectedBooking = requestedBookingId
       ? eligibleCheckInBookings.find((booking) => booking.id === requestedBookingId)
       : eligibleCheckInBookings[0];
@@ -484,14 +516,18 @@ export const LiveQueueManagement: React.FC = () => {
   };
 
   useEffect(() => {
-    if (isCheckInPage) {
+    if (isCheckInPage && canCheckIn) {
       handleOpenCheckInModal();
     }
-  }, [isCheckInPage]);
+  }, [isCheckInPage, canCheckIn]);
 
   const handleCheckInVisit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isCheckInSubmitting) return;
+    if (!canCheckIn) {
+      setActionError("Check-in hanya dapat dilakukan Admin Cabang atau Super Admin.");
+      return;
+    }
 
     try {
       setActionError(null);
@@ -503,9 +539,14 @@ export const LiveQueueManagement: React.FC = () => {
         : selectedBranchId;
       const branchId = branches.find((branch) => isBranchMatch(branch.id, requestedBranchId, branches))?.id || requestedBranchId;
 
-      let visitIdToUse = selectedVisitIdForCheckIn;
+      let visitIdToUse: string | null = selectedVisitIdForCheckIn || null;
       let visitForQueue: PatientVisit | undefined;
       let targetDoctorId = selectedDoctorId !== "ALL" ? selectedDoctorId : undefined;
+      let targetBookingId: string | null = null;
+      let targetBookingBranchId: string | undefined;
+      let targetPatientId: string | undefined;
+      let targetPatientName: string | undefined;
+      let targetBookingTime: string | undefined;
 
       const bookingIdToCheckIn = requestedBookingId || selectedBookingIdForCheckIn;
       if (bookingIdToCheckIn) {
@@ -530,44 +571,12 @@ export const LiveQueueManagement: React.FC = () => {
         if ((isBranchAdmin || isAssistant) && !isBranchMatch(bookingBranchId, branchId, branches)) {
           throw new Error("Booking berasal dari cabang lain dan tidak dapat dimasukkan ke antrean cabang ini.");
         }
-        if (hasActiveQueueForPatientOnDate(queueItems, booking.patientId, bookingBranchId, AppClock.nowISO())) {
-          throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain.");
-        }
-        const existingVisit = visits.find(
-          (v) => isValidUUID(v.id) &&
-            v.bookingId === booking.id &&
-            v.patientId === booking.patientId &&
-            isBranchMatch(v.branchId, bookingBranchId, branches)
-        );
-
-        if (existingVisit) {
-          visitIdToUse = existingVisit.id;
-          visitForQueue = existingVisit;
-        } else {
-          const newVisit = await repos.visit.createVisit(
-            {
-              patientId: booking.patientId,
-              branchId: bookingBranchId,
-              visitType: VisitType.BOOKING,
-              visitDateTime: booking.bookingDateTime || AppClock.nowISO(),
-              bookingId: booking.id,
-              doctorId: booking.doctorId,
-              complaint: booking.notes || booking.complaint || "Konsultasi Booking",
-              plannedTreatments: booking.plannedTreatments || []
-            },
-            currentUser?.role,
-            branchId
-          );
-          visitIdToUse = newVisit.id;
-          visitForQueue = newVisit;
-        }
-
-        await repos.booking.updateBooking(
-          booking.id,
-          { status: BookingStatus.CONFIRMED },
-          currentUser?.role,
-          branchId
-        );
+        visitIdToUse = null;
+        targetBookingId = booking.id;
+        targetBookingBranchId = bookingBranchId;
+        targetPatientId = booking.patientId;
+        targetPatientName = booking.patientNameSnapshot;
+        targetBookingTime = booking.bookingDateTime;
         setCustomDuration(getPlannedTreatmentDurationMinutes(booking.plannedTreatments));
       } else {
         if (!selectedVisitIdForCheckIn) {
@@ -589,13 +598,13 @@ export const LiveQueueManagement: React.FC = () => {
         {
           estimatedDurationMinutes: customDuration,
           plannedTreatments: visitForQueue?.plannedTreatments || [],
-          bookingId: visitForQueue?.bookingId || null,
+          bookingId: targetBookingId || visitForQueue?.bookingId || null,
           doctorId: targetDoctorId,
-          branchId: visitForQueue?.branchId,
-          patientId: visitForQueue?.patientId,
-          patientNameSnapshot: patientsList.find((patient) => patient.id === visitForQueue?.patientId)?.fullName,
+          branchId: visitForQueue?.branchId || targetBookingBranchId,
+          patientId: visitForQueue?.patientId || targetPatientId,
+          patientNameSnapshot: patientsList.find((patient) => patient.id === (visitForQueue?.patientId || targetPatientId))?.fullName || targetPatientName,
           doctorNameSnapshot: doctors.find((doctor) => doctor.id === targetDoctorId)?.name,
-          bookingTimeSnapshot: allBookingsList.find((booking) => booking.id === visitForQueue?.bookingId)?.bookingDateTime
+          bookingTimeSnapshot: targetBookingTime || allBookingsList.find((booking) => booking.id === visitForQueue?.bookingId)?.bookingDateTime
         }
       );
       setActionSuccess("Pasien berhasil di-checkin dan masuk antrean live!");
@@ -1026,8 +1035,21 @@ export const LiveQueueManagement: React.FC = () => {
                             )}
 
                           {(isSuper || isBranchAdmin || isDoctor) &&
-                            q.status !== QueueStatus.COMPLETED &&
-                            q.status !== QueueStatus.SKIPPED && (
+                            q.status === QueueStatus.SKIPPED && (
+                              <button
+                                onClick={() => handleRestoreSkippedQueue(q.id)}
+                                disabled={queueActionLoadingId === q.id}
+                                className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded text-[11px] font-medium transition-colors border border-emerald-200 disabled:opacity-50"
+                              >
+                                <span className="inline-flex items-center gap-1">
+                                  <RotateCcw className="w-3 h-3" />
+                                  {queueActionLoadingId === q.id ? "Memulihkan..." : "Kembalikan"}
+                                </span>
+                              </button>
+                            )}
+
+                          {(isSuper || isBranchAdmin || isDoctor) &&
+                            q.status === QueueStatus.WAITING && (
                               <button
                                 onClick={() => handleSkip(q.id)}
                                 className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-medium transition-colors border border-rose-200"
@@ -1036,7 +1058,9 @@ export const LiveQueueManagement: React.FC = () => {
                               </button>
                             )}
 
-                          {(isSuper || isBranchAdmin || isDoctor || isAssistant) && (
+                          {(isSuper || isBranchAdmin || isDoctor || isAssistant) &&
+                            q.status !== QueueStatus.IN_PREPARATION &&
+                            q.status !== QueueStatus.IN_CONSULTATION && (
                             <button
                               onClick={() => handleRemoveQueue(q.id)}
                               disabled={queueActionLoadingId === q.id}
@@ -1058,7 +1082,7 @@ export const LiveQueueManagement: React.FC = () => {
     </div>}
 
       {/* CHECK-IN VISIT MODAL */}
-      {showCheckInModal && (
+      {showCheckInModal && canCheckIn && (
           <div className={isCheckInPage ? "p-6 max-w-3xl mx-auto" : "fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"}>
             {isCheckInPage && (
               <div className="mb-5">
@@ -1228,7 +1252,7 @@ export const LiveQueueManagement: React.FC = () => {
                   type="submit"
                   disabled={isCheckInSubmitting || (
                     requestedBookingId
-                      ? !requestedBooking || requestedBooking.status === BookingStatus.CANCELLED || requestedBooking.status === BookingStatus.COMPLETED
+                      ? !requestedBooking || (requestedBooking.status !== BookingStatus.PENDING && requestedBooking.status !== BookingStatus.CONFIRMED)
                       : !selectedBookingIdForCheckIn && !selectedVisitIdForCheckIn
                   )}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-semibold transition-colors shadow-xs"

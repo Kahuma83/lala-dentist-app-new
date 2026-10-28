@@ -28,6 +28,7 @@ import { DoctorSchedules } from "./pages/DoctorSchedules";
 import { AdminLayout } from "./layouts/AdminLayout";
 import { UserRole } from "./types/domain";
 import { isSupabaseConfigured } from "./lib/supabase";
+import { isLocalPatientDemoEnabled } from "./utils/localPatientDemo";
 import { AuthService } from "./services/authService";
 import { Lock, ArrowLeft, RefreshCw } from "lucide-react";
 
@@ -141,7 +142,7 @@ const AppContent: React.FC = () => {
     /^(user-|auth-|patient-)/i.test(currentUser.authUserId);
 
   // 1. Session boundary: If not logged in, or still holding stale mock identity, force to Login
-  if (!currentUser || (isSupabaseConfigured && hasStaleMockIdentity)) {
+  if (!currentUser || (isSupabaseConfigured && !isLocalPatientDemoEnabled && hasStaleMockIdentity)) {
     return <Login />;
   }
 

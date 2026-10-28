@@ -26,6 +26,7 @@ vi.mock("../lib/supabase", () => {
   };
   return {
     isSupabaseConfigured: true,
+    isLocalPatientDemoEnabled: false,
     supabase: mockSupabaseClient
   };
 });

@@ -131,12 +131,13 @@ export { AppClock } from "../utils/clock";
 import { redactPatientPhone } from "../utils/patientPrivacy";
 import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentUtils";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
+import { getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
 import { getVisitStatusForQueueStatus, hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 import { calculateQueueEstimates } from "../utils/queueScheduleUtils";
 import { getNextMedicalRecordNumber, checkRMUniqueness } from "../utils/rmUtils";
 import { isBranchMatch } from "../utils/branchUtils";
 import { allocateInvoiceNetToLines } from "../utils/invoiceLineAllocation";
-import { toOperationalDateTime } from "../utils/dateUtils";
+import { getOperationalDateString, toOperationalDateTime } from "../utils/dateUtils";
 
 const db = MockDatabase.getInstance();
 
@@ -2066,6 +2067,43 @@ export class MockBookingRepository implements BookingRepository {
       .map((b) => ({ ...b }));
   }
 
+  async getPatientAvailableBookingSlots(branchId: string, doctorId: string, operationalDate: string): Promise<string[]> {
+    const schedule = db.doctorSchedules.find((item) =>
+      item.branchId === branchId && item.doctorId === doctorId && item.date === operationalDate && item.status === ScheduleStatus.ACTIVE
+    );
+    const now = new Date(AppClock.nowISO()).getTime();
+
+    return getScheduledBookingTimeSlots(schedule).filter((slot) => {
+      const startAt = new Date(toOperationalDateTime(`${operationalDate}T00:00:00+07:00`, slot)).getTime();
+      const endAt = startAt + 30 * 60_000;
+      if (startAt <= now) return false;
+
+      const hasBookingConflict = db.bookings.some((booking) => {
+        if (
+          booking.branchId !== branchId ||
+          booking.doctorId !== doctorId ||
+          ![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)
+        ) return false;
+        const bookingStart = new Date(booking.bookingDateTime).getTime();
+        const bookingEnd = bookingStart + getPlannedTreatmentDurationMinutes(booking.plannedTreatments || [], 30) * 60_000;
+        return startAt < bookingEnd && bookingStart < endAt;
+      });
+      if (hasBookingConflict) return false;
+
+      return !db.queueItems.some((queue) => {
+        if (
+          queue.branchId !== branchId ||
+          queue.doctorId !== doctorId ||
+          !["WAITING", "IN_PREPARATION", "IN_CONSULTATION", "CALLING"].includes(queue.status) ||
+          getOperationalDateString(queue.arrivalAt) !== operationalDate
+        ) return false;
+        const queueStart = new Date(queue.actualServiceStartAt || queue.estimatedServiceAt || queue.arrivalAt).getTime();
+        const queueEnd = queueStart + Math.max(1, queue.estimatedDurationMinutes) * 60_000;
+        return startAt < queueEnd && queueStart < endAt;
+      });
+    });
+  }
+
   async confirmPatientEnRoute(bookingId: string): Promise<string> {
     const booking = db.bookings.find((item) => item.id === bookingId);
     if (!booking || ![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
@@ -2666,7 +2704,7 @@ export class MockQueueRepository implements QueueRepository {
   }
 
   async checkInVisitToQueue(
-    visitId: string,
+    visitId: string | null,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     options?: {
@@ -2681,10 +2719,76 @@ export class MockQueueRepository implements QueueRepository {
       patientNameSnapshot?: string;
       doctorNameSnapshot?: string;
       bookingTimeSnapshot?: string;
+      complaint?: string;
     }
   ): Promise<QueueItem> {
+    if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Check-in hanya dapat dilakukan Admin Cabang atau Super Admin");
+    }
+
+    let resolvedVisitId = visitId;
+    let visit = visitId ? db.visits.find((v) => v.id === visitId) : undefined;
+    let linkedBooking = options?.bookingId
+      ? db.bookings.find((candidate) => candidate.id === options.bookingId)
+      : visit?.bookingId
+        ? db.bookings.find((candidate) => candidate.id === visit?.bookingId)
+        : undefined;
+
+    if (options?.bookingId && !linkedBooking) {
+      throw new Error("Booking yang dipilih tidak ditemukan");
+    }
+
+    if (linkedBooking) {
+      if (linkedBooking.status !== BookingStatus.PENDING && linkedBooking.status !== BookingStatus.CONFIRMED) {
+        throw new Error("Booking sudah tidak aktif dan tidak dapat di-check-in");
+      }
+      if ((options?.branchId && options.branchId !== linkedBooking.branchId) ||
+        (options?.patientId && options.patientId !== linkedBooking.patientId) ||
+        (options?.doctorId && options.doctorId !== linkedBooking.doctorId)) {
+        throw new Error("Data check-in tidak sesuai dengan booking");
+      }
+      if (getOperationalDateString(linkedBooking.bookingDateTime) !== getOperationalDateString(AppClock.nowISO())) {
+        throw new Error("Booking hanya dapat di-check-in pada tanggal operasional yang sama");
+      }
+      if (visit && (
+        visit.bookingId !== linkedBooking.id ||
+        visit.patientId !== linkedBooking.patientId ||
+        visit.branchId !== linkedBooking.branchId ||
+        (visit.doctorId && visit.doctorId !== linkedBooking.doctorId)
+      )) {
+        throw new Error("Relasi booking, pasien, dokter, cabang, dan kunjungan tidak sesuai");
+      }
+      visit = db.visits.find((candidate) =>
+        candidate.bookingId === linkedBooking?.id &&
+        candidate.visitStatus !== VisitStatus.COMPLETED &&
+        candidate.visitStatus !== VisitStatus.CANCELLED
+      ) || visit;
+      if (!visit) {
+        if (db.visits.some((candidate) => candidate.bookingId === linkedBooking?.id)) {
+          throw new Error("Booking sudah memiliki kunjungan yang ditutup dan tidak dapat di-check-in ulang");
+        }
+        if (hasActiveQueueForPatientOnDate(
+          db.queueItems,
+          linkedBooking.patientId,
+          linkedBooking.branchId,
+          AppClock.nowISO()
+        )) {
+          throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain");
+        }
+        visit = await new MockVisitRepository().createVisit({
+          patientId: linkedBooking.patientId,
+          branchId: linkedBooking.branchId,
+          visitType: VisitType.BOOKING,
+          bookingId: linkedBooking.id,
+          doctorId: linkedBooking.doctorId,
+          complaint: options?.complaint || linkedBooking.complaint || linkedBooking.notes,
+          plannedTreatments: linkedBooking.plannedTreatments || []
+        }, currentUserRole, userBranchId);
+      }
+      resolvedVisitId = visit.id;
+    }
+
     // 1. Visit validation
-    const visit = db.visits.find((v) => v.id === visitId);
     if (!visit) {
       throw new Error("PatientVisit tidak ditemukan");
     }
@@ -2708,13 +2812,17 @@ export class MockQueueRepository implements QueueRepository {
 
     // 5. Idempotency Check
     const existingQueue = db.queueItems.find(
-      (q) => q.visitId === visitId && q.status !== QueueStatus.SKIPPED && q.status !== "CANCELLED"
+      (q) => q.visitId === resolvedVisitId && q.status !== QueueStatus.SKIPPED && q.status !== "CANCELLED"
     );
     if (existingQueue) {
       return existingQueue;
     }
 
-    if (hasActiveQueueForPatientOnDate(db.queueItems, visit.patientId, visit.branchId, AppClock.nowISO(), visitId)) {
+    if (visit.visitStatus !== VisitStatus.WAITING && visit.visitStatus !== VisitStatus.IN_TRIAGE) {
+      throw new Error("Status kunjungan tidak mengizinkan check-in");
+    }
+
+    if (hasActiveQueueForPatientOnDate(db.queueItems, visit.patientId, visit.branchId, AppClock.nowISO(), resolvedVisitId || undefined)) {
       throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain");
     }
 
@@ -2816,6 +2924,10 @@ export class MockQueueRepository implements QueueRepository {
       visit.visitStatus = VisitStatus.IN_TRIAGE;
       visit.updatedAt = now;
     }
+    if (linkedBooking && linkedBooking.status === BookingStatus.PENDING) {
+      linkedBooking.status = BookingStatus.CONFIRMED;
+      linkedBooking.updatedAt = now;
+    }
 
     await this.recalculateQueue(visit.branchId, doctorId, operationalDate);
 
@@ -2870,6 +2982,7 @@ export class MockQueueRepository implements QueueRepository {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
 
+    this.assertTreatmentRoomAvailable(item);
     item.status = QueueStatus.IN_PREPARATION;
     item.updatedAt = AppClock.nowISO();
     await this.syncVisitStatus(item, currentUserRole, userBranchId);
@@ -2910,7 +3023,7 @@ export class MockQueueRepository implements QueueRepository {
         q.id !== queueId &&
         q.branchId === item.branchId &&
         q.doctorId === item.doctorId &&
-        (!opDate || !qDate || qDate === opDate || true) &&
+        (!opDate || !qDate || qDate === opDate) &&
         q.status === QueueStatus.IN_CONSULTATION
       );
     });
@@ -2919,6 +3032,7 @@ export class MockQueueRepository implements QueueRepository {
       throw new Error("Dokter sedang melayani pasien lain dalam konsultasi aktif");
     }
 
+    this.assertTreatmentRoomAvailable(item);
     const now = AppClock.nowISO();
     item.status = QueueStatus.IN_CONSULTATION;
     item.actualServiceStartAt = now;
@@ -2929,6 +3043,31 @@ export class MockQueueRepository implements QueueRepository {
     await this.recalculateQueue(item.branchId, item.doctorId, opDate);
 
     return { ...item };
+  }
+
+  private assertTreatmentRoomAvailable(queueItem: QueueItem): void {
+    const operationalDate = (queueItem.arrivalAt || queueItem.checkInTime || "").split("T")[0];
+    const occupiedQueue = db.queueItems.find((item) => {
+      const itemDate = (item.arrivalAt || item.checkInTime || item.actualServiceStartAt || "").split("T")[0];
+      return item.id !== queueItem.id
+        && item.branchId === queueItem.branchId
+        && item.doctorId === queueItem.doctorId
+        && (!operationalDate || !itemDate || itemDate === operationalDate)
+        && (item.status === QueueStatus.IN_PREPARATION || item.status === QueueStatus.IN_CONSULTATION);
+    });
+
+    if (!occupiedQueue) return;
+
+    const unfinishedTreatment = db.treatmentJobs.some((treatment) =>
+      treatment.visitId === occupiedQueue.visitId
+      && treatment.status !== TreatmentJobStatus.SELESAI
+      && treatment.status !== TreatmentJobStatus.DISERAHKAN
+    );
+    if (unfinishedTreatment) {
+      throw new Error("Treatment pasien sebelumnya belum selesai. Selesaikan semua treatment sebelum memanggil pasien berikutnya.");
+    }
+
+    throw new Error("Pasien lain masih berada di ruang tindakan. Selesaikan kunjungan sebelum memanggil pasien berikutnya.");
   }
 
   async finishService(
@@ -2983,6 +3122,9 @@ export class MockQueueRepository implements QueueRepository {
     if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
+    if (item.status === QueueStatus.IN_PREPARATION || item.status === QueueStatus.IN_CONSULTATION) {
+      throw new Error("Pasien yang sudah berada di ruang tindakan tidak dapat dilewati");
+    }
 
     item.status = QueueStatus.SKIPPED;
     item.updatedAt = AppClock.nowISO();
@@ -3006,6 +3148,9 @@ export class MockQueueRepository implements QueueRepository {
     }
     if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
+    }
+    if (item.status === QueueStatus.IN_PREPARATION || item.status === QueueStatus.IN_CONSULTATION) {
+      throw new Error("Pasien yang sudah berada di ruang tindakan tidak dapat dibatalkan dari antrean");
     }
 
     item.status = QueueStatus.CANCELLED;
@@ -3035,7 +3180,8 @@ export class MockQueueRepository implements QueueRepository {
     item.updatedAt = AppClock.nowISO();
     const operationalDate = (item.arrivalAt || item.checkInTime || "").split("T")[0];
     await this.recalculateQueue(item.branchId, item.doctorId, operationalDate);
-    return { ...item };
+    const updatedItem = db.queueItems.find((queueItem) => queueItem.id === queueId);
+    return { ...(updatedItem || item) };
   }
 
   async removeQueuePatient(
@@ -3050,6 +3196,9 @@ export class MockQueueRepository implements QueueRepository {
     }
 
     const item = db.queueItems[itemIndex];
+    if (item.status === QueueStatus.IN_PREPARATION || item.status === QueueStatus.IN_CONSULTATION) {
+      throw new Error("Pasien yang sudah berada di ruang tindakan tidak dapat dihapus dari antrean");
+    }
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat menghapus antrean cabang lain");
     }

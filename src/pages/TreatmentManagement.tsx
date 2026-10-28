@@ -49,7 +49,7 @@ import { InventoryRecipeLine, getInventoryTreatmentRecipe } from "../utils/inven
 import { getApprovedInventoryTreatmentRecipe } from "../services/inventoryRecipeService";
 
 export const TreatmentManagement: React.FC = () => {
-  const { currentUser, repos, branches, services, patients, doctorSchedules } = useApp();
+  const { currentUser, repos, branches, services, patients, bookings, doctorSchedules } = useApp();
   const { path } = useRouter();
   const processedVisitQuery = useRef<string | null>(null);
 
@@ -521,6 +521,25 @@ export const TreatmentManagement: React.FC = () => {
     }
   }, [selectedVisitId, selectedDoctorId, treatmentVisitDate, selectedVisit?.branchId, doctorSchedules, doctorsForVisit]);
 
+  const getTreatmentPatientName = (treatment: TreatmentJob) => {
+    const patient = patients.find((item) => item.id === treatment.patientId);
+    if (patient?.fullName || patient?.name) return patient.fullName || patient.name;
+
+    const visit = visits.find((item) => item.id === treatment.visitId);
+    const bookingName = bookings.find((item) => item.id === visit?.bookingId)?.patientNameSnapshot;
+    const queueName = queueItems.find((item) => item.visitId === treatment.visitId)?.patientNameSnapshot;
+    return bookingName || queueName || "Nama pasien tidak tersedia";
+  };
+
+  const getVisitPatientName = (visit: PatientVisit) => {
+    const patient = patients.find((item) => item.id === visit.patientId);
+    if (patient?.fullName || patient?.name) return patient.fullName || patient.name;
+
+    const bookingName = bookings.find((item) => item.id === visit.bookingId)?.patientNameSnapshot;
+    const queueName = queueItems.find((item) => item.visitId === visit.id)?.patientNameSnapshot;
+    return bookingName || queueName || "Nama pasien tidak tersedia";
+  };
+
   const filteredTreatments = treatments.filter((tr) => {
     const isActive = tr.status === TreatmentJobStatus.BELUM_DIMULAI
       || tr.status === TreatmentJobStatus.DALAM_PROSES;
@@ -533,7 +552,7 @@ export const TreatmentManagement: React.FC = () => {
       tr.serviceNameSnapshot.toLowerCase().includes(q) ||
       tr.doctorNameSnapshot.toLowerCase().includes(q) ||
       tr.visitId.toLowerCase().includes(q) ||
-      (patients.find((patient) => patient.id === tr.patientId)?.fullName || "").toLowerCase().includes(q) ||
+      getTreatmentPatientName(tr).toLowerCase().includes(q) ||
       (tr.notes && tr.notes.toLowerCase().includes(q));
 
     return matchStatus && matchQuery;
@@ -843,7 +862,7 @@ export const TreatmentManagement: React.FC = () => {
                     <td className="py-3.5 px-4">
                       <div className="font-medium text-slate-800 flex items-center gap-1">
                         <FileText className="w-3.5 h-3.5 text-slate-400" />
-                        {patients.find((patient) => patient.id === tr.patientId)?.fullName || "Nama pasien tidak tersedia"}
+                        {getTreatmentPatientName(tr)}
                       </div>
                       <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
                         <Building2 className="w-3 h-3 text-slate-400" />
@@ -971,7 +990,7 @@ export const TreatmentManagement: React.FC = () => {
                   <option value="">-- Pilih Visit --</option>
                   {eligibleVisits.map((v) => (
                     <option key={v.id} value={v.id}>
-                      {patients.find((patient) => patient.id === v.patientId)?.fullName || "Nama pasien tidak tersedia"} — {v.visitType} • {branches.find((branch) => isBranchMatch(branch.id, v.branchId, branches))?.name || "Cabang"}
+                      {getVisitPatientName(v)} — {v.visitType} • {branches.find((branch) => isBranchMatch(branch.id, v.branchId, branches))?.name || "Cabang"}
                     </option>
                   ))}
                 </select>
@@ -1152,7 +1171,7 @@ export const TreatmentManagement: React.FC = () => {
                 <div className="border border-slate-100 p-2.5 rounded-xl space-y-1">
                   <div className="text-[10px] uppercase text-slate-400 font-semibold">Informasi Kunjungan</div>
                   <div className="font-semibold text-slate-800">
-                    Pasien: {selectedTreatmentPatient?.fullName || "Nama pasien tidak tersedia"}
+                    Pasien: {selectedTreatmentPatient?.fullName || selectedTreatmentPatient?.name || (selectedTreatment ? getTreatmentPatientName(selectedTreatment) : "Nama pasien tidak tersedia")}
                   </div>
                   {selectedTreatmentPatient && getPatientMedicalRecordNumber(selectedTreatmentPatient, selectedTreatment.branchId) && (
                     <div>No. Rekam Medis: {getPatientMedicalRecordNumber(selectedTreatmentPatient, selectedTreatment.branchId)}</div>
