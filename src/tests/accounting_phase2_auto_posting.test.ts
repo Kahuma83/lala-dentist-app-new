@@ -1072,35 +1072,6 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
       expect(payment.lines.find((line) => line.accountId === bank?.id)?.credit).toBe(3000000);
     });
 
-    it("posts an idempotent direct branch expense for an external doctor replacement", async () => {
-      const entry = {
-        id: "external-doctor-payroll-entry",
-        doctorName: "drg. Dokter Eksternal",
-        branchId: "branch-gebang",
-        month: 10,
-        year: 2026,
-        amount: 130_000,
-        coveredDays: 1,
-        actionCount: 3,
-        paymentAccountId: "coa-1000"
-      };
-
-      const expense = await service.postExternalDoctorReplacementExpense(entry);
-      const repeatedExpense = await service.postExternalDoctorReplacementExpense(entry);
-      const replacementExpenseAccount = await accountingRepo.getAccountByCode("5080");
-      const cash = await accountingRepo.getAccountByCode("1000");
-      const journals = await accountingRepo.getJournalsBySource(JournalSourceType.EXPENSE, entry.id);
-
-      expect(expense.sourceType).toBe(JournalSourceType.EXPENSE);
-      expect(expense.id).toBe(repeatedExpense.id);
-      expect(journals).toHaveLength(1);
-      expect(expense.totalDebit).toBe(130_000);
-      expect(expense.totalCredit).toBe(130_000);
-      expect(expense.lines.find((line) => line.accountId === replacementExpenseAccount?.id)?.debit).toBe(130_000);
-      expect(expense.lines.find((line) => line.accountId === cash?.id)?.credit).toBe(130_000);
-      expect(expense.description).toContain("1 hari, 3 tindakan");
-    });
-
     it("should resolve payroll branch from linked staff when payroll has no branch snapshot", async () => {
       db.staff.push({
         id: "staff-payroll-branch-resolution",

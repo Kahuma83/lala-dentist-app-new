@@ -112,12 +112,14 @@ export const Expenses: React.FC = () => {
       
       const code = a.code;
       const nameLower = a.name.toLowerCase();
+      const isExternalDoctorReplacement =
+        code === "5080" || a.accountCategory === AccountCategory.DOCTOR_REPLACEMENT_EXPENSE;
+      if (isExternalDoctorReplacement) return true;
+
       const isPayrollOrComp =
         code === "5000" ||
         code === "5010" ||
-        code === "5080" ||
         code === "5020" ||
-        a.accountCategory === AccountCategory.DOCTOR_REPLACEMENT_EXPENSE ||
         nameLower.includes("gaji") ||
         nameLower.includes("insentif") ||
         nameLower.includes("biaya dokter") ||
@@ -511,16 +513,16 @@ export const Expenses: React.FC = () => {
           <span>PERLU DIINGAT</span>
         </div>
         <p className="text-slate-700 leading-relaxed">
-          Gaji karyawan, insentif, komisi, dan pembayaran jasa dokter <strong>tidak perlu dicatat di halaman ini</strong>. Data tersebut diproses otomatis melalui Penggajian dan sistem insentif.
+          Gaji karyawan, insentif, komisi, dan honor dokter tetap yang diproses melalui Penggajian <strong>tidak dicatat di halaman ini</strong>. Honor Dokter pengganti eksternal yang dibayar pada hari praktik dicatat di sini dengan kategori <strong>Beban Dokter Pengganti</strong>.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1 border-t border-amber-200/60 text-[11px]">
           <div className="flex items-center gap-1.5 text-emerald-800 font-medium">
             <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-[10px]">✓</span>
-            <span>Catat di sini: Listrik, Air, ATK, Perbaikan, Promosi, dan operasional lainnya.</span>
+            <span>Catat di sini: honor Dokter pengganti eksternal, listrik, air, ATK, perbaikan, promosi, dan operasional lainnya.</span>
           </div>
           <div className="flex items-center gap-1.5 text-rose-800 font-medium">
             <span className="w-4 h-4 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center font-bold text-[10px]">✕</span>
-            <span>Gaji dan insentif melalui Penggajian. Sewa/THR yang punya rencana otomatis dibayar melalui kartu akrual agar tidak dihitung dua kali.</span>
+            <span>Gaji, insentif, dan komisi tetap melalui Penggajian. Sewa/THR yang punya rencana otomatis dibayar melalui kartu akrual agar tidak dihitung dua kali.</span>
           </div>
         </div>
       </div>
@@ -924,7 +926,7 @@ export const Expenses: React.FC = () => {
             </div>
 
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600 my-3 leading-relaxed">
-              Formulir ini untuk pengeluaran operasional yang sudah dibayar. <strong>Sewa gedung dan THR tidak dicatat di sini</strong>; atur target penyisihannya di bagian Penyisihan Harian Otomatis.
+              Catat pengeluaran setelah pembayaran dilakukan. Untuk honor Dokter pengganti eksternal yang dibayar pada hari praktik, pilih kategori <strong>Beban Dokter Pengganti</strong>. <strong>Sewa gedung dan THR tidak dicatat di sini</strong>; atur target penyisihannya di bagian Penyisihan Harian Otomatis.
             </div>
 
             <form onSubmit={handleCreateExpense} className="space-y-4 text-xs">
@@ -993,7 +995,7 @@ export const Expenses: React.FC = () => {
                   ))}
                 </select>
                 <span className="text-[10px] text-slate-400 mt-0.5 block">
-                  Pilih sesuai kebutuhan yang dibayar oleh cabang.
+                  Untuk honor Dokter pengganti eksternal yang dibayar hari itu, pilih Beban Dokter Pengganti.
                 </span>
               </div>
 

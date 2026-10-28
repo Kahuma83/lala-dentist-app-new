@@ -1063,91 +1063,6 @@ export class AccountingPostingService {
     );
   }
 
-  async postExternalDoctorReplacementExpense(
-    entry: {
-      id: string;
-      doctorName: string;
-      branchId: string;
-      month: number;
-      year: number;
-      amount: number;
-      coveredDays: number;
-      actionCount: number;
-      paymentAccountId: string;
-    },
-    currentUserRole: UserRole = UserRole.SUPER_ADMIN,
-    userBranchId: string | null = null,
-    postedBy: string = "System Auto-Post"
-  ): Promise<JournalEntry> {
-    if (currentUserRole !== UserRole.SUPER_ADMIN) {
-      throw new Error("Hanya Super Admin yang dapat mencatat beban dokter pengganti eksternal.");
-    }
-    const amount = Math.round(Number(entry.amount));
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new Error("Nominal beban dokter pengganti harus lebih dari nol.");
-    }
-    if (
-      !entry.branchId ||
-      !entry.paymentAccountId ||
-      !Number.isInteger(entry.month) ||
-      !Number.isInteger(entry.year) ||
-      !Number.isInteger(entry.coveredDays) ||
-      entry.coveredDays <= 0 ||
-      !Number.isInteger(entry.actionCount) ||
-      entry.actionCount < 0
-    ) {
-      throw new Error("Rincian atau akun pembayaran beban dokter pengganti tidak valid.");
-    }
-
-    const expenseJournals = await this.accountingRepo.getJournalsBySource(
-      JournalSourceType.EXPENSE,
-      entry.id
-    );
-    const existingExpense = expenseJournals.find((journal) => journal.status !== JournalStatus.VOID);
-    if (existingExpense) {
-      return existingExpense.status === JournalStatus.POSTED
-        ? existingExpense
-        : this.accountingRepo.postJournal(existingExpense.id, postedBy, currentUserRole, userBranchId);
-    }
-
-    const legacyJournals = await this.accountingRepo.getJournalsBySource(
-      JournalSourceType.PAYROLL,
-      entry.id
-    );
-    const legacyPayment = legacyJournals.find((journal) =>
-      journal.status !== JournalStatus.VOID && journal.event === "PAYMENT"
-    );
-    if (legacyPayment) {
-      return legacyPayment.status === JournalStatus.POSTED
-        ? legacyPayment
-        : this.accountingRepo.postJournal(legacyPayment.id, postedBy, currentUserRole, userBranchId);
-    }
-    if (legacyJournals.some((journal) => journal.status !== JournalStatus.VOID)) {
-      throw new Error(
-        "Ditemukan jurnal akrual lama untuk honor ini tanpa jurnal pembayaran. Rekonsiliasikan jurnal lama sebelum membuat beban langsung agar biaya tidak tercatat dua kali."
-      );
-    }
-
-    const replacementExpense = await AccountingAccountResolver.resolveAccount(
-      this.accountingRepo,
-      "DOCTOR_REPLACEMENT_EXPENSE"
-    );
-    return this.postBranchExpense(
-      {
-        branchId: entry.branchId,
-        expenseAccountId: replacementExpense.id,
-        paymentAccountId: entry.paymentAccountId,
-        amount,
-        date: AppClock.nowISO().slice(0, 10),
-        description: `Honor dokter pengganti eksternal ${entry.doctorName} (${entry.coveredDays} hari, ${entry.actionCount} tindakan)`,
-        referenceNumber: entry.id
-      },
-      currentUserRole,
-      userBranchId,
-      postedBy
-    );
-  }
-
   // =========================================================================
   // HELPER & SYNCHRONIZATION ALIASES
   // =========================================================================
@@ -1232,14 +1147,12 @@ export class AccountingPostingService {
     userBranchId: string | null = null,
     postedBy: string = "Staff Admin"
   ): Promise<JournalEntry> {
-    if (
-      currentUserRole === UserRole.BRANCH_ADMIN &&
-      userBranchId &&
-      input.branchId !== userBranchId
-    ) {
-      throw new Error(
-        "Akses ditolak: Branch Admin hanya dapat mencatat pengeluaran di cabangnya sendiri"
-      );
+    if (currentUserRole === UserRole.BRANCH_ADMIN) {
+      if (!userBranchId || input.branchId !== userBranchId) {
+        throw new Error(
+          "Akses ditolak: Branch Admin hanya dapat mencatat pengeluaran di cabangnya sendiri"
+        );
+      }
     }
 
     if (input.amount <= 0) {

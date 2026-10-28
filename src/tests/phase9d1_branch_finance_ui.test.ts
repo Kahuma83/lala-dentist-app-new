@@ -83,8 +83,8 @@ describe("PHASE 9D.1 — Branch Admin Financial UI & Operational Simplification 
     expect(result.sourceType).toBe(JournalSourceType.EXPENSE);
   });
 
-  // 2. Branch Admin cannot select Gaji/Insentif/Share Dokter in manual expense dropdown
-  it("2. Manual expense account selection should exclude Gaji, Insentif, and Share Dokter accounts", async () => {
+  // 2. Branch Admin can record external doctor replacement fees but not payroll costs
+  it("2. Manual expense selection includes external replacement fees and excludes payroll accounts", async () => {
     const allAccounts = await accountingRepo.getAccounts();
 
     // Simulation of manual dropdown filtering in Expenses.tsx
@@ -102,7 +102,7 @@ describe("PHASE 9D.1 — Branch Admin Financial UI & Operational Simplification 
         nameLower.includes("biaya dokter") ||
         nameLower.includes("jasa dokter");
 
-      return !isPayrollOrComp;
+      return code === "5080" || a.accountCategory === "DOCTOR_REPLACEMENT_EXPENSE" || !isPayrollOrComp;
     });
 
     const hasGajiStaff = filteredExpenseAccounts.some((a) => a.code === "5000");
@@ -115,7 +115,50 @@ describe("PHASE 9D.1 — Branch Admin Financial UI & Operational Simplification 
 
     // Operational expenses should remain available
     const hasListrik = filteredExpenseAccounts.some((a) => a.code === "5040");
+    const hasReplacementDoctorFee = filteredExpenseAccounts.some((a) => a.code === "5080");
     expect(hasListrik).toBe(true);
+    expect(hasReplacementDoctorFee).toBe(true);
+  });
+
+  it("records same-day external doctor honor as a normal branch expense", async () => {
+    const accounts = await accountingRepo.getAccounts();
+    const replacementExpense = accounts.find((account) => account.code === "5080");
+    const cash = accounts.find((account) => account.code === "1000");
+    if (!replacementExpense || !cash) throw new Error("Akun Beban Dokter Pengganti atau Kas tidak ditemukan.");
+
+    const expense = await postingService.postBranchExpense(
+      {
+        branchId: "branch-gebang",
+        expenseAccountId: replacementExpense.id,
+        paymentAccountId: cash.id,
+        amount: 130_000,
+        date: "2026-09-22",
+        description: "Honor harian dokter pengganti eksternal - dibayar tunai"
+      },
+      UserRole.BRANCH_ADMIN,
+      "branch-gebang",
+      "Admin Gebang"
+    );
+
+    expect(expense.sourceType).toBe(JournalSourceType.EXPENSE);
+    expect(expense.status).toBe(JournalStatus.POSTED);
+    expect(expense.branchId).toBe("branch-gebang");
+    expect(expense.totalDebit).toBe(130_000);
+    await expect(
+      postingService.postBranchExpense(
+        {
+          branchId: "branch-gebang",
+          expenseAccountId: replacementExpense.id,
+          paymentAccountId: cash.id,
+          amount: 130_000,
+          date: "2026-09-22",
+          description: "Honor harian dokter pengganti eksternal"
+        },
+        UserRole.BRANCH_ADMIN,
+        null,
+        "Admin tanpa cabang"
+      )
+    ).rejects.toThrow("cabangnya sendiri");
   });
 
   // 3. Payroll automatically generates accounting entries

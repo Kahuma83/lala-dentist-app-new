@@ -91,7 +91,7 @@ Super Admin memiliki menu operasional lintas cabang dan menu pengelolaan klinik.
 | **Manajemen SDM → Jadwal Dokter** | Mengatur jadwal praktik Dokter dan penempatan cabangnya. |
 | **Manajemen SDM → Jadwal Admin & Asisten** | Mengatur shift, pegawai, dan penempatan kerja. |
 | **Manajemen SDM** | Mengelola data pegawai/Dokter dan membantu pengaturan akun sesuai kewenangan. Tab yang tersedia dapat mencakup data, jadwal, absensi, izin, dan lembur. |
-| **Payroll** | Menyiapkan, memeriksa, dan menyetujui penggajian serta memproses konfirmasi pembayaran honor Dokter pengganti eksternal. Pembayaran nyata tetap harus dilakukan terlebih dahulu. |
+| **Payroll** | Menyiapkan dan memeriksa penggajian pegawai. Honor Dokter pengganti eksternal yang dibayar pada hari itu dicatat Admin Cabang melalui menu Pengeluaran. |
 | **Kompensasi Dokter** | Mengelola aturan dan perhitungan kompensasi Dokter sesuai kebijakan klinik. |
 | **Laporan Keuangan** | Meninjau pemasukan, pengeluaran, saldo, dan laporan sesuai cabang serta periode. |
 | **Analisa Kunjungan** | Meninjau ringkasan kunjungan pasien untuk membantu evaluasi operasional. |
@@ -227,7 +227,7 @@ Jangan mencatat pembayaran sebelum uang atau konfirmasi pembayaran benar-benar d
 1. Catat pengeluaran berdasarkan bukti pembayaran yang benar.
 2. Pastikan tanggal, cabang, kategori pengeluaran, jumlah, dan akun kas/bank yang digunakan sesuai.
 3. Simpan nomor bukti atau catatan transaksi bila tersedia.
-4. Honor Dokter pengganti eksternal diproses melalui bagian honor Dokter pengganti pada **Payroll** oleh petugas yang berwenang. Jangan mencatatnya sekali lagi sebagai pengeluaran umum karena akan terhitung ganda.
+4. Honor Dokter pengganti eksternal yang dibayarkan hari itu dicatat pada **Pengeluaran** dengan kategori **Beban Dokter Pengganti**. Masukkan jumlah yang benar-benar dibayarkan, cabang, akun kas/bank, dan nama Dokter pada keterangan. Jangan mencatat transaksi yang sama lagi di menu lain.
 5. Pengeluaran rutin atau koreksi transaksi harus mengikuti persetujuan dan bukti yang berlaku di klinik.
 
 ### 7. Follow-up pasien
@@ -303,15 +303,14 @@ Super Admin memiliki menu lintas cabang. Sebelum menyimpan atau memproses transa
 - Tinjau permohonan cuti/izin dan lembur yang memerlukan keputusan Super Admin sebelum disetujui atau ditolak.
 - Jangan membagikan kata sandi atau akun Super Admin. Buat akses pribadi sesuai tugas pengguna.
 
-### Penggajian dan honor Dokter pengganti
+### Penggajian
 
 **Menu:** **Payroll**.
 
 - Periksa periode, nama pegawai, cabang, komponen gaji, potongan, dan total sebelum menyetujui penggajian.
 - Penggajian bulanan perlu disetujui. Transfer atau pembayaran tetap dilakukan petugas secara nyata; menandai pembayaran di aplikasi bukan pengganti transfer.
-- Untuk Dokter pengganti eksternal, periksa Dokter, cabang, periode, jumlah tindakan/honor, dan akun kas atau bank yang dipilih.
-- Setelah honor benar-benar dibayarkan, konfirmasikan pembayaran melalui bagian Dokter pengganti. Sistem mencatatnya sebagai **Beban Dokter Pengganti** pada cabang terkait.
-- Jangan membuat catatan pengeluaran kedua untuk honor yang sama.
+- Gunakan **Payroll** untuk penggajian pegawai yang diproses sesuai jadwal pembayaran klinik.
+- Honor Dokter pengganti eksternal yang dibayar pada hari praktik dicatat langsung oleh Admin Cabang di **Pengeluaran**, memakai kategori **Beban Dokter Pengganti**. Simpan bukti pembayaran dan jangan mencatatnya lagi di Payroll.
 
 ### Laporan dan pengawasan
 

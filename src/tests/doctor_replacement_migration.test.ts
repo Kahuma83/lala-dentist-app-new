@@ -42,10 +42,9 @@ describe("Doctor replacement compensation migration", () => {
     expect(migration).toMatch(/UPDATE public\.treatment_jobs[\s\S]*?SET external_doctor_id = p_external_doctor_id,[\s\S]*?doctor_name_snapshot = v_external_doctor\.full_name/i);
   });
 
-  it("requires Super Admin action-count confirmation and reviewed payroll status transitions", () => {
+  it("keeps action-count confirmation and honor review restricted to Super Admin", () => {
     expect(migration).toMatch(/confirm_external_doctor_action_count[\s\S]*?public\.is_super_admin\(\)/i);
     expect(migration).toMatch(/review_external_doctor_payroll_entry[\s\S]*?public\.is_super_admin\(\)/i);
-    expect(migration).toMatch(/mark_external_doctor_payroll_paid[\s\S]*?public\.is_super_admin\(\)/i);
   });
 
   it("adds a dedicated chart-of-accounts category for direct replacement expenses", () => {
@@ -64,4 +63,5 @@ describe("Doctor replacement compensation migration", () => {
     expect(branchSplitMigration).toMatch(/entry\.status <> 'PENDING_ACTION_COUNT' OR entry\.action_count IS NOT NULL/i);
     expect(branchSplitMigration).toMatch(/entry\.status <> 'PAID'[\s\S]*DELETE FROM public\.external_doctor_payroll_entries/i);
   });
+
 });
