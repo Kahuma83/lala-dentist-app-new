@@ -3560,26 +3560,30 @@ export class MockTreatmentRepository implements TreatmentRepository {
     currentUserId?: string | null,
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
-    if (
-      currentUserRole &&
-      currentUserRole !== UserRole.DOCTOR
-    ) {
-      throw new Error("Hanya Dokter yang dapat menyelesaikan tindakan medis");
-    }
-
     const job = db.treatmentJobs.find((t) => t.id === id);
     if (!job) {
       throw new Error("TreatmentJob tidak ditemukan");
     }
 
-    // Security Checks
-    if (
-      currentUserRole === UserRole.DOCTOR &&
-      currentUserId &&
-      job.doctorId !== currentUserId &&
-      job.assignedDoctorId !== currentUserId
+    if (currentUserRole === UserRole.DOCTOR) {
+      if (!currentUserId || (job.assignedDoctorId || job.doctorId) !== currentUserId) {
+        throw new Error("Dokter tidak ditugaskan pada tindakan ini");
+      }
+    } else if (
+      currentUserRole &&
+      !(job.externalDoctorId && (
+        currentUserRole === UserRole.DOCTOR_ASSISTANT || currentUserRole === UserRole.SUPER_ADMIN
+      ))
     ) {
-      throw new Error("Dokter tidak dapat mengelola treatment dokter lain");
+      throw new Error("Hanya Dokter atau petugas berwenang pada tindakan dokter eksternal yang dapat menyelesaikan tindakan.");
+    }
+
+    if (
+      job.externalDoctorId &&
+      currentUserRole === UserRole.DOCTOR_ASSISTANT &&
+      userBranchId !== job.branchId
+    ) {
+      throw new Error("Asisten tidak memiliki izin tindakan di cabang ini");
     }
 
     // State Transition Check: MUST be DALAM_PROSES
@@ -3628,26 +3632,30 @@ export class MockTreatmentRepository implements TreatmentRepository {
     currentUserId?: string | null,
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob> {
-    if (
-      currentUserRole &&
-      currentUserRole !== UserRole.DOCTOR
-    ) {
-      throw new Error("Hanya Dokter yang dapat menyerahkan tindakan ke kasir");
-    }
-
     const job = db.treatmentJobs.find((t) => t.id === id);
     if (!job) {
       throw new Error("TreatmentJob tidak ditemukan");
     }
 
-    // Security Checks
-    if (
-      currentUserRole === UserRole.DOCTOR &&
-      currentUserId &&
-      job.doctorId !== currentUserId &&
-      job.assignedDoctorId !== currentUserId
+    if (currentUserRole === UserRole.DOCTOR) {
+      if (!currentUserId || (job.assignedDoctorId || job.doctorId) !== currentUserId) {
+        throw new Error("Dokter tidak ditugaskan pada tindakan ini");
+      }
+    } else if (
+      currentUserRole &&
+      !(job.externalDoctorId && (
+        currentUserRole === UserRole.DOCTOR_ASSISTANT || currentUserRole === UserRole.SUPER_ADMIN
+      ))
     ) {
-      throw new Error("Dokter tidak dapat mengelola treatment dokter lain");
+      throw new Error("Hanya Dokter atau petugas berwenang pada tindakan dokter eksternal yang dapat menyerahkan tindakan ke kasir.");
+    }
+
+    if (
+      job.externalDoctorId &&
+      currentUserRole === UserRole.DOCTOR_ASSISTANT &&
+      userBranchId !== job.branchId
+    ) {
+      throw new Error("Asisten tidak memiliki izin tindakan di cabang ini");
     }
 
     // State Transition Check: MUST be SELESAI

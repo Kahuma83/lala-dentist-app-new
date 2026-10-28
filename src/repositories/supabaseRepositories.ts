@@ -4144,32 +4144,14 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       }
     }
 
-    const now = new Date().toISOString();
-    let q = supabase.from("treatment_jobs").update({
-      status: TreatmentJobStatus.DISERAHKAN,
-      handed_over_at: now,
-      updated_at: now
-    }).eq("id", id);
-
-    const { data, error } = await q.select().single();
+    const { data, error } = await supabase.rpc("hand_over_treatment_job_secure", {
+      p_treatment_id: id,
+      p_notes: actorData?.notes || "Tindakan medis diserahkan"
+    });
     if (error) throw new Error(`Supabase error: ${error.message}`);
-
-    if (actorData) {
-      const { error: activityError } = await supabase.from("treatment_activities").insert({
-        treatment_id: id,
-        actor_id: actorData.actorId || currentUserId || data.doctor_id,
-        actor_role: actorData.actorRole || currentUserRole || "DOCTOR",
-        actor_name_snapshot: actorData.actorNameSnapshot || "Petugas Medis",
-        activity_type: "HANDED_OVER",
-        branch_id: data.branch_id,
-        notes: actorData.notes || null
-      });
-      if (activityError) {
-        throw new Error(`Treatment sudah diserahkan, tetapi gagal mencatat aktivitas: ${activityError.message}`);
-      }
-    }
-
-    return this.mapTreatmentFromDb(data);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Gagal menyerahkan treatment: data tidak ditemukan");
+    return this.mapTreatmentFromDb(row);
   }
 }
 

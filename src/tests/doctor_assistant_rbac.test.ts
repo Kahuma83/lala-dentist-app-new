@@ -130,21 +130,103 @@ describe("RBAC DOCTOR_ASSISTANT Audit & Integrity Tests", () => {
     }
   });
 
-  it("8. Only a doctor can complete or hand over treatment", async () => {
+  it("8. Assistants and Super Admin cannot complete or hand over ordinary treatment", async () => {
     await expect(
-      treatmentRepo.completeTreatmentJob("treatment-test", assistantRole, gebangBranchId, claryStaffId)
-    ).rejects.toThrow("Hanya Dokter yang dapat menyelesaikan tindakan medis");
+      treatmentRepo.completeTreatmentJob("treatment-job-1", assistantRole, gebangBranchId, claryStaffId)
+    ).rejects.toThrow("Hanya Dokter atau petugas berwenang");
 
     await expect(
-      treatmentRepo.handOverTreatmentJob("treatment-test", assistantRole, gebangBranchId, claryStaffId)
-    ).rejects.toThrow("Hanya Dokter yang dapat menyerahkan tindakan ke kasir");
+      treatmentRepo.handOverTreatmentJob("treatment-job-1", assistantRole, gebangBranchId, claryStaffId)
+    ).rejects.toThrow("Hanya Dokter atau petugas berwenang");
 
     await expect(
-      treatmentRepo.completeTreatmentJob("treatment-test", UserRole.SUPER_ADMIN)
-    ).rejects.toThrow("Hanya Dokter yang dapat menyelesaikan tindakan medis");
+      treatmentRepo.completeTreatmentJob("treatment-job-1", UserRole.SUPER_ADMIN)
+    ).rejects.toThrow("Hanya Dokter atau petugas berwenang");
 
     await expect(
-      treatmentRepo.handOverTreatmentJob("treatment-test", UserRole.SUPER_ADMIN)
-    ).rejects.toThrow("Hanya Dokter yang dapat menyerahkan tindakan ke kasir");
+      treatmentRepo.handOverTreatmentJob("treatment-job-1", UserRole.SUPER_ADMIN)
+    ).rejects.toThrow("Hanya Dokter atau petugas berwenang");
+  });
+
+  it("9. Only the assigned doctor can complete and hand over ordinary treatment", async () => {
+    await expect(
+      treatmentRepo.completeTreatmentJob("treatment-job-1", UserRole.DOCTOR, gebangBranchId, "doctor-budi")
+    ).rejects.toThrow("Dokter tidak ditugaskan");
+
+    await expect(
+      treatmentRepo.handOverTreatmentJob("treatment-job-3", UserRole.DOCTOR, gebangBranchId, "doctor-budi")
+    ).rejects.toThrow("Dokter tidak ditugaskan");
+
+    const completed = await treatmentRepo.completeTreatmentJob(
+      "treatment-job-1",
+      UserRole.DOCTOR,
+      gebangBranchId,
+      "doc-syafira"
+    );
+    expect(completed.status).toBe(TreatmentJobStatus.SELESAI);
+
+    const handedOver = await treatmentRepo.handOverTreatmentJob(
+      "treatment-job-3",
+      UserRole.DOCTOR,
+      gebangBranchId,
+      "doc-syafira"
+    );
+    expect(handedOver.status).toBe(TreatmentJobStatus.DISERAHKAN);
+  });
+
+  it("10. Assistant may finalize an external-doctor treatment assigned to their branch", async () => {
+    const ordinaryTreatment = db.treatmentJobs.find((treatment) => treatment.id === "treatment-job-1");
+    if (!ordinaryTreatment) throw new Error("Treatment fixture tidak ditemukan");
+    db.treatmentJobs.push({
+      ...ordinaryTreatment,
+      id: "external-treatment-test",
+      externalDoctorId: "external-doctor-test",
+      status: TreatmentJobStatus.DALAM_PROSES
+    });
+
+    const completed = await treatmentRepo.completeTreatmentJob(
+      "external-treatment-test",
+      assistantRole,
+      gebangBranchId,
+      claryStaffId
+    );
+    expect(completed.status).toBe(TreatmentJobStatus.SELESAI);
+
+    const handedOver = await treatmentRepo.handOverTreatmentJob(
+      "external-treatment-test",
+      assistantRole,
+      gebangBranchId,
+      claryStaffId
+    );
+    expect(handedOver.status).toBe(TreatmentJobStatus.DISERAHKAN);
+  });
+
+  it("11. Internal replacement assignment supersedes the original doctor for finalization", async () => {
+    const originalTreatment = db.treatmentJobs.find((treatment) => treatment.id === "treatment-job-1");
+    if (!originalTreatment) throw new Error("Treatment fixture tidak ditemukan");
+    db.treatmentJobs.push({
+      ...originalTreatment,
+      id: "replacement-treatment-test",
+      assignedDoctorId: "doctor-replacement",
+      status: TreatmentJobStatus.DALAM_PROSES,
+      startedAt: new Date().toISOString()
+    });
+
+    await expect(
+      treatmentRepo.completeTreatmentJob(
+        "replacement-treatment-test",
+        UserRole.DOCTOR,
+        gebangBranchId,
+        "doc-syafira"
+      )
+    ).rejects.toThrow("Dokter tidak ditugaskan");
+
+    const completed = await treatmentRepo.completeTreatmentJob(
+      "replacement-treatment-test",
+      UserRole.DOCTOR,
+      gebangBranchId,
+      "doctor-replacement"
+    );
+    expect(completed.status).toBe(TreatmentJobStatus.SELESAI);
   });
 });

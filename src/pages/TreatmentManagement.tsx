@@ -92,13 +92,16 @@ export const TreatmentManagement: React.FC = () => {
   const canStartTreatment = (treatment: TreatmentJob) =>
     canManageTreatment
     || (Boolean(treatment.externalDoctorId) && currentUser?.role === UserRole.SUPER_ADMIN);
-  const canFinalizeTreatment = currentUser?.role === UserRole.DOCTOR;
+  const canFinalizeTreatment = (treatment: TreatmentJob) =>
+    currentUser?.role === UserRole.DOCTOR
+    && Boolean(currentUser.doctorId)
+    && (treatment.assignedDoctorId || treatment.doctorId) === currentUser.doctorId;
   const canCompleteTreatment = (treatment: TreatmentJob) =>
-    canFinalizeTreatment
+    canFinalizeTreatment(treatment)
     || (Boolean(treatment.externalDoctorId)
       && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
   const canHandOverTreatment = (treatment: TreatmentJob) =>
-    canFinalizeTreatment
+    canFinalizeTreatment(treatment)
     || (Boolean(treatment.externalDoctorId)
       && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
 
@@ -328,7 +331,7 @@ export const TreatmentManagement: React.FC = () => {
         treatment.id,
         currentUser?.role,
         currentUser?.assignedBranchId,
-        currentUser?.id,
+        currentUser?.role === UserRole.DOCTOR ? currentUser.doctorId : currentUser?.id,
         {
           actorId: currentUser?.id,
           actorRole: currentUser?.role,
@@ -409,7 +412,7 @@ export const TreatmentManagement: React.FC = () => {
         id,
         currentUser?.role,
         currentUser?.assignedBranchId,
-        currentUser?.id,
+        currentUser?.role === UserRole.DOCTOR ? currentUser.doctorId : currentUser?.id,
         {
           actorId: currentUser?.id,
           actorRole: currentUser?.role,
@@ -1373,7 +1376,7 @@ export const TreatmentManagement: React.FC = () => {
                 >
                   Tutup
                 </button>
-                {canFinalizeTreatment && selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && (
+                {canCompleteTreatment(selectedTreatment) && selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && (
                   <button
                     onClick={() => void handleCompleteTreatment(selectedTreatment)}
                       disabled={completingTreatment

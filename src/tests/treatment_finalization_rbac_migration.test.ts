@@ -7,10 +7,21 @@ const migration = fs.readFileSync(
   "utf-8"
 );
 
+const assignmentMigration = fs.readFileSync(
+  path.resolve(process.cwd(), "supabase/migrations/20270106000000_restrict_treatment_finalization_to_assigned_doctor.sql"),
+  "utf-8"
+);
+
 describe("Doctor-only treatment finalization migration", () => {
-  it("restricts treatment completion and direct updates to doctors", () => {
-    expect(migration).toContain("IF v_user.role <> 'DOCTOR' THEN");
-    expect(migration).toContain("public.get_user_role() = 'DOCTOR'");
+  it("restricts completion and handover to the assigned doctor", () => {
+    expect(assignmentMigration).toContain("public.get_authenticated_doctor_id()");
+    expect(assignmentMigration).toContain("COALESCE(v_treatment.assigned_doctor_id, v_treatment.doctor_id)");
+    expect(assignmentMigration).toContain("CREATE OR REPLACE FUNCTION public.hand_over_treatment_job_secure");
+  });
+
+  it("keeps assistant and Super Admin exceptions limited to external-doctor treatment", () => {
+    expect(assignmentMigration).toContain("v_treatment.external_doctor_id IS NOT NULL");
+    expect(assignmentMigration).toContain("v_user.role IN ('SUPER_ADMIN', 'DOCTOR_ASSISTANT')");
   });
 
   it("provides a secure assistant-only treatment start workflow", () => {
