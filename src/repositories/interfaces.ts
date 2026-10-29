@@ -657,6 +657,22 @@ export interface TreatmentRepository {
     currentUserId?: string | null,
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob>;
+  returnTreatmentToDoctor(
+    id: string,
+    reason: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string }
+  ): Promise<TreatmentJob>;
+  resubmitTreatmentToCashier(
+    id: string,
+    correctedNotes: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string }
+  ): Promise<TreatmentJob>;
 }
 
 export interface TreatmentActivityRepository {

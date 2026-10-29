@@ -3853,6 +3853,8 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       startedAt: row.started_at ?? undefined,
       completedAt: row.completed_at ?? undefined,
       handedOverAt: row.handed_over_at ?? undefined,
+      returnedAt: row.returned_at ?? undefined,
+      returnReason: row.return_reason ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -3884,7 +3886,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       q = q.eq("branch_id", userBranchId);
     }
     if (currentUserRole === UserRole.DOCTOR && currentUserId && isValidUUID(currentUserId)) {
-      q = q.eq("doctor_id", currentUserId);
+      q = q.or(`doctor_id.eq.${currentUserId},assigned_doctor_id.eq.${currentUserId}`);
     }
     const { data, error } = await q;
     if (error) return handleSupabaseReadError("treatment_jobs", error, []);
@@ -3899,7 +3901,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       q = q.eq("branch_id", userBranchId);
     }
     if (currentUserRole === UserRole.DOCTOR && currentUserId && isValidUUID(currentUserId)) {
-      q = q.eq("doctor_id", currentUserId);
+      q = q.or(`doctor_id.eq.${currentUserId},assigned_doctor_id.eq.${currentUserId}`);
     }
     const { data, error } = await q.single();
     if (error) return handleSupabaseReadError("treatment_jobs", error, null);
@@ -4151,6 +4153,37 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     if (error) throw new Error(`Supabase error: ${error.message}`);
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) throw new Error("Gagal menyerahkan treatment: data tidak ditemukan");
+    return this.mapTreatmentFromDb(row);
+  }
+
+  async returnTreatmentToDoctor(
+    id: string,
+    reason: string
+  ): Promise<TreatmentJob> {
+    ensureSupabaseConnected();
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new Error("Alasan pengembalian wajib diisi.");
+    const { data, error } = await supabase.rpc("return_treatment_to_doctor_secure", {
+      p_treatment_id: id,
+      p_reason: normalizedReason
+    });
+    if (error) throw new Error(`Gagal mengembalikan tindakan ke dokter: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Gagal mengembalikan tindakan: data tidak ditemukan");
+    return this.mapTreatmentFromDb(row);
+  }
+
+  async resubmitTreatmentToCashier(id: string, correctedNotes: string): Promise<TreatmentJob> {
+    ensureSupabaseConnected();
+    const normalizedNotes = correctedNotes.trim();
+    if (!normalizedNotes) throw new Error("Catatan tindakan yang sudah dikoreksi wajib diisi.");
+    const { data, error } = await supabase.rpc("resubmit_treatment_to_cashier_secure", {
+      p_treatment_id: id,
+      p_corrected_notes: normalizedNotes
+    });
+    if (error) throw new Error(`Gagal menyerahkan ulang tindakan ke kasir: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Gagal menyerahkan ulang tindakan: data tidak ditemukan");
     return this.mapTreatmentFromDb(row);
   }
 }

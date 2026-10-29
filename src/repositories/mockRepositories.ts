@@ -3693,6 +3693,96 @@ export class MockTreatmentRepository implements TreatmentRepository {
 
     return { ...job };
   }
+
+  async returnTreatmentToDoctor(
+    id: string,
+    reason: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string }
+  ): Promise<TreatmentJob> {
+    const job = db.treatmentJobs.find((treatment) => treatment.id === id);
+    if (!job) throw new Error("TreatmentJob tidak ditemukan");
+    if (currentUserRole !== UserRole.BRANCH_ADMIN && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya petugas kasir yang dapat mengembalikan tindakan ke dokter.");
+    }
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId !== job.branchId) {
+      throw new Error("Admin Cabang tidak dapat mengakses treatment cabang lain");
+    }
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new Error("Alasan pengembalian wajib diisi.");
+    if (job.status !== TreatmentJobStatus.DISERAHKAN) {
+      throw new Error("Hanya tindakan yang sudah diserahkan ke kasir yang dapat dikembalikan.");
+    }
+
+    const visitInvoices = db.invoices.filter((invoice) => invoice.visitId === job.visitId);
+    if (visitInvoices.some((invoice) => invoice.status !== InvoiceStatus.CANCELLED)) {
+      throw new Error("Tindakan tidak dapat dikembalikan setelah invoice diterbitkan.");
+    }
+    if (db.payments.some((payment) => visitInvoices.some((invoice) => invoice.id === payment.invoiceId))) {
+      throw new Error("Tindakan tidak dapat dikembalikan setelah ada pembayaran.");
+    }
+
+    const now = AppClock.nowISO();
+    job.status = TreatmentJobStatus.PERLU_REVISI;
+    job.returnedAt = now;
+    job.returnReason = normalizedReason;
+    job.updatedAt = now;
+
+    const activityRepo = new MockTreatmentActivityRepository();
+    await activityRepo.addActivity({
+      treatmentId: job.id,
+      actorId: actorData?.actorId || currentUserId || "actor-system",
+      actorRole: actorData?.actorRole || currentUserRole,
+      actorNameSnapshot: actorData?.actorNameSnapshot,
+      activityType: TreatmentActivityType.RETURNED_TO_DOCTOR,
+      notes: normalizedReason
+    });
+    return { ...job };
+  }
+
+  async resubmitTreatmentToCashier(
+    id: string,
+    correctedNotes: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string }
+  ): Promise<TreatmentJob> {
+    const job = db.treatmentJobs.find((treatment) => treatment.id === id);
+    if (!job) throw new Error("TreatmentJob tidak ditemukan");
+    if (currentUserRole !== UserRole.DOCTOR
+      || !currentUserId
+      || (job.assignedDoctorId || job.doctorId) !== currentUserId) {
+      throw new Error("Hanya dokter penanggung jawab yang dapat mengirim ulang tindakan ini.");
+    }
+    if (userBranchId && userBranchId !== job.branchId) {
+      throw new Error("Dokter tidak memiliki izin tindakan di cabang ini.");
+    }
+    const normalizedNotes = correctedNotes.trim();
+    if (!normalizedNotes) throw new Error("Catatan tindakan yang sudah dikoreksi wajib diisi.");
+    if (job.status !== TreatmentJobStatus.PERLU_REVISI) {
+      throw new Error("Tindakan tidak sedang menunggu revisi dokter.");
+    }
+
+    const now = AppClock.nowISO();
+    job.notes = normalizedNotes;
+    job.status = TreatmentJobStatus.DISERAHKAN;
+    job.handedOverAt = now;
+    job.updatedAt = now;
+
+    const activityRepo = new MockTreatmentActivityRepository();
+    await activityRepo.addActivity({
+      treatmentId: job.id,
+      actorId: actorData?.actorId || currentUserId,
+      actorRole: actorData?.actorRole || currentUserRole,
+      actorNameSnapshot: actorData?.actorNameSnapshot,
+      activityType: TreatmentActivityType.REVISION_RESUBMITTED,
+      notes: "Dokter memperbarui catatan tindakan dan menyerahkan kembali ke kasir."
+    });
+    return { ...job };
+  }
 }
 
 export class MockTreatmentActivityRepository implements TreatmentActivityRepository {

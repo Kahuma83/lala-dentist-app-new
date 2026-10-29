@@ -83,6 +83,8 @@ export const TreatmentManagement: React.FC = () => {
   const [activityType, setActivityType] = useState<TreatmentActivityType>(TreatmentActivityType.PROGRESS);
   const [activityNotes, setActivityNotes] = useState<string>("");
   const [addingActivity, setAddingActivity] = useState<boolean>(false);
+  const [correctedTreatmentNotes, setCorrectedTreatmentNotes] = useState("");
+  const [submittingRevision, setSubmittingRevision] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [completingTreatment, setCompletingTreatment] = useState(false);
   const [approvedRecipeMaterials, setApprovedRecipeMaterials] = useState<InventoryRecipeLine[] | null>(null);
@@ -104,6 +106,8 @@ export const TreatmentManagement: React.FC = () => {
     canFinalizeTreatment(treatment)
     || (Boolean(treatment.externalDoctorId)
       && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
+  const canReviseTreatment = (treatment: TreatmentJob) =>
+    treatment.status === TreatmentJobStatus.PERLU_REVISI && canFinalizeTreatment(treatment);
 
   const treatmentRepo = repos.treatment;
   const visitRepo = repos.visit;
@@ -191,6 +195,7 @@ export const TreatmentManagement: React.FC = () => {
 
   useEffect(() => {
     if (selectedTreatment) {
+      setCorrectedTreatmentNotes(selectedTreatment.notes || "");
       setApprovedRecipeMaterials(null);
       loadActivities(selectedTreatment.id);
       void listInventoryItems(selectedTreatment.branchId)
@@ -427,6 +432,33 @@ export const TreatmentManagement: React.FC = () => {
     }
   };
 
+  const handleResubmitTreatment = async (treatment: TreatmentJob) => {
+    if (!canReviseTreatment(treatment) || submittingRevision) return;
+    setSubmittingRevision(true);
+    setError(null);
+    try {
+      const updatedTreatment = await treatmentRepo.resubmitTreatmentToCashier(
+        treatment.id,
+        correctedTreatmentNotes,
+        currentUser?.role,
+        currentUser?.assignedBranchId,
+        currentUser?.doctorId,
+        {
+          actorId: currentUser?.id,
+          actorRole: currentUser?.role,
+          actorNameSnapshot: currentUser?.name || "Dokter"
+        }
+      );
+      setSelectedTreatment(updatedTreatment);
+      setSuccessMsg("Catatan tindakan berhasil diperbaiki dan diserahkan kembali ke kasir.");
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || "Gagal mengirim ulang koreksi tindakan");
+    } finally {
+      setSubmittingRevision(false);
+    }
+  };
+
   const handleAddManualActivity = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTreatment || !currentUser) return;
@@ -609,6 +641,14 @@ export const TreatmentManagement: React.FC = () => {
             DISERAHKAN KE KASIR
           </span>
         );
+      case TreatmentJobStatus.PERLU_REVISI:
+      case "PERLU_REVISI":
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+            <AlertCircle className="w-3 h-3 mr-1 text-rose-600" />
+            PERLU REVISI
+          </span>
+        );
       default:
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
@@ -704,7 +744,7 @@ export const TreatmentManagement: React.FC = () => {
       )}
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <div
           onClick={() => setStatusFilter("ACTIVE")}
           className={`p-4 rounded-xl border transition-all cursor-pointer ${
@@ -784,6 +824,22 @@ export const TreatmentManagement: React.FC = () => {
             {countByStatus(TreatmentJobStatus.DISERAHKAN)}
           </span>
         </div>
+
+        <div
+          onClick={() => setStatusFilter(TreatmentJobStatus.PERLU_REVISI)}
+          className={`p-4 rounded-xl border transition-all cursor-pointer ${
+            statusFilter === TreatmentJobStatus.PERLU_REVISI
+              ? "bg-rose-600 text-white border-rose-600 shadow-md"
+              : "bg-white text-slate-800 border-slate-100 hover:border-slate-300"
+          }`}
+        >
+          <span className="text-[10px] font-semibold uppercase tracking-wider block text-rose-600">
+            Perlu Revisi
+          </span>
+          <span className="text-2xl font-black mt-1 block text-rose-700">
+            {countByStatus(TreatmentJobStatus.PERLU_REVISI)}
+          </span>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -813,6 +869,7 @@ export const TreatmentManagement: React.FC = () => {
             <option value={TreatmentJobStatus.DALAM_PROSES}>DALAM PROSES</option>
             <option value={TreatmentJobStatus.SELESAI}>SELESAI</option>
             <option value={TreatmentJobStatus.DISERAHKAN}>DISERAHKAN</option>
+            <option value={TreatmentJobStatus.PERLU_REVISI}>PERLU REVISI</option>
           </select>
         </div>
       </div>
@@ -858,6 +915,11 @@ export const TreatmentManagement: React.FC = () => {
                       {tr.notes && (
                         <div className="text-[11px] text-teal-700 bg-teal-50 px-2 py-0.5 rounded mt-1 inline-block">
                           Note: {tr.notes}
+                        </div>
+                      )}
+                      {tr.status === TreatmentJobStatus.PERLU_REVISI && tr.returnReason && (
+                        <div className="text-[11px] text-rose-700 bg-rose-50 px-2 py-0.5 rounded mt-1 inline-block">
+                          Koreksi kasir: {tr.returnReason}
                         </div>
                       )}
                     </td>
@@ -931,6 +993,15 @@ export const TreatmentManagement: React.FC = () => {
                           <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-lg">
                             Final
                           </span>
+                        )}
+                        {canReviseTreatment(tr) && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTreatment(tr)}
+                            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-medium rounded-lg text-[11px] transition-colors"
+                          >
+                            Perbaiki Catatan
+                          </button>
                         )}
 
                         <button
@@ -1256,10 +1327,35 @@ export const TreatmentManagement: React.FC = () => {
                   )}
                 </div>
 
-                {selectedTreatment.notes && (
+                {selectedTreatment.notes && !canReviseTreatment(selectedTreatment) && (
                   <div className="bg-teal-50 border border-teal-100 p-2.5 rounded-xl text-teal-800">
                     <div className="text-[10px] uppercase text-teal-600 font-bold">Catatan Clinical</div>
                     <div className="mt-0.5">{selectedTreatment.notes}</div>
+                  </div>
+                )}
+                {selectedTreatment.status === TreatmentJobStatus.PERLU_REVISI && selectedTreatment.returnReason && (
+                  <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-rose-800 space-y-1">
+                    <div className="text-[10px] uppercase font-bold">Alasan dikembalikan kasir</div>
+                    <div>{selectedTreatment.returnReason}</div>
+                  </div>
+                )}
+                {canReviseTreatment(selectedTreatment) && (
+                  <div className="rounded-xl border border-rose-200 bg-white p-3 space-y-2">
+                    <label htmlFor="treatment-revision-notes" className="text-[10px] uppercase text-rose-800 font-bold">
+                      Perbaiki catatan tindakan
+                    </label>
+                    <textarea
+                      id="treatment-revision-notes"
+                      value={correctedTreatmentNotes}
+                      onChange={(event) => setCorrectedTreatmentNotes(event.target.value)}
+                      rows={3}
+                      required
+                      className="w-full rounded-lg border border-slate-200 p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                      placeholder="Tulis catatan tindakan yang sudah dikoreksi"
+                    />
+                    <p className="text-[10px] text-slate-500">
+                      Setelah dikirim, tindakan kembali ke kasir tanpa mengulang pemotongan stok atau akrual kompensasi.
+                    </p>
                   </div>
                 )}
 
@@ -1394,6 +1490,17 @@ export const TreatmentManagement: React.FC = () => {
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     {completingTreatment ? "Menyelesaikan..." : "Selesaikan & Kurangi Stok"}
+                  </button>
+                )}
+                {canReviseTreatment(selectedTreatment) && (
+                  <button
+                    type="button"
+                    onClick={() => void handleResubmitTreatment(selectedTreatment)}
+                    disabled={submittingRevision || !correctedTreatmentNotes.trim()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {submittingRevision ? "Mengirim..." : "Simpan & Serahkan ke Kasir"}
                   </button>
                 )}
               </div>
