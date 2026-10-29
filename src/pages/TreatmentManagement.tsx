@@ -340,7 +340,7 @@ export const TreatmentManagement: React.FC = () => {
         }
       );
       treatmentCompleted = true;
-      setSelectedTreatment((previous) => previous?.id === completedTreatment.id ? completedTreatment : previous);
+      setSelectedTreatment(null);
       try {
         if (!completedTreatment.externalDoctorId) {
           const createdAccruals = await repos.compensation.calculateAndAccrueForTreatment(completedTreatment.id);
@@ -674,7 +674,7 @@ export const TreatmentManagement: React.FC = () => {
 
       {currentUser?.role === UserRole.DOCTOR_ASSISTANT && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800">
-          Asisten dapat memulai treatment. Treatment dokter internal diselesaikan oleh Dokter; treatment yang ditugaskan kepada dokter eksternal dapat diselesaikan dan diserahkan oleh petugas berwenang.
+          Asisten dapat memulai treatment dan mencatat aktivitas. Treatment dokter internal hanya dapat diselesaikan atau diserahkan oleh dokter penanggung jawab. Untuk treatment dokter eksternal, asisten cabang berwenang dapat menyelesaikan dan menyerahkannya; stok resep dipotong saat treatment berhasil diselesaikan.
         </div>
       )}
 
@@ -1186,6 +1186,14 @@ export const TreatmentManagement: React.FC = () => {
                     Tanggal kunjungan: {formatActivityDateTime(selectedTreatmentVisit?.visitDateTime)}
                   </div>
                 </div>
+
+                {currentUser?.role === UserRole.DOCTOR_ASSISTANT && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-[11px] leading-relaxed text-blue-800">
+                    {selectedTreatment.externalDoctorId
+                      ? "Tindakan ini ditugaskan kepada dokter eksternal. Asisten cabang berwenang dapat menyelesaikan atau menyerahkan tindakan ini; stok resep dipotong saat berhasil diselesaikan."
+                      : "Tindakan dokter internal hanya dapat diselesaikan atau diserahkan oleh dokter penanggung jawab. Asisten tetap dapat menambahkan catatan aktivitas."}
+                  </div>
+                )}
 
                 <div className="border border-amber-100 bg-amber-50/50 p-3 rounded-xl space-y-2">
                   <div className="flex items-center justify-between">
