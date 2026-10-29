@@ -548,6 +548,7 @@ export interface Booking {
   patientNameSnapshot?: string;
   doctorNameSnapshot?: string;
   branchNameSnapshot?: string;
+  referringStaffId?: string | null;
   source?: BookingSource;
   channel?: BookingSource;
   enRouteConfirmedAt?: string | null;

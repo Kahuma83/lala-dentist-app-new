@@ -649,6 +649,30 @@ app.post('/api/bookings', async (req, res) => {
       return res.status(400).json({ message: 'Dokter tidak ditemukan atau sedang tidak aktif.' });
     }
 
+    if (payload.referring_staff_id) {
+      if (isPatient) {
+        return res.status(403).json({ message: 'Pasien tidak dapat menetapkan staf referral pada booking.' });
+      }
+      const { data: referringStaff, error: referringStaffError } = await supabaseAdmin
+        .from('staff')
+        .select('id, branch_id, position, employment_status, active')
+        .eq('id', payload.referring_staff_id)
+        .maybeSingle();
+      if (referringStaffError) {
+        console.error('[server] booking referring staff lookup failed:', referringStaffError);
+        return res.status(500).json({ message: 'Gagal memeriksa staf referral booking.' });
+      }
+      if (
+        !referringStaff ||
+        referringStaff.branch_id !== payload.branch_id ||
+        !['BRANCH_ADMIN', 'ASSISTANT'].includes(referringStaff.position) ||
+        referringStaff.employment_status !== 'ACTIVE' ||
+        referringStaff.active !== true
+      ) {
+        return res.status(400).json({ message: 'Staf referral harus admin atau asisten aktif pada cabang booking.' });
+      }
+    }
+
     if (isPatient) {
       if (canonicalBookingDateTime.getTime() <= Date.now()) {
         return res.status(400).json({ message: 'Pilih tanggal dan waktu booking yang masih akan datang.' });

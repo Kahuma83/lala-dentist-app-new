@@ -424,6 +424,7 @@ export interface BookingRepository {
       status?: BookingStatus;
       source?: BookingSource;
       channel?: BookingSource;
+      referringStaffId?: string | null;
       rescheduledFromBookingId?: string;
       rescheduleReason?: string;
     },

@@ -3720,8 +3720,11 @@ export class MockDatabase {
         clinicBranding: this.clinicBranding,
       };
       window.localStorage.setItem(mockDatabaseStorageKey, JSON.stringify(dataToSave));
-    } catch (e) {
-      console.warn("Could not save to localStorage:", e);
+    } catch (error) {
+      const detail = error instanceof Error ? ` ${error.message}` : "";
+      throw new Error(
+        `Data demo gagal disimpan di browser. Periksa ruang penyimpanan browser atau coba hapus data demo yang tidak diperlukan.${detail}`
+      );
     }
   }
 

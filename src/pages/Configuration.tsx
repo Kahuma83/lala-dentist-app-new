@@ -43,12 +43,19 @@ import {
   Power,
   ArrowUp,
   ArrowDown,
-  Database
+  Database,
+  Hash
 } from "lucide-react";
 import { DocumentHeader } from "../components/documents/DocumentHeader";
 import { LalaLogo } from "../components/common/LalaLogo";
 import { BackupManagement } from "./BackupManagement";
+import {
+  BranchRMSettings,
+  getBranchRMSettings,
+  saveBranchRMSettings
+} from "../services/patientBranchRMSettingsService";
 
+type ConfigurationTab = "BRANCHES" | "DOCTORS" | "PROMOTIONS" | "SERVICES" | "TARIFFS" | "RM" | "BRANDING" | "BACKUP";
 
 export const Configuration: React.FC = () => {
   const {
@@ -70,9 +77,14 @@ export const Configuration: React.FC = () => {
   const [selectedBranchId, setSelectedBranchId] = useState<string>("branch-gebang");
   const [branchTariffs, setBranchTariffs] = useState<BranchServiceTariff[]>([]);
   const [loading, setLoading] = useState(true);
+  const [branchRMSettings, setBranchRMSettings] = useState<BranchRMSettings | null>(null);
+  const [branchRMSettingsLoading, setBranchRMSettingsLoading] = useState(false);
+  const [branchRMSettingsSaving, setBranchRMSettingsSaving] = useState(false);
+  const [branchRMSettingsError, setBranchRMSettingsError] = useState("");
+  const [branchRMSettingsSuccess, setBranchRMSettingsSuccess] = useState("");
 
   // Tab State with URL query param support
-  const [activeTab, setActiveTab] = useState<"BRANCHES" | "DOCTORS" | "PROMOTIONS" | "SERVICES" | "TARIFFS" | "BRANDING" | "BACKUP">(() => {
+  const [activeTab, setActiveTab] = useState<ConfigurationTab>(() => {
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab")?.toUpperCase();
     if (tabParam === "BRANCHES") return "BRANCHES";
@@ -80,6 +92,7 @@ export const Configuration: React.FC = () => {
     if (tabParam === "PROMOTIONS") return "PROMOTIONS";
     if (tabParam === "SERVICES") return "SERVICES";
     if (tabParam === "TARIFFS") return "TARIFFS";
+    if (tabParam === "RM") return "RM";
     if (tabParam === "BRANDING") return "BRANDING";
     if (tabParam === "BACKUP") return "BACKUP";
     return "BRANCHES";
@@ -188,15 +201,15 @@ export const Configuration: React.FC = () => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get("tab")?.toUpperCase();
-      if (tabParam && ["BRANCHES", "DOCTORS", "PROMOTIONS", "SERVICES", "TARIFFS", "BRANDING", "BACKUP"].includes(tabParam)) {
-        setActiveTab(tabParam as any);
+      if (tabParam && ["BRANCHES", "DOCTORS", "PROMOTIONS", "SERVICES", "TARIFFS", "RM", "BRANDING", "BACKUP"].includes(tabParam)) {
+        setActiveTab(tabParam as ConfigurationTab);
       }
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const changeTab = (tab: "BRANCHES" | "DOCTORS" | "PROMOTIONS" | "SERVICES" | "TARIFFS" | "BRANDING" | "BACKUP") => {
+  const changeTab = (tab: ConfigurationTab) => {
     setActiveTab(tab);
     const url = new URL(window.location.href);
     url.searchParams.set("tab", tab.toLowerCase());
@@ -261,6 +274,58 @@ export const Configuration: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [selectedBranchId]);
+
+  useEffect(() => {
+    if (currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.assignedBranchId) {
+      setSelectedBranchId(currentUser.assignedBranchId);
+    }
+  }, [currentUser?.role, currentUser?.assignedBranchId]);
+
+  useEffect(() => {
+    if (activeTab !== "RM" || !selectedBranchId) return;
+
+    let isCurrent = true;
+    setBranchRMSettingsLoading(true);
+    setBranchRMSettingsError("");
+    setBranchRMSettingsSuccess("");
+    getBranchRMSettings(selectedBranchId)
+      .then((settings) => {
+        if (isCurrent) setBranchRMSettings(settings);
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) {
+          setBranchRMSettings(null);
+          setBranchRMSettingsError(error instanceof Error ? error.message : "Gagal memuat pengaturan RM cabang.");
+        }
+      })
+      .finally(() => {
+        if (isCurrent) setBranchRMSettingsLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeTab, selectedBranchId]);
+
+  const handleSaveBranchRMSettings = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!branchRMSettings) return;
+
+    setBranchRMSettingsSaving(true);
+    setBranchRMSettingsError("");
+    setBranchRMSettingsSuccess("");
+    try {
+      const saved = await saveBranchRMSettings(selectedBranchId, branchRMSettings);
+      setBranchRMSettings(saved);
+      setBranchRMSettingsSuccess("Pengaturan No. RM cabang berhasil disimpan dan akan digunakan untuk penerbitan RM baru.");
+    } catch (error: unknown) {
+      setBranchRMSettingsError(error instanceof Error ? error.message : "Gagal menyimpan pengaturan RM cabang.");
+    } finally {
+      setBranchRMSettingsSaving(false);
+    }
+  };
+
+  const selectedRMBranch = branches.find((branch) => branch.id === selectedBranchId);
 
   // ==========================================
   // BRANCH MANAGEMENT HANDLERS
@@ -1314,12 +1379,16 @@ export const Configuration: React.FC = () => {
                 <Settings className="w-5 h-5" />
               )}
             </div>
-            {currentUser?.role === UserRole.BRANCH_ADMIN
+            {activeTab === "RM"
+              ? "Pengaturan Penomoran RM Cabang"
+              : currentUser?.role === UserRole.BRANCH_ADMIN
               ? "Profil Cabang Lala Dentist"
               : "Pengaturan & Master Lala Dentist"}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            {currentUser?.role === UserRole.BRANCH_ADMIN
+            {activeTab === "RM"
+              ? "Atur format dan nomor berikutnya yang diterbitkan untuk pasien baru di cabang."
+              : currentUser?.role === UserRole.BRANCH_ADMIN
               ? "Informasi profil resmi, kontak, alamat, logo, dan foto gedung cabang Anda (Mode Baca)."
               : "Single Source of Truth (SSOT) untuk Master Cabang Klinik, Foto Dokter, Media Promosi, dan Katalog Layanan."}
           </p>
@@ -1411,6 +1480,18 @@ export const Configuration: React.FC = () => {
           </span>
         </button>
 
+        <button
+          onClick={() => changeTab("RM")}
+          className={`pb-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeTab === "RM"
+              ? "border-[#916b1c] text-[#916b1c]"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <Hash className="w-4 h-4" />
+          <span>Penomoran RM</span>
+        </button>
+
         {currentUser?.role === UserRole.SUPER_ADMIN && (
           <>
             <button
@@ -1487,6 +1568,149 @@ export const Configuration: React.FC = () => {
           </>
         )}
       </div>
+
+      {activeTab === "RM" && (
+        <div className="max-w-3xl space-y-4">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-slate-800">Penomoran Rekam Medis per Cabang</h2>
+                <p className="mt-1 max-w-xl text-xs leading-5 text-slate-500">
+                  Pengaturan ini berlaku untuk pasien yang belum memiliki No. RM di cabang tersebut.
+                  No. RM yang sudah diterbitkan tidak akan berubah.
+                </p>
+              </div>
+              {currentUser?.role === UserRole.SUPER_ADMIN ? (
+                <label className="w-full text-xs font-semibold text-slate-700 sm:w-64">
+                  Cabang
+                  <select
+                    value={selectedBranchId}
+                    onChange={(event) => setSelectedBranchId(event.target.value)}
+                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs"
+                    disabled={loading || branches.length === 0}
+                  >
+                    {branches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>{branch.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+                  {branches.find((branch) => branch.id === selectedBranchId)?.name || "Cabang Anda"}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {branchRMSettingsError && (
+            <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">
+              {branchRMSettingsError}
+            </div>
+          )}
+          {branchRMSettingsSuccess && (
+            <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">
+              {branchRMSettingsSuccess}
+            </div>
+          )}
+
+          {branchRMSettingsLoading ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-xs text-slate-500">
+              Memuat pengaturan No. RM cabang...
+            </div>
+          ) : branchRMSettings ? (
+            <form onSubmit={handleSaveBranchRMSettings} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-700">
+                  Jumlah digit angka (0 = tanpa nol di depan)
+                  <input
+                    type="number"
+                    min="0"
+                    max="18"
+                    step="1"
+                    value={branchRMSettings.padDigits}
+                    onChange={(event) => setBranchRMSettings({
+                      ...branchRMSettings,
+                      padDigits: Math.max(0, Math.min(18, Number.parseInt(event.target.value, 10) || 0))
+                    })}
+                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs"
+                    disabled={branchRMSettingsSaving}
+                  />
+                </label>
+
+                <label className="text-xs font-semibold text-slate-700 sm:col-span-2">
+                  Nomor berikutnya
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]+"
+                    maxLength={18}
+                    value={branchRMSettings.nextNumber}
+                    onChange={(event) => setBranchRMSettings({
+                      ...branchRMSettings,
+                      nextNumber: event.target.value.replace(/\D/g, "")
+                    })}
+                    required
+                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white p-2.5 font-mono text-xs"
+                    disabled={branchRMSettingsSaving}
+                  />
+                  <span className="mt-1 block text-[10px] font-normal text-slate-500">
+                    Nomor harus lebih besar dari No. RM tertinggi yang sudah digunakan di cabang.
+                  </span>
+                </label>
+              </div>
+
+              <div className="grid gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:grid-cols-2">
+                <div>
+                  <span className="block text-[10px] font-bold uppercase tracking-wide text-amber-800">No. RM tertinggi tercatat</span>
+                  <span className="mt-1 block font-mono text-sm font-bold text-amber-950">
+                    {branchRMSettings.highestNumber || "Belum ada"}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold uppercase tracking-wide text-amber-800">Kode cabang otomatis</span>
+                  <span className="mt-1 block font-mono text-sm font-bold text-amber-950">
+                    {selectedRMBranch?.branchCode?.toUpperCase() || "Belum diatur"}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold uppercase tracking-wide text-amber-800">Preview No. RM berikutnya</span>
+                  <span className="mt-1 block font-mono text-sm font-bold text-amber-950">
+                    {branchRMSettings.nextNumber.padStart(branchRMSettings.padDigits, "0")}
+                  </span>
+                </div>
+                <div className="sm:col-span-2">
+                  <span className="block text-[10px] font-bold uppercase tracking-wide text-amber-800">Kode pasien otomatis</span>
+                  <span className="mt-1 block font-mono text-sm font-bold text-amber-950">
+                    {selectedRMBranch?.branchCode
+                      ? `${selectedRMBranch.branchCode.toUpperCase()}-RM${branchRMSettings.nextNumber.padStart(branchRMSettings.padDigits, "0")}`
+                      : "Kode cabang belum tersedia"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="max-w-lg text-[10px] leading-4 text-slate-500">
+                  RM pasien lama yang sudah diterbitkan tetap. Pengaturan nomor dan format ini digunakan ketika sistem menerbitkan RM baru saat check-in.
+                </p>
+                <button
+                  type="submit"
+                  disabled={branchRMSettingsSaving || branchRMSettingsLoading}
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+                  {branchRMSettingsSaving ? "Menyimpan..." : "Simpan Pengaturan RM"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            !branchRMSettingsError && (
+              <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-xs text-slate-500">
+                Pilih cabang untuk melihat pengaturan No. RM.
+              </div>
+            )
+          )}
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* TAB 1: MASTER CABANG KLINIK                                              */}

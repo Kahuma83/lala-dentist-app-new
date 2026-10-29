@@ -2844,6 +2844,7 @@ export class SupabaseBookingRepository implements BookingRepository {
       patientNameSnapshot: row.patient_name_snapshot ?? undefined,
       doctorNameSnapshot: row.doctor_name_snapshot ?? undefined,
       branchNameSnapshot: row.branch_name_snapshot ?? undefined,
+      referringStaffId: row.referring_staff_id ?? null,
       source,
       channel: source,
       rescheduledFromBookingId: row.rescheduled_from_booking_id ?? undefined,
@@ -3130,6 +3131,7 @@ export class SupabaseBookingRepository implements BookingRepository {
       patientNameSnapshot: bookingData.patientNameSnapshot || "",
       doctorNameSnapshot: bookingData.doctorNameSnapshot || "",
       branchNameSnapshot: bookingData.branchNameSnapshot || "",
+      referringStaffId: bookingData.referringStaffId || null,
       source,
       channel: source,
       rescheduledFromBookingId: bookingData.rescheduledFromBookingId,
@@ -3154,6 +3156,7 @@ export class SupabaseBookingRepository implements BookingRepository {
         patient_name_snapshot: bookingData.patientNameSnapshot || null,
         doctor_name_snapshot: bookingData.doctorNameSnapshot || null,
         branch_name_snapshot: bookingData.branchNameSnapshot || null,
+        referring_staff_id: bookingData.referringStaffId || null,
         status: bookingData.status || BookingStatus.PENDING,
         schedule_verified: bookingData.scheduleVerified !== undefined ? bookingData.scheduleVerified : true,
         planned_treatments: bookingData.plannedTreatments || [],
@@ -3270,6 +3273,7 @@ export class SupabaseBookingRepository implements BookingRepository {
         dbPayload.branch_id = updates.branchId;
       }
       if (updates.doctorId && isValidUUID(updates.doctorId)) dbPayload.doctor_id = updates.doctorId;
+      if (updates.referringStaffId !== undefined) dbPayload.referring_staff_id = updates.referringStaffId || null;
       if (updates.serviceId !== undefined && isValidUUID(updates.serviceId)) dbPayload.service_id = updates.serviceId;
       if (updates.bookingDateTime) {
         dbPayload.booking_date_time = updates.bookingDateTime;
@@ -6570,8 +6574,6 @@ export class SupabaseCompensationRepository implements CompensationRepository {
     if (job.status !== TreatmentJobStatus.SELESAI && job.status !== TreatmentJobStatus.DISERAHKAN) {
       throw new Error("Akrual kompensasi hanya dapat dihitung untuk treatment yang sudah SELESAI atau DISERAHKAN");
     }
-    if (job.external_doctor_id) return [];
-
     const { data: invoices, error: invoicesError } = await supabase
       .from("invoices")
       .select("id, patient_id, net_amount, total_amount, discount_amount, updated_at")
@@ -6620,6 +6622,8 @@ export class SupabaseCompensationRepository implements CompensationRepository {
     const applicableRules = (ruleRows || [])
       .map((row: any) => this.mapCompensationRuleFromDb(row))
       .filter((rule) =>
+        !job.external_doctor_id
+        &&
         rule.isActive
         && rule.ruleTypeSnapshot !== "BASE_SALARY"
         && rule.ruleTypeSnapshot !== "DOCTOR_SITTING_FEE"
@@ -6673,16 +6677,24 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       createdAccruals = (created || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
     }
 
-    const { data: patient, error: patientError } = await supabase
-      .from("patient_profiles")
-      .select("referring_staff_id")
-      .eq("id", invoice.patient_id)
+    const { data: visit, error: visitError } = await supabase
+      .from("patient_visits")
+      .select("booking_id")
+      .eq("id", job.visit_id)
       .maybeSingle();
-    if (patientError) throw new Error(`Gagal memuat Admin perujuk pasien: ${patientError.message}`);
-    const referringStaffId = patient?.referring_staff_id;
-    if (referringStaffId) {
-      const referralSourceId = `referral:${invoice.patient_id}`;
-      const referralRuleId = "ADMIN_REFERRAL_RP3000_V1";
+    if (visitError) throw new Error(`Gagal memuat booking kunjungan untuk insentif referral: ${visitError.message}`);
+    if (visit?.booking_id) {
+      const { data: booking, error: bookingError } = await supabase
+        .from("bookings")
+        .select("referring_staff_id")
+        .eq("id", visit.booking_id)
+        .maybeSingle();
+      if (bookingError) throw new Error(`Gagal memuat staf referral booking: ${bookingError.message}`);
+      const referringStaffId = booking?.referring_staff_id;
+      if (!referringStaffId) return createdAccruals;
+
+      const referralSourceId = `referral:visit:${job.visit_id}`;
+      const referralRuleId = "STAFF_VISIT_REFERRAL_RP3000_V1";
       const { data: existingReferral, error: existingReferralError } = await supabase
         .from("compensation_accruals")
         .select("id")
@@ -6697,7 +6709,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
             staff_id: referringStaffId,
             branch_id: job.branch_id,
             rule_id_snapshot: referralRuleId,
-            rule_type_snapshot: "ADMIN_REFERRAL",
+            rule_type_snapshot: "STAFF_VISIT_REFERRAL",
             value_snapshot: 3000,
             base_amount_snapshot: Number(invoice.net_amount) || 0,
             amount: 3000,
@@ -6705,8 +6717,23 @@ export class SupabaseCompensationRepository implements CompensationRepository {
             accrued_at: accruedAt
           })
           .select("*")
-          .single();
-        if (referralError) throw new Error(`Gagal mencatat insentif referral Admin: ${referralError.message}`);
+          .maybeSingle();
+        if (referralError?.code === "23505") {
+          const { data: concurrentReferral, error: concurrentReferralError } = await supabase
+            .from("compensation_accruals")
+            .select("id")
+            .eq("source_id", referralSourceId)
+            .eq("rule_id_snapshot", referralRuleId)
+            .maybeSingle();
+          if (concurrentReferralError) {
+            throw new Error(`Gagal memverifikasi insentif referral kunjungan: ${concurrentReferralError.message}`);
+          }
+          if (!concurrentReferral) {
+            throw new Error(`Gagal mencatat insentif referral kunjungan: ${referralError.message}`);
+          }
+        } else if (referralError) {
+          throw new Error(`Gagal mencatat insentif referral kunjungan: ${referralError.message}`);
+        }
         if (referral) createdAccruals.push(this.mapCompensationAccrualFromDb(referral));
       }
     }
@@ -7055,8 +7082,8 @@ export class SupabasePayrollRepository implements PayrollRepository {
         type: "EARNING"
       },
       ...accruals.map((row: any) => ({
-        description_snapshot: row.rule_type_snapshot === "ADMIN_REFERRAL"
-          ? `Insentif Referral Admin (#${row.source_id || row.id})`
+        description_snapshot: row.rule_type_snapshot === "STAFF_VISIT_REFERRAL"
+          ? `Insentif Referral Kunjungan (#${row.source_id || row.id})`
           : isDoctor
             ? `Sharing Dokter - Kompensasi Tindakan (#${row.source_id || row.id})`
             : `Insentif Kompensasi Tindakan (#${row.source_id || row.id})`,

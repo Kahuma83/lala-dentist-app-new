@@ -23,6 +23,8 @@ Buka `http://localhost:3000`. Mode ini menyimpan perubahan hanya di penyimpanan 
 | Dokter Gebang | `syafira_doc` | `laladentist123` |
 | Asisten Gebang | `clary_assistant` | `laladentist123` |
 
+Menu **Pengaturan Cabang → Penomoran RM** dapat dicoba dengan akun Admin Cabang. Nomor berikutnya dan padding digit tersimpan hanya di browser lokal, terpisah dari Supabase, dan dipakai saat mencoba check-in demo. Kode cabang seperti GEB dibuat otomatis dari master cabang dan tidak dapat diubah dari pengaturan RM.
+
 Alur yang disarankan: pasien membuat booking, Admin Cabang melakukan check-in, lalu Dokter/Asisten menguji antrean dan treatment. Dokter dan Asisten sengaja tidak memiliki kewenangan check-in; gunakan tombol akun mereka untuk memverifikasi penolakan. Perintah lama `npm run dev:patient` tetap tersedia sebagai alias mode demo lokal.
 
 1. Pasang dependencies:

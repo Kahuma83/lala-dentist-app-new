@@ -171,11 +171,13 @@ OB menggunakan **Portal Pegawai** untuk melihat ringkasan kerja, melakukan absen
 
 1. Pilih **Jadwal Baru**, lalu cari pasien yang benar.
 2. Pilih Dokter, tanggal, jam yang tersedia, dan sumber kedatangan yang sesuai: Online, WhatsApp, Front Desk, atau Walk-In.
-3. Isi catatan yang membantu petugas, lalu simpan.
-4. Untuk pasien yang datang tanpa janji, pilih sumber **Walk-In** dan tetap pilih slot Dokter yang kosong. Jangan menimpa jadwal pasien lain.
-5. Sehari sebelum jadwal, buka **Konfirmasi Booking H-1** pada bagian **Follow Up & Tindak Lanjut**. Hubungi pasien dan catat hasilnya: dihubungi, dikonfirmasi, perlu jadwal ulang, tidak merespons, atau batal.
-6. Jika pasien meminta waktu lain, buka jadwal pasien dan gunakan **Jadwal Ulang**. Pilih slot kosong; jangan sekadar mengubah catatan konfirmasi.
-7. Jika pasien membatalkan, gunakan tindakan pembatalan yang tersedia dan isi alasan bila diminta.
+3. Jika admin atau asisten berhasil mengajak pasien untuk kunjungan ini, pilih namanya pada **Referral / staf pengajak**. Daftar hanya memuat staf aktif di cabang booking; kosongkan jika tidak ada staf yang mengajak.
+4. Insentif referral Rp3.000 dicatat satu kali per kunjungan setelah tindakan selesai dan invoice lunas. Kunjungan berikutnya dapat memilih staf yang berbeda. Jadwal ulang membawa pilihan staf referral ke booking pengganti.
+5. Isi catatan yang membantu petugas, lalu simpan.
+6. Untuk pasien yang datang tanpa janji, pilih sumber **Walk-In** dan tetap pilih slot Dokter yang kosong. Jangan menimpa jadwal pasien lain.
+7. Sehari sebelum jadwal, buka **Konfirmasi Booking H-1** pada bagian **Follow Up & Tindak Lanjut**. Hubungi pasien dan catat hasilnya: dihubungi, dikonfirmasi, perlu jadwal ulang, tidak merespons, atau batal.
+8. Jika pasien meminta waktu lain, buka jadwal pasien dan gunakan **Jadwal Ulang**. Pilih slot kosong; jangan sekadar mengubah catatan konfirmasi.
+9. Jika pasien membatalkan, gunakan tindakan pembatalan yang tersedia dan isi alasan bila diminta.
 
 Status konfirmasi sehari sebelumnya hanya catatan tindak lanjut. Pasien tetap perlu check-in saat benar-benar datang.
 
