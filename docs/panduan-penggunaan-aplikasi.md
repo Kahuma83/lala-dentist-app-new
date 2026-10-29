@@ -40,7 +40,7 @@ Semua data dan transaksi Admin Cabang terbatas pada cabang yang menjadi tanggung
 | **Check-In Pasien** | Mencatat kedatangan pasien yang sudah hadir dan siap dilayani. Check-in menyiapkan kunjungan serta antrean; jangan digunakan dua kali untuk pasien yang sama. |
 | **Antrean Klinik** | Memantau pasien yang menunggu, dipanggil, sedang dilayani, atau telah selesai. Admin membantu kelancaran operasional; keputusan klinis tetap milik Dokter. |
 | **Daftar Treatment** | Melihat tindakan yang sedang berjalan atau siap ditagihkan. Admin menunggu Dokter menyelesaikan dan menyerahkan tindakan sebelum membuat tagihan. |
-| **Invoice & Tagihan** | Membuat dan memeriksa tagihan, menerima pembayaran, serta mencatat pembayaran sebagian atau lunas. |
+| **Invoice & Tagihan** | Memeriksa tindakan yang siap ditagihkan, mengembalikan catatan tindakan yang salah kepada Dokter sebelum invoice dibuat, membuat tagihan, dan menerima pembayaran. |
 | **Riwayat Pembayaran & Kwitansi** | Mencari transaksi yang sudah diterima dan membuka, mencetak, mengunduh, atau mengirim kwitansinya. |
 | **Pengeluaran** | Mencatat pengeluaran cabang berdasarkan bukti pembayaran, kategori, tanggal, dan akun kas/bank yang benar. |
 | **Inventori Stok → Daftar Stok** | Melihat barang, jumlah tersedia, batas minimum, lokasi, dan status stok cabang. |
@@ -60,7 +60,7 @@ Semua data dan transaksi Admin Cabang terbatas pada cabang yang menjadi tanggung
 |---|---|
 | **Antrean Dokter** | Melihat pasien yang menunggu Dokter, memeriksa urutan, memanggil pasien, dan mengikuti status kunjungan. |
 | **Pasien & Rekam Medis** | Membuka data pasien dan mencatat pemeriksaan, diagnosis, rencana, serta informasi klinis lainnya. Cocokkan identitas sebelum mengisi. |
-| **Treatment** | Membuat atau memeriksa tindakan, mencatat prosesnya, menyelesaikan tindakan yang benar-benar selesai, dan menyerahkannya untuk penagihan. |
+| **Treatment** | Membuat atau memeriksa tindakan, mencatat prosesnya, menyelesaikan tindakan yang benar-benar selesai, memperbaiki catatan yang dikembalikan kasir, dan menyerahkannya kembali untuk penagihan. |
 | **Persetujuan Resep Stok** | Menilai usulan perubahan resep bahan dari cabang yang menjadi wewenang Dokter. Resep baru digunakan setelah disetujui. |
 
 ### Asisten Dokter — Web Admin
@@ -171,11 +171,13 @@ OB menggunakan **Portal Pegawai** untuk melihat ringkasan kerja, melakukan absen
 
 1. Pilih **Jadwal Baru**, lalu cari pasien yang benar.
 2. Pilih Dokter, tanggal, jam yang tersedia, dan sumber kedatangan yang sesuai: Online, WhatsApp, Front Desk, atau Walk-In.
-3. Isi catatan yang membantu petugas, lalu simpan.
-4. Untuk pasien yang datang tanpa janji, pilih sumber **Walk-In** dan tetap pilih slot Dokter yang kosong. Jangan menimpa jadwal pasien lain.
-5. Sehari sebelum jadwal, buka **Konfirmasi Booking H-1** pada bagian **Follow Up & Tindak Lanjut**. Hubungi pasien dan catat hasilnya: dihubungi, dikonfirmasi, perlu jadwal ulang, tidak merespons, atau batal.
-6. Jika pasien meminta waktu lain, buka jadwal pasien dan gunakan **Jadwal Ulang**. Pilih slot kosong; jangan sekadar mengubah catatan konfirmasi.
-7. Jika pasien membatalkan, gunakan tindakan pembatalan yang tersedia dan isi alasan bila diminta.
+3. Jika admin atau asisten berhasil mengajak pasien untuk kunjungan ini, pilih namanya pada **Referral / staf pengajak**. Daftar hanya memuat staf aktif di cabang booking; kosongkan jika tidak ada staf yang mengajak.
+4. Insentif referral Rp3.000 dicatat satu kali per kunjungan setelah tindakan selesai dan invoice lunas. Kunjungan berikutnya dapat memilih staf yang berbeda. Jadwal ulang membawa pilihan staf referral ke booking pengganti.
+5. Isi catatan yang membantu petugas, lalu simpan.
+6. Untuk pasien yang datang tanpa janji, pilih sumber **Walk-In** dan tetap pilih slot Dokter yang kosong. Jangan menimpa jadwal pasien lain.
+7. Sehari sebelum jadwal, buka **Konfirmasi Booking H-1** pada bagian **Follow Up & Tindak Lanjut**. Hubungi pasien dan catat hasilnya: dihubungi, dikonfirmasi, perlu jadwal ulang, tidak merespons, atau batal.
+8. Jika pasien meminta waktu lain, buka jadwal pasien dan gunakan **Jadwal Ulang**. Pilih slot kosong; jangan sekadar mengubah catatan konfirmasi.
+9. Jika pasien membatalkan, gunakan tindakan pembatalan yang tersedia dan isi alasan bila diminta.
 
 Status konfirmasi sehari sebelumnya hanya catatan tindak lanjut. Pasien tetap perlu check-in saat benar-benar datang.
 
@@ -196,13 +198,14 @@ Status konfirmasi sehari sebelumnya hanya catatan tindak lanjut. Pasien tetap pe
 
 1. Tunggu sampai Dokter menyelesaikan tindakan dan menyerahkannya untuk ditagihkan.
 2. Pada daftar tindakan yang siap ditagihkan, pilih pasien dan kunjungan yang benar.
-3. Pilih **Buat Invoice**. Periksa nama pasien, layanan, tarif, jumlah, diskon, dan pajak sebelum menerbitkannya.
-4. Jelaskan jumlah tagihan kepada pasien. Invoice adalah tagihan, bukan bukti bahwa pasien sudah membayar.
-5. Saat menerima pembayaran, pilih **Bayar**, pilih metode yang sesuai dengan uang yang benar-benar diterima, lalu masukkan jumlahnya. Pembayaran dapat dicatat bertahap jika pasien belum melunasi.
-6. Periksa nominal, metode, dan nomor referensi bila ada sebelum menekan **Konfirmasi Pembayaran**.
-7. Untuk mencetak bukti, buka **Riwayat Pembayaran & Kwitansi**, pilih transaksi yang tepat, lalu pilih **Kwitansi**. Cocokkan nama pasien, nomor kwitansi, invoice, jumlah yang diterima, metode, dan sisa tagihan.
-8. Pilih **Cetak**, **Unduh PDF**, atau **Kirim WhatsApp**. Pastikan nomor tujuan benar sebelum mengirim.
-9. Jika pembayaran dilakukan beberapa kali, setiap penerimaan memiliki bukti tersendiri. Cetak kwitansi dari transaksi yang sesuai.
+3. Jika catatan tindakan perlu koreksi, pilih **Kembalikan ke Dokter** sebelum menerbitkan invoice dan tulis alasan dengan jelas. Tindakan yang menunggu revisi tidak dapat ditagihkan; pantau bagian **Menunggu Revisi Dokter**.
+4. Pilih **Buat Invoice** setelah tindakan yang dikembalikan sudah diserahkan kembali oleh Dokter. Periksa nama pasien, layanan, tarif, jumlah, diskon, dan pajak sebelum menerbitkannya.
+5. Jelaskan jumlah tagihan kepada pasien. Invoice adalah tagihan, bukan bukti bahwa pasien sudah membayar.
+6. Saat menerima pembayaran, pilih **Bayar**, pilih metode yang sesuai dengan uang yang benar-benar diterima, lalu masukkan jumlahnya. Pembayaran dapat dicatat bertahap jika pasien belum melunasi.
+7. Periksa nominal, metode, dan nomor referensi bila ada sebelum menekan **Konfirmasi Pembayaran**.
+8. Untuk mencetak bukti, buka **Riwayat Pembayaran & Kwitansi**, pilih transaksi yang tepat, lalu pilih **Kwitansi**. Cocokkan nama pasien, nomor kwitansi, invoice, jumlah yang diterima, metode, dan sisa tagihan.
+9. Pilih **Cetak**, **Unduh PDF**, atau **Kirim WhatsApp**. Pastikan nomor tujuan benar sebelum mengirim.
+10. Jika pembayaran dilakukan beberapa kali, setiap penerimaan memiliki bukti tersendiri. Cetak kwitansi dari transaksi yang sesuai.
 
 Jangan mencatat pembayaran sebelum uang atau konfirmasi pembayaran benar-benar diterima. Jika transaksi salah, jangan menghapus atau membuat transaksi pengganti tanpa mengikuti prosedur koreksi yang tersedia dan meminta persetujuan yang diperlukan.
 
@@ -254,6 +257,7 @@ Gunakan **Kontrol & Perawatan Lanjutan** untuk menghubungi pasien yang perlu dii
 6. Bila bahan kurang, beri tahu Admin Cabang agar pengadaan dicatat. Kekurangan yang tertinggal akan dipotong otomatis saat stok barang tersebut masuk.
 7. Pilih **Serahkan ke Kasir** jika tindakan siap ditagihkan. Jika kunjungan berisi beberapa tindakan, pastikan semuanya sudah selesai dan diserahkan.
 8. Hanya Dokter yang tercatat sebagai penanggung jawab tindakan yang dapat menyelesaikan dan menyerahkannya ke kasir. Jika perlu diganti, minta penugasan Dokter pengganti terlebih dahulu. Untuk tindakan Dokter pengganti eksternal, Asisten atau Super Admin hanya dapat melanjutkan langkah yang memang tersedia dan ditugaskan untuk tindakan tersebut.
+9. Jika kasir mengembalikan tindakan sebelum invoice diterbitkan, buka filter **Perlu Revisi**, baca alasan koreksi, perbaiki catatan tindakan, lalu pilih **Simpan & Serahkan ke Kasir**. Pengiriman ulang tidak mengulang pencatatan stok atau akrual kompensasi.
 
 ### Meninjau resep bahan
 
@@ -350,8 +354,8 @@ OB menggunakan Portal Pegawai untuk kebutuhan pribadi dan kehadiran saja. OB tid
 - Satu Dokter menangani satu kunjungan aktif pada satu waktu. Pasien berikutnya mungkin perlu menunggu sampai kunjungan sebelumnya selesai.
 - Jangan melakukan check-in ulang jika pasien sudah memiliki kunjungan atau antrean aktif.
 - Dokter menyelesaikan tindakan dan menyerahkan tagihan. Admin Cabang menangani invoice dan pembayaran.
-- Pemakaian bahan resep dicatat saat tindakan diselesaikan. Jika stok tidak cukup, sistem mencatat kekurangan yang belum terpenuhi.
-- Stok masuk berikutnya dipakai untuk menutup kekurangan tertunda barang dan cabang yang sama, dari catatan yang paling lama. Sisa stok setelahnya tetap tersedia.
+- Pemakaian bahan resep tetap dicatat saat Dokter menyelesaikan tindakan meskipun stok kurang; saldo barang dapat menjadi minus. Pengeluaran manual dari menu stok tetap tidak dapat membuat stok minus.
+- Stok masuk berikutnya menaikkan saldo minus secara alami. Kekurangan untuk kode barang yang belum terdaftar direkonsiliasi setelah barang tersedia, dari catatan tertua untuk cabang yang sama.
 - Pembelian barang tetap harus dicatat sebagai pengeluaran berdasarkan bukti pembelian; penerimaan stok tidak mencatat biaya pembelian secara otomatis.
 - Jangan mencatat ulang pemakaian tindakan yang sama melalui menu stok jika pemakaian tersebut sudah dicatat dari Treatment.
 

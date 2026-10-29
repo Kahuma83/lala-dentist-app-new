@@ -6,6 +6,7 @@ import {
   BookingSource,
   ScheduleStatus,
   UserRole,
+  StaffPosition,
   PatientProfile,
   DentalDoctor,
   DoctorSchedule,
@@ -77,7 +78,7 @@ const getMinutesOfDay = (time: string) => {
 };
 
 export const BookingManagement: React.FC = () => {
-  const { repos, currentUser, selectedBranchId, branches, patients, refreshData } = useApp();
+  const { repos, currentUser, selectedBranchId, branches, patients, staff, refreshData } = useApp();
   const canViewPatientPhoneNumber = canViewPatientPhone(currentUser?.role);
   const { navigate, path } = useRouter();
 
@@ -109,6 +110,7 @@ export const BookingManagement: React.FC = () => {
   const [formDoctorId, setFormDoctorId] = useState<string>("");
   const [formDate, setFormDate] = useState<string>(getTomorrowDateString());
   const [formTimeSlot, setFormTimeSlot] = useState<string>("");
+  const [formReferringStaffId, setFormReferringStaffId] = useState("");
   const [formNotes, setFormNotes] = useState<string>("");
   const [plannedServices, setPlannedServices] = useState<MasterService[]>([]);
   const [bookingSource, setBookingSource] = useState<BookingSource>(BookingSource.FRONT_DESK);
@@ -170,6 +172,17 @@ export const BookingManagement: React.FC = () => {
   const [bookingCloseFeedback, setBookingCloseFeedback] = useState<{ bookingId: string; message: string } | null>(null);
 
   const effectiveBranchId = currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId : (branchFilter !== "ALL" ? branchFilter : selectedBranchId);
+  const availableReferringStaff = useMemo(
+    () => staff
+      .filter((employee) =>
+        employee.active &&
+        employee.employmentStatus === "ACTIVE" &&
+        employee.branchId === formBranchId &&
+        (employee.position === StaffPosition.BRANCH_ADMIN || employee.position === StaffPosition.ASSISTANT)
+      )
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, "id")),
+    [staff, formBranchId]
+  );
   const patientProfileForDetail = selectedBooking
     ? patients.find((patient) => patient.id === selectedBooking.patientId)
     : undefined;
@@ -305,6 +318,7 @@ export const BookingManagement: React.FC = () => {
     setFormDate(getTodayDateString());
     setFormDoctorId("");
     setFormTimeSlot("");
+    setFormReferringStaffId("");
     setSelectedPatient(patient || null);
     setPatientSearch("");
     setShowNewPatientForm(false);
@@ -853,6 +867,7 @@ export const BookingManagement: React.FC = () => {
           patientNameSnapshot: selectedPatient.fullName || selectedPatient.name || "Pasien",
           doctorNameSnapshot: selectedDoc?.name || "Dokter",
           branchNameSnapshot: selectedBr?.name || "Cabang",
+          referringStaffId: formReferringStaffId || null,
           scheduleVerified: hasScheduleForBranchAndDate
         },
         currentUser?.role,
@@ -867,6 +882,7 @@ export const BookingManagement: React.FC = () => {
         setSelectedPatient(null);
         setPatientSearch("");
         setFormNotes("");
+        setFormReferringStaffId("");
         setPlannedServices([]);
         setBookingSource(BookingSource.FRONT_DESK);
         setFormSuccess(null);
@@ -1220,6 +1236,7 @@ export const BookingManagement: React.FC = () => {
 
   const handleOpenNewBooking = (date = getTomorrowDateString()) => {
     setFormDate(date);
+    setFormReferringStaffId("");
     setSelectedPatient(null);
     setPatientSearch("");
     setShowNewPatientForm(false);
@@ -1324,7 +1341,8 @@ export const BookingManagement: React.FC = () => {
             branchNameSnapshot: selectedBooking.branchNameSnapshot || "Cabang",
             scheduleVerified: true,
             rescheduledFromBookingId: selectedBooking.id,
-            rescheduleReason: rescheduleReason.trim() || undefined
+            rescheduleReason: rescheduleReason.trim() || undefined,
+            referringStaffId: selectedBooking.referringStaffId || null
           },
           currentUser?.role,
           currentUser?.assignedBranchId
@@ -2305,6 +2323,28 @@ export const BookingManagement: React.FC = () => {
                 )}
               </div>
 
+              <div>
+                <label htmlFor="select-booking-referring-staff" className="block text-xs font-bold text-slate-700 mb-1">
+                  Referral / staf pengajak (opsional)
+                </label>
+                <select
+                  id="select-booking-referring-staff"
+                  value={formReferringStaffId}
+                  onChange={(event) => setFormReferringStaffId(event.target.value)}
+                  className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium"
+                >
+                  <option value="">Tidak ada / belum dicatat</option>
+                  {availableReferringStaff.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.position === StaffPosition.BRANCH_ADMIN ? "Admin" : "Asisten"} · {employee.fullName}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[10px] text-slate-500">
+                  Pilih admin atau asisten cabang yang mengajak pasien untuk kunjungan ini. Insentif Rp3.000 dicatat satu kali setelah tindakan selesai dan invoice lunas.
+                </p>
+              </div>
+
               {/* Step 2: Branch & Doctor */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -2316,7 +2356,10 @@ export const BookingManagement: React.FC = () => {
                       const matched = branches.find((b) => isBranchMatch(b.id, formBranchId, branches));
                       return matched ? matched.id : formBranchId;
                     })()}
-                    onChange={(e) => setFormBranchId(e.target.value)}
+                    onChange={(e) => {
+                      setFormBranchId(e.target.value);
+                      setFormReferringStaffId("");
+                    }}
                     disabled={currentUser?.role === UserRole.BRANCH_ADMIN}
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium disabled:opacity-75"
                     id="select-modal-branch"
@@ -2774,6 +2817,14 @@ export const BookingManagement: React.FC = () => {
                 <h3 className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Keluhan / Catatan</h3>
                 <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-slate-700">{selectedBooking.notes || selectedBooking.complaint || "Belum dicatat"}</p>
               </section>
+              {selectedBooking.referringStaffId && (
+                <section className="rounded-2xl border border-violet-200 bg-violet-50/60 p-3.5">
+                  <h3 className="text-[10px] font-bold uppercase tracking-wide text-violet-700">Referral / staf pengajak</h3>
+                  <p className="mt-1.5 text-xs font-semibold text-slate-700">
+                    {staff.find((employee) => employee.id === selectedBooking.referringStaffId)?.fullName || "Staf tidak ditemukan"}
+                  </p>
+                </section>
+              )}
               {selectedBooking.plannedTreatments && selectedBooking.plannedTreatments.length > 0 && (
                 <section className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-3.5">
                   <h3 className="text-[10px] font-bold uppercase tracking-wide text-amber-800">Rencana tindakan · Estimasi</h3>

@@ -45,6 +45,7 @@ import {
 
 import { MockDatabase, MOCK_SERVICES, MOCK_BRANCH_TARIFFS, MOCK_DOCTORS, MOCK_BRANCHES } from "../data/mockData";
 import { formatInternalPatientCode, getPatientMedicalRecordNumber } from "../utils/rmUtils";
+import { advanceStoredBranchRM, getNextStoredBranchRM } from "../utils/branchRMSettings";
 import { calculatePayrollTax } from "../utils/payrollTax";
 import {
   PatientProfile,
@@ -2214,6 +2215,18 @@ export class MockBookingRepository implements BookingRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && bookingData.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat membuat booking untuk cabang lain");
     }
+    if (bookingData.referringStaffId) {
+      const referringStaff = db.staff.find((staff) =>
+        staff.id === bookingData.referringStaffId &&
+        staff.branchId === bookingData.branchId &&
+        staff.active &&
+        staff.employmentStatus === "ACTIVE" &&
+        (staff.position === StaffPosition.BRANCH_ADMIN || staff.position === StaffPosition.ASSISTANT)
+      );
+      if (!referringStaff) {
+        throw new Error("Staf referral harus admin atau asisten aktif pada cabang booking.");
+      }
+    }
 
     const bookingDate = bookingData.bookingDateTime.slice(0, 10);
     const existingPatientBooking = db.bookings.find((booking) =>
@@ -2259,6 +2272,7 @@ export class MockBookingRepository implements BookingRepository {
       patientNameSnapshot: patient.fullName || patient.name,
       doctorNameSnapshot: doctor.name,
       branchNameSnapshot: branch.name,
+      referringStaffId: bookingData.referringStaffId || null,
       source,
       channel: source,
       rescheduledFromBookingId: bookingData.rescheduledFromBookingId,
@@ -2831,7 +2845,8 @@ export class MockQueueRepository implements QueueRepository {
         ...candidate,
         medicalRecordNumber: getPatientMedicalRecordNumber(candidate, visit.branchId)
       }));
-      const localRm = getNextMedicalRecordNumber(branchPatients);
+      const localRm = getNextStoredBranchRM(visit.branchId, branchPatients)
+        || getNextMedicalRecordNumber(branchPatients);
       patient.branchMedicalRecordNumbers = [
         ...(patient.branchMedicalRecordNumbers || []),
         { branchId: visit.branchId, medicalRecordNumber: localRm }
@@ -2840,6 +2855,7 @@ export class MockQueueRepository implements QueueRepository {
       if (!patient.internalPatientCode) {
         patient.internalPatientCode = formatInternalPatientCode(branch.branchCode || "BRN", localRm);
       }
+      advanceStoredBranchRM(visit.branchId, localRm);
     }
 
     // 6. Doctor Determination & Validation
@@ -3691,6 +3707,96 @@ export class MockTreatmentRepository implements TreatmentRepository {
       currentUserId
     );
 
+    return { ...job };
+  }
+
+  async returnTreatmentToDoctor(
+    id: string,
+    reason: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string }
+  ): Promise<TreatmentJob> {
+    const job = db.treatmentJobs.find((treatment) => treatment.id === id);
+    if (!job) throw new Error("TreatmentJob tidak ditemukan");
+    if (currentUserRole !== UserRole.BRANCH_ADMIN && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya petugas kasir yang dapat mengembalikan tindakan ke dokter.");
+    }
+    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId !== job.branchId) {
+      throw new Error("Admin Cabang tidak dapat mengakses treatment cabang lain");
+    }
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new Error("Alasan pengembalian wajib diisi.");
+    if (job.status !== TreatmentJobStatus.DISERAHKAN) {
+      throw new Error("Hanya tindakan yang sudah diserahkan ke kasir yang dapat dikembalikan.");
+    }
+
+    const visitInvoices = db.invoices.filter((invoice) => invoice.visitId === job.visitId);
+    if (visitInvoices.some((invoice) => invoice.status !== InvoiceStatus.CANCELLED)) {
+      throw new Error("Tindakan tidak dapat dikembalikan setelah invoice diterbitkan.");
+    }
+    if (db.payments.some((payment) => visitInvoices.some((invoice) => invoice.id === payment.invoiceId))) {
+      throw new Error("Tindakan tidak dapat dikembalikan setelah ada pembayaran.");
+    }
+
+    const now = AppClock.nowISO();
+    job.status = TreatmentJobStatus.PERLU_REVISI;
+    job.returnedAt = now;
+    job.returnReason = normalizedReason;
+    job.updatedAt = now;
+
+    const activityRepo = new MockTreatmentActivityRepository();
+    await activityRepo.addActivity({
+      treatmentId: job.id,
+      actorId: actorData?.actorId || currentUserId || "actor-system",
+      actorRole: actorData?.actorRole || currentUserRole,
+      actorNameSnapshot: actorData?.actorNameSnapshot,
+      activityType: TreatmentActivityType.RETURNED_TO_DOCTOR,
+      notes: normalizedReason
+    });
+    return { ...job };
+  }
+
+  async resubmitTreatmentToCashier(
+    id: string,
+    correctedNotes: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string }
+  ): Promise<TreatmentJob> {
+    const job = db.treatmentJobs.find((treatment) => treatment.id === id);
+    if (!job) throw new Error("TreatmentJob tidak ditemukan");
+    if (currentUserRole !== UserRole.DOCTOR
+      || !currentUserId
+      || (job.assignedDoctorId || job.doctorId) !== currentUserId) {
+      throw new Error("Hanya dokter penanggung jawab yang dapat mengirim ulang tindakan ini.");
+    }
+    if (userBranchId && userBranchId !== job.branchId) {
+      throw new Error("Dokter tidak memiliki izin tindakan di cabang ini.");
+    }
+    const normalizedNotes = correctedNotes.trim();
+    if (!normalizedNotes) throw new Error("Catatan tindakan yang sudah dikoreksi wajib diisi.");
+    if (job.status !== TreatmentJobStatus.PERLU_REVISI) {
+      throw new Error("Tindakan tidak sedang menunggu revisi dokter.");
+    }
+
+    const now = AppClock.nowISO();
+    job.notes = normalizedNotes;
+    job.status = TreatmentJobStatus.DISERAHKAN;
+    job.handedOverAt = now;
+    job.updatedAt = now;
+
+    const activityRepo = new MockTreatmentActivityRepository();
+    await activityRepo.addActivity({
+      treatmentId: job.id,
+      actorId: actorData?.actorId || currentUserId,
+      actorRole: actorData?.actorRole || currentUserRole,
+      actorNameSnapshot: actorData?.actorNameSnapshot,
+      activityType: TreatmentActivityType.REVISION_RESUBMITTED,
+      notes: "Dokter memperbarui catatan tindakan dan menyerahkan kembali ke kasir."
+    });
     return { ...job };
   }
 }
@@ -4549,19 +4655,22 @@ export class MockCompensationRepository implements CompensationRepository {
       }
     }
 
-    const patient = db.patients.find((item: PatientProfile) => item.id === invoice.patientId);
-    if (patient?.referringStaffId) {
-      const referralSourceId = `referral:${patient.id}`;
-      const referralRuleId = "ADMIN_REFERRAL_RP3000_V1";
+    const visit = db.visits.find((item) => item.id === job.visitId);
+    const booking = visit?.bookingId
+      ? db.bookings.find((item) => item.id === visit.bookingId)
+      : undefined;
+    if (visit && booking?.referringStaffId) {
+      const referralSourceId = `referral:visit:${visit.id}`;
+      const referralRuleId = "STAFF_VISIT_REFERRAL_RP3000_V1";
       const referralExists = db.accruals.some((accrual: CompensationAccrual) =>
         accrual.sourceId === referralSourceId && accrual.ruleIdSnapshot === referralRuleId
       );
       if (!referralExists) {
         const referralAccrual: CompensationAccrual = {
           id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-          staffId: patient.referringStaffId,
+          staffId: booking.referringStaffId,
           ruleIdSnapshot: referralRuleId,
-          ruleTypeSnapshot: "ADMIN_REFERRAL",
+          ruleTypeSnapshot: "STAFF_VISIT_REFERRAL",
           valueSnapshot: 3000,
           baseAmountSnapshot: invoice.netAmount,
           amount: 3000,
@@ -4844,8 +4953,8 @@ export class MockPayrollRepository implements PayrollRepository {
       db.payrollItems.push({
         id: `item-${payrollId}-accrual-${idx + 1}`,
         payrollId,
-        descriptionSnapshot: accrual.ruleTypeSnapshot === "ADMIN_REFERRAL"
-          ? `Insentif Referral Admin (#${accrual.sourceId})`
+        descriptionSnapshot: accrual.ruleTypeSnapshot === "STAFF_VISIT_REFERRAL"
+          ? `Insentif Referral Kunjungan (#${accrual.sourceId})`
           : isDoctor
             ? `Sharing Dokter - Kompensasi Tindakan (#${accrual.sourceId})`
             : `Insentif Kompensasi Tindakan (#${accrual.sourceId})`,

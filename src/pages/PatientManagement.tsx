@@ -2085,7 +2085,7 @@ export const PatientManagement: React.FC = () => {
 
                 <div>
                   <label htmlFor="input-patient-referring-staff" className="block font-semibold text-slate-700 mb-1">
-                    Admin Perujuk Pasien
+                    Admin Perujuk Awal (Riwayat)
                   </label>
                   <select
                     id="input-patient-referring-staff"
@@ -2103,7 +2103,7 @@ export const PatientManagement: React.FC = () => {
                       ))}
                   </select>
                   <p className="text-[10px] text-slate-500 mt-1">
-                    Insentif referral Rp3.000 hanya dihitung satu kali setelah tindakan selesai dan invoice lunas.
+                    Untuk insentif referral per kunjungan, pilih staf pengajak pada formulir booking.
                   </p>
                 </div>
 

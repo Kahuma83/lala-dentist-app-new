@@ -69,7 +69,8 @@ export enum TreatmentJobStatus {
   BELUM_DIMULAI = "BELUM_DIMULAI",
   DALAM_PROSES = "DALAM_PROSES",
   SELESAI = "SELESAI",
-  DISERAHKAN = "DISERAHKAN"
+  DISERAHKAN = "DISERAHKAN",
+  PERLU_REVISI = "PERLU_REVISI"
 }
 
 export enum TreatmentActivityType {
@@ -78,6 +79,8 @@ export enum TreatmentActivityType {
   PROGRESS = "PROGRESS",
   COMPLETED = "COMPLETED",
   HANDED_OVER = "HANDED_OVER",
+  RETURNED_TO_DOCTOR = "RETURNED_TO_DOCTOR",
+  REVISION_RESUBMITTED = "REVISION_RESUBMITTED",
   DURATION_CHANGE = "DURATION_CHANGE",
   OTHER = "OTHER"
 }
@@ -545,6 +548,7 @@ export interface Booking {
   patientNameSnapshot?: string;
   doctorNameSnapshot?: string;
   branchNameSnapshot?: string;
+  referringStaffId?: string | null;
   source?: BookingSource;
   channel?: BookingSource;
   enRouteConfirmedAt?: string | null;
@@ -661,7 +665,7 @@ export interface TreatmentJob {
   doctorId: string;
   externalDoctorId?: string | null;
   serviceId: string;
-  status: TreatmentJobStatus | "BELUM_DIMULAI" | "DALAM_PROSES" | "SELESAI" | "DISERAHKAN";
+  status: TreatmentJobStatus | "BELUM_DIMULAI" | "DALAM_PROSES" | "SELESAI" | "DISERAHKAN" | "PERLU_REVISI";
   serviceNameSnapshot: string;
   doctorNameSnapshot: string;
   priceSnapshot?: number;
@@ -671,6 +675,8 @@ export interface TreatmentJob {
   startedAt?: string;
   completedAt?: string;
   handedOverAt?: string;
+  returnedAt?: string;
+  returnReason?: string;
   updatedAt: string;
 
   // Backward compatibility & future phase fields

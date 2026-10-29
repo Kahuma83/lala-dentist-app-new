@@ -83,6 +83,8 @@ export const TreatmentManagement: React.FC = () => {
   const [activityType, setActivityType] = useState<TreatmentActivityType>(TreatmentActivityType.PROGRESS);
   const [activityNotes, setActivityNotes] = useState<string>("");
   const [addingActivity, setAddingActivity] = useState<boolean>(false);
+  const [correctedTreatmentNotes, setCorrectedTreatmentNotes] = useState("");
+  const [submittingRevision, setSubmittingRevision] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [completingTreatment, setCompletingTreatment] = useState(false);
   const [approvedRecipeMaterials, setApprovedRecipeMaterials] = useState<InventoryRecipeLine[] | null>(null);
@@ -104,6 +106,8 @@ export const TreatmentManagement: React.FC = () => {
     canFinalizeTreatment(treatment)
     || (Boolean(treatment.externalDoctorId)
       && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
+  const canReviseTreatment = (treatment: TreatmentJob) =>
+    treatment.status === TreatmentJobStatus.PERLU_REVISI && canFinalizeTreatment(treatment);
 
   const treatmentRepo = repos.treatment;
   const visitRepo = repos.visit;
@@ -191,6 +195,7 @@ export const TreatmentManagement: React.FC = () => {
 
   useEffect(() => {
     if (selectedTreatment) {
+      setCorrectedTreatmentNotes(selectedTreatment.notes || "");
       setApprovedRecipeMaterials(null);
       loadActivities(selectedTreatment.id);
       void listInventoryItems(selectedTreatment.branchId)
@@ -300,6 +305,7 @@ export const TreatmentManagement: React.FC = () => {
     let treatmentCompleted = false;
     let inventoryRecorded = false;
     let stockShortages: InventoryTreatmentStockShortage[] = [];
+    const inventoryWarnings: string[] = [];
     let accrualCount = 0;
     let accrualError: string | null = null;
     try {
@@ -307,12 +313,17 @@ export const TreatmentManagement: React.FC = () => {
         || treatment.serviceNameSnapshot;
       const recipe = getInventoryTreatmentRecipe(serviceCode);
       if (!recipe) {
-        throw new Error(`Resep stok untuk layanan "${treatment.serviceNameSnapshot}" belum tersedia. Tindakan tidak dapat diselesaikan otomatis.`);
-      }
-      if (recipe.lines.length > 0) {
-        const approvedMaterials = await getApprovedInventoryTreatmentRecipe(treatment.branchId, serviceCode || "");
+        inventoryWarnings.push(`Resep stok untuk layanan "${treatment.serviceNameSnapshot}" belum tersedia; tindakan tetap diselesaikan tanpa pencatatan stok otomatis.`);
+      } else if (recipe.lines.length > 0) {
+        let approvedMaterials: InventoryRecipeLine[] | null = null;
+        try {
+          approvedMaterials = await getApprovedInventoryTreatmentRecipe(treatment.branchId, serviceCode || "");
+        } catch (recipeError: unknown) {
+          const message = recipeError instanceof Error ? recipeError.message : String(recipeError);
+          inventoryWarnings.push(`Resep khusus cabang gagal dimuat; resep standar digunakan. ${message}`);
+        }
         if (!approvedMaterials && recipe.requiresBraceMaterialChoice) {
-          throw new Error("Resep khusus cabang untuk tindakan ini belum disetujui. Dokter perlu menetapkan dan menyetujui formula di menu Resep Bahan Tindakan sebelum menyelesaikan tindakan.");
+          inventoryWarnings.push("Resep khusus cabang belum disetujui; resep standar digunakan untuk tindakan ini.");
         }
         const materials = [...(approvedMaterials || recipe.lines)];
         const result = await recordTreatmentInventoryUsage({
@@ -325,8 +336,22 @@ export const TreatmentManagement: React.FC = () => {
         });
         inventoryRecorded = true;
         stockShortages = result.shortages;
-        setInventoryItems(await listInventoryItems(treatment.branchId));
+        try {
+          setInventoryItems(await listInventoryItems(treatment.branchId));
+        } catch (inventoryRefreshError: unknown) {
+          const message = inventoryRefreshError instanceof Error ? inventoryRefreshError.message : String(inventoryRefreshError);
+          inventoryWarnings.push(`Pemakaian tercatat, tetapi stok terbaru gagal dimuat: ${message}`);
+        }
       }
+    } catch (inventoryError: unknown) {
+      const message = inventoryError instanceof Error ? inventoryError.message : String(inventoryError);
+      inventoryWarnings.push(`Pemakaian bahan otomatis gagal dicatat; tindakan tetap diselesaikan dan stok perlu diperiksa: ${message}`);
+    }
+
+    const inventoryWarning = inventoryWarnings.length
+      ? ` Peringatan stok: ${inventoryWarnings.join(" ")}`
+      : "";
+    try {
       const completedTreatment = await treatmentRepo.completeTreatmentJob(
         treatment.id,
         currentUser?.role,
@@ -340,7 +365,7 @@ export const TreatmentManagement: React.FC = () => {
         }
       );
       treatmentCompleted = true;
-      setSelectedTreatment((previous) => previous?.id === completedTreatment.id ? completedTreatment : previous);
+      setSelectedTreatment(null);
       try {
         if (!completedTreatment.externalDoctorId) {
           const createdAccruals = await repos.compensation.calculateAndAccrueForTreatment(completedTreatment.id);
@@ -375,13 +400,16 @@ export const TreatmentManagement: React.FC = () => {
       }
       const shortageWarning = stockShortages.length
         ? ` Peringatan: stok resep kurang — ${stockShortages.map((shortage) =>
-          `${shortage.itemCode} kurang ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.shortage)} ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
-        ).join(", ")}. Stok yang tersedia sudah dipotong.`
+          `${shortage.itemCode} ${shortage.stockDeficit
+            ? `minus ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.stockDeficit)}`
+            : `belum terdaftar, kurang ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.shortage)}`}` +
+          ` ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
+        ).join(", ")}.`
         : "";
       setSuccessMsg(
         unfinishedTreatments.length === 0
-          ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.${shortageWarning}`
-          : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.${shortageWarning}`
+          ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.${shortageWarning}${inventoryWarning}`
+          : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.${shortageWarning}${inventoryWarning}`
       );
       await loadData();
       if (accrualError) {
@@ -390,14 +418,17 @@ export const TreatmentManagement: React.FC = () => {
     } catch (err: any) {
       const shortageWarning = stockShortages.length
         ? ` Stok resep kurang: ${stockShortages.map((shortage) =>
-          `${shortage.itemCode} kurang ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.shortage)} ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
-        ).join(", ")}. Stok yang tersedia sudah dipotong.`
+          `${shortage.itemCode} ${shortage.stockDeficit
+            ? `minus ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.stockDeficit)}`
+            : `belum terdaftar, kurang ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.shortage)}`}` +
+          ` ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
+        ).join(", ")}.`
         : "";
       setError(treatmentCompleted
-        ? `Treatment sudah tersimpan selesai, tetapi antrean belum berhasil ditutup: ${err.message || "kesalahan tidak diketahui"}.${shortageWarning} Silakan muat ulang dan periksa status kunjungan.`
+        ? `Treatment sudah tersimpan selesai, tetapi antrean belum berhasil ditutup: ${err.message || "kesalahan tidak diketahui"}.${shortageWarning}${inventoryWarning} Silakan muat ulang dan periksa status kunjungan.`
         : inventoryRecorded
-          ? `Stok bahan sudah dicatat, tetapi tindakan belum berhasil diselesaikan: ${err.message || "kesalahan tidak diketahui"}.${shortageWarning} Coba Selesaikan kembali; stok tidak akan dipotong ulang.`
-          : err.message || "Gagal menyelesaikan tindakan medis");
+          ? `Stok bahan sudah dicatat, tetapi tindakan belum berhasil diselesaikan: ${err.message || "kesalahan tidak diketahui"}.${shortageWarning}${inventoryWarning} Coba Selesaikan kembali; stok tidak akan dipotong ulang.`
+          : `${err.message || "Gagal menyelesaikan tindakan medis"}${shortageWarning}${inventoryWarning}`);
     } finally {
       setCompletingTreatment(false);
     }
@@ -424,6 +455,33 @@ export const TreatmentManagement: React.FC = () => {
       await loadData();
     } catch (err: any) {
       setError(err.message || "Gagal menyerahkan tindakan medis");
+    }
+  };
+
+  const handleResubmitTreatment = async (treatment: TreatmentJob) => {
+    if (!canReviseTreatment(treatment) || submittingRevision) return;
+    setSubmittingRevision(true);
+    setError(null);
+    try {
+      const updatedTreatment = await treatmentRepo.resubmitTreatmentToCashier(
+        treatment.id,
+        correctedTreatmentNotes,
+        currentUser?.role,
+        currentUser?.assignedBranchId,
+        currentUser?.doctorId,
+        {
+          actorId: currentUser?.id,
+          actorRole: currentUser?.role,
+          actorNameSnapshot: currentUser?.name || "Dokter"
+        }
+      );
+      setSelectedTreatment(updatedTreatment);
+      setSuccessMsg("Catatan tindakan berhasil diperbaiki dan diserahkan kembali ke kasir.");
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || "Gagal mengirim ulang koreksi tindakan");
+    } finally {
+      setSubmittingRevision(false);
     }
   };
 
@@ -609,6 +667,14 @@ export const TreatmentManagement: React.FC = () => {
             DISERAHKAN KE KASIR
           </span>
         );
+      case TreatmentJobStatus.PERLU_REVISI:
+      case "PERLU_REVISI":
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+            <AlertCircle className="w-3 h-3 mr-1 text-rose-600" />
+            PERLU REVISI
+          </span>
+        );
       default:
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
@@ -674,7 +740,7 @@ export const TreatmentManagement: React.FC = () => {
 
       {currentUser?.role === UserRole.DOCTOR_ASSISTANT && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800">
-          Asisten dapat memulai treatment. Treatment dokter internal diselesaikan oleh Dokter; treatment yang ditugaskan kepada dokter eksternal dapat diselesaikan dan diserahkan oleh petugas berwenang.
+          Asisten dapat memulai treatment dan mencatat aktivitas. Treatment dokter internal hanya dapat diselesaikan atau diserahkan oleh dokter penanggung jawab. Untuk treatment dokter eksternal, asisten cabang berwenang dapat menyelesaikan dan menyerahkannya; stok resep dipotong saat treatment berhasil diselesaikan.
         </div>
       )}
 
@@ -704,7 +770,7 @@ export const TreatmentManagement: React.FC = () => {
       )}
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <div
           onClick={() => setStatusFilter("ACTIVE")}
           className={`p-4 rounded-xl border transition-all cursor-pointer ${
@@ -784,6 +850,22 @@ export const TreatmentManagement: React.FC = () => {
             {countByStatus(TreatmentJobStatus.DISERAHKAN)}
           </span>
         </div>
+
+        <div
+          onClick={() => setStatusFilter(TreatmentJobStatus.PERLU_REVISI)}
+          className={`p-4 rounded-xl border transition-all cursor-pointer ${
+            statusFilter === TreatmentJobStatus.PERLU_REVISI
+              ? "bg-rose-600 text-white border-rose-600 shadow-md"
+              : "bg-white text-slate-800 border-slate-100 hover:border-slate-300"
+          }`}
+        >
+          <span className="text-[10px] font-semibold uppercase tracking-wider block text-rose-600">
+            Perlu Revisi
+          </span>
+          <span className="text-2xl font-black mt-1 block text-rose-700">
+            {countByStatus(TreatmentJobStatus.PERLU_REVISI)}
+          </span>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -813,6 +895,7 @@ export const TreatmentManagement: React.FC = () => {
             <option value={TreatmentJobStatus.DALAM_PROSES}>DALAM PROSES</option>
             <option value={TreatmentJobStatus.SELESAI}>SELESAI</option>
             <option value={TreatmentJobStatus.DISERAHKAN}>DISERAHKAN</option>
+            <option value={TreatmentJobStatus.PERLU_REVISI}>PERLU REVISI</option>
           </select>
         </div>
       </div>
@@ -858,6 +941,11 @@ export const TreatmentManagement: React.FC = () => {
                       {tr.notes && (
                         <div className="text-[11px] text-teal-700 bg-teal-50 px-2 py-0.5 rounded mt-1 inline-block">
                           Note: {tr.notes}
+                        </div>
+                      )}
+                      {tr.status === TreatmentJobStatus.PERLU_REVISI && tr.returnReason && (
+                        <div className="text-[11px] text-rose-700 bg-rose-50 px-2 py-0.5 rounded mt-1 inline-block">
+                          Koreksi kasir: {tr.returnReason}
                         </div>
                       )}
                     </td>
@@ -931,6 +1019,15 @@ export const TreatmentManagement: React.FC = () => {
                           <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-lg">
                             Final
                           </span>
+                        )}
+                        {canReviseTreatment(tr) && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTreatment(tr)}
+                            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-medium rounded-lg text-[11px] transition-colors"
+                          >
+                            Perbaiki Catatan
+                          </button>
                         )}
 
                         <button
@@ -1187,6 +1284,14 @@ export const TreatmentManagement: React.FC = () => {
                   </div>
                 </div>
 
+                {currentUser?.role === UserRole.DOCTOR_ASSISTANT && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-[11px] leading-relaxed text-blue-800">
+                    {selectedTreatment.externalDoctorId
+                      ? "Tindakan ini ditugaskan kepada dokter eksternal. Asisten cabang berwenang dapat menyelesaikan atau menyerahkan tindakan ini; stok resep dipotong saat berhasil diselesaikan."
+                      : "Tindakan dokter internal hanya dapat diselesaikan atau diserahkan oleh dokter penanggung jawab. Asisten tetap dapat menambahkan catatan aktivitas."}
+                  </div>
+                )}
+
                 <div className="border border-amber-100 bg-amber-50/50 p-3 rounded-xl space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] uppercase font-bold text-amber-800 tracking-wider">Durasi Pelayanan</span>
@@ -1248,10 +1353,35 @@ export const TreatmentManagement: React.FC = () => {
                   )}
                 </div>
 
-                {selectedTreatment.notes && (
+                {selectedTreatment.notes && !canReviseTreatment(selectedTreatment) && (
                   <div className="bg-teal-50 border border-teal-100 p-2.5 rounded-xl text-teal-800">
                     <div className="text-[10px] uppercase text-teal-600 font-bold">Catatan Clinical</div>
                     <div className="mt-0.5">{selectedTreatment.notes}</div>
+                  </div>
+                )}
+                {selectedTreatment.status === TreatmentJobStatus.PERLU_REVISI && selectedTreatment.returnReason && (
+                  <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-rose-800 space-y-1">
+                    <div className="text-[10px] uppercase font-bold">Alasan dikembalikan kasir</div>
+                    <div>{selectedTreatment.returnReason}</div>
+                  </div>
+                )}
+                {canReviseTreatment(selectedTreatment) && (
+                  <div className="rounded-xl border border-rose-200 bg-white p-3 space-y-2">
+                    <label htmlFor="treatment-revision-notes" className="text-[10px] uppercase text-rose-800 font-bold">
+                      Perbaiki catatan tindakan
+                    </label>
+                    <textarea
+                      id="treatment-revision-notes"
+                      value={correctedTreatmentNotes}
+                      onChange={(event) => setCorrectedTreatmentNotes(event.target.value)}
+                      rows={3}
+                      required
+                      className="w-full rounded-lg border border-slate-200 p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                      placeholder="Tulis catatan tindakan yang sudah dikoreksi"
+                    />
+                    <p className="text-[10px] text-slate-500">
+                      Setelah dikirim, tindakan kembali ke kasir tanpa mengulang pemotongan stok atau akrual kompensasi.
+                    </p>
                   </div>
                 )}
 
@@ -1282,7 +1412,7 @@ export const TreatmentManagement: React.FC = () => {
                         </div>
                         {!approvedRecipeMaterials && selectedTreatmentRecipe.requiresBraceMaterialChoice && (
                           <p className="text-[10px] leading-relaxed text-amber-800">
-                            Resep khusus cabang belum disetujui. Tetapkan dan setujui formula di menu Resep Bahan Tindakan sebelum menyelesaikan tindakan.
+                            Resep khusus cabang belum disetujui. Resep standar digunakan saat tindakan diselesaikan; stok dapat menjadi minus jika persediaan kurang.
                           </p>
                         )}
                         <p className="text-[10px] leading-relaxed text-emerald-800">
@@ -1379,13 +1509,22 @@ export const TreatmentManagement: React.FC = () => {
                 {canCompleteTreatment(selectedTreatment) && selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && (
                   <button
                     onClick={() => void handleCompleteTreatment(selectedTreatment)}
-                      disabled={completingTreatment
-                        || !selectedTreatmentRecipe
-                        || (selectedTreatmentRecipe.requiresBraceMaterialChoice && !approvedRecipeMaterials)}
+                      disabled={completingTreatment}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     {completingTreatment ? "Menyelesaikan..." : "Selesaikan & Kurangi Stok"}
+                  </button>
+                )}
+                {canReviseTreatment(selectedTreatment) && (
+                  <button
+                    type="button"
+                    onClick={() => void handleResubmitTreatment(selectedTreatment)}
+                    disabled={submittingRevision || !correctedTreatmentNotes.trim()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {submittingRevision ? "Mengirim..." : "Simpan & Serahkan ke Kasir"}
                   </button>
                 )}
               </div>

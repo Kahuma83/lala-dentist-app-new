@@ -214,6 +214,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "PENGATURAN SISTEM",
       items: [
+        { name: "Penomoran RM Cabang", path: "/super-admin/configuration?tab=rm", icon: Settings },
         { name: "Identitas Dokumen", path: "/super-admin/configuration?tab=branding", icon: FileText }
       ]
     },
@@ -285,7 +286,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "PENGATURAN CABANG",
       items: [
-        { name: "Profil Cabang", path: "/branch-admin/configuration?tab=branches", icon: Building2 }
+        { name: "Profil Cabang", path: "/branch-admin/configuration?tab=branches", icon: Building2 },
+        { name: "Penomoran RM", path: "/branch-admin/configuration?tab=rm", icon: Settings }
       ]
     },
     {

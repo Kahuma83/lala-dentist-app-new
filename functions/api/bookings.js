@@ -174,6 +174,31 @@ export const onRequestPost = async ({ request, env }) => {
       return jsonResponse({ message: "Dokter tidak ditemukan atau sedang tidak aktif." }, 400);
     }
 
+    if (payload.referring_staff_id) {
+      if (isPatient) {
+        return jsonResponse({ message: "Pasien tidak dapat menetapkan staf referral pada booking." }, 403);
+      }
+      const referringStaffRows = await requestSupabase({
+        url: supabaseUrl,
+        apiKey: serviceKey,
+        path: `/rest/v1/staff?${toQueryString({
+          select: "id,branch_id,position,employment_status,active",
+          id: `eq.${payload.referring_staff_id}`,
+          limit: "1"
+        })}`
+      });
+      const referringStaff = Array.isArray(referringStaffRows) ? referringStaffRows[0] : null;
+      if (
+        !referringStaff ||
+        referringStaff.branch_id !== payload.branch_id ||
+        !["BRANCH_ADMIN", "ASSISTANT"].includes(referringStaff.position) ||
+        referringStaff.employment_status !== "ACTIVE" ||
+        referringStaff.active !== true
+      ) {
+        return jsonResponse({ message: "Staf referral harus admin atau asisten aktif pada cabang booking." }, 400);
+      }
+    }
+
     if (isPatient) {
       if (canonicalBookingDateTime.getTime() <= Date.now()) {
         return jsonResponse({ message: "Pilih tanggal dan waktu booking yang masih akan datang." }, 400);
