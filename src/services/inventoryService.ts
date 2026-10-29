@@ -62,6 +62,7 @@ export interface InventoryTreatmentStockShortage {
   requested: number;
   deducted: number;
   shortage: number;
+  stockDeficit?: number;
 }
 
 const mockStorageKey = "lala-dentist-inventory-v1";
@@ -378,22 +379,24 @@ export async function recordTreatmentInventoryUsage(input: {
         .reduce((total, movement) => total + movement.quantity, 0) : 0;
       const remaining = Math.max(material.quantity - previouslyUsed, 0);
       const available = item?.currentStock || 0;
-      const quantity = Math.min(remaining, available);
+      const quantity = item ? remaining : 0;
       return {
         item,
         itemCode: item?.itemCode || material.itemCode.trim().toUpperCase(),
         quantity,
-        shortage: Math.max(remaining - quantity, 0),
+        shortage: item ? 0 : remaining,
+        stockDeficit: item ? Math.max(quantity - available, 0) : 0,
         requested: remaining
       };
     });
     const shortages = deductions
-      .filter(({ shortage }) => shortage > 0)
-      .map(({ itemCode, requested, quantity, shortage }) => ({
+      .filter(({ shortage, stockDeficit }) => shortage > 0 || stockDeficit > 0)
+      .map(({ itemCode, requested, quantity, shortage, stockDeficit }) => ({
         itemCode,
         requested,
         deducted: quantity,
-        shortage
+        shortage,
+        stockDeficit
       }));
 
     const createdAt = new Date().toISOString();
@@ -456,7 +459,8 @@ export async function recordTreatmentInventoryUsage(input: {
     itemCode: String(shortage.itemCode),
     requested: Number(shortage.requested),
     deducted: Number(shortage.deducted),
-    shortage: Number(shortage.shortage)
+  shortage: Number(shortage.shortage),
+  ...(shortage.stockDeficit == null ? {} : { stockDeficit: Number(shortage.stockDeficit) })
   })) : [];
   return { alreadyRecorded: data.alreadyRecorded, shortages };
 }

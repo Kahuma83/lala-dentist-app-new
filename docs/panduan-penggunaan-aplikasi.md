@@ -352,8 +352,8 @@ OB menggunakan Portal Pegawai untuk kebutuhan pribadi dan kehadiran saja. OB tid
 - Satu Dokter menangani satu kunjungan aktif pada satu waktu. Pasien berikutnya mungkin perlu menunggu sampai kunjungan sebelumnya selesai.
 - Jangan melakukan check-in ulang jika pasien sudah memiliki kunjungan atau antrean aktif.
 - Dokter menyelesaikan tindakan dan menyerahkan tagihan. Admin Cabang menangani invoice dan pembayaran.
-- Pemakaian bahan resep dicatat saat tindakan diselesaikan. Jika stok tidak cukup, sistem mencatat kekurangan yang belum terpenuhi.
-- Stok masuk berikutnya dipakai untuk menutup kekurangan tertunda barang dan cabang yang sama, dari catatan yang paling lama. Sisa stok setelahnya tetap tersedia.
+- Pemakaian bahan resep tetap dicatat saat Dokter menyelesaikan tindakan meskipun stok kurang; saldo barang dapat menjadi minus. Pengeluaran manual dari menu stok tetap tidak dapat membuat stok minus.
+- Stok masuk berikutnya menaikkan saldo minus secara alami. Kekurangan untuk kode barang yang belum terdaftar direkonsiliasi setelah barang tersedia, dari catatan tertua untuk cabang yang sama.
 - Pembelian barang tetap harus dicatat sebagai pengeluaran berdasarkan bukti pembelian; penerimaan stok tidak mencatat biaya pembelian secara otomatis.
 - Jangan mencatat ulang pemakaian tindakan yang sama melalui menu stok jika pemakaian tersebut sudah dicatat dari Treatment.
 

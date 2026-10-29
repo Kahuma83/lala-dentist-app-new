@@ -150,7 +150,7 @@ describe("Inventory service", () => {
     await expect(listInventoryMovements({ branchId: "branch-gebang" })).resolves.toHaveLength(6);
   });
 
-  it("deducts available stock, reports shortages, and does not deduct twice on retry", async () => {
+  it("allows treatment stock to go negative and does not deduct twice on retry", async () => {
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => localStorageData.get(key) ?? null,
       setItem: (key: string, value: string) => localStorageData.set(key, value)
@@ -181,19 +181,22 @@ describe("Inventory service", () => {
 
     await expect(recordTreatmentInventoryUsage(input)).resolves.toEqual({
       alreadyRecorded: false,
-      shortages: [{ itemCode: "BT-009", requested: 10, deducted: 5, shortage: 5 }]
+      shortages: [{ itemCode: "BT-009", requested: 10, deducted: 10, shortage: 0, stockDeficit: 5 }]
     });
     await expect(recordTreatmentInventoryUsage(input)).resolves.toEqual({
       alreadyRecorded: true,
-      shortages: [{ itemCode: "BT-009", requested: 10, deducted: 5, shortage: 5 }]
+      shortages: [{ itemCode: "BT-009", requested: 10, deducted: 10, shortage: 0, stockDeficit: 5 }]
     });
     await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
-      { id: item.id, currentStock: 0 }
+      { id: item.id, currentStock: -5 }
     ]);
-    await expect(listInventoryMovements({ itemId: item.id })).resolves.toHaveLength(2);
+    await expect(listInventoryMovements({ itemId: item.id })).resolves.toMatchObject([
+      { movementType: "OUT", quantity: 10, previousStock: 5, newStock: -5 },
+      { movementType: "IN", quantity: 5, previousStock: 0, newStock: 5 }
+    ]);
   });
 
-  it("reconciles treatment shortages automatically from later stock receipts", async () => {
+  it("uses later stock receipts to restore negative treatment stock without charging it twice", async () => {
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => localStorageData.get(key) ?? null,
       setItem: (key: string, value: string) => localStorageData.set(key, value)
@@ -224,12 +227,15 @@ describe("Inventory service", () => {
 
     await expect(recordTreatmentInventoryUsage(input)).resolves.toMatchObject({
       alreadyRecorded: false,
-      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 0, shortage: 4 }]
+      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 4, shortage: 0, stockDeficit: 4 }]
     });
     await expect(recordTreatmentInventoryUsage(laterTreatmentInput)).resolves.toMatchObject({
       alreadyRecorded: false,
-      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 0, shortage: 3 }]
+      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 3, shortage: 0, stockDeficit: 7 }]
     });
+    await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
+      { id: item.id, currentStock: -7 }
+    ]);
 
     await recordInventoryMovement({
       itemId: item.id,
@@ -240,10 +246,10 @@ describe("Inventory service", () => {
     });
     await expect(recordTreatmentInventoryUsage(input)).resolves.toMatchObject({
       alreadyRecorded: true,
-      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 2, shortage: 2 }]
+      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 4, shortage: 0, stockDeficit: 4 }]
     });
     await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
-      { id: item.id, currentStock: 0 }
+      { id: item.id, currentStock: -5 }
     ]);
 
     await recordInventoryMovement({
@@ -255,11 +261,11 @@ describe("Inventory service", () => {
     });
     await expect(recordTreatmentInventoryUsage(input)).resolves.toMatchObject({
       alreadyRecorded: true,
-      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 4, shortage: 0 }]
+      shortages: [{ itemCode: "BT-010", requested: 4, deducted: 4, shortage: 0, stockDeficit: 4 }]
     });
     await expect(recordTreatmentInventoryUsage(laterTreatmentInput)).resolves.toMatchObject({
       alreadyRecorded: true,
-      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 1, shortage: 2 }]
+      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 3, shortage: 0, stockDeficit: 7 }]
     });
     await recordInventoryMovement({
       itemId: item.id,
@@ -270,43 +276,35 @@ describe("Inventory service", () => {
     });
     await expect(recordTreatmentInventoryUsage(laterTreatmentInput)).resolves.toMatchObject({
       alreadyRecorded: true,
-      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 3, shortage: 0 }]
+      shortages: [{ itemCode: "BT-010", requested: 3, deducted: 3, shortage: 0, stockDeficit: 7 }]
     });
     await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
       { id: item.id, currentStock: 1 }
     ]);
     await expect(listInventoryMovements({ itemId: item.id })).resolves.toMatchObject([
+      { movementType: "IN", quantity: 3, previousStock: -2, newStock: 1, reference: "PO-004" },
+      { movementType: "IN", quantity: 3, previousStock: -5, newStock: -2, reference: "PO-003" },
+      { movementType: "IN", quantity: 2, previousStock: -7, newStock: -5, reference: "PO-002" },
       {
         movementType: "OUT",
-        quantity: 2,
+        quantity: 3,
+        previousStock: -4,
+        newStock: -7,
         patientVisitId: "visit-later-shortage",
         treatmentJobId: "treatment-later-shortage"
       },
-      { movementType: "IN", quantity: 3, reference: "PO-004" },
       {
         movementType: "OUT",
-        quantity: 2,
+        quantity: 4,
+        previousStock: 0,
+        newStock: -4,
         patientVisitId: "visit-pending-shortage",
         treatmentJobId: "treatment-pending-shortage"
-      },
-      {
-        movementType: "OUT",
-        quantity: 1,
-        patientVisitId: "visit-later-shortage",
-        treatmentJobId: "treatment-later-shortage"
-      },
-      { movementType: "IN", quantity: 3, reference: "PO-003" },
-      {
-        movementType: "OUT",
-        quantity: 2,
-        patientVisitId: "visit-pending-shortage",
-        treatmentJobId: "treatment-pending-shortage"
-      },
-      { movementType: "IN", quantity: 2, reference: "PO-002" }
+      }
     ]);
   });
 
-  it("does not reconcile shortages across branches with matching item codes", async () => {
+  it("keeps treatment stock deficits isolated by branch", async () => {
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => localStorageData.get(key) ?? null,
       setItem: (key: string, value: string) => localStorageData.set(key, value)
@@ -350,7 +348,7 @@ describe("Inventory service", () => {
       userName: "Dokter"
     })).resolves.toMatchObject({
       alreadyRecorded: true,
-      shortages: [{ shortage: 0 }]
+      shortages: [{ shortage: 0, stockDeficit: 2 }]
     });
     await expect(recordTreatmentInventoryUsage({
       treatmentJobId: "treatment-branch-sambiroto",
@@ -361,14 +359,64 @@ describe("Inventory service", () => {
       userName: "Dokter"
     })).resolves.toMatchObject({
       alreadyRecorded: true,
-      shortages: [{ shortage: 2 }]
+      shortages: [{ shortage: 0, stockDeficit: 2 }]
     });
     await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
       { currentStock: 0 }
     ]);
     await expect(listInventoryItems("branch-sambiroto")).resolves.toMatchObject([
-      { currentStock: 0 }
+      { currentStock: -2 }
     ]);
+  });
+
+  it("keeps an unregistered recipe item as a pending shortage", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => localStorageData.get(key) ?? null,
+      setItem: (key: string, value: string) => localStorageData.set(key, value)
+    });
+
+    await expect(recordTreatmentInventoryUsage({
+      treatmentJobId: "treatment-unregistered-item",
+      patientVisitId: "visit-unregistered-item",
+      branchId: "branch-gebang",
+      serviceName: "Tindakan",
+      materials: [{ itemCode: "BT-012", quantity: 3 }],
+      userName: "Dokter"
+    })).resolves.toMatchObject({
+      alreadyRecorded: false,
+      shortages: [{ itemCode: "BT-012", requested: 3, deducted: 0, shortage: 3 }]
+    });
+
+    const item = await saveInventoryItem({
+      branchId: "branch-gebang",
+      itemCode: "BT-012",
+      name: "Bahan tindakan terdaftar belakangan",
+      category: "BAHAN_TINDAKAN",
+      unit: "ml",
+      minimumStock: 0,
+      storageLocation: ""
+    }, "Admin");
+    await recordInventoryMovement({
+      itemId: item.id,
+      movementType: "IN",
+      quantity: 2,
+      userName: "Admin"
+    });
+
+    await expect(listInventoryItems("branch-gebang")).resolves.toMatchObject([
+      { id: item.id, currentStock: 0 }
+    ]);
+    await expect(recordTreatmentInventoryUsage({
+      treatmentJobId: "treatment-unregistered-item",
+      patientVisitId: "visit-unregistered-item",
+      branchId: "branch-gebang",
+      serviceName: "Tindakan",
+      materials: [{ itemCode: "BT-012", quantity: 3 }],
+      userName: "Dokter"
+    })).resolves.toMatchObject({
+      alreadyRecorded: true,
+      shortages: [{ itemCode: "BT-012", deducted: 2, shortage: 1 }]
+    });
   });
 
   it("provides standard recipes for each treatment, with one selected brace material", () => {
@@ -491,5 +539,13 @@ describe("Inventory service", () => {
     expect(shortageReconciliationMigration).toMatch(/ORDER BY consumption\.created_at, consumption\.treatment_job_id/i);
     expect(shortageReconciliationMigration).toMatch(/Rekonsiliasi kekurangan resep tindakan/i);
     expect(shortageReconciliationMigration).toMatch(/shortage_details = v_updated_shortages/i);
+    const negativeStockMigration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270110000000_allow_negative_treatment_stock.sql"),
+      "utf8"
+    );
+    expect(negativeStockMigration).toMatch(/DROP CONSTRAINT IF EXISTS inventory_items_current_stock_check/i);
+    expect(negativeStockMigration).toMatch(/'stockDeficit', v_stock_deficit/i);
+    expect(negativeStockMigration).toMatch(/v_to_deduct := v_remaining/i);
+    expect(negativeStockMigration).toMatch(/shortage_details = v_updated_shortages/i);
   });
 });

@@ -305,6 +305,7 @@ export const TreatmentManagement: React.FC = () => {
     let treatmentCompleted = false;
     let inventoryRecorded = false;
     let stockShortages: InventoryTreatmentStockShortage[] = [];
+    const inventoryWarnings: string[] = [];
     let accrualCount = 0;
     let accrualError: string | null = null;
     try {
@@ -312,12 +313,17 @@ export const TreatmentManagement: React.FC = () => {
         || treatment.serviceNameSnapshot;
       const recipe = getInventoryTreatmentRecipe(serviceCode);
       if (!recipe) {
-        throw new Error(`Resep stok untuk layanan "${treatment.serviceNameSnapshot}" belum tersedia. Tindakan tidak dapat diselesaikan otomatis.`);
-      }
-      if (recipe.lines.length > 0) {
-        const approvedMaterials = await getApprovedInventoryTreatmentRecipe(treatment.branchId, serviceCode || "");
+        inventoryWarnings.push(`Resep stok untuk layanan "${treatment.serviceNameSnapshot}" belum tersedia; tindakan tetap diselesaikan tanpa pencatatan stok otomatis.`);
+      } else if (recipe.lines.length > 0) {
+        let approvedMaterials: InventoryRecipeLine[] | null = null;
+        try {
+          approvedMaterials = await getApprovedInventoryTreatmentRecipe(treatment.branchId, serviceCode || "");
+        } catch (recipeError: unknown) {
+          const message = recipeError instanceof Error ? recipeError.message : String(recipeError);
+          inventoryWarnings.push(`Resep khusus cabang gagal dimuat; resep standar digunakan. ${message}`);
+        }
         if (!approvedMaterials && recipe.requiresBraceMaterialChoice) {
-          throw new Error("Resep khusus cabang untuk tindakan ini belum disetujui. Dokter perlu menetapkan dan menyetujui formula di menu Resep Bahan Tindakan sebelum menyelesaikan tindakan.");
+          inventoryWarnings.push("Resep khusus cabang belum disetujui; resep standar digunakan untuk tindakan ini.");
         }
         const materials = [...(approvedMaterials || recipe.lines)];
         const result = await recordTreatmentInventoryUsage({
@@ -330,8 +336,22 @@ export const TreatmentManagement: React.FC = () => {
         });
         inventoryRecorded = true;
         stockShortages = result.shortages;
-        setInventoryItems(await listInventoryItems(treatment.branchId));
+        try {
+          setInventoryItems(await listInventoryItems(treatment.branchId));
+        } catch (inventoryRefreshError: unknown) {
+          const message = inventoryRefreshError instanceof Error ? inventoryRefreshError.message : String(inventoryRefreshError);
+          inventoryWarnings.push(`Pemakaian tercatat, tetapi stok terbaru gagal dimuat: ${message}`);
+        }
       }
+    } catch (inventoryError: unknown) {
+      const message = inventoryError instanceof Error ? inventoryError.message : String(inventoryError);
+      inventoryWarnings.push(`Pemakaian bahan otomatis gagal dicatat; tindakan tetap diselesaikan dan stok perlu diperiksa: ${message}`);
+    }
+
+    const inventoryWarning = inventoryWarnings.length
+      ? ` Peringatan stok: ${inventoryWarnings.join(" ")}`
+      : "";
+    try {
       const completedTreatment = await treatmentRepo.completeTreatmentJob(
         treatment.id,
         currentUser?.role,
@@ -380,13 +400,16 @@ export const TreatmentManagement: React.FC = () => {
       }
       const shortageWarning = stockShortages.length
         ? ` Peringatan: stok resep kurang — ${stockShortages.map((shortage) =>
-          `${shortage.itemCode} kurang ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.shortage)} ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
-        ).join(", ")}. Stok yang tersedia sudah dipotong.`
+          `${shortage.itemCode} ${shortage.stockDeficit
+            ? `minus ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.stockDeficit)}`
+            : `belum terdaftar, kurang ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.shortage)}`}` +
+          ` ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
+        ).join(", ")}.`
         : "";
       setSuccessMsg(
         unfinishedTreatments.length === 0
-          ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.${shortageWarning}`
-          : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.${shortageWarning}`
+          ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.${shortageWarning}${inventoryWarning}`
+          : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.${shortageWarning}${inventoryWarning}`
       );
       await loadData();
       if (accrualError) {
@@ -395,14 +418,17 @@ export const TreatmentManagement: React.FC = () => {
     } catch (err: any) {
       const shortageWarning = stockShortages.length
         ? ` Stok resep kurang: ${stockShortages.map((shortage) =>
-          `${shortage.itemCode} kurang ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.shortage)} ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
-        ).join(", ")}. Stok yang tersedia sudah dipotong.`
+          `${shortage.itemCode} ${shortage.stockDeficit
+            ? `minus ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.stockDeficit)}`
+            : `belum terdaftar, kurang ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(shortage.shortage)}`}` +
+          ` ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
+        ).join(", ")}.`
         : "";
       setError(treatmentCompleted
-        ? `Treatment sudah tersimpan selesai, tetapi antrean belum berhasil ditutup: ${err.message || "kesalahan tidak diketahui"}.${shortageWarning} Silakan muat ulang dan periksa status kunjungan.`
+        ? `Treatment sudah tersimpan selesai, tetapi antrean belum berhasil ditutup: ${err.message || "kesalahan tidak diketahui"}.${shortageWarning}${inventoryWarning} Silakan muat ulang dan periksa status kunjungan.`
         : inventoryRecorded
-          ? `Stok bahan sudah dicatat, tetapi tindakan belum berhasil diselesaikan: ${err.message || "kesalahan tidak diketahui"}.${shortageWarning} Coba Selesaikan kembali; stok tidak akan dipotong ulang.`
-          : err.message || "Gagal menyelesaikan tindakan medis");
+          ? `Stok bahan sudah dicatat, tetapi tindakan belum berhasil diselesaikan: ${err.message || "kesalahan tidak diketahui"}.${shortageWarning}${inventoryWarning} Coba Selesaikan kembali; stok tidak akan dipotong ulang.`
+          : `${err.message || "Gagal menyelesaikan tindakan medis"}${shortageWarning}${inventoryWarning}`);
     } finally {
       setCompletingTreatment(false);
     }
@@ -1386,7 +1412,7 @@ export const TreatmentManagement: React.FC = () => {
                         </div>
                         {!approvedRecipeMaterials && selectedTreatmentRecipe.requiresBraceMaterialChoice && (
                           <p className="text-[10px] leading-relaxed text-amber-800">
-                            Resep khusus cabang belum disetujui. Tetapkan dan setujui formula di menu Resep Bahan Tindakan sebelum menyelesaikan tindakan.
+                            Resep khusus cabang belum disetujui. Resep standar digunakan saat tindakan diselesaikan; stok dapat menjadi minus jika persediaan kurang.
                           </p>
                         )}
                         <p className="text-[10px] leading-relaxed text-emerald-800">
@@ -1483,9 +1509,7 @@ export const TreatmentManagement: React.FC = () => {
                 {canCompleteTreatment(selectedTreatment) && selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && (
                   <button
                     onClick={() => void handleCompleteTreatment(selectedTreatment)}
-                      disabled={completingTreatment
-                        || !selectedTreatmentRecipe
-                        || (selectedTreatmentRecipe.requiresBraceMaterialChoice && !approvedRecipeMaterials)}
+                      disabled={completingTreatment}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
