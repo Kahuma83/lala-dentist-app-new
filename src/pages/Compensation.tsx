@@ -1019,9 +1019,8 @@ export const Compensation: React.FC = () => {
                 </label>
                 <select
                   value={formBranchId}
-                  onChange={(e) => setFormBranchId(e.target.value)}
                   required
-                  disabled={currentUser?.role === UserRole.BRANCH_ADMIN}
+                  disabled
                   className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:text-slate-500"
                 >
                   {branches
@@ -1031,7 +1030,7 @@ export const Compensation: React.FC = () => {
                     ))}
                 </select>
                 <span className="text-[10px] text-slate-400 mt-1 block">
-                  Aturan payroll dan pajak diterapkan untuk dokter pada cabang yang dipilih.
+                  Cabang mengikuti kartu cabang yang dipilih di halaman ini. Untuk membuat aturan di cabang lain, tutup formulir lalu pilih cabang tersebut.
                 </span>
               </div>
 
@@ -1095,6 +1094,7 @@ export const Compensation: React.FC = () => {
                   type="number"
                   min={formType === "TAX_PERCENTAGE" ? "0" : "1"}
                   max={formType === "PERCENTAGE" || formType === "TAX_PERCENTAGE" ? 100 : undefined}
+                  step={formType === "PERCENTAGE" || formType === "TAX_PERCENTAGE" ? "0.1" : "1"}
                   value={formValue}
                   onChange={(e) => setFormValue(parseFloat(e.target.value) || 0)}
                   required
