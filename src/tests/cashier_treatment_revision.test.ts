@@ -91,6 +91,8 @@ describe("Cashier treatment revision workflow", () => {
       treatmentRepo.resubmitTreatmentToCashier(
         "treatment-job-3",
         "Catatan diperbaiki",
+        "service-scaling",
+        175000,
         UserRole.DOCTOR,
         "branch-gebang",
         "doctor-lain"
@@ -100,6 +102,8 @@ describe("Cashier treatment revision workflow", () => {
     const resubmitted = await treatmentRepo.resubmitTreatmentToCashier(
       "treatment-job-3",
       "Catatan tindakan telah diperbaiki",
+      "service-scaling",
+      175000,
       UserRole.DOCTOR,
       "branch-gebang",
       "doc-syafira",
@@ -108,6 +112,9 @@ describe("Cashier treatment revision workflow", () => {
 
     expect(resubmitted.status).toBe(TreatmentJobStatus.DISERAHKAN);
     expect(resubmitted.notes).toBe("Catatan tindakan telah diperbaiki");
+    expect(resubmitted.serviceId).toBe("service-scaling");
+    expect(resubmitted.serviceNameSnapshot).toBe("Scaling");
+    expect(resubmitted.priceSnapshot).toBe(175000);
     expect(resubmitted.completedAt).toBe(completedAt);
     const activities = await activityRepo.listActivitiesByTreatment(resubmitted.id);
     expect(activities.at(-1)?.activityType).toBe(TreatmentActivityType.REVISION_RESUBMITTED);

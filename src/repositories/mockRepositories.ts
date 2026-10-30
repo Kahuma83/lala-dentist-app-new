@@ -3760,6 +3760,8 @@ export class MockTreatmentRepository implements TreatmentRepository {
   async resubmitTreatmentToCashier(
     id: string,
     correctedNotes: string,
+    serviceId: string,
+    priceSnapshot: number,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null,
@@ -3777,12 +3779,20 @@ export class MockTreatmentRepository implements TreatmentRepository {
     }
     const normalizedNotes = correctedNotes.trim();
     if (!normalizedNotes) throw new Error("Catatan tindakan yang sudah dikoreksi wajib diisi.");
+    if (!Number.isSafeInteger(priceSnapshot) || priceSnapshot < 0) {
+      throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
+    }
     if (job.status !== TreatmentJobStatus.PERLU_REVISI) {
       throw new Error("Tindakan tidak sedang menunggu revisi dokter.");
     }
+    const service = db.services.find((item) => item.id === serviceId && item.isActive);
+    if (!service) throw new Error("Jenis tindakan aktif tidak ditemukan.");
 
     const now = AppClock.nowISO();
     job.notes = normalizedNotes;
+    job.serviceId = service.id;
+    job.serviceNameSnapshot = service.name;
+    job.priceSnapshot = priceSnapshot;
     job.status = TreatmentJobStatus.DISERAHKAN;
     job.handedOverAt = now;
     job.updatedAt = now;

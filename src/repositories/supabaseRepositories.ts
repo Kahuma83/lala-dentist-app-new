@@ -4177,13 +4177,24 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     return this.mapTreatmentFromDb(row);
   }
 
-  async resubmitTreatmentToCashier(id: string, correctedNotes: string): Promise<TreatmentJob> {
+  async resubmitTreatmentToCashier(
+    id: string,
+    correctedNotes: string,
+    serviceId: string,
+    priceSnapshot: number
+  ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
     const normalizedNotes = correctedNotes.trim();
     if (!normalizedNotes) throw new Error("Catatan tindakan yang sudah dikoreksi wajib diisi.");
+    if (!serviceId) throw new Error("Jenis tindakan hasil koreksi wajib dipilih.");
+    if (!Number.isSafeInteger(priceSnapshot) || priceSnapshot < 0) {
+      throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
+    }
     const { data, error } = await supabase.rpc("resubmit_treatment_to_cashier_secure", {
       p_treatment_id: id,
-      p_corrected_notes: normalizedNotes
+      p_corrected_notes: normalizedNotes,
+      p_service_id: serviceId,
+      p_price_snapshot: priceSnapshot
     });
     if (error) throw new Error(`Gagal menyerahkan ulang tindakan ke kasir: ${error.message}`);
     const row = Array.isArray(data) ? data[0] : data;

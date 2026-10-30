@@ -669,6 +669,8 @@ export interface TreatmentRepository {
   resubmitTreatmentToCashier(
     id: string,
     correctedNotes: string,
+    serviceId: string,
+    priceSnapshot: number,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null,
