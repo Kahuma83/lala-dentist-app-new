@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isFullAppDemoPath } from "../utils/localPatientDemo";
+import {
+  isFullAppDemoEnabledForEnvironment,
+  isFullAppDemoPath
+} from "../utils/localPatientDemo";
 
 describe("Full app demo routing", () => {
   it("recognizes the demo entry and nested app routes", () => {
@@ -12,5 +15,11 @@ describe("Full app demo routing", () => {
     expect(isFullAppDemoPath("/doctor/queue")).toBe(false);
     expect(isFullAppDemoPath("/demo-treatment")).toBe(false);
     expect(isFullAppDemoPath("/demography")).toBe(false);
+  });
+
+  it("only enables full demo routes in development builds", () => {
+    expect(isFullAppDemoEnabledForEnvironment(true, "/demo/doctor/queue")).toBe(true);
+    expect(isFullAppDemoEnabledForEnvironment(false, "/demo/doctor/queue")).toBe(false);
+    expect(isFullAppDemoEnabledForEnvironment(false, "/")).toBe(false);
   });
 });

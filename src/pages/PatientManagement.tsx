@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
 import {
@@ -19,7 +19,8 @@ import {
   PatientMedicalProfile,
   ClinicalVitalSigns,
   ClinicalConsentDocument,
-  ClinicalConsentScope
+  ClinicalConsentScope,
+  ClinicalVisitDocument
 } from "../types/domain";
 import {
   Search,
@@ -36,6 +37,7 @@ import {
   Eye,
   Edit2,
   Lock,
+  ArrowLeft,
   ArrowRight,
   Filter,
   RefreshCw,
@@ -61,6 +63,10 @@ import { LegacyPatientHistoryImportModal } from "../components/LegacyPatientHist
 import { Odontogram } from "../components/Odontogram";
 import { ClinicDentalAssessmentFields } from "../components/ClinicDentalAssessmentFields";
 import { ClinicMedicalRecordPrintDocument } from "../components/ClinicMedicalRecordPrintDocument";
+import {
+  ClinicalDocumentType,
+  DoctorClinicalDocument
+} from "../components/documents/DoctorClinicalDocument";
 import { ImportPatientExecutionResult } from "../utils/excelPatientUtils";
 import { useRouter } from "../components/Router";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
@@ -93,9 +99,17 @@ export const PatientManagement: React.FC = () => {
     treatmentJobs,
     staff,
     services,
+    branding,
     refreshData
   } = useApp();
   const { path, navigate } = useRouter();
+  const directMedicalRecordParams = new URLSearchParams(window.location.search);
+  const directMedicalRecordVisitId = path === "/doctor/patients"
+    ? directMedicalRecordParams.get("visitId")
+    : null;
+  const isDirectMedicalRecordPage = Boolean(directMedicalRecordVisitId);
+  const directVisitRequestRef = useRef<string | null>(null);
+  const [directMedicalRecordError, setDirectMedicalRecordError] = useState<string | null>(null);
   const canReadMedicalRecords =
     currentUser?.role === UserRole.DOCTOR || currentUser?.role === UserRole.SUPER_ADMIN;
   const canViewPatientPhone = isPatientPhoneVisible(currentUser?.role);
@@ -206,6 +220,8 @@ export const PatientManagement: React.FC = () => {
   const [existingMR, setExistingMR] = useState<MedicalRecord | null>(null);
   const [visitTreatments, setVisitTreatments] = useState<TreatmentJob[]>([]);
   const [consentDocuments, setConsentDocuments] = useState<ClinicalConsentDocument[]>([]);
+  const [clinicalVisitDocuments, setClinicalVisitDocuments] = useState<ClinicalVisitDocument[]>([]);
+  const [clinicalDocumentToOpen, setClinicalDocumentToOpen] = useState<ClinicalVisitDocument | null>(null);
   const [uploadingConsentKey, setUploadingConsentKey] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
   const [medicalProfile, setMedicalProfile] = useState<PatientMedicalProfile>({
@@ -776,11 +792,13 @@ export const PatientManagement: React.FC = () => {
   };
 
   // Open Medical Record Modal for Visit
-  const handleOpenMedicalRecord = async (v: PatientVisit) => {
-    if (!selectedPatient) {
+  const handleOpenMedicalRecord = async (v: PatientVisit, patientOverride?: PatientProfile) => {
+    const patient = patientOverride || selectedPatient;
+    if (!patient) {
       setMrError("Pilih pasien terlebih dahulu sebelum membuka rekam medis.");
       return;
     }
+    setSelectedPatient(patient);
     setSelectedVisitForMR(v);
     setMrModalOpen(true);
     setLoadingMR(true);
@@ -789,6 +807,7 @@ export const PatientManagement: React.FC = () => {
     setMedicalProfileSaved(false);
     setConsentDocuments([]);
     setConsentError(null);
+    setClinicalVisitDocuments([]);
 
     try {
       // 1. Fetch existing Medical Record
@@ -800,12 +819,12 @@ export const PatientManagement: React.FC = () => {
       setExistingMR(mr);
 
       const profile = await repos.medicalRecord.getPatientMedicalProfile(
-        selectedPatient.id,
+        patient.id,
         currentUser?.role,
         currentUser?.assignedBranchId
       );
       setMedicalProfile({
-        patientId: selectedPatient.id,
+        patientId: patient.id,
         branchId: profile?.branchId || v.branchId,
         bloodType: profile?.bloodType || "",
         allergies: profile?.allergies || "",
@@ -815,7 +834,7 @@ export const PatientManagement: React.FC = () => {
         systemicDiseases: profile?.systemicDiseases || "",
         routineMedications: profile?.routineMedications || "",
         medicalWarnings: profile?.medicalWarnings || "",
-        medicalHistoryNotes: profile?.medicalHistoryNotes || selectedPatient.medicalHistoryNotes || ""
+        medicalHistoryNotes: profile?.medicalHistoryNotes || patient.medicalHistoryNotes || ""
       });
 
       if (mr) {
@@ -851,7 +870,7 @@ export const PatientManagement: React.FC = () => {
       }
 
       // 2. Fetch treatments for this visit
-      const [tList, documentList] = await Promise.all([
+      const [tList, documentList, clinicalDocumentList] = await Promise.all([
         repos.treatment.listTreatmentsByVisit(
           v.id,
           currentUser?.role,
@@ -861,15 +880,60 @@ export const PatientManagement: React.FC = () => {
           v.id,
           currentUser?.role,
           currentUser?.assignedBranchId
+        ),
+        repos.medicalRecord.getClinicalVisitDocuments(
+          v.id,
+          currentUser?.role,
+          currentUser?.assignedBranchId
         )
       ]);
       setVisitTreatments(tList);
       setConsentDocuments(documentList);
+      setClinicalVisitDocuments(clinicalDocumentList);
     } catch (err: any) {
       setMrError(err.message || "Gagal memuat rekam medis.");
     } finally {
       setLoadingMR(false);
     }
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const visitId = directMedicalRecordVisitId;
+    const patientId = params.get("patientId");
+    if (!visitId || !patientId || directVisitRequestRef.current === visitId) return;
+
+    const patient = patients.find((candidate) => candidate.id === patientId);
+    if (!patient) return;
+    directVisitRequestRef.current = visitId;
+    setSelectedPatient(patient);
+    setDirectMedicalRecordError(null);
+
+    const visitFromContext = visits.find((candidate) => candidate.id === visitId);
+    const visitRequest = visitFromContext
+      ? Promise.resolve(visitFromContext)
+      : repos.visit.getVisitById(visitId);
+    void visitRequest
+      .then(async (visit) => {
+        if (!visit || visit.patientId !== patient.id) {
+          throw new Error("Kunjungan tidak ditemukan atau tidak sesuai dengan pasien yang dipilih.");
+        }
+        await handleOpenMedicalRecord(visit, patient);
+      })
+      .catch((error: unknown) => {
+        setDirectMedicalRecordError(
+          error instanceof Error ? error.message : "Gagal membuka rekam medis kunjungan."
+        );
+      });
+  }, [directMedicalRecordVisitId, patients, repos.visit, visits]);
+
+  const closeMedicalRecord = () => {
+    if (isDirectMedicalRecordPage) {
+      const returnTo = directMedicalRecordParams.get("returnTo");
+      navigate(returnTo === "/doctor/dashboard" ? returnTo : "/doctor/queue");
+      return;
+    }
+    setMrModalOpen(false);
   };
 
   const handleUploadConsentDocument = async (
@@ -1083,6 +1147,14 @@ export const PatientManagement: React.FC = () => {
 
   return (
     <div className="space-y-6" id="patient-management-root">
+      {directMedicalRecordError && (
+        <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          <span>{directMedicalRecordError}</span>
+          <button type="button" onClick={closeMedicalRecord} className="shrink-0 font-semibold underline">
+            Kembali ke Dashboard
+          </button>
+        </div>
+      )}
       {mrModalOpen && selectedVisitForMR && selectedPatient && canReadMedicalRecords && createPortal(
         <ClinicMedicalRecordPrintDocument
           patient={medicalRecordPrintPatient || selectedPatient}
@@ -1119,6 +1191,24 @@ export const PatientManagement: React.FC = () => {
             odontogram: mrForm.odontogram,
             clinicFormData: mrForm.clinicFormData
           }}
+        />,
+        document.body
+      )}
+      {clinicalDocumentToOpen && selectedPatient && selectedVisitForMR && createPortal(
+        <DoctorClinicalDocument
+          type={
+            clinicalDocumentToOpen.type === "PRESCRIPTION" ? "prescription" :
+              clinicalDocumentToOpen.type === "SICK_NOTE" ? "sick-note" : "referral"
+          }
+          visitId={selectedVisitForMR.id}
+          initialDocumentId={clinicalDocumentToOpen.id}
+          initialComplaint={selectedVisitForMR.complaint || ""}
+          patient={selectedPatient}
+          branch={branches.find((branch) => branch.id === selectedVisitForMR.branchId)}
+          branding={branding}
+          doctor={doctors.find((doctor) => doctor.id === clinicalDocumentToOpen.doctorId)}
+          today={getOperationalDateString(new Date().toISOString())}
+          onClose={() => setClinicalDocumentToOpen(null)}
         />,
         document.body
       )}
@@ -2319,11 +2409,28 @@ export const PatientManagement: React.FC = () => {
       {/* MODAL 4: CLINICAL MEDICAL RECORD MODAL     */}
       {/* ========================================== */}
       {mrModalOpen && selectedVisitForMR && selectedPatient && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col animate-scale-in">
+        <div className={`fixed inset-0 z-[60] flex items-center justify-center ${
+          isDirectMedicalRecordPage
+            ? "bg-slate-900/50 p-2 backdrop-blur-sm sm:p-5"
+            : "bg-slate-900/40 p-4 backdrop-blur-sm"
+        }`}>
+          <div className={`flex w-full flex-col overflow-hidden border border-[#d6b96f] bg-[#fffdf8] shadow-2xl ${
+            isDirectMedicalRecordPage
+              ? "max-h-[94vh] max-w-6xl rounded-2xl animate-scale-in"
+              : "max-h-[90vh] max-w-2xl rounded-2xl animate-scale-in"
+          }`}>
             {/* Header */}
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center justify-between border-b border-[#eadbb9] bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] p-5 text-white">
               <div>
+                {isDirectMedicalRecordPage && (
+                  <button
+                    type="button"
+                    onClick={closeMedicalRecord}
+                    className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold text-white/85 hover:text-white"
+                  >
+                    <ArrowLeft className="h-4 w-4" /> Kembali ke Dashboard Dokter
+                  </button>
+                )}
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded">
                     {selectedPatient.medicalRecordNumber || "Belum check-in"}
@@ -2339,10 +2446,10 @@ export const PatientManagement: React.FC = () => {
                     {existingMR?.status || "BARU"}
                   </span>
                 </div>
-                <h2 className="text-base font-bold text-slate-800 mt-1">
+                <h2 className="mt-1 text-base font-bold text-white">
                   Rekam Medis Digital: {selectedPatient.fullName || selectedPatient.name}
                 </h2>
-                <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+                <div className="mt-0.5 flex items-center gap-2 text-xs text-white/85">
                   <span>Visit: {formatDateTime(selectedVisitForMR.visitDateTime)}</span>
                   <span>•</span>
                   <span>{branches.find((b) => b.id === selectedVisitForMR.branchId)?.name || selectedVisitForMR.branchId}</span>
@@ -2353,17 +2460,20 @@ export const PatientManagement: React.FC = () => {
                   <button
                     type="button"
                     onClick={handlePrintMedicalRecord}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-200"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/40 bg-white/15 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-white/25"
                     title="Cetak atau simpan sebagai PDF, format formulir klinik A4"
                   >
                     <Printer className="h-4 w-4" /> Cetak / PDF
                   </button>
                 )}
                 <button
-                  onClick={() => setMrModalOpen(false)}
-                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                  onClick={closeMedicalRecord}
+                  aria-label={isDirectMedicalRecordPage ? "Kembali ke Dashboard Dokter" : "Tutup rekam medis"}
+                  className="rounded-lg p-1.5 text-white/80 transition-colors hover:bg-white/15 hover:text-white"
                 >
-                  <X className="w-5 h-5" />
+                  {isDirectMedicalRecordPage
+                    ? <ArrowLeft className="w-5 h-5" />
+                    : <X className="w-5 h-5" />}
                 </button>
               </div>
             </div>
@@ -2376,6 +2486,41 @@ export const PatientManagement: React.FC = () => {
                   <AlertTriangle className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />
                   <span>{mrError}</span>
                 </div>
+              )}
+              {canReadMedicalRecords && clinicalVisitDocuments.length > 0 && (
+                <section className="rounded-xl border border-[#eadfc7] bg-white p-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-800">Dokumen Klinis Kunjungan</h3>
+                      <p className="mt-0.5 text-[10px] text-slate-500">Resep dan surat yang pernah disimpan untuk kunjungan ini.</p>
+                    </div>
+                    <span className="rounded-full bg-[#faf6ec] px-2 py-1 text-[10px] font-bold text-[#80651f]">
+                      {clinicalVisitDocuments.length} dokumen
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {clinicalVisitDocuments.map((document) => {
+                      const documentLabel =
+                        document.type === "PRESCRIPTION" ? "Resep Obat" :
+                          document.type === "SICK_NOTE" ? "Surat Keterangan Sakit" : "Surat Rujukan";
+                      return (
+                        <div key={document.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#eee4cf] bg-[#fcfaf5] px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold text-slate-800">{documentLabel}</p>
+                            <p className="mt-0.5 text-[10px] text-slate-500">{formatDateTime(document.createdAt)}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setClinicalDocumentToOpen(document)}
+                            className="shrink-0 rounded-lg border border-[#e5d3aa] bg-white px-3 py-1.5 text-[10px] font-bold text-[#80651f] transition hover:bg-[#faf6ec]"
+                          >
+                            Lihat / Cetak
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
               )}
               <div className="rounded-lg border border-teal-100 bg-teal-50 p-3 text-[11px] leading-relaxed text-teal-900">
                 Catatan digital ini opsional untuk kunjungan ini. Jika dokter memilih pencatatan manual, tutup formulir ini; kunjungan dan treatment tetap dapat dilanjutkan.
@@ -2942,7 +3087,7 @@ export const PatientManagement: React.FC = () => {
                   <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                     <button
                       type="button"
-                      onClick={() => setMrModalOpen(false)}
+                      onClick={closeMedicalRecord}
                       className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-semibold text-xs transition-colors"
                     >
                       Tutup

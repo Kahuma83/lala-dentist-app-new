@@ -785,6 +785,20 @@ export interface ClinicalConsentDocument {
   uploadedAt: string;
 }
 
+export type ClinicalVisitDocumentType = "PRESCRIPTION" | "SICK_NOTE" | "REFERRAL";
+
+export interface ClinicalVisitDocument {
+  id: string;
+  visitId: string;
+  patientId: string;
+  branchId: string;
+  doctorId: string;
+  type: ClinicalVisitDocumentType;
+  formData: Record<string, string>;
+  createdAt: string;
+  createdBy: string;
+}
+
 export interface PatientMedicalProfile {
   patientId: string;
   branchId?: string | null;

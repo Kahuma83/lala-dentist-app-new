@@ -247,13 +247,14 @@ Gunakan **Kontrol & Perawatan Lanjutan** untuk menghubungi pasien yang perlu dii
 
 1. Buka **Portal Pegawai → Jadwal Saya** untuk memeriksa jadwal praktik. Absensi dilakukan melalui **Absensi** di Portal Pegawai, sesuai ketentuan klinik.
 2. Buka **Antrean Dokter** dan pastikan pasien, cabang, serta urutan antrean sesuai.
-3. Panggil pasien yang siap. Periksa bahwa kunjungan pasien yang sedang ditangani sebelumnya sudah selesai sebelum memulai pasien berikutnya.
-4. Buka pasien melalui **Pasien & Rekam Medis**. Cocokkan identitas sebelum menulis catatan.
+3. Dari kartu pasien di Dashboard Dokter, pilih **Mulai Alur Pasien** untuk pasien berikutnya. Setelah pemeriksaan dimulai, jendela alur pasien terbuka; bila kunjungan sudah aktif, pilih **Lanjutkan Alur Pasien**. Pastikan identitas pasien dan antrean benar.
+4. Saat pasien berstatus sedang diperiksa, pilih **Buka Rekam Medis** pada kartu pasien aktif di **Antrean Dokter** untuk membuka rekam medis kunjungan tersebut sebagai jendela di atas aplikasi. Tutup jendela untuk kembali ke Dashboard Dokter. **Pasien & Rekam Medis** tetap tersedia untuk mencari pasien atau kunjungan lain. Cocokkan identitas sebelum menulis catatan.
 5. Catat hasil pemeriksaan, diagnosis, rencana, dan informasi klinis yang diperlukan secara jelas.
+6. Pada kartu **Dokumen Kunjungan**, pilih **Resep**, **Surat Sakit**, atau **Rujukan** untuk pasien yang sedang diperiksa. Identitas pasien terisi dari profil; lengkapi instruksi obat atau rincian surat, lalu pilih **Simpan & Cetak**. Dokumen tersimpan permanen pada kunjungan dan dapat dibuka kembali dari riwayat dokumen pada rekam medis pasien. Untuk koreksi dokumen yang sudah disimpan, buat dokumen baru agar riwayat sebelumnya tetap terjaga.
 
 ### Membuat dan menyelesaikan tindakan
 
-1. Buka **Treatment** dan pastikan pasien serta kunjungan yang dipilih benar.
+1. Rencana dan tindakan dapat dikelola di jendela **Alur Pasien** dari Dashboard Dokter, tanpa berpindah ke tab Treatment. Pastikan pasien dan kunjungan yang ditampilkan benar.
 2. Susun rencana dengan memilih satu atau beberapa tindakan. Tarif cabang terisi sebagai harga awal; dokter penanggung jawab dapat menyesuaikan harga setiap item sesuai kondisi atau luas tindakan.
 3. Jelaskan rencana dan estimasi biaya terbaru kepada pasien sebelum menyimpan. Catat persetujuan lisan hanya setelah pasien menyetujuinya; tanda tangan atau persetujuan tertulis tidak diwajibkan oleh alur aplikasi. Persetujuan dan waktu pencatatannya tersimpan pada rencana.
 4. Rencana belum berarti tindakan sudah dilakukan. Mulai tindakan hanya setelah pasien menyetujui rencana dan biaya. Tindakan dalam satu kunjungan tampil sebagai satu rencana; mulai dan selesaikan item yang memenuhi syarat bersama-sama. Status, durasi, dan pemakaian bahan tetap tercatat per item.
@@ -262,7 +263,7 @@ Gunakan **Kontrol & Perawatan Lanjutan** untuk menghubungi pasien yang perlu dii
 7. Pilih **Selesaikan** setelah tindakan benar-benar selesai. Aplikasi mencatat pemakaian bahan yang tersedia dan memberi tahu bila masih ada kekurangan.
 8. Bila bahan kurang, beri tahu Admin Cabang agar pengadaan dicatat. Kekurangan yang tertinggal akan dipotong otomatis saat stok barang tersebut masuk.
 9. Jika pasien membatalkan sebagian tindakan, pilih **Batalkan item** serta tulis alasannya. Item yang belum dimulai dapat dibatalkan. Item yang sudah berstatus berjalan hanya dapat dibatalkan jika belum dikerjakan dan belum memakai bahan; centang konfirmasi yang tersedia. Sistem menolak pembatalan jika pemakaian bahan atau aktivitas tindakan selain mulai sudah tercatat. Item yang dibatalkan tidak ditagihkan; tindakan lain yang selesai tetap dapat masuk satu invoice kunjungan.
-10. Admin Cabang dapat membuat invoice setelah semua rencana dalam kunjungan selesai atau dibatalkan. Invoice hanya mencakup tindakan yang selesai.
+10. Setelah semua rencana selesai atau dibatalkan, pilih **Akhiri Pemeriksaan** di bagian bawah jendela Alur Pasien. Konsultasi tanpa tindakan juga dapat diakhiri; invoice dan pembayaran tetap diproses Admin/Kasir sesuai alur klinik.
 11. Hanya Dokter yang tercatat sebagai penanggung jawab tindakan yang dapat menyelesaikannya. Jika perlu diganti, minta penugasan Dokter pengganti terlebih dahulu. Untuk tindakan Dokter pengganti eksternal, Asisten atau Super Admin hanya dapat melanjutkan langkah yang memang tersedia dan ditugaskan untuk tindakan tersebut.
 12. Jika kasir mengembalikan tindakan sebelum invoice diterbitkan, buka filter **Perlu Revisi**, baca alasan koreksi, perbarui jenis tindakan dan catatan bila diperlukan, lalu pilih **Simpan Koreksi**. Tarif resmi cabang diterapkan otomatis. Tindakan kembali siap ditagihkan. Koreksi tidak mengulang pencatatan stok atau akrual kompensasi; selisih harus disesuaikan manual oleh Admin.
 

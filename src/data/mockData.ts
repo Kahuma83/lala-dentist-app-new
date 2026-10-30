@@ -61,6 +61,7 @@ import {
   MedicalRecord,
   MedicalRecordStatus,
   PatientMedicalProfile,
+  ClinicalVisitDocument,
   PromotionMedia
 } from "../types/domain";
 import { isFullAppDemoEnabled, isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
@@ -3592,6 +3593,7 @@ export class MockDatabase {
   replacementAssignments: StaffReplacementAssignment[] = [];
   medicalRecords: MedicalRecord[] = [];
   patientMedicalProfiles: PatientMedicalProfile[] = [];
+  clinicalVisitDocuments: ClinicalVisitDocument[] = [];
   clinicBranding: ClinicBranding = JSON.parse(JSON.stringify(DEFAULT_CLINIC_BRANDING));
   promotions: PromotionMedia[] = JSON.parse(JSON.stringify(MOCK_PROMOTIONS));
 
@@ -3737,6 +3739,7 @@ export class MockDatabase {
         if (Array.isArray(stored.replacementAssignments)) this.replacementAssignments = stored.replacementAssignments;
         if (Array.isArray(stored.medicalRecords)) this.medicalRecords = stored.medicalRecords;
         if (Array.isArray(stored.patientMedicalProfiles)) this.patientMedicalProfiles = stored.patientMedicalProfiles;
+        if (Array.isArray(stored.clinicalVisitDocuments)) this.clinicalVisitDocuments = stored.clinicalVisitDocuments;
         if (Array.isArray(stored.promotions)) this.promotions = stored.promotions;
         if (stored.clinicBranding) this.clinicBranding = stored.clinicBranding;
       return true;
@@ -3785,6 +3788,7 @@ export class MockDatabase {
         replacementAssignments: this.replacementAssignments,
         medicalRecords: this.medicalRecords,
         patientMedicalProfiles: this.patientMedicalProfiles,
+        clinicalVisitDocuments: this.clinicalVisitDocuments,
         promotions: this.promotions,
         clinicBranding: this.clinicBranding,
       };
@@ -3840,6 +3844,7 @@ export class MockDatabase {
     this.instance.replacementAssignments = [];
     this.instance.medicalRecords = [];
     this.instance.patientMedicalProfiles = [];
+    this.instance.clinicalVisitDocuments = [];
     this.instance.clinicBranding = JSON.parse(JSON.stringify(DEFAULT_CLINIC_BRANDING));
     this.instance.promotions = JSON.parse(JSON.stringify(MOCK_PROMOTIONS));
     return this.instance;
@@ -3860,6 +3865,7 @@ export class MockDatabase {
     db.accruals = [];
     db.medicalRecords = [];
     db.patientMedicalProfiles = [];
+    db.clinicalVisitDocuments = [];
     db.overtimes = [];
     db.replacementAssignments = [];
     return db;

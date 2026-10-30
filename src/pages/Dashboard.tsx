@@ -272,7 +272,10 @@ export const Dashboard: React.FC = () => {
   const displayName = currentUser.name.replace(/ \((Super Admin|Admin .*|Dokter .*|Pasien)\)/g, "");
 
   return (
-    <div className="space-y-6" id="dashboard-view">
+    <div
+      className="min-h-full space-y-5 bg-[linear-gradient(145deg,#fbf8f0_0%,#fffdf9_52%,#f8f3e8_100%)] p-4 sm:p-6"
+      id="dashboard-view"
+    >
       
       {/* SUPABASE PROFILE NOTICE */}
       {currentUser.isMockFallback && (
@@ -300,58 +303,57 @@ export const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 1. TOP WELCOME HEADER SECTION */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        
-        {/* Left Side Welcome Text */}
-        <div className="flex items-start gap-3">
-          <div className="p-2.5 bg-amber-50 rounded-2xl border border-[#ebd4a8]/40 text-[#c5a059] shrink-0">
-            <Sun className="w-6 h-6 animate-spin-slow" />
+      <header className="relative isolate flex min-h-28 flex-col gap-4 overflow-hidden rounded-2xl border border-[#d8bd7d] bg-gradient-to-r from-[#e7d199] via-[#d6b866] to-[#f2e3b8] p-5 shadow-[0_8px_24px_rgba(138,111,39,0.16)] sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div className="pointer-events-none absolute -right-10 -top-20 -z-10 h-56 w-56 rounded-full bg-white/35 blur-3xl" />
+        <div className="pointer-events-none absolute right-4 top-1/2 hidden -translate-y-1/2 text-[#80651f]/15 sm:block">
+          <Users className="h-36 w-36 -rotate-12" strokeWidth={1.1} aria-hidden="true" />
+        </div>
+        <div className="relative flex min-w-0 items-center gap-4">
+          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-2 border-white/70 bg-gradient-to-br from-[#fffdf8] to-[#e6c875] text-[#8a6f27] shadow-[0_3px_10px_rgba(138,111,39,0.2)] sm:h-[68px] sm:w-[68px]">
+            <Sun className="h-6 w-6 sm:h-7 sm:w-7" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400 text-[11px] font-bold uppercase tracking-wider">Selamat Datang,</span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/70 bg-white/70 text-[#9b7625]">
+                <CalendarDays className="h-4 w-4" />
+              </span>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#735b20]">Dashboard Klinik</p>
               {currentBranch && (
-                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#faf6ec] text-[#8a6f27] border border-[#ebd4a8]/50">
+                <span className="rounded-full border border-white/60 bg-white/65 px-2.5 py-1 text-[10px] font-bold text-[#735b20]">
                   {currentBranch.name}
                 </span>
               )}
             </div>
-            <h1 className="text-2xl font-black text-[#17233C] tracking-tight mt-0.5">
-              {displayName}
+            <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              Selamat Datang, {displayName}
             </h1>
-            <p className="text-xs text-slate-500 mt-1 font-medium">
-              Ringkasan operasional dan aktivitas klinik Anda hari ini.
-            </p>
+            <p className="mt-1 text-sm text-[#594a2b]">Ringkasan operasional dan aktivitas klinik · {formattedToday}</p>
           </div>
         </div>
-
-        {/* Right Side Floating Date Card */}
-        <div className="flex items-center gap-3 bg-white border border-slate-100 p-3.5 rounded-2xl shadow-sm shrink-0">
-          <div className="p-2 bg-[#faf6ec] text-[#c5a059] rounded-xl">
-            <CalendarRange className="w-5 h-5" />
+        <div className="relative z-10 flex shrink-0 items-center gap-3 rounded-xl border border-white/60 bg-white/75 p-3.5 shadow-sm">
+          <div className="rounded-xl bg-[#faf6ec] p-2 text-[#8a6f27]">
+            <CalendarRange className="h-5 w-5" />
           </div>
           <div className="text-xs">
-            <p className="font-extrabold text-[#17233C]">{formattedToday}</p>
-            <span className="text-[10px] text-slate-400 font-bold flex items-center gap-1 mt-1">
-              <Clock className="w-3.5 h-3.5 text-slate-400" /> Operasional Aktif
+            <p className="font-extrabold text-slate-900">{formattedToday}</p>
+            <span className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#80651f]">
+              <Clock className="h-3.5 w-3.5" /> Operasional Aktif
             </span>
           </div>
         </div>
-
-      </div>
+      </header>
 
       {/* 2. OPERATIONAL SUMMARY: 4 KEY OPERATIONAL KPI CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         
         {/* KPI 1: Pasien Hari Ini */}
         <div
           onClick={handleViewAllPatients}
-          className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md hover:border-[#ebd4a8]/50 transition-all cursor-pointer"
+          className="group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] transition-all hover:-translate-y-0.5 hover:border-[#d8bd7d] hover:shadow-md"
         >
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Pasien Hari Ini</span>
-            <div className="p-2 bg-[#faf6ec] text-[#c5a059] rounded-xl shrink-0">
+            <div className="shrink-0 rounded-xl bg-[#faf6ec] p-2 text-[#9b7625]">
               <Users className="w-4 h-4" />
             </div>
           </div>
@@ -360,7 +362,7 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="flex items-center justify-between mt-3 border-t border-slate-50 pt-3 text-[10px] text-slate-400 font-medium">
             <span>Kunjungan tercatat hari ini</span>
-            <span className="text-[#c5a059] font-bold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+            <span className="flex items-center gap-0.5 font-bold text-[#9b7625] transition-transform group-hover:translate-x-0.5">
               Lihat <ArrowRight className="w-3 h-3" />
             </span>
           </div>
@@ -369,11 +371,11 @@ export const Dashboard: React.FC = () => {
         {/* KPI 2: Antrean Aktif */}
         <div
           onClick={handleViewAllQueue}
-          className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md hover:border-[#ebd4a8]/50 transition-all cursor-pointer"
+          className="group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] transition-all hover:-translate-y-0.5 hover:border-[#d8bd7d] hover:shadow-md"
         >
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Antrean Aktif</span>
-            <div className="p-2 bg-amber-50 text-amber-600 rounded-xl shrink-0">
+            <div className="shrink-0 rounded-xl bg-orange-50 p-2 text-orange-600">
               <ListOrdered className="w-4 h-4" />
             </div>
           </div>
@@ -382,7 +384,7 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="flex items-center justify-between mt-3 border-t border-slate-50 pt-3 text-[10px] text-slate-400 font-medium">
             <span>Menunggu & Di Ruang Periksa</span>
-            <span className="text-amber-600 font-bold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+            <span className="flex items-center gap-0.5 font-bold text-orange-600 transition-transform group-hover:translate-x-0.5">
               Kelola <ArrowRight className="w-3 h-3" />
             </span>
           </div>
@@ -391,11 +393,11 @@ export const Dashboard: React.FC = () => {
         {/* KPI 3: Booking Hari Ini */}
         <div
           onClick={handleViewAllBookings}
-          className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md hover:border-[#ebd4a8]/50 transition-all cursor-pointer"
+          className="group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] transition-all hover:-translate-y-0.5 hover:border-[#d8bd7d] hover:shadow-md"
         >
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Booking Hari Ini</span>
-            <div className="p-2 bg-sky-50 text-sky-600 rounded-xl shrink-0">
+            <div className="shrink-0 rounded-xl bg-cyan-50 p-2 text-cyan-700">
               <CalendarDays className="w-4 h-4" />
             </div>
           </div>
@@ -404,7 +406,7 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="flex items-center justify-between mt-3 border-t border-slate-50 pt-3 text-[10px] text-slate-400 font-medium">
             <span>Reservasi terjadwal hari ini</span>
-            <span className="text-sky-600 font-bold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+            <span className="flex items-center gap-0.5 font-bold text-cyan-700 transition-transform group-hover:translate-x-0.5">
               Jadwal <ArrowRight className="w-3 h-3" />
             </span>
           </div>
@@ -413,11 +415,11 @@ export const Dashboard: React.FC = () => {
         {/* KPI 4: Treatment Berjalan */}
         <div
           onClick={handleViewAllTreatments}
-          className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md hover:border-[#ebd4a8]/50 transition-all cursor-pointer"
+          className="group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] transition-all hover:-translate-y-0.5 hover:border-[#d8bd7d] hover:shadow-md"
         >
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Treatment Berjalan</span>
-            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
+            <div className="shrink-0 rounded-xl bg-emerald-50 p-2 text-emerald-700">
               <Activity className="w-4 h-4" />
             </div>
           </div>
@@ -426,7 +428,7 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="flex items-center justify-between mt-3 border-t border-slate-50 pt-3 text-[10px] text-slate-400 font-medium">
             <span>Sedang ditangani di dental chair</span>
-            <span className="text-emerald-600 font-bold group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+            <span className="flex items-center gap-0.5 font-bold text-emerald-700 transition-transform group-hover:translate-x-0.5">
               Detail <ArrowRight className="w-3 h-3" />
             </span>
           </div>
@@ -435,21 +437,26 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* 3. CORE CONTENT GRID SYSTEM (Left: Pasien Terbaru & Jadwal Dokter | Middle: Aktivitas Hari Ini | Right: Promo & Event) */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
         
         {/* ==================== LEFT COLUMN (5/12 WIDTH) ==================== */}
         <div className="xl:col-span-5 space-y-6">
           
           {/* A. Pasien Terbaru List Card */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-50 mb-4">
-              <div>
-                <h2 className="text-sm font-bold text-[#17233C]">Pasien Terbaru</h2>
+          <section className="rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] sm:p-6">
+            <div className="mb-4 flex items-center justify-between border-b border-[#f1eadb] pb-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#eadbb9] bg-[#faf6ec] text-[#8a6f27]">
+                  <Users className="h-4 w-4" />
+                </span>
+                <div>
+                <h2 className="text-sm font-bold text-slate-900">Pasien Terbaru</h2>
                 <p className="text-[10px] text-slate-400 font-medium mt-0.5">Riwayat kunjungan terbaru pada cabang aktif</p>
+                </div>
               </div>
               <button
                 onClick={handleViewAllPatients}
-                className="text-[11px] font-bold text-[#c5a059] flex items-center gap-1 hover:text-[#8a6f27] transition-colors"
+                className="flex items-center gap-1 rounded-full bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:from-[#80651f] hover:to-[#a98232] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c5a059] focus-visible:ring-offset-2"
               >
                 Lihat Semua <ArrowRight className="w-3.5 h-3.5" />
               </button>
@@ -462,10 +469,10 @@ export const Dashboard: React.FC = () => {
                 Belum ada pasien terbaru.
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-xl border border-slate-100">
+              <div className="overflow-x-auto rounded-xl border border-[#eee4cf]">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
-                    <tr className="border-b border-slate-100 bg-[#fafaf8] text-slate-500 font-bold uppercase tracking-wider text-[9px]">
+                    <tr className="border-b border-[#eee4cf] bg-[#fcfaf5] text-slate-500 font-bold uppercase tracking-wider text-[9px]">
                       <th className="py-2.5 px-3">No</th>
                       <th className="py-2.5 px-3">Nama Pasien</th>
                       <th className="py-2.5 px-3">Layanan / Keluhan</th>
@@ -475,7 +482,7 @@ export const Dashboard: React.FC = () => {
                   </thead>
                   <tbody>
                     {recentPatientsList.map((p, idx) => (
-                      <tr key={p.id} className="border-b border-slate-50 hover:bg-[#faf6ec]/20 transition-colors">
+                      <tr key={p.id} className="border-b border-[#f1eadb] transition-colors hover:bg-[#fcfaf5]">
                         <td className="py-3 px-3 font-semibold text-slate-400">{idx + 1}</td>
                         <td className="py-3 px-3">
                           <p className="font-bold text-[#17233C]">{p.patientName}</p>
@@ -496,14 +503,19 @@ export const Dashboard: React.FC = () => {
                 </table>
               </div>
             )}
-          </div>
+          </section>
 
           {/* B. Jadwal Dokter Hari Ini Card */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-50 mb-4">
-              <div>
-                <h2 className="text-sm font-bold text-[#17233C]">Jadwal Dokter Hari Ini</h2>
+          <section className="rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] sm:p-6">
+            <div className="mb-4 flex items-center justify-between border-b border-[#f1eadb] pb-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#eadbb9] bg-[#faf6ec] text-[#8a6f27]">
+                  <CalendarDays className="h-4 w-4" />
+                </span>
+                <div>
+                <h2 className="text-sm font-bold text-slate-900">Jadwal Dokter Hari Ini</h2>
                 <p className="text-[10px] text-slate-400 font-medium mt-0.5">Dokter bertugas sesuai jadwal operasional</p>
+                </div>
               </div>
             </div>
 
@@ -518,7 +530,7 @@ export const Dashboard: React.FC = () => {
                 {todayDoctorSchedules.map((doc) => (
                   <div
                     key={doc.id}
-                    className="flex items-center justify-between p-3 bg-slate-50 hover:bg-[#faf6ec]/50 rounded-xl border border-slate-100 transition-colors"
+                    className="flex items-center justify-between rounded-xl border border-[#eee4cf] bg-[#fcfaf5] p-3 transition-colors hover:border-[#d8bd7d] hover:bg-[#faf6ec]"
                   >
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#ebd4a8] to-[#c5a059] flex items-center justify-center text-[#17233C] font-black text-xs border border-white shrink-0 overflow-hidden shadow-2xs">
@@ -550,7 +562,7 @@ export const Dashboard: React.FC = () => {
                 ))}
               </div>
             )}
-          </div>
+          </section>
 
         </div>
 
@@ -558,11 +570,16 @@ export const Dashboard: React.FC = () => {
         <div className="xl:col-span-4 space-y-6">
           
           {/* C. Aktivitas Hari Ini (Timeline) */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-50 mb-4">
-              <div>
-                <h2 className="text-sm font-bold text-[#17233C]">Aktivitas Hari Ini</h2>
+          <section className="rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] sm:p-6">
+            <div className="mb-4 flex items-center justify-between border-b border-[#f1eadb] pb-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#eadbb9] bg-[#faf6ec] text-[#8a6f27]">
+                  <Activity className="h-4 w-4" />
+                </span>
+                <div>
+                <h2 className="text-sm font-bold text-slate-900">Aktivitas Hari Ini</h2>
                 <p className="text-[10px] text-slate-400 font-medium mt-0.5">Kronologi kejadian operasional klinik</p>
+                </div>
               </div>
             </div>
 
@@ -580,7 +597,7 @@ export const Dashboard: React.FC = () => {
                     <div className="absolute -left-[22.5px] top-1.5 w-4 h-4 rounded-full bg-white border-2 border-[#ebd4a8] flex items-center justify-center">
                       <span className="w-1.5 h-1.5 rounded-full bg-[#c5a059]"></span>
                     </div>
-                    <div className="flex items-start justify-between gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100 hover:border-[#ebd4a8]/30 transition-all">
+                    <div className="flex items-start justify-between gap-3 rounded-xl border border-[#eee4cf] bg-[#fcfaf5] p-2.5 transition-all hover:border-[#d8bd7d]">
                       <div>
                         <p className="font-extrabold text-[#17233C] text-[11px]">{act.title}</p>
                         <p className="text-[10px] text-slate-500 mt-0.5 font-medium leading-relaxed">{act.description}</p>
@@ -598,7 +615,7 @@ export const Dashboard: React.FC = () => {
                 ))}
               </div>
             )}
-          </div>
+          </section>
 
         </div>
 
@@ -606,7 +623,7 @@ export const Dashboard: React.FC = () => {
         <div className="xl:col-span-3 space-y-6">
           
           {/* D. Promo & Event Klinik Widget (Source: PromotionRepository / promotions) */}
-          <div className="bg-gradient-to-br from-[#17233C] via-[#21304C] to-[#8a6f27] text-white rounded-2xl p-5 relative overflow-hidden shadow-md flex flex-col justify-between min-h-[22rem]">
+          <section className="relative flex min-h-[22rem] flex-col justify-between overflow-hidden rounded-2xl border border-[#d6b96f] bg-gradient-to-br from-[#17233C] via-[#21304C] to-[#8a6f27] p-5 text-white shadow-[0_12px_30px_rgba(44,37,21,0.18)]">
             
             {/* Absolute Decorative Curved Gold Ribbon */}
             <div className="absolute right-0 bottom-0 w-32 h-32 bg-gradient-to-tr from-[#ebd4a8]/35 to-transparent rounded-full -mr-8 -mb-8 blur-2xl pointer-events-none" />
@@ -668,7 +685,7 @@ export const Dashboard: React.FC = () => {
               </div>
             </div>
 
-          </div>
+          </section>
 
         </div>
 

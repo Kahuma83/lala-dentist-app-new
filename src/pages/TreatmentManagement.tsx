@@ -48,7 +48,15 @@ import {
 import { InventoryRecipeLine, getInventoryTreatmentRecipe } from "../utils/inventoryTreatmentRecipes";
 import { getApprovedInventoryTreatmentRecipe } from "../services/inventoryRecipeService";
 
-export const TreatmentManagement: React.FC = () => {
+interface TreatmentManagementProps {
+  embeddedVisitId?: string;
+  onVisitFinished?: (message: string, error?: string) => void;
+}
+
+export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
+  embeddedVisitId,
+  onVisitFinished
+}) => {
   const { currentUser, repos, branches, services, patients, bookings, doctorSchedules } = useApp();
   const { navigate } = useRouter();
   const processedVisitQuery = useRef<string | null>(null);
@@ -80,6 +88,12 @@ export const TreatmentManagement: React.FC = () => {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [startingTreatmentId, setStartingTreatmentId] = useState<string | null>(null);
   const [processingVisitId, setProcessingVisitId] = useState<string | null>(null);
+  const [isFinishVisitConfirmOpen, setIsFinishVisitConfirmOpen] = useState(false);
+  const [planAwaitingCompletion, setPlanAwaitingCompletion] = useState<{
+    visitId: string;
+    treatments: TreatmentJob[];
+  } | null>(null);
+  const [confirmingWorkflowAction, setConfirmingWorkflowAction] = useState(false);
 
   // Detail Modal & Activity state
   const [selectedTreatment, setSelectedTreatment] = useState<TreatmentJob | null>(null);
@@ -312,7 +326,7 @@ export const TreatmentManagement: React.FC = () => {
         `${createdTreatments.length} rencana tindakan tersimpan. Mulai tindakan setelah pasien menyetujui rencana dan estimasi biaya; invoice hanya memuat tindakan yang selesai.`
       );
       setIsCreateOpen(false);
-      setSelectedVisitId("");
+      if (!embeddedVisitId) setSelectedVisitId("");
       setSelectedTreatmentServices([]);
       setOfficialTreatmentPrices({});
       setTreatmentPrices({});
@@ -469,6 +483,9 @@ export const TreatmentManagement: React.FC = () => {
         setSuccessMsg("Rencana tindakan dibatalkan dan tidak akan masuk invoice. Lanjutkan rencana lain pada kunjungan ini.");
       }
       await loadData();
+      if (allPlansClosed) {
+        onVisitFinished?.("Rencana tindakan ditutup dan kunjungan selesai. Tagihan dapat diproses Admin/Kasir.");
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Gagal membatalkan rencana tindakan.";
       if (cancellationSaved) {
@@ -591,14 +608,17 @@ export const TreatmentManagement: React.FC = () => {
           ` ${inventoryItems.find((item) => item.itemCode.toUpperCase() === shortage.itemCode.toUpperCase())?.unit || ""}`.trim()
         ).join(", ")}.`
         : "";
-      setSuccessMsg(
-        unfinishedTreatments.length === 0
-          ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.${shortageWarning}${inventoryWarning}`
-          : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.${shortageWarning}${inventoryWarning}`
-      );
+      const completionMessage = unfinishedTreatments.length === 0
+        ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.${shortageWarning}${inventoryWarning}`
+        : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.${shortageWarning}${inventoryWarning}`;
+      setSuccessMsg(completionMessage);
       await loadData();
       if (accrualError) {
-        setError(`Treatment selesai, tetapi akrual kompensasi gagal dicatat: ${accrualError}. Admin dapat mencoba sinkronisasi ulang di menu Kompensasi Dokter.`);
+        const compensationError = `Treatment selesai, tetapi akrual kompensasi gagal dicatat: ${accrualError}. Admin dapat mencoba sinkronisasi ulang di menu Kompensasi Dokter.`;
+        setError(compensationError);
+        if (unfinishedTreatments.length === 0) onVisitFinished?.(completionMessage, compensationError);
+      } else if (unfinishedTreatments.length === 0) {
+        onVisitFinished?.(completionMessage);
       }
       return true;
     } catch (err: any) {
@@ -621,7 +641,7 @@ export const TreatmentManagement: React.FC = () => {
     }
   };
 
-  const handleCompleteVisitPlan = async (visitId: string, visitTreatments: TreatmentJob[]) => {
+  const handleCompleteVisitPlan = (visitId: string, visitTreatments: TreatmentJob[]) => {
     if (processingVisitId || completingTreatment) return;
     const inProgress = visitTreatments.filter((treatment) =>
       treatment.status === TreatmentJobStatus.DALAM_PROSES
@@ -633,11 +653,16 @@ export const TreatmentManagement: React.FC = () => {
       || treatment.status === TreatmentJobStatus.DIBATALKAN
     );
     if (!inProgress.length || !canFinishTogether || inProgress.some((treatment) => !canCompleteTreatment(treatment))) return;
-    const patientName = getTreatmentPatientName(inProgress[0]);
-    if (!window.confirm(
-      `Selesaikan bersama ${inProgress.length} tindakan untuk ${patientName}? Pemakaian stok dan pencatatan selesai akan diproses per tindakan.`
-    )) return;
+    setPlanAwaitingCompletion({ visitId, treatments: visitTreatments });
+  };
 
+  const confirmCompleteVisitPlan = async () => {
+    if (!planAwaitingCompletion || processingVisitId || completingTreatment) return;
+    const { visitId, treatments: visitTreatments } = planAwaitingCompletion;
+    const inProgress = visitTreatments.filter((treatment) =>
+      treatment.status === TreatmentJobStatus.DALAM_PROSES
+    );
+    setPlanAwaitingCompletion(null);
     setProcessingVisitId(visitId);
     let completedCount = 0;
     try {
@@ -651,6 +676,48 @@ export const TreatmentManagement: React.FC = () => {
       }
       setSuccessMsg(`${completedCount} tindakan dalam rencana kunjungan berhasil diselesaikan bersama.`);
       await loadData();
+    } finally {
+      setProcessingVisitId(null);
+    }
+  };
+
+  const handleFinishEmbeddedVisit = async () => {
+    if (!embeddedVisitId || currentUser?.role !== UserRole.DOCTOR || processingVisitId) return;
+    setIsFinishVisitConfirmOpen(false);
+    setProcessingVisitId(embeddedVisitId);
+    setError(null);
+    try {
+      const visitTreatments = await treatmentRepo.getTreatmentsByVisit(embeddedVisitId);
+      const unfinishedTreatments = visitTreatments.filter((treatment) =>
+        treatment.status !== TreatmentJobStatus.SELESAI
+        && treatment.status !== TreatmentJobStatus.DISERAHKAN
+        && treatment.status !== TreatmentJobStatus.DIBATALKAN
+      );
+      if (unfinishedTreatments.length > 0) {
+        throw new Error("Selesaikan atau batalkan semua tindakan dalam rencana sebelum mengakhiri pemeriksaan.");
+      }
+
+      const activeQueueItem = queueItems.find((item) =>
+        item.visitId === embeddedVisitId && item.status === "IN_CONSULTATION"
+      );
+      if (activeQueueItem) {
+        await repos.queue.finishService(
+          activeQueueItem.id,
+          currentUser.role,
+          currentUser.assignedBranchId,
+          currentUser.id
+        );
+      } else if (!queueItems.some((item) =>
+        item.visitId === embeddedVisitId && item.status === "COMPLETED"
+      )) {
+        throw new Error("Antrean aktif untuk kunjungan ini tidak ditemukan.");
+      }
+
+      setSuccessMsg("Pemeriksaan selesai. Tagihan dapat diproses Admin/Kasir.");
+      await loadData();
+      onVisitFinished?.("Pemeriksaan selesai. Tagihan dapat diproses Admin/Kasir.");
+    } catch (finishError: unknown) {
+      setError(finishError instanceof Error ? finishError.message : "Gagal mengakhiri pemeriksaan.");
     } finally {
       setProcessingVisitId(null);
     }
@@ -789,7 +856,7 @@ export const TreatmentManagement: React.FC = () => {
 
   useEffect(() => {
     if (loading || !currentUser) return;
-    const requestedVisitId = new URLSearchParams(window.location.search).get("visitId");
+    const requestedVisitId = embeddedVisitId || new URLSearchParams(window.location.search).get("visitId");
     if (!requestedVisitId || processedVisitQuery.current === requestedVisitId) return;
     if (!eligibleVisits.some((visit) => visit.id === requestedVisitId)) return;
 
@@ -810,8 +877,8 @@ export const TreatmentManagement: React.FC = () => {
       return;
     }
 
-    setIsCreateOpen(true);
-  }, [currentUser, eligibleVisits, loading, queueItems, treatments]);
+    if (!embeddedVisitId) setIsCreateOpen(true);
+  }, [currentUser, eligibleVisits, embeddedVisitId, loading, queueItems, treatments]);
 
   useEffect(() => {
     if (!selectedDoctorId || !selectedVisitId) return;
@@ -856,7 +923,7 @@ export const TreatmentManagement: React.FC = () => {
       getTreatmentPatientName(tr).toLowerCase().includes(q) ||
       (tr.notes && tr.notes.toLowerCase().includes(q));
 
-    return matchStatus && matchQuery;
+    return matchStatus && matchQuery && (!embeddedVisitId || tr.visitId === embeddedVisitId);
   });
   const matchedTreatmentIds = new Set(filteredTreatments.map((treatment) => treatment.id));
   const filteredTreatmentGroups = Array.from(
@@ -955,10 +1022,10 @@ export const TreatmentManagement: React.FC = () => {
   const selectedTreatmentRecipeLines = approvedRecipeMaterials || selectedTreatmentRecipe?.lines || [];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className={`${embeddedVisitId ? "p-3 sm:p-4 space-y-4" : "p-6 max-w-7xl mx-auto space-y-6"}`}>
       {!isCreateOpen && (
         <>
-      <OperationalHubTabs hub="queue_treatment" />
+      {!embeddedVisitId && <OperationalHubTabs hub="queue_treatment" />}
 
       {/* Page Title & Controls Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
@@ -967,31 +1034,37 @@ export const TreatmentManagement: React.FC = () => {
             <div className="w-9 h-9 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center font-bold">
               <Stethoscope className="w-5 h-5" />
             </div>
-            <h1 className="text-xl font-bold text-slate-900">Daftar Tindakan Medis</h1>
-            <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold tracking-wide uppercase bg-teal-100 text-teal-800">
-              Phase 4A
-            </span>
+            <h1 className="text-xl font-bold text-slate-900">
+              {embeddedVisitId ? "Rencana Tindakan Pasien" : "Daftar Tindakan Medis"}
+            </h1>
+            {!embeddedVisitId && (
+              <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold tracking-wide uppercase bg-teal-100 text-teal-800">
+                Phase 4A
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-500">
             Catat beberapa tindakan dalam satu kunjungan. Dokter memulai tindakan dari daftar ini; setelah semuanya selesai, admin memproses satu invoice.
           </p>
         </div>
 
-        {canCreateTreatment
-          && (canManageTreatment || eligibleVisits.some((visit) => Boolean(visit.externalDoctorId)))
-          && <button
-          onClick={() => {
-            setIsCreateOpen(true);
+        <div className="flex flex-wrap gap-2">
+          {canCreateTreatment
+            && (canManageTreatment || eligibleVisits.some((visit) => Boolean(visit.externalDoctorId)))
+            && <button
+            onClick={() => {
+              setIsCreateOpen(true);
               setPatientApprovalConfirmed(false);
               if (currentUser?.role === UserRole.DOCTOR) {
-              setSelectedDoctorId(currentUser.doctorId || "");
-            }
-          }}
-          className="inline-flex items-center justify-center px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs rounded-xl shadow-sm transition-colors cursor-pointer"
-        >
-          <Plus className="w-4 h-4 mr-1.5" />
-          Catat Tindakan Kunjungan
-        </button>}
+                setSelectedDoctorId(currentUser.doctorId || "");
+              }
+            }}
+            className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-md transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            <Plus className="mr-1.5 h-4 w-4" />
+            {embeddedVisitId ? "Tambah Tindakan" : "Catat Tindakan Kunjungan"}
+          </button>}
+        </div>
       </div>
 
       {currentUser?.role === UserRole.DOCTOR_ASSISTANT && (
@@ -1025,6 +1098,7 @@ export const TreatmentManagement: React.FC = () => {
         </div>
       )}
 
+      {!embeddedVisitId && <>
       {/* Statistics Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <div
@@ -1136,7 +1210,6 @@ export const TreatmentManagement: React.FC = () => {
             className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 bg-slate-50/50"
           />
         </div>
-
         <div className="flex items-center gap-2 text-xs w-full sm:w-auto justify-end">
           <Filter className="w-3.5 h-3.5 text-slate-400" />
           <span className="text-slate-500 font-medium">Status:</span>
@@ -1155,6 +1228,7 @@ export const TreatmentManagement: React.FC = () => {
           </select>
         </div>
       </div>
+      </>}
 
       {/* Treatment Table */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
@@ -1333,17 +1407,36 @@ export const TreatmentManagement: React.FC = () => {
           </div>
         )}
       </div>
+      {embeddedVisitId && currentUser?.role === UserRole.DOCTOR && (
+        <footer className="flex flex-col gap-3 rounded-2xl border border-[#eadbb9] bg-gradient-to-r from-white via-[#fffdf8] to-[#f7e9c9] p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div>
+            <h2 className="text-sm font-bold text-slate-800">Pemeriksaan sudah selesai?</h2>
+            <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-slate-600">
+              Akhiri kunjungan setelah konsultasi selesai dan semua tindakan sudah diselesaikan atau dibatalkan. Invoice tetap diproses Admin/Kasir.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsFinishVisitConfirmOpen(true)}
+            disabled={Boolean(processingVisitId || completingTreatment)}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-5 py-3 text-sm font-bold text-white shadow-md transition hover:from-[#80651f] hover:to-[#a98232] focus:outline-none focus:ring-2 focus:ring-[#c5a059] focus:ring-offset-2 disabled:opacity-50"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            {processingVisitId === embeddedVisitId ? "Mengakhiri..." : "Akhiri Pemeriksaan"}
+          </button>
+        </footer>
+      )}
 
         </>
       )}
 
       {isCreateOpen && (
         <main className="space-y-6">
-          <OperationalHubTabs hub="queue_treatment" />
-          <section className="bg-white rounded-2xl max-w-7xl mx-auto p-4 md:p-6 shadow-sm border border-slate-100 space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <Stethoscope className="w-4 h-4 text-teal-600" />
+          {!embeddedVisitId && <OperationalHubTabs hub="queue_treatment" />}
+          <section className="mx-auto max-w-7xl space-y-5 overflow-hidden rounded-2xl border border-[#eadbb9] bg-[#fffdf8] p-4 shadow-xl md:p-6">
+            <div className="-mx-4 -mt-4 flex items-center justify-between border-b border-[#eadbb9] bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] px-4 py-4 text-white md:-mx-6 md:-mt-6 md:px-6">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+                <Stethoscope className="w-4 h-4 text-white" />
                 Rencana Tindakan Kunjungan
               </h3>
               <button
@@ -1351,7 +1444,7 @@ export const TreatmentManagement: React.FC = () => {
                   setIsCreateOpen(false);
                   setPatientApprovalConfirmed(false);
                 }}
-                className="text-sm text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg border border-slate-200"
+                className="rounded-lg border border-white/50 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
               >
                 Kembali
               </button>
@@ -1640,7 +1733,7 @@ export const TreatmentManagement: React.FC = () => {
                 <button
                   type="submit"
                   disabled={submitting || !selectedVisitId || selectedTreatmentServices.length === 0 || !selectedDoctorId || !doctorsForVisit.length || !patientApprovalConfirmed}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-medium shadow-sm disabled:opacity-50"
+                  className="rounded-lg bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-4 py-2 font-semibold text-white shadow-sm transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
                 >
                   {submitting ? "Menyimpan..." : "Simpan Rencana Tindakan"}
                 </button>
@@ -1654,16 +1747,16 @@ export const TreatmentManagement: React.FC = () => {
 
       {/* Detail Modal */}
       {selectedTreatment && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl border border-slate-100 space-y-4 my-8">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <Stethoscope className="w-4 h-4 text-teal-600" />
+        <div className={`fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 ${embeddedVisitId ? "z-[70]" : "z-50"} overflow-y-auto`}>
+          <div className="my-8 w-full max-w-2xl space-y-4 overflow-hidden rounded-2xl border border-[#eadbb9] bg-[#fffdf8] p-6 shadow-2xl">
+            <div className="-mx-6 -mt-6 flex items-center justify-between border-b border-[#eadbb9] bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] px-6 py-4 text-white">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+                <Stethoscope className="h-4 w-4 text-white" />
                 Detail Tindakan & Riwayat Aktivitas
               </h3>
               <button
                 onClick={() => setSelectedTreatment(null)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+                className="rounded-lg p-1 text-white/80 transition hover:bg-white/15 hover:text-white"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1758,6 +1851,74 @@ export const TreatmentManagement: React.FC = () => {
                     {selectedTreatment.cancelledAt && (
                       <div className="text-[10px] text-slate-500">
                         Dibatalkan: {formatActivityDateTime(selectedTreatment.cancelledAt)}
+                      </div>
+                    )}
+                    {(isFinishVisitConfirmOpen || planAwaitingCompletion) && (
+                      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+                        <section
+                          role="alertdialog"
+                          aria-modal="true"
+                          aria-labelledby="treatment-confirm-title"
+                          className="w-full max-w-md overflow-hidden rounded-2xl border border-[#d6b96f] bg-[#fffdf8] shadow-2xl"
+                        >
+                          <header className="bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] px-5 py-4 text-white">
+                            <h2 id="treatment-confirm-title" className="text-sm font-bold">
+                              {planAwaitingCompletion ? "Selesaikan Rencana Tindakan" : "Akhiri Pemeriksaan"}
+                            </h2>
+                          </header>
+                          <div className="space-y-3 p-5 text-xs leading-relaxed text-slate-700">
+                            {planAwaitingCompletion ? (
+                              <>
+                                <p>
+                                  Selesaikan bersama {planAwaitingCompletion.treatments.filter((treatment) =>
+                                    treatment.status === TreatmentJobStatus.DALAM_PROSES
+                                  ).length} tindakan untuk {getTreatmentPatientName(planAwaitingCompletion.treatments[0])}?
+                                </p>
+                                <p className="rounded-lg border border-[#eadbb9] bg-[#faf6ec] p-3 text-[#735b20]">
+                                  Pemakaian stok dan pencatatan selesai akan diproses per tindakan.
+                                </p>
+                              </>
+                            ) : (
+                              <>
+                                <p>Yakin ingin mengakhiri pemeriksaan pasien ini?</p>
+                                <p className="rounded-lg border border-[#eadbb9] bg-[#faf6ec] p-3 text-[#735b20]">
+                                  Konsultasi tanpa tindakan tetap dapat diakhiri. Jika ada tindakan, semuanya harus selesai atau dibatalkan terlebih dahulu. Invoice tetap diproses Admin/Kasir.
+                                </p>
+                              </>
+                            )}
+                          </div>
+                          <footer className="flex justify-end gap-2 border-t border-[#eadfc7] bg-[#fcfaf5] px-5 py-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsFinishVisitConfirmOpen(false);
+                                setPlanAwaitingCompletion(null);
+                              }}
+                              disabled={confirmingWorkflowAction}
+                              className="rounded-lg border border-[#e5d7b8] bg-white px-4 py-2 text-xs font-semibold text-[#735b20] transition hover:bg-[#faf6ec] disabled:opacity-50"
+                            >
+                              Batal
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setConfirmingWorkflowAction(true);
+                                try {
+                                  if (planAwaitingCompletion) await confirmCompleteVisitPlan();
+                                  else await handleFinishEmbeddedVisit();
+                                } finally {
+                                  setConfirmingWorkflowAction(false);
+                                }
+                              }}
+                              disabled={confirmingWorkflowAction}
+                              className="rounded-lg bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-4 py-2 text-xs font-bold text-white transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
+                            >
+                              {confirmingWorkflowAction
+                                ? "Memproses..."
+                                : planAwaitingCompletion ? "Ya, Selesaikan" : "Ya, Akhiri Pemeriksaan"}
+                            </button>
+                          </footer>
+                        </section>
                       </div>
                     )}
                   </div>

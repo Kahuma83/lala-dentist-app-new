@@ -204,7 +204,7 @@ export const Login: React.FC = () => {
           <p className="text-xs text-slate-400 mt-1.5">
             Portal Masuk Resmi Sistem Manajemen &amp; Operasional Klinik
           </p>
-          {!isFullAppDemoEnabled && (
+          {import.meta.env.DEV && !isFullAppDemoEnabled && (
             <button
               type="button"
               onClick={() => window.location.assign("/demo")}

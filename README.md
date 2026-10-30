@@ -2,6 +2,22 @@
 
 Aplikasi web klinik dengan Supabase sebagai database dan autentikasi.
 
+## Deploy migration Supabase Production
+
+Workflow GitHub Actions `.github/workflows/deploy-supabase-migrations.yml` menjalankan `supabase db push` hanya ketika perubahan pada `supabase/migrations/` masuk ke branch `main`. Push ke branch lain tidak mengubah database Production. Perintah ini menerapkan migration yang belum tercatat; migration yang sudah diterapkan tidak dijalankan ulang.
+
+Sebelum merge migration ke `main`, tambahkan secrets berikut di **GitHub → Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Nilai |
+|---|---|
+| `SUPABASE_ACCESS_TOKEN` | Personal access token Supabase dengan akses ke project |
+| `SUPABASE_DB_PASSWORD` | Password database project Supabase Production |
+| `SUPABASE_PROJECT_ID` | Project reference ID Supabase Production |
+
+Jangan masukkan nilai secret ke repository, file `.env`, atau chat. Workflow akan berhenti dengan pesan yang menyebut nama secret yang belum diatur. Periksa hasil workflow di tab **Actions** setelah migration di-merge.
+
+Build Production menonaktifkan mode demo dan menyembunyikan tombol demo, termasuk bila alamat yang dibuka memakai path `/demo`. Akun demo hanya dapat digunakan saat menjalankan server pengembangan lokal.
+
 ## Menjalankan aplikasi secara lokal
 
 Prerequisite: Node.js dan akses ke project Supabase.

@@ -302,7 +302,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "PRAKTIK DOKTER",
       items: [
-        { name: "Monitor Praktik Hari Ini", path: "/doctor/queue", icon: LayoutDashboard },
+        { name: "Dashboard", path: "/doctor/queue", icon: LayoutDashboard },
         { name: "Antrean Pasien", path: "/doctor/queue/manage", icon: ListOrdered },
         { name: "Tindakan & Perawatan", path: "/doctor/treatments", icon: Activity }
       ]
