@@ -171,7 +171,7 @@ OB menggunakan **Portal Pegawai** untuk melihat ringkasan kerja, melakukan absen
 
 1. Pilih **Jadwal Baru**, lalu cari pasien yang benar.
 2. Pilih Dokter, tanggal, jam yang tersedia, dan sumber kedatangan yang sesuai: Online, WhatsApp, Front Desk, atau Walk-In.
-3. Jika admin atau asisten berhasil mengajak pasien untuk kunjungan ini, pilih namanya pada **Referral / staf pengajak**. Daftar hanya memuat staf aktif di cabang booking; kosongkan jika tidak ada staf yang mengajak.
+3. Jika admin atau asisten berhasil mengajak pasien untuk kunjungan ini, cari dan pilih namanya pada **Referral**. Daftar memuat admin dan asisten aktif dari semua cabang; kosongkan jika tidak ada referral.
 4. Insentif referral Rp3.000 dicatat satu kali per kunjungan setelah tindakan selesai dan invoice lunas. Kunjungan berikutnya dapat memilih staf yang berbeda. Jadwal ulang membawa pilihan staf referral ke booking pengganti.
 5. Isi catatan yang membantu petugas, lalu simpan.
 6. Untuk pasien yang datang tanpa janji, pilih sumber **Walk-In** dan tetap pilih slot Dokter yang kosong. Jangan menimpa jadwal pasien lain.

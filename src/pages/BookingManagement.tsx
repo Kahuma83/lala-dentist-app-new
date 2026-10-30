@@ -15,7 +15,8 @@ import {
   QueueStatus,
   PatientVisit,
   VisitStatus,
-  MasterService
+  MasterService,
+  Staff
 } from "../types/domain";
 import {
   getTodayDateString,
@@ -46,6 +47,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import { useRouter } from "../components/Router";
+import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { TreatmentPicker } from "../components/TreatmentPicker";
 import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
 import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
@@ -68,6 +70,22 @@ const getWeekStart = (date: string) => {
 
 const formatCalendarDate = (date: string, options: Intl.DateTimeFormatOptions) =>
   new Intl.DateTimeFormat("id-ID", { ...options, timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
+
+type BookingReferralStaffOption = Pick<Staff, "id" | "fullName" | "position" | "branchId">;
+
+const isBookingReferralStaffOption = (value: unknown): value is {
+  id: string;
+  full_name: string;
+  position: StaffPosition.BRANCH_ADMIN | StaffPosition.ASSISTANT;
+  branch_id: string | null;
+} => {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.id === "string"
+    && typeof row.full_name === "string"
+    && (row.position === StaffPosition.BRANCH_ADMIN || row.position === StaffPosition.ASSISTANT)
+    && (typeof row.branch_id === "string" || row.branch_id === null);
+};
 
 const getMinutesOfDay = (time: string) => {
   const match = time.match(/^(\d{1,2}):([0-5]\d)/);
@@ -111,6 +129,10 @@ export const BookingManagement: React.FC = () => {
   const [formDate, setFormDate] = useState<string>(getTomorrowDateString());
   const [formTimeSlot, setFormTimeSlot] = useState<string>("");
   const [formReferringStaffId, setFormReferringStaffId] = useState("");
+  const [referringStaffSearch, setReferringStaffSearch] = useState("");
+  const [referralStaffOptions, setReferralStaffOptions] = useState<BookingReferralStaffOption[]>([]);
+  const [referralStaffLoading, setReferralStaffLoading] = useState(false);
+  const [referralStaffError, setReferralStaffError] = useState<string | null>(null);
   const [formNotes, setFormNotes] = useState<string>("");
   const [plannedServices, setPlannedServices] = useState<MasterService[]>([]);
   const [bookingSource, setBookingSource] = useState<BookingSource>(BookingSource.FRONT_DESK);
@@ -172,17 +194,84 @@ export const BookingManagement: React.FC = () => {
   const [bookingCloseFeedback, setBookingCloseFeedback] = useState<{ bookingId: string; message: string } | null>(null);
 
   const effectiveBranchId = currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId : (branchFilter !== "ALL" ? branchFilter : selectedBranchId);
-  const availableReferringStaff = useMemo(
-    () => staff
-      .filter((employee) =>
-        employee.active &&
-        employee.employmentStatus === "ACTIVE" &&
-        employee.branchId === formBranchId &&
-        (employee.position === StaffPosition.BRANCH_ADMIN || employee.position === StaffPosition.ASSISTANT)
-      )
-      .sort((a, b) => a.fullName.localeCompare(b.fullName, "id")),
-    [staff, formBranchId]
-  );
+  const selectedReferringStaff = referralStaffOptions.find((employee) => employee.id === formReferringStaffId);
+  const availableReferringStaff = useMemo(() => {
+    const query = referringStaffSearch.trim().toLocaleLowerCase("id");
+    if (!query || formReferringStaffId) return [];
+    return referralStaffOptions
+      .filter((employee) => {
+        const branchName = branches.find((branch) => isBranchMatch(branch.id, employee.branchId, branches))?.name || "";
+        const positionName = employee.position === StaffPosition.BRANCH_ADMIN ? "admin" : "asisten";
+        return `${employee.fullName} ${positionName} ${branchName}`.toLocaleLowerCase("id").includes(query);
+      })
+      .slice(0, 8);
+  }, [branches, formReferringStaffId, referralStaffOptions, referringStaffSearch]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    const isBookingAdmin = currentUser?.role === UserRole.BRANCH_ADMIN || currentUser?.role === UserRole.SUPER_ADMIN;
+    if (!currentUser || !isBookingAdmin) {
+      setReferralStaffOptions([]);
+      setReferralStaffError(null);
+      setReferralStaffLoading(false);
+      return () => {
+        isCurrent = false;
+      };
+    }
+
+    if (!isSupabaseConfigured) {
+      setReferralStaffOptions(
+        staff
+          .filter((employee) =>
+            employee.active &&
+            employee.employmentStatus === "ACTIVE" &&
+            (employee.position === StaffPosition.BRANCH_ADMIN || employee.position === StaffPosition.ASSISTANT)
+          )
+          .map(({ id, fullName, position, branchId }) => ({ id, fullName, position, branchId }))
+          .sort((a, b) => a.fullName.localeCompare(b.fullName, "id"))
+      );
+      setReferralStaffError(null);
+      setReferralStaffLoading(false);
+      return () => {
+        isCurrent = false;
+      };
+    }
+
+    setReferralStaffLoading(true);
+    setReferralStaffError(null);
+    setReferralStaffOptions([]);
+    void (async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_booking_referral_staff");
+        if (error) throw new Error(error.message);
+        if (!Array.isArray(data) || !data.every(isBookingReferralStaffOption)) {
+          throw new Error("Format daftar staf referral dari server tidak valid.");
+        }
+        if (!isCurrent) return;
+        setReferralStaffOptions(
+          data
+            .map((row) => ({
+              id: row.id,
+              fullName: row.full_name,
+              position: row.position,
+              branchId: row.branch_id
+            }))
+            .sort((a, b) => a.fullName.localeCompare(b.fullName, "id"))
+        );
+      } catch (error: unknown) {
+        if (!isCurrent) return;
+        const message = error instanceof Error ? error.message : String(error);
+        setReferralStaffOptions([]);
+        setReferralStaffError(`Gagal memuat pilihan referral semua cabang: ${message}`);
+      } finally {
+        if (isCurrent) setReferralStaffLoading(false);
+      }
+    })();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [currentUser?.id, currentUser?.role, staff]);
   const patientProfileForDetail = selectedBooking
     ? patients.find((patient) => patient.id === selectedBooking.patientId)
     : undefined;
@@ -319,6 +408,7 @@ export const BookingManagement: React.FC = () => {
     setFormDoctorId("");
     setFormTimeSlot("");
     setFormReferringStaffId("");
+    setReferringStaffSearch("");
     setSelectedPatient(patient || null);
     setPatientSearch("");
     setShowNewPatientForm(false);
@@ -883,6 +973,7 @@ export const BookingManagement: React.FC = () => {
         setPatientSearch("");
         setFormNotes("");
         setFormReferringStaffId("");
+        setReferringStaffSearch("");
         setPlannedServices([]);
         setBookingSource(BookingSource.FRONT_DESK);
         setFormSuccess(null);
@@ -1237,6 +1328,7 @@ export const BookingManagement: React.FC = () => {
   const handleOpenNewBooking = (date = getTomorrowDateString()) => {
     setFormDate(date);
     setFormReferringStaffId("");
+    setReferringStaffSearch("");
     setSelectedPatient(null);
     setPatientSearch("");
     setShowNewPatientForm(false);
@@ -2324,24 +2416,72 @@ export const BookingManagement: React.FC = () => {
               </div>
 
               <div>
-                <label htmlFor="select-booking-referring-staff" className="block text-xs font-bold text-slate-700 mb-1">
-                  Referral / staf pengajak (opsional)
+                <label htmlFor="search-booking-referring-staff" className="block text-xs font-bold text-slate-700 mb-1">
+                  Referral (opsional)
                 </label>
-                <select
-                  id="select-booking-referring-staff"
-                  value={formReferringStaffId}
-                  onChange={(event) => setFormReferringStaffId(event.target.value)}
-                  className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium"
-                >
-                  <option value="">Tidak ada / belum dicatat</option>
-                  {availableReferringStaff.map((employee) => (
-                    <option key={employee.id} value={employee.id}>
-                      {employee.position === StaffPosition.BRANCH_ADMIN ? "Admin" : "Asisten"} · {employee.fullName}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="search-booking-referring-staff"
+                    type="text"
+                    value={selectedReferringStaff?.fullName || referringStaffSearch}
+                    onChange={(event) => {
+                      setFormReferringStaffId("");
+                      setReferringStaffSearch(event.target.value);
+                    }}
+                    placeholder="Cari nama admin/asisten dari semua cabang"
+                    autoComplete="off"
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-20 text-xs font-medium"
+                  />
+                  {formReferringStaffId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormReferringStaffId("");
+                        setReferringStaffSearch("");
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-slate-200"
+                    >
+                      Hapus pilihan
+                    </button>
+                  )}
+                  {availableReferringStaff.length > 0 && (
+                    <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                      {availableReferringStaff.map((employee) => (
+                        <button
+                          key={employee.id}
+                          type="button"
+                          onClick={() => {
+                            setFormReferringStaffId(employee.id);
+                            setReferringStaffSearch(employee.fullName);
+                          }}
+                          className="flex w-full items-start justify-between gap-3 rounded-md px-2.5 py-2 text-left hover:bg-violet-50"
+                        >
+                          <span className="text-xs font-semibold text-slate-800">{employee.fullName}</span>
+                          <span className="shrink-0 text-[10px] text-slate-500">
+                            {employee.position === StaffPosition.BRANCH_ADMIN ? "Admin" : "Asisten"}
+                            {" · "}
+                            {branches.find((branch) => isBranchMatch(branch.id, employee.branchId, branches))?.name || (employee.branchId ? employee.branchId : "Cabang belum ditetapkan")}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {selectedReferringStaff && (
+                  <p className="mt-1 text-[10px] font-medium text-violet-700">
+                    {selectedReferringStaff.position === StaffPosition.BRANCH_ADMIN ? "Admin" : "Asisten"}
+                    {" · "}
+                    {branches.find((branch) => isBranchMatch(branch.id, selectedReferringStaff.branchId, branches))?.name || (selectedReferringStaff.branchId ? selectedReferringStaff.branchId : "Cabang belum ditetapkan")}
+                  </p>
+                )}
+                {referralStaffLoading && <p className="mt-1 text-[10px] text-slate-500">Memuat daftar referral semua cabang...</p>}
+                {referralStaffError && <p role="alert" className="mt-1 text-[10px] text-rose-700">{referralStaffError}</p>}
+                {!referralStaffLoading && referringStaffSearch.trim() && !formReferringStaffId && availableReferringStaff.length === 0 && (
+                  <p className="mt-1 text-[10px] text-slate-500">Tidak ada admin atau asisten aktif yang cocok.</p>
+                )}
                 <p className="mt-1 text-[10px] text-slate-500">
-                  Pilih admin atau asisten cabang yang mengajak pasien untuk kunjungan ini. Insentif Rp3.000 dicatat satu kali setelah tindakan selesai dan invoice lunas.
+                  Cari admin atau asisten aktif dari cabang mana pun. Insentif Rp3.000 dicatat satu kali setelah tindakan selesai dan invoice lunas.
                 </p>
               </div>
 
@@ -2358,7 +2498,6 @@ export const BookingManagement: React.FC = () => {
                     })()}
                     onChange={(e) => {
                       setFormBranchId(e.target.value);
-                      setFormReferringStaffId("");
                     }}
                     disabled={currentUser?.role === UserRole.BRANCH_ADMIN}
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium disabled:opacity-75"
@@ -2819,9 +2958,19 @@ export const BookingManagement: React.FC = () => {
               </section>
               {selectedBooking.referringStaffId && (
                 <section className="rounded-2xl border border-violet-200 bg-violet-50/60 p-3.5">
-                  <h3 className="text-[10px] font-bold uppercase tracking-wide text-violet-700">Referral / staf pengajak</h3>
+                  <h3 className="text-[10px] font-bold uppercase tracking-wide text-violet-700">Referral</h3>
                   <p className="mt-1.5 text-xs font-semibold text-slate-700">
-                    {staff.find((employee) => employee.id === selectedBooking.referringStaffId)?.fullName || "Staf tidak ditemukan"}
+                    {referralStaffOptions.find((employee) => employee.id === selectedBooking.referringStaffId)?.fullName
+                      || staff.find((employee) => employee.id === selectedBooking.referringStaffId)?.fullName
+                      || "Staf tidak ditemukan"}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-slate-500">
+                    {(() => {
+                      const referralStaff = referralStaffOptions.find((employee) => employee.id === selectedBooking.referringStaffId);
+                      return referralStaff
+                        ? branches.find((branch) => isBranchMatch(branch.id, referralStaff.branchId, branches))?.name || (referralStaff.branchId || "Cabang belum ditetapkan")
+                        : "";
+                    })()}
                   </p>
                 </section>
               )}

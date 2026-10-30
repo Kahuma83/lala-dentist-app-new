@@ -664,12 +664,11 @@ app.post('/api/bookings', async (req, res) => {
       }
       if (
         !referringStaff ||
-        referringStaff.branch_id !== payload.branch_id ||
         !['BRANCH_ADMIN', 'ASSISTANT'].includes(referringStaff.position) ||
         referringStaff.employment_status !== 'ACTIVE' ||
         referringStaff.active !== true
       ) {
-        return res.status(400).json({ message: 'Staf referral harus admin atau asisten aktif pada cabang booking.' });
+        return res.status(400).json({ message: 'Staf referral harus admin atau asisten aktif.' });
       }
     }
 

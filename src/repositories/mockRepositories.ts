@@ -2218,13 +2218,12 @@ export class MockBookingRepository implements BookingRepository {
     if (bookingData.referringStaffId) {
       const referringStaff = db.staff.find((staff) =>
         staff.id === bookingData.referringStaffId &&
-        staff.branchId === bookingData.branchId &&
         staff.active &&
         staff.employmentStatus === "ACTIVE" &&
         (staff.position === StaffPosition.BRANCH_ADMIN || staff.position === StaffPosition.ASSISTANT)
       );
       if (!referringStaff) {
-        throw new Error("Staf referral harus admin atau asisten aktif pada cabang booking.");
+        throw new Error("Staf referral harus admin atau asisten aktif.");
       }
     }
 

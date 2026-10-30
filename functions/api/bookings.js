@@ -190,12 +190,11 @@ export const onRequestPost = async ({ request, env }) => {
       const referringStaff = Array.isArray(referringStaffRows) ? referringStaffRows[0] : null;
       if (
         !referringStaff ||
-        referringStaff.branch_id !== payload.branch_id ||
         !["BRANCH_ADMIN", "ASSISTANT"].includes(referringStaff.position) ||
         referringStaff.employment_status !== "ACTIVE" ||
         referringStaff.active !== true
       ) {
-        return jsonResponse({ message: "Staf referral harus admin atau asisten aktif pada cabang booking." }, 400);
+        return jsonResponse({ message: "Staf referral harus admin atau asisten aktif." }, 400);
       }
     }
 

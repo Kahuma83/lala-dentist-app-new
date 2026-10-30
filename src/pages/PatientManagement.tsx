@@ -2103,7 +2103,7 @@ export const PatientManagement: React.FC = () => {
                       ))}
                   </select>
                   <p className="text-[10px] text-slate-500 mt-1">
-                    Untuk insentif referral per kunjungan, pilih staf pengajak pada formulir booking.
+                    Untuk insentif referral per kunjungan, pilih nama referral pada formulir booking.
                   </p>
                 </div>
 
