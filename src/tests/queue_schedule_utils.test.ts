@@ -90,6 +90,81 @@ describe("calculateQueueEstimates", () => {
     expect(estimatedBooking.estimatedServiceAt).toBe("2026-10-15T02:00:00.000Z");
   });
 
+  it("orders checked-in booking patients by appointment time instead of check-in time", () => {
+    const laterBooking = booking({
+      id: "booking-later",
+      bookingDateTime: "2026-10-15T09:30:00+07:00"
+    });
+    const earlierBooking = booking({
+      id: "booking-earlier",
+      bookingDateTime: "2026-10-15T09:00:00+07:00"
+    });
+    const laterAppointmentQueue = queueItem({
+      id: "queue-later-booking",
+      bookingId: laterBooking.id,
+      arrivalAt: "2026-10-15T08:30:00+07:00",
+      estimatedDurationMinutes: 30
+    });
+    const earlierAppointmentQueue = queueItem({
+      id: "queue-earlier-booking",
+      bookingId: earlierBooking.id,
+      arrivalAt: "2026-10-15T08:45:00+07:00",
+      estimatedDurationMinutes: 30
+    });
+    const walkIn = queueItem({
+      id: "queue-walk-in",
+      bookingId: null,
+      arrivalAt: "2026-10-15T08:50:00+07:00",
+      estimatedDurationMinutes: 60
+    });
+
+    const estimateById = new Map(
+      calculateQueueEstimates(
+        [laterAppointmentQueue, walkIn, earlierAppointmentQueue],
+        [laterBooking, earlierBooking],
+        referenceTime,
+        operationalDate
+      ).map((item) => [item.id, item])
+    );
+
+    expect(estimateById.get(earlierAppointmentQueue.id)?.estimatedServiceAt)
+      .toBe("2026-10-15T02:00:00.000Z");
+    expect(estimateById.get(laterAppointmentQueue.id)?.estimatedServiceAt)
+      .toBe("2026-10-15T02:30:00.000Z");
+    expect(estimateById.get(walkIn.id)?.estimatedServiceAt)
+      .toBe("2026-10-15T03:00:00.000Z");
+  });
+
+  it("places a walk-in in a gap when its estimated duration fits before the next booking", () => {
+    const appointment = booking({
+      bookingDateTime: "2026-10-15T09:30:00+07:00"
+    });
+    const bookedQueueItem = queueItem({
+      id: "queue-booking",
+      bookingId: appointment.id,
+      arrivalAt: "2026-10-15T08:45:00+07:00",
+      estimatedDurationMinutes: 30
+    });
+    const walkIn = queueItem({
+      id: "queue-walk-in",
+      bookingId: null,
+      arrivalAt: referenceTime,
+      estimatedDurationMinutes: 30
+    });
+
+    const estimates = calculateQueueEstimates(
+      [bookedQueueItem, walkIn],
+      [appointment],
+      referenceTime,
+      operationalDate
+    );
+
+    expect(estimates[0].id).toBe(walkIn.id);
+    expect(estimates[0].estimatedServiceAt).toBe("2026-10-15T01:30:00.000Z");
+    expect(estimates[1].id).toBe(bookedQueueItem.id);
+    expect(estimates[1].estimatedServiceAt).toBe("2026-10-15T02:30:00.000Z");
+  });
+
   it("does not estimate waiting patients before now when consultation exceeds its planned duration", () => {
     const currentPatient = queueItem({
       id: "queue-consulting",

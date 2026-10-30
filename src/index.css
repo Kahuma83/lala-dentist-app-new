@@ -39,6 +39,15 @@
   background: linear-gradient(135deg, #fbf9f4 0%, #ebd4a8 50%, #faf6ec 100%) !important;
 }
 
+.bg-gold-card-textured {
+  background-color: var(--color-gold-light);
+  background-image:
+    radial-gradient(rgba(145, 107, 28, 0.13) 0.8px, transparent 0.8px),
+    linear-gradient(118deg, rgba(255, 255, 255, 0.62), transparent 38%, rgba(197, 160, 89, 0.1) 72%, rgba(255, 255, 255, 0.35)),
+    linear-gradient(135deg, #fbf9f4 0%, #ebd4a8 50%, #faf6ec 100%);
+  background-size: 14px 14px, cover, cover;
+}
+
 .bg-gold-btn {
   background: linear-gradient(135deg, #c5a059 0%, #aa853a 50%, #d9bf8f 100%) !important;
   color: #ffffff !important;
@@ -547,6 +556,8 @@
   #receipt-printable-document *,
   #payslip-printable-document,
   #payslip-printable-document *,
+  #doctor-clinical-document,
+  #doctor-clinical-document *,
   #patient-card-printable,
   #patient-card-printable * {
     visibility: visible !important;
@@ -554,7 +565,8 @@
 
   #invoice-printable-document,
   #receipt-printable-document,
-  #payslip-printable-document {
+  #payslip-printable-document,
+  #doctor-clinical-document {
     position: absolute !important;
     top: 0 !important;
     left: 0 !important;

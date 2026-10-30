@@ -9,13 +9,14 @@ import {
   Lock,
   ArrowLeft,
   CheckCircle2,
-  ShieldCheck
+  ShieldCheck,
+  PlayCircle
 } from "lucide-react";
 import { UserRole, CurrentUser } from "../types/domain";
 import { LalaLogo } from "../components/common/LalaLogo";
 import { AuthService } from "../services/authService";
 import { isSupabaseConfigured } from "../lib/supabase";
-import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
+import { isFullAppDemoEnabled, isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 
 export const Login: React.FC = () => {
   const { setCurrentUser, branding, configRepo, setBranding } = useApp();
@@ -203,6 +204,26 @@ export const Login: React.FC = () => {
           <p className="text-xs text-slate-400 mt-1.5">
             Portal Masuk Resmi Sistem Manajemen &amp; Operasional Klinik
           </p>
+          {!isFullAppDemoEnabled && (
+            <button
+              type="button"
+              onClick={() => window.location.assign("/demo")}
+              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-800 hover:bg-teal-100"
+            >
+              <PlayCircle className="h-4 w-4" />
+              Coba Demo Semua Alur Aplikasi
+            </button>
+          )}
+          {isFullAppDemoEnabled && (
+            <button
+              type="button"
+              onClick={() => window.location.assign("/login")}
+              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Kembali ke Login Resmi
+            </button>
+          )}
         </div>
 
         {/* EMAIL & PASSWORD AUTH FORM */}

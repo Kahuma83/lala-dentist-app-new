@@ -19,7 +19,7 @@ export interface TreatmentPickerProps {
   branchId?: string | null;
   multiSelect?: boolean;
   selectedServiceIds?: string[];
-  onSelectServices?: (services: MasterService[]) => void;
+  onSelectServices?: (services: MasterService[], effectivePrices?: Record<string, number>) => void;
   readOnly?: boolean;
 }
 
@@ -63,6 +63,7 @@ export const TreatmentPicker: React.FC<TreatmentPickerProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [branchTariffs, setBranchTariffs] = useState<BranchServiceTariff[]>([]);
   const [loadingTariffs, setLoadingTariffs] = useState<boolean>(false);
+  const [tariffLoadError, setTariffLoadError] = useState<string | null>(null);
 
   // Effective branch for tariff lookup (Branch Admin must use their assignedBranchId)
   const effectiveBranch = branchId || currentUser?.assignedBranchId || selectedBranchId || "branch-gebang";
@@ -73,11 +74,15 @@ export const TreatmentPicker: React.FC<TreatmentPickerProps> = ({
     const loadTariffs = async () => {
       if (!effectiveBranch) return;
       setLoadingTariffs(true);
+      setTariffLoadError(null);
       try {
         const tariffs = await repos.config.getBranchTariffs(effectiveBranch);
         if (isMounted) setBranchTariffs(tariffs);
       } catch (err) {
-        console.warn("Gagal memuat tarif cabang:", err);
+        if (isMounted) {
+          setBranchTariffs([]);
+          setTariffLoadError(err instanceof Error ? err.message : "Gagal memuat tarif cabang.");
+        }
       } finally {
         if (isMounted) setLoadingTariffs(false);
       }
@@ -138,7 +143,7 @@ export const TreatmentPicker: React.FC<TreatmentPickerProps> = ({
   }, []);
 
   const handleCardClick = (service: MasterService) => {
-    if (readOnly) return;
+    if (readOnly || loadingTariffs || tariffLoadError) return;
     const tariffInfo = getTariffInfo(service);
 
     if (multiSelect) {
@@ -151,7 +156,13 @@ export const TreatmentPicker: React.FC<TreatmentPickerProps> = ({
         const currentSelected = services.filter((s) => selectedServiceIds.includes(s.id));
         updated = [...currentSelected, service];
       }
-      onSelectServices(updated);
+      onSelectServices(
+        updated,
+        Object.fromEntries(updated.map((selectedService) => [
+          selectedService.id,
+          getTariffInfo(selectedService).price
+        ]))
+      );
     } else {
       if (onSelectService) {
         onSelectService(service, tariffInfo.price);
@@ -207,7 +218,15 @@ export const TreatmentPicker: React.FC<TreatmentPickerProps> = ({
 
       {/* Service List Grid - Touch Friendly */}
       <div className="max-h-72 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
-        {filteredServices.length === 0 ? (
+        {loadingTariffs ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-xs font-medium text-amber-800">
+            Memuat tarif cabang sebelum memilih tindakan...
+          </div>
+        ) : tariffLoadError ? (
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-center text-xs font-medium text-red-700">
+            {tariffLoadError}
+          </div>
+        ) : filteredServices.length === 0 ? (
           <div className="p-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
             <Stethoscope className="w-8 h-8 text-slate-300 mx-auto mb-2" />
             <p className="text-xs font-semibold text-slate-600">Tidak ada jenis tindakan yang sesuai</p>

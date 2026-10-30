@@ -633,15 +633,15 @@ export const BookingManagement: React.FC = () => {
     const medicalRecordNumber = newPatientForm.medicalRecordNumber.trim();
     const phone = newPatientForm.phone.trim();
     const documentNumber = newPatientForm.identityDocumentNumber.trim().replace(/\s/g, "");
-    if (!fullName || !documentNumber || !newPatientForm.placeOfBirth.trim() || !newPatientForm.dateOfBirth || !newPatientForm.gender) {
-      setFormError("Nama, identitas (NIK/paspor), tempat/tanggal lahir, dan jenis kelamin wajib diisi.");
+    if (!fullName || !newPatientForm.placeOfBirth.trim() || !newPatientForm.dateOfBirth || !newPatientForm.gender) {
+      setFormError("Nama, tempat/tanggal lahir, dan jenis kelamin wajib diisi.");
       return;
     }
-    if (newPatientForm.identityDocumentType === "NIK" && !/^\d{16}$/.test(documentNumber)) {
+    if (documentNumber && newPatientForm.identityDocumentType === "NIK" && !/^\d{16}$/.test(documentNumber)) {
       setFormError("NIK harus terdiri dari 16 digit angka.");
       return;
     }
-    if (newPatientForm.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(documentNumber)) {
+    if (documentNumber && newPatientForm.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(documentNumber)) {
       setFormError("Nomor paspor harus terdiri dari 6–20 huruf atau angka.");
       return;
     }
@@ -656,10 +656,10 @@ export const BookingManagement: React.FC = () => {
       );
       const matchingPatients = duplicates.byPhone
         .filter((patient, index, all) => all.findIndex((item) => item.id === patient.id) === index);
-      const existingIdentity = patients.find((patient) =>
+      const existingIdentity = documentNumber ? patients.find((patient) =>
         patient.identityDocumentType === newPatientForm.identityDocumentType &&
         patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === documentNumber.toLowerCase()
-      );
+      ) : undefined;
       if (matchingPatients.length > 0 || existingIdentity) {
         if (existingIdentity) {
           setFormError("Nomor identitas ini sudah terdaftar. Pilih profil pasien yang sudah ada agar tidak membuat data ganda.");
@@ -681,8 +681,10 @@ export const BookingManagement: React.FC = () => {
           medicalRecordNumber: medicalRecordNumber || undefined,
           phone,
           email: "",
-          identityDocumentType: newPatientForm.identityDocumentType,
-          identityDocumentNumber: documentNumber,
+          ...(documentNumber ? {
+            identityDocumentType: newPatientForm.identityDocumentType,
+            identityDocumentNumber: documentNumber
+          } : {}),
           placeOfBirth: newPatientForm.placeOfBirth.trim(),
           dateOfBirth: newPatientForm.dateOfBirth,
           gender: newPatientForm.gender,
@@ -762,15 +764,15 @@ export const BookingManagement: React.FC = () => {
     setPatientEditError(null);
     if (!selectedBooking) return;
     const documentNumber = patientEditDraft.identityDocumentNumber.trim().replace(/\s/g, "");
-    if (!patientEditDraft.fullName.trim() || !documentNumber || !patientEditDraft.placeOfBirth.trim() || !patientEditDraft.dateOfBirth) {
-      setPatientEditError("Nama, identitas (NIK/paspor), tempat dan tanggal lahir wajib diisi.");
+    if (!patientEditDraft.fullName.trim() || !patientEditDraft.placeOfBirth.trim() || !patientEditDraft.dateOfBirth) {
+      setPatientEditError("Nama, tempat dan tanggal lahir wajib diisi.");
       return;
     }
-    if (patientEditDraft.identityDocumentType === "NIK" && !/^\d{16}$/.test(documentNumber)) {
+    if (documentNumber && patientEditDraft.identityDocumentType === "NIK" && !/^\d{16}$/.test(documentNumber)) {
       setPatientEditError("NIK harus terdiri dari 16 digit angka.");
       return;
     }
-    if (patientEditDraft.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(documentNumber)) {
+    if (documentNumber && patientEditDraft.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(documentNumber)) {
       setPatientEditError("Nomor paspor harus terdiri dari 6–20 huruf atau angka.");
       return;
     }
@@ -797,8 +799,10 @@ export const BookingManagement: React.FC = () => {
           name: patientEditDraft.fullName.trim(),
           fullName: patientEditDraft.fullName.trim(),
           phone: patientEditDraft.phone.trim(),
-          identityDocumentType: patientEditDraft.identityDocumentType,
-          identityDocumentNumber: documentNumber,
+          ...(documentNumber ? {
+            identityDocumentType: patientEditDraft.identityDocumentType,
+            identityDocumentNumber: documentNumber
+          } : {}),
           placeOfBirth: patientEditDraft.placeOfBirth.trim(),
           dateOfBirth: patientEditDraft.dateOfBirth,
           gender: patientEditDraft.gender,
@@ -2235,7 +2239,7 @@ export const BookingManagement: React.FC = () => {
                       <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/60 space-y-3">
                         <div>
                           <p className="text-[11px] font-bold text-emerald-900">Identitas utama pasien</p>
-                          <p className="mt-0.5 text-[10px] text-slate-500">Data kontak dan sosial bersifat opsional.</p>
+                          <p className="mt-0.5 text-[10px] text-slate-500">NIK/paspor dapat dilengkapi pada kunjungan berikutnya. Data kontak dan sosial juga opsional.</p>
                         </div>
                         <input
                           type="text"
@@ -2277,9 +2281,8 @@ export const BookingManagement: React.FC = () => {
                             maxLength={newPatientForm.identityDocumentType === "NIK" ? 16 : 20}
                             value={newPatientForm.identityDocumentNumber}
                             onChange={(event) => setNewPatientForm((form) => ({ ...form, identityDocumentNumber: event.target.value.replace(/\s/g, "") }))}
-                            placeholder={newPatientForm.identityDocumentType === "NIK" ? "16 digit NIK *" : "Nomor paspor *"}
+                            placeholder={newPatientForm.identityDocumentType === "NIK" ? "16 digit NIK (opsional)" : "Nomor paspor (opsional)"}
                             className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5"
-                            required
                           />
                         </div>
                         <div className="grid grid-cols-2 gap-2">
@@ -2387,7 +2390,7 @@ export const BookingManagement: React.FC = () => {
                         <button
                           type="button"
                           onClick={handleCreatePatientForSchedule}
-                          disabled={isCreatingPatient || !newPatientForm.fullName.trim() || !newPatientForm.identityDocumentNumber.trim() || !newPatientForm.placeOfBirth.trim() || !newPatientForm.dateOfBirth || !newPatientForm.gender}
+                          disabled={isCreatingPatient || !newPatientForm.fullName.trim() || !newPatientForm.placeOfBirth.trim() || !newPatientForm.dateOfBirth || !newPatientForm.gender}
                           className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-[11px] font-bold disabled:opacity-50"
                         >
                           {isCreatingPatient ? "Menyimpan pasien..." : "Simpan & Pilih Pasien"}
@@ -2806,9 +2809,8 @@ export const BookingManagement: React.FC = () => {
                             maxLength={patientEditDraft.identityDocumentType === "NIK" ? 16 : 20}
                             value={patientEditDraft.identityDocumentNumber}
                             onChange={(event) => setPatientEditDraft((draft) => ({ ...draft, identityDocumentNumber: event.target.value.replace(/\s/g, "") }))}
-                            placeholder={patientEditDraft.identityDocumentType === "NIK" ? "NIK 16 digit *" : "Nomor paspor *"}
+                            placeholder={patientEditDraft.identityDocumentType === "NIK" ? "NIK 16 digit (opsional)" : "Nomor paspor (opsional)"}
                             aria-label="Nomor identitas pasien"
-                            required
                             className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
                           />
                         </div>

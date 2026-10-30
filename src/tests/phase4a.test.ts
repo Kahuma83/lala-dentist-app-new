@@ -1,14 +1,16 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { MockDatabase } from "../data/mockData";
 import {
   MockVisitRepository,
-  MockTreatmentRepository
+  MockTreatmentRepository,
+  MockTreatmentActivityRepository
 } from "../repositories/mockRepositories";
 import {
   UserRole,
   VisitType,
   VisitStatus,
-  TreatmentJobStatus
+  TreatmentJobStatus,
+  TreatmentActivityType
 } from "../types/domain";
 import { AppClock } from "../utils/clock";
 
@@ -23,6 +25,10 @@ describe("Lala Dentist Web Admin - Phase 4A Treatment Core Tests", () => {
 
     visitRepo = new MockVisitRepository();
     treatmentRepo = new MockTreatmentRepository();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   // ==========================================
@@ -54,7 +60,7 @@ describe("Lala Dentist Web Admin - Phase 4A Treatment Core Tests", () => {
     expect(treatment.status).toBe(TreatmentJobStatus.BELUM_DIMULAI);
   });
 
-  it("uses the doctor's adjusted price snapshot when creating a treatment", async () => {
+  it("uses the official branch tariff when creating a treatment", async () => {
     const visit = await visitRepo.createVisit({
       patientId: "patient-1",
       branchId: "branch-gebang",
@@ -63,22 +69,22 @@ describe("Lala Dentist Web Admin - Phase 4A Treatment Core Tests", () => {
       doctorId: "doc-syafira"
     });
 
-    const treatment = await treatmentRepo.createTreatmentJob(
-      {
-        visitId: visit.id,
-        serviceId: "service-scaling",
-        doctorId: "doc-syafira",
-        priceSnapshot: 225000
-      },
-      UserRole.DOCTOR,
-      "branch-gebang",
-      "doc-syafira"
-    );
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira",
+      patientApprovalConfirmed: true
+    }, UserRole.DOCTOR, "branch-gebang", "doc-syafira");
 
-    expect(treatment.priceSnapshot).toBe(225000);
+    const officialTariff = MockDatabase.getInstance().tariffs.find(
+      (tariff) => tariff.branchId === visit.branchId && tariff.serviceId === "service-scaling" && tariff.isActive
+    );
+    expect(treatment.priceSnapshot).toBe(officialTariff?.customPrice ?? MockDatabase.getInstance().services.find((service) => service.id === "service-scaling")?.basePrice);
+    expect(treatment.patientApprovalMethod).toBe("VERBAL");
+    expect(treatment.patientApprovedBy).toBe("doc-syafira");
   });
 
-  it("does not allow non-doctors to override treatment prices", async () => {
+  it("allows the assigned doctor to adjust the treatment price and records an audit activity", async () => {
     const visit = await visitRepo.createVisit({
       patientId: "patient-1",
       branchId: "branch-gebang",
@@ -93,12 +99,170 @@ describe("Lala Dentist Web Admin - Phase 4A Treatment Core Tests", () => {
           visitId: visit.id,
           serviceId: "service-scaling",
           doctorId: "doc-syafira",
-          priceSnapshot: 1
+          priceSnapshot: 175_000,
+          patientApprovalConfirmed: true
         },
-        UserRole.DOCTOR_ASSISTANT,
-        "branch-gebang"
+        UserRole.DOCTOR,
+        "branch-gebang",
+        "user-drg-syafira"
       )
-    ).rejects.toThrow("Hanya dokter yang dapat menyesuaikan harga tindakan.");
+    ).resolves.toMatchObject({ priceSnapshot: 175_000 });
+
+    const treatment = MockDatabase.getInstance().treatmentJobs.at(-1);
+    if (!treatment) throw new Error("Treatment price adjustment fixture was not created");
+    const activities = await new MockTreatmentActivityRepository().listActivitiesByTreatment(treatment.id);
+    expect(activities.some((activity) =>
+      activity.activityType === TreatmentActivityType.OTHER
+      && activity.notes?.includes("175.000")
+    )).toBe(true);
+  });
+
+  it("does not allow an assistant to override a treatment price", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+
+    await expect(treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira",
+      priceSnapshot: 1
+    }, UserRole.DOCTOR_ASSISTANT, "branch-gebang", "assistant-clary"))
+      .rejects.toThrow("Hanya dokter yang dapat menyesuaikan harga tindakan");
+  });
+
+  it("cancels only an unstarted plan and records the reason", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+
+    const cancelled = await treatmentRepo.cancelTreatmentJob(
+      treatment.id,
+      "Pasien memilih menunda tindakan",
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira"
+    );
+
+    expect(cancelled.status).toBe(TreatmentJobStatus.DIBATALKAN);
+    expect(cancelled.cancellationReason).toBe("Pasien memilih menunda tindakan");
+    const activities = await new MockTreatmentActivityRepository().listActivitiesByTreatment(cancelled.id);
+    expect(activities.at(-1)?.activityType).toBe(TreatmentActivityType.CANCELLED);
+  });
+
+  it("requires explicit confirmation to cancel an in-progress item", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+    await treatmentRepo.startTreatmentJob(treatment.id);
+
+    await expect(treatmentRepo.cancelTreatmentJob(
+      treatment.id,
+      "Pasien menunda item ini",
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira"
+    )).rejects.toThrow("Konfirmasi bahwa tindakan belum dikerjakan");
+  });
+
+  it("cancels an in-progress item only when it has no recorded material usage", async () => {
+    const inventoryStorage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => inventoryStorage.get(key) ?? null,
+      setItem: (key: string, value: string) => inventoryStorage.set(key, value)
+    });
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+    await treatmentRepo.startTreatmentJob(treatment.id);
+
+    await expect(treatmentRepo.cancelTreatmentJob(
+      treatment.id,
+      "Item ini tidak jadi dikerjakan",
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira",
+      undefined,
+      true
+    )).resolves.toMatchObject({ status: TreatmentJobStatus.DIBATALKAN });
+
+    const clinicallyProgressedTreatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+    await treatmentRepo.startTreatmentJob(clinicallyProgressedTreatment.id);
+    await new MockTreatmentActivityRepository().addActivity({
+      treatmentId: clinicallyProgressedTreatment.id,
+      actorId: "doc-syafira",
+      actorRole: UserRole.DOCTOR,
+      actorNameSnapshot: "dr. Syafira",
+      activityType: TreatmentActivityType.PROGRESS,
+      notes: "Tindakan sudah dikerjakan"
+    });
+
+    await expect(treatmentRepo.cancelTreatmentJob(
+      clinicallyProgressedTreatment.id,
+      "Item ini tidak jadi dikerjakan",
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira",
+      undefined,
+      true
+    )).rejects.toThrow("aktivitas tindakan selain mulai sudah tercatat");
+
+    const usedTreatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+    await treatmentRepo.startTreatmentJob(usedTreatment.id);
+    inventoryStorage.set("lala-dentist-inventory-v1", JSON.stringify({
+      items: [],
+      movements: [],
+      consumedTreatmentIds: [usedTreatment.id]
+    }));
+
+    await expect(treatmentRepo.cancelTreatmentJob(
+      usedTreatment.id,
+      "Item ini tidak jadi dikerjakan",
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira",
+      undefined,
+      true
+    )).rejects.toThrow("pemakaian bahan sudah tercatat");
   });
 
   it("2. Visit wajib valid (non-existent visit ID rejected)", async () => {
@@ -359,6 +523,28 @@ describe("Lala Dentist Web Admin - Phase 4A Treatment Core Tests", () => {
     const started = await treatmentRepo.startTreatmentJob(t.id);
     expect(started.status).toBe(TreatmentJobStatus.DALAM_PROSES);
     expect(started.startedAt).toBeDefined();
+  });
+
+  it("allows the assigned doctor to start treatment using the linked doctor ID", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+
+    await expect(treatmentRepo.startTreatmentJob(
+      treatment.id,
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira"
+    )).resolves.toMatchObject({ status: TreatmentJobStatus.DALAM_PROSES });
   });
 
   it("15. DALAM_PROSES -> SELESAI", async () => {

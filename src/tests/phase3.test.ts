@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { MockDatabase } from "../data/mockData";
+import { MOCK_QUEUE_ITEMS, MOCK_TREATMENT_JOBS, MOCK_VISITS, MockDatabase } from "../data/mockData";
 import {
   MockPatientRepository,
   MockBranchRepository,
@@ -35,6 +35,21 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
   // ==========================================
   // 1. CLOCK ABSTRACTION & INITIALIZATION
   // ==========================================
+  it("keeps the demo waiting queue and completed treatment on separate Budi visits", () => {
+    const waitingQueue = MOCK_QUEUE_ITEMS.find((item) => item.id === "queue-2");
+    const waitingVisit = MOCK_VISITS.find((visit) => visit.id === waitingQueue?.visitId);
+    const completedTreatment = MOCK_TREATMENT_JOBS.find((item) => item.id === "treatment-job-3");
+    const completedVisit = MOCK_VISITS.find((visit) => visit.id === completedTreatment?.visitId);
+
+    expect(waitingQueue?.status).toBe(QueueStatus.WAITING);
+    expect(waitingVisit?.patientId).toBe(waitingQueue?.patientId);
+    expect(waitingVisit?.patientId).toBe("patient-2");
+    expect(completedTreatment?.status).toBe(TreatmentJobStatus.SELESAI);
+    expect(completedVisit?.id).toBe("visit-3");
+    expect(completedVisit?.patientId).toBe("patient-2");
+    expect(completedVisit?.visitStatus).toBe(VisitStatus.COMPLETED);
+  });
+
   it("1. should fix and retrieve deterministic operational time via AppClock", () => {
     AppClock.setFixedTime("2026-09-21T08:30:00Z");
     expect(AppClock.nowISO()).toBe("2026-09-21T08:30:00Z");
@@ -891,6 +906,26 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
     await expect(
       queueRepo.startService(item.id, UserRole.DOCTOR, "branch-gebang", "doc-syafira")
     ).rejects.toThrow("Dokter tidak dapat mengelola antrean dokter lain");
+  });
+
+  it("30a. should allow a doctor account to manage its linked doctor's queue", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+
+    const item = await queueRepo.checkInVisitToQueue(visit.id);
+    const preparedItem = await queueRepo.prepareQueuePatient(
+      item.id,
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "user-drg-syafira"
+    );
+
+    expect(preparedItem.status).toBe(QueueStatus.IN_PREPARATION);
   });
 
   it("31. should allow starting next patient after current patient is finished", async () => {

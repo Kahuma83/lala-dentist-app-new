@@ -89,7 +89,7 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     await createPaidInvoiceForTreatment("treatment-job-3");
     const testDb = MockDatabase.getInstance();
     expect(testDb.invoiceItems.some((item) => item.treatmentJobId === "treatment-job-3")).toBe(true);
-    expect(testDb.invoices.some((invoice) => invoice.visitId === "visit-2" && invoice.status === "PAID")).toBe(true);
+    expect(testDb.invoices.some((invoice) => invoice.visitId === "visit-3" && invoice.status === "PAID")).toBe(true);
     const accruals = await compRepo.calculateAndAccrueForTreatment("treatment-job-3");
     expect(accruals.length).toBeGreaterThan(0);
 

@@ -42,7 +42,25 @@ describe("Cashier treatment revision workflow", () => {
     expect(returned.returnReason).toBe("Mohon koreksi ejaan pada catatan tindakan");
     expect(returned.returnedAt).toBeDefined();
     const activities = await activityRepo.listActivitiesByTreatment(returned.id);
-    expect(activities.at(-1)?.activityType).toBe(TreatmentActivityType.RETURNED_TO_DOCTOR);
+    expect(activities.some((activity) =>
+      activity.activityType === TreatmentActivityType.RETURNED_TO_DOCTOR
+    )).toBe(true);
+  });
+
+  it("cashier can return a completed treatment directly before creating an invoice", async () => {
+    const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-3");
+    if (!treatment) throw new Error("Revision test treatment fixture is missing");
+    treatment.status = TreatmentJobStatus.SELESAI;
+
+    const returned = await treatmentRepo.returnTreatmentToDoctor(
+      treatment.id,
+      "Mohon koreksi catatan",
+      UserRole.BRANCH_ADMIN,
+      "branch-gebang",
+      "admin-test"
+    );
+
+    expect(returned.status).toBe(TreatmentJobStatus.PERLU_REVISI);
   });
 
   it("rejects return by non-cashier roles and after an invoice has been issued", async () => {
@@ -90,9 +108,23 @@ describe("Cashier treatment revision workflow", () => {
     await expect(
       treatmentRepo.resubmitTreatmentToCashier(
         "treatment-job-3",
+        "Catatan tindakan dikoreksi",
+        "service-scaling",
+        120_000,
+        false,
+        UserRole.DOCTOR,
+        "branch-gebang",
+        "doc-syafira"
+      )
+    ).rejects.toThrow("Persetujuan lisan pasien atas harga koreksi wajib dicatat");
+
+    await expect(
+      treatmentRepo.resubmitTreatmentToCashier(
+        "treatment-job-3",
         "Catatan diperbaiki",
         "service-scaling",
-        175000,
+        120_000,
+        true,
         UserRole.DOCTOR,
         "branch-gebang",
         "doctor-lain"
@@ -103,20 +135,26 @@ describe("Cashier treatment revision workflow", () => {
       "treatment-job-3",
       "Catatan tindakan telah diperbaiki",
       "service-scaling",
-      175000,
+      120_000,
+      true,
       UserRole.DOCTOR,
       "branch-gebang",
       "doc-syafira",
       { actorId: "doc-syafira", actorRole: UserRole.DOCTOR, actorNameSnapshot: "drg. Syafira" }
     );
 
-    expect(resubmitted.status).toBe(TreatmentJobStatus.DISERAHKAN);
+    expect(resubmitted.status).toBe(TreatmentJobStatus.SELESAI);
     expect(resubmitted.notes).toBe("Catatan tindakan telah diperbaiki");
     expect(resubmitted.serviceId).toBe("service-scaling");
     expect(resubmitted.serviceNameSnapshot).toBe("Scaling");
-    expect(resubmitted.priceSnapshot).toBe(175000);
+    expect(resubmitted.priceSnapshot).toBe(120_000);
+    expect(resubmitted.patientApprovalMethod).toBe("VERBAL");
+    expect(resubmitted.patientApprovedBy).toBe("doc-syafira");
     expect(resubmitted.completedAt).toBe(completedAt);
     const activities = await activityRepo.listActivitiesByTreatment(resubmitted.id);
-    expect(activities.at(-1)?.activityType).toBe(TreatmentActivityType.REVISION_RESUBMITTED);
+    expect(activities.some((activity) =>
+      activity.activityType === TreatmentActivityType.REVISION_RESUBMITTED
+      && activity.notes?.includes("120.000")
+    )).toBe(true);
   });
 });

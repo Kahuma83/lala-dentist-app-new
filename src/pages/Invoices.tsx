@@ -231,9 +231,14 @@ export const Invoices: React.FC = () => {
     }, new Map<string, TreatmentJob[]>()).entries()
   ).filter(([visitId, visitTreatments]) =>
     visitTreatments.length > 0
+    && visitTreatments.some((treatment) =>
+      treatment.status === TreatmentJobStatus.SELESAI
+      || treatment.status === TreatmentJobStatus.DISERAHKAN
+    )
     && visitTreatments.every((treatment) =>
       treatment.status === TreatmentJobStatus.SELESAI
       || treatment.status === TreatmentJobStatus.DISERAHKAN
+      || treatment.status === TreatmentJobStatus.DIBATALKAN
     )
     && !invoices.some((invoice) =>
       invoice.visitId === visitId && invoice.status !== InvoiceStatus.CANCELLED
@@ -243,11 +248,15 @@ export const Invoices: React.FC = () => {
   const handlePrepareTreatmentInvoice = (visitId: string, visitTreatments: TreatmentJob[]) => {
     const isReadyVisit = invoiceReadyVisits.some(([readyVisitId]) => readyVisitId === visitId);
     if (!isReadyVisit || visitTreatments.length === 0) {
-      setTreatmentInvoiceError("Invoice hanya dapat dibuat dari kunjungan dengan tindakan yang sudah selesai atau diserahkan dokter.");
+      setTreatmentInvoiceError("Invoice hanya dapat dibuat setelah seluruh tindakan dalam kunjungan selesai.");
       return;
     }
 
-    const items = visitTreatments.map((treatment) => {
+    const completedTreatments = visitTreatments.filter((treatment) =>
+      treatment.status === TreatmentJobStatus.SELESAI
+      || treatment.status === TreatmentJobStatus.DISERAHKAN
+    );
+    const items = completedTreatments.map((treatment) => {
       const service = services.find((item) => item.id === treatment.serviceId);
       if (!service) return null;
       return {
@@ -264,8 +273,8 @@ export const Invoices: React.FC = () => {
     }
 
     setTreatmentInvoiceError("");
-    setFormPatientId(visitTreatments[0]?.patientId || "");
-    setFormBranchId(visitTreatments[0]?.branchId || formBranchId);
+    setFormPatientId(completedTreatments[0]?.patientId || "");
+    setFormBranchId(completedTreatments[0]?.branchId || formBranchId);
     setFormVisitId(visitId);
     setFormItems(items.filter((item): item is NonNullable<typeof item> => item !== null));
     setFormDiscount(0);
@@ -372,7 +381,7 @@ export const Invoices: React.FC = () => {
     e.preventDefault();
     const readyVisit = invoiceReadyVisits.find(([visitId]) => visitId === formVisitId);
     if (!readyVisit || !formVisitId || readyVisit[1][0]?.patientId !== formPatientId) {
-      setFormError("Kunjungan ini tidak lagi siap ditagihkan. Perbarui data dan pilih tindakan yang sudah selesai atau diserahkan dokter.");
+      setFormError("Kunjungan ini tidak lagi siap ditagihkan. Perbarui data dan pastikan seluruh tindakannya sudah selesai.");
       return;
     }
     if (formItems.length === 0) {
@@ -580,7 +589,7 @@ export const Invoices: React.FC = () => {
           <div>
             <h2 className="text-sm font-bold text-rose-900">Menunggu Revisi Dokter</h2>
             <p className="mt-1 text-xs text-rose-800">
-              Tindakan yang dikembalikan belum dapat ditagihkan. Dokter perlu memperbaiki catatan dan menyerahkannya kembali.
+              Tindakan yang dikembalikan belum dapat ditagihkan. Dokter perlu memperbaiki catatan hingga tindakan siap ditagihkan kembali.
             </p>
           </div>
           <div className="space-y-2">
@@ -603,7 +612,7 @@ export const Invoices: React.FC = () => {
           <div>
             <h2 className="text-sm font-bold text-amber-900">Tindakan Selesai — Siap Ditagihkan</h2>
             <p className="text-xs text-amber-800 mt-1">
-              Hanya kunjungan dengan seluruh tindakan berstatus selesai atau diserahkan dokter yang dapat dibuatkan invoice.
+              Admin dapat membuat satu invoice untuk tindakan yang selesai. Rencana yang dibatalkan tidak ditagihkan.
             </p>
           </div>
           {invoiceReadyVisits.length === 0 ? (
@@ -616,14 +625,16 @@ export const Invoices: React.FC = () => {
                 <div key={visitId} className="bg-white border border-amber-100 rounded-lg px-3 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="text-xs">
                     <div className="font-semibold text-slate-800">
-                      {getPatientName(visitTreatments[0]?.patientId || "")}
-                      <span className="font-normal text-slate-500"> · {getBranchName(visitTreatments[0]?.branchId || "")}</span>
+                      {getPatientName(visitTreatments.find((treatment) => treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)?.patientId || "")}
+                      <span className="font-normal text-slate-500"> · {getBranchName(visitTreatments.find((treatment) => treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)?.branchId || "")}</span>
                     </div>
                     <div className="text-slate-500 mt-0.5">
-                      {visitTreatments.map((treatment) => (
+                      {visitTreatments
+                        .filter((treatment) => treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
+                        .map((treatment) => (
                         <div key={treatment.id} className="mt-1 flex flex-wrap items-center gap-2">
                           <span>{treatment.serviceNameSnapshot}</span>
-                          {treatment.status === TreatmentJobStatus.DISERAHKAN
+                          {(treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
                             && (currentUser?.role === UserRole.BRANCH_ADMIN || currentUser?.role === UserRole.SUPER_ADMIN)
                             && (
                               <button
@@ -641,6 +652,11 @@ export const Invoices: React.FC = () => {
                             )}
                         </div>
                       ))}
+                      {visitTreatments.some((treatment) => treatment.status === TreatmentJobStatus.DIBATALKAN) && (
+                        <div className="mt-1 text-[10px] text-slate-400">
+                          {visitTreatments.filter((treatment) => treatment.status === TreatmentJobStatus.DIBATALKAN).length} rencana dibatalkan dan tidak ditagihkan.
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button
