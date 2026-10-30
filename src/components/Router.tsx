@@ -1,4 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from "react";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 
 interface RouterContextType {
   path: string;
@@ -8,18 +9,24 @@ interface RouterContextType {
 
 const RouterContext = createContext<RouterContextType | undefined>(undefined);
 
+function getApplicationPath(pathname: string): string {
+  if (isLocalPatientDemoEnabled && pathname.startsWith("/demo/")) {
+    return pathname.slice("/demo".length) || "/login";
+  }
+  if (isLocalPatientDemoEnabled && pathname === "/demo") return "/login";
+  return pathname === "/" || !pathname ? "/login" : pathname;
+}
+
 export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Read current pathname, default to /login if empty or root
   const [path, setPath] = useState<string>(() => {
-    const initial = window.location.pathname;
-    return initial === "/" || !initial ? "/login" : initial;
+    return getApplicationPath(window.location.pathname);
   });
   const [navigationVersion, setNavigationVersion] = useState(0);
 
   useEffect(() => {
     const handlePopState = () => {
-      const current = window.location.pathname;
-      setPath(current === "/" ? "/login" : current);
+      setPath(getApplicationPath(window.location.pathname));
       setNavigationVersion((version) => version + 1);
     };
     window.addEventListener("popstate", handlePopState);
@@ -28,8 +35,13 @@ export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const navigate = (newPath: string) => {
     const destination = new URL(newPath, window.location.origin);
-    window.history.pushState({}, "", destination);
-    setPath(destination.pathname);
+    const applicationPath = getApplicationPath(destination.pathname);
+    const alreadyHasDemoPrefix = destination.pathname === "/demo" || destination.pathname.startsWith("/demo/");
+    const destinationPath = isLocalPatientDemoEnabled && !alreadyHasDemoPrefix
+      ? `/demo${destination.pathname === "/" ? "/login" : destination.pathname}${destination.search}${destination.hash}`
+      : `${destination.pathname}${destination.search}${destination.hash}`;
+    window.history.pushState({}, "", destinationPath);
+    setPath(applicationPath);
     setNavigationVersion((version) => version + 1);
   };
 

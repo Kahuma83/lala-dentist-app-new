@@ -454,8 +454,8 @@ export const PatientManagement: React.FC = () => {
       if (!patientForm.gender) {
         throw new Error("Jenis kelamin wajib dipilih.");
       }
-      if (!patientForm.id && (!identityNumber || !patientForm.placeOfBirth.trim() || !patientForm.dateOfBirth)) {
-        throw new Error("Identitas (NIK/paspor), tempat dan tanggal lahir wajib diisi untuk pasien baru.");
+      if (!patientForm.id && (!patientForm.placeOfBirth.trim() || !patientForm.dateOfBirth)) {
+        throw new Error("Tempat dan tanggal lahir wajib diisi untuk pasien baru.");
       }
       if (identityNumber && patientForm.identityDocumentType === "NIK" && !/^\d{16}$/.test(identityNumber)) {
         throw new Error("NIK harus terdiri dari 16 digit angka.");
@@ -463,7 +463,7 @@ export const PatientManagement: React.FC = () => {
       if (identityNumber && patientForm.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(identityNumber)) {
         throw new Error("Nomor paspor harus terdiri dari 6–20 huruf atau angka.");
       }
-      if (!patientForm.id && patients.some((patient) =>
+      if (!patientForm.id && identityNumber && patients.some((patient) =>
         patient.identityDocumentType === patientForm.identityDocumentType &&
         patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === identityNumber.toLowerCase()
       )) {
@@ -520,8 +520,10 @@ export const PatientManagement: React.FC = () => {
             emergencyContactName: patientForm.emergencyContactName.trim(),
             emergencyContactPhone: patientForm.emergencyContactPhone.trim(),
             emergencyContactRelationship: patientForm.emergencyContactRelationship.trim(),
-            identityDocumentType: patientForm.identityDocumentType,
-            identityDocumentNumber: identityNumber,
+            ...(identityNumber ? {
+              identityDocumentType: patientForm.identityDocumentType,
+              identityDocumentNumber: identityNumber
+            } : {}),
             placeOfBirth: patientForm.placeOfBirth.trim(),
             dateOfBirth: patientForm.dateOfBirth,
             gender: patientForm.gender,
@@ -555,8 +557,10 @@ export const PatientManagement: React.FC = () => {
             emergencyContactName: patientForm.emergencyContactName.trim(),
             emergencyContactPhone: patientForm.emergencyContactPhone.trim(),
             emergencyContactRelationship: patientForm.emergencyContactRelationship.trim(),
-            identityDocumentType: patientForm.identityDocumentType,
-            identityDocumentNumber: identityNumber,
+            ...(identityNumber ? {
+              identityDocumentType: patientForm.identityDocumentType,
+              identityDocumentNumber: identityNumber
+            } : {}),
             placeOfBirth: patientForm.placeOfBirth.trim(),
             dateOfBirth: patientForm.dateOfBirth,
             gender: patientForm.gender,
@@ -1781,7 +1785,7 @@ export const PatientManagement: React.FC = () => {
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 space-y-3">
                   <div>
                     <h3 className="font-bold text-slate-800">Identitas utama</h3>
-                    <p className="mt-0.5 text-[10px] text-slate-500">Wajib diisi untuk pasien baru. Nomor RM tetap diterbitkan saat check-in pertama.</p>
+                    <p className="mt-0.5 text-[10px] text-slate-500">NIK/paspor opsional dan dapat dilengkapi pada kunjungan berikutnya. Nomor RM tetap diterbitkan saat check-in pertama.</p>
                   </div>
                   <div className="grid grid-cols-[120px_1fr] gap-2">
                     <select
@@ -1800,7 +1804,6 @@ export const PatientManagement: React.FC = () => {
                       value={patientForm.identityDocumentNumber}
                       onChange={(e) => setPatientForm({ ...patientForm, identityDocumentNumber: e.target.value.replace(/\s/g, "") })}
                       placeholder={patientForm.identityDocumentType === "NIK" ? "NIK 16 digit" : "Nomor paspor"}
-                      required={!patientForm.id}
                       className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-slate-800"
                     />
                   </div>

@@ -465,6 +465,37 @@ export async function recordTreatmentInventoryUsage(input: {
   return { alreadyRecorded: data.alreadyRecorded, shortages };
 }
 
+export function hasMockRecordedTreatmentInventoryUsage(treatmentJobId: string): boolean {
+  const inventory = readMockInventory();
+  return Boolean(
+    inventory.consumedTreatmentIds?.includes(treatmentJobId)
+    || inventory.movements.some((movement) =>
+      movement.treatmentJobId === treatmentJobId && movement.movementType === "OUT"
+    )
+  );
+}
+
+export async function hasRecordedTreatmentInventoryUsage(treatmentJobId: string): Promise<boolean> {
+  if (!isSupabaseConfigured) return hasMockRecordedTreatmentInventoryUsage(treatmentJobId);
+
+  const { data: consumption, error: consumptionError } = await supabase
+    .from("inventory_treatment_consumptions")
+    .select("treatment_job_id")
+    .eq("treatment_job_id", treatmentJobId)
+    .maybeSingle();
+  throwSupabaseError(consumptionError);
+  if (consumption) return true;
+
+  const { data: movements, error: movementError } = await supabase
+    .from("inventory_movements")
+    .select("id")
+    .eq("treatment_job_id", treatmentJobId)
+    .eq("movement_type", "OUT")
+    .limit(1);
+  throwSupabaseError(movementError);
+  return Boolean(movements?.length);
+}
+
 export async function listInventoryMovements(input: {
   branchId?: string | null;
   itemId?: string | null;

@@ -59,7 +59,8 @@ import {
 } from "../repositories/repositoryFactory";
 import { AccountingPostingService } from "../services/accountingPostingService";
 import { isSupabaseConfigured } from "../lib/supabase";
-import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
+import { MockDatabase } from "../data/mockData";
+import { isFullAppDemoEnabled, isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 import { AuthService } from "../services/authService";
 import { useRealtimeSync, RealtimeSyncStatus } from "../hooks/useRealtimeSync";
 import { getOperationalDateString } from "../utils/dateUtils";
@@ -973,6 +974,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const refreshDataRef = useRef(refreshData);
   refreshDataRef.current = refreshData;
+  useEffect(() => {
+    if (!isFullAppDemoEnabled) return;
+
+    const handleDemoDatabaseChange = (event: StorageEvent) => {
+      if (event.key !== "lala_full_app_demo_db_v1" || !event.newValue) return;
+      if (!MockDatabase.getInstance().loadFromStorage()) return;
+
+      void refreshDataRef.current();
+      window.dispatchEvent(new Event("demo-database-updated"));
+    };
+
+    window.addEventListener("storage", handleDemoDatabaseChange);
+    return () => window.removeEventListener("storage", handleDemoDatabaseChange);
+  }, []);
+
   const realtimeBranchId = currentUser && (
     currentUser.role === UserRole.BRANCH_ADMIN ||
     currentUser.role === UserRole.DOCTOR_ASSISTANT ||

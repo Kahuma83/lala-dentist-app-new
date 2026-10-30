@@ -27,6 +27,7 @@ import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { useRouter } from "../components/Router";
 import { isBranchMatch } from "../utils/branchUtils";
 import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
+import { calculateQueueEstimates } from "../utils/queueScheduleUtils";
 
 export const LiveQueueManagement: React.FC = () => {
   const { currentUser, repos, branches, doctors, doctorSchedules, refreshData } = useApp();
@@ -258,15 +259,16 @@ export const LiveQueueManagement: React.FC = () => {
         currentUser?.assignedBranchId
       );
 
-      const filteredItems = items.filter((q) => {
+      const queueScopeItems = items.filter((q) => {
         const qDate = getOperationalDateString(q.arrivalAt || q.checkInTime);
         if (qDate !== selectedDate) return false;
         if (docId !== "ALL" && q.doctorId !== docId) return false;
+        return true;
+      });
+      const filteredItems = queueScopeItems.filter((q) => {
         if (isPatient && currentUser?.id && q.patientId !== currentUser.id) return false;
         return true;
       });
-
-      setQueueItems(filteredItems);
 
       // Load visits for Check-In dropdown
       let allVisits: PatientVisit[] = [];
@@ -305,6 +307,27 @@ export const LiveQueueManagement: React.FC = () => {
         );
       }
       setAllBookingsList(allBookings);
+
+      const itemsByDoctor = new Map<string, QueueItem[]>();
+      queueScopeItems.forEach((item) => {
+        const itemsForDoctor = itemsByDoctor.get(item.doctorId) || [];
+        itemsForDoctor.push(item);
+        itemsByDoctor.set(item.doctorId, itemsForDoctor);
+      });
+      const estimatedItems = Array.from(itemsByDoctor.values()).flatMap((doctorItems) =>
+        calculateQueueEstimates(doctorItems, allBookings, AppClock.nowISO(), selectedDate)
+      );
+      const estimatedById = new Map(estimatedItems.map((item) => [item.id, item]));
+      const serviceOrderedItems = filteredItems
+        .map((item) => estimatedById.get(item.id) || item)
+        .sort((a, b) => {
+          const aStart = a.actualServiceStartAt || a.estimatedServiceAt || a.bookingTimeSnapshot || a.arrivalAt;
+          const bStart = b.actualServiceStartAt || b.estimatedServiceAt || b.bookingTimeSnapshot || b.arrivalAt;
+          const timeDiff = new Date(aStart).getTime() - new Date(bStart).getTime();
+          if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
+          return (a.sequenceOrder || 0) - (b.sequenceOrder || 0);
+        });
+      setQueueItems(serviceOrderedItems);
 
       // Bookings eligible for check-in: matching branch, not cancelled, not already completed or queued
       const eligibleBookings = allBookings.filter((b) => {
@@ -356,6 +379,12 @@ export const LiveQueueManagement: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const handleDemoDatabaseUpdate = () => void loadQueueData();
+    window.addEventListener("demo-database-updated", handleDemoDatabaseUpdate);
+    return () => window.removeEventListener("demo-database-updated", handleDemoDatabaseUpdate);
+  }, [selectedBranchId, selectedDoctorId, selectedDate, currentUser]);
 
   const handlePrepare = async (queueId: string) => {
     if (!isDoctor && !isAssistant) return;
@@ -851,10 +880,10 @@ export const LiveQueueManagement: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm border-l-4 border-l-emerald-500">
-          <div className="text-emerald-700 text-[11px] font-medium uppercase">Sedang Konsultasi</div>
-          <div className="text-2xl font-bold text-emerald-700 mt-1">
-            {snapshot?.consultationQueue?.length || 0}
+        <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm border-l-4 border-l-amber-500">
+          <div className="text-amber-700 text-[11px] font-medium uppercase">Menunggu</div>
+          <div className="text-2xl font-bold text-amber-700 mt-1">
+            {snapshot?.waitingQueue?.length || 0}
           </div>
         </div>
 
@@ -865,10 +894,10 @@ export const LiveQueueManagement: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm border-l-4 border-l-amber-500">
-          <div className="text-amber-700 text-[11px] font-medium uppercase">Menunggu</div>
-          <div className="text-2xl font-bold text-amber-700 mt-1">
-            {snapshot?.waitingQueue?.length || 0}
+        <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm border-l-4 border-l-emerald-500">
+          <div className="text-emerald-700 text-[11px] font-medium uppercase">Sedang Konsultasi</div>
+          <div className="text-2xl font-bold text-emerald-700 mt-1">
+            {snapshot?.consultationQueue?.length || 0}
           </div>
         </div>
 

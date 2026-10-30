@@ -8,6 +8,7 @@ import { BookingManagement } from "./pages/BookingManagement";
 import { H1ConfirmationPage } from "./pages/H1ConfirmationPage";
 import { HotProspectPage } from "./pages/HotProspectPage";
 import { LiveQueueManagement } from "./pages/LiveQueueManagement";
+import { DoctorDashboard } from "./pages/DoctorDashboard";
 import { TreatmentManagement } from "./pages/TreatmentManagement";
 import { Invoices } from "./pages/Invoices";
 import { Payments } from "./pages/Payments";
@@ -258,7 +259,11 @@ const AppContent: React.FC = () => {
       return <UnauthorizedPage />;
     }
     let view = <LiveQueueManagement />;
-    if (path.startsWith("/doctor/inventory")) {
+    if (path === "/doctor/queue" || path === "/doctor/dashboard") {
+      view = <DoctorDashboard />;
+    } else if (path.startsWith("/doctor/queue/manage")) {
+      view = <LiveQueueManagement />;
+    } else if (path.startsWith("/doctor/inventory")) {
       view = <InventoryManagement />;
     } else if (path.includes("/treatments")) {
       view = <TreatmentManagement />;

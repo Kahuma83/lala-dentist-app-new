@@ -627,6 +627,7 @@ export interface TreatmentRepository {
       doctorId: string;
       externalDoctorId?: string | null;
       priceSnapshot?: number;
+      patientApprovalConfirmed?: boolean;
       estimatedDurationMinutes?: number;
       notes?: string;
       customId?: string;
@@ -643,6 +644,15 @@ export interface TreatmentRepository {
     userBranchId?: string | null,
     currentUserId?: string | null,
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
+  ): Promise<TreatmentJob>;
+  cancelTreatmentJob(
+    id: string,
+    reason: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string },
+    notPerformedConfirmed?: boolean
   ): Promise<TreatmentJob>;
   completeTreatmentJob(
     id: string,
@@ -671,6 +681,7 @@ export interface TreatmentRepository {
     correctedNotes: string,
     serviceId: string,
     priceSnapshot: number,
+    patientApprovalConfirmed: boolean,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null,

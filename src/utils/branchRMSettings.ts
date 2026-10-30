@@ -1,12 +1,15 @@
 import { PatientProfile } from "../types/domain";
 import { extractNumberFromRM, formatRMNumber, getPatientMedicalRecordNumber } from "./rmUtils";
+import { isFullAppDemoEnabled } from "./localPatientDemo";
 
 export type LocalBranchRMFormat = {
   padDigits: number;
   nextNumber: number;
 };
 
-const STORAGE_KEY = "lala_branch_rm_settings_v1";
+const STORAGE_KEY = isFullAppDemoEnabled
+  ? "lala_full_app_demo_branch_rm_settings_v1"
+  : "lala_branch_rm_settings_v1";
 
 function readAllSettings(): Record<string, LocalBranchRMFormat> {
   if (typeof window === "undefined" || !window.localStorage) return {};

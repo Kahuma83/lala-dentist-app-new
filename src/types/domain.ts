@@ -70,7 +70,8 @@ export enum TreatmentJobStatus {
   DALAM_PROSES = "DALAM_PROSES",
   SELESAI = "SELESAI",
   DISERAHKAN = "DISERAHKAN",
-  PERLU_REVISI = "PERLU_REVISI"
+  PERLU_REVISI = "PERLU_REVISI",
+  DIBATALKAN = "DIBATALKAN"
 }
 
 export enum TreatmentActivityType {
@@ -81,6 +82,7 @@ export enum TreatmentActivityType {
   HANDED_OVER = "HANDED_OVER",
   RETURNED_TO_DOCTOR = "RETURNED_TO_DOCTOR",
   REVISION_RESUBMITTED = "REVISION_RESUBMITTED",
+  CANCELLED = "CANCELLED",
   DURATION_CHANGE = "DURATION_CHANGE",
   OTHER = "OTHER"
 }
@@ -665,10 +667,13 @@ export interface TreatmentJob {
   doctorId: string;
   externalDoctorId?: string | null;
   serviceId: string;
-  status: TreatmentJobStatus | "BELUM_DIMULAI" | "DALAM_PROSES" | "SELESAI" | "DISERAHKAN" | "PERLU_REVISI";
+  status: TreatmentJobStatus | "BELUM_DIMULAI" | "DALAM_PROSES" | "SELESAI" | "DISERAHKAN" | "PERLU_REVISI" | "DIBATALKAN";
   serviceNameSnapshot: string;
   doctorNameSnapshot: string;
   priceSnapshot?: number;
+  patientApprovalMethod?: "VERBAL";
+  patientApprovedAt?: string;
+  patientApprovedBy?: string;
   estimatedDurationMinutes?: number;
   notes?: string;
   createdAt: string;
@@ -677,6 +682,9 @@ export interface TreatmentJob {
   handedOverAt?: string;
   returnedAt?: string;
   returnReason?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancellationReason?: string;
   updatedAt: string;
 
   // Backward compatibility & future phase fields

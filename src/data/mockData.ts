@@ -63,7 +63,7 @@ import {
   PatientMedicalProfile,
   PromotionMedia
 } from "../types/domain";
-import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
+import { isFullAppDemoEnabled, isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 
 // ==========================================
 // MOCK DATABASE STORE (In-Memory)
@@ -939,7 +939,7 @@ export const MOCK_VISITS: PatientVisit[] = [
   },
   {
     id: "visit-2",
-    patientId: "patient-4",
+    patientId: "patient-2",
     branchId: "branch-gebang",
     visitDateTime: "2026-09-21T09:30:00Z",
     visitType: VisitType.WALK_IN, // Walk-In Visit Type
@@ -996,14 +996,15 @@ export const MOCK_QUEUE_ITEMS: QueueItem[] = [
     doctorId: "doc-syafira",
     queueNumber: "A-01",
     sequenceOrder: 1,
-    status: QueueStatus.COMPLETED,
+    status: QueueStatus.IN_CONSULTATION,
     arrivalAt: "2026-09-21T09:05:00Z",
     checkInTime: "2026-09-21T09:05:00Z",
     estimatedServiceAt: "2026-09-21T09:15:00Z",
     estimatedDurationMinutes: 30,
-    startTime: "2026-09-21T09:15:00Z",
+    actualServiceStartAt: "2026-09-21T09:25:00Z",
+    startTime: "2026-09-21T09:25:00Z",
     createdAt: "2026-09-21T09:05:00Z",
-    updatedAt: "2026-09-21T09:15:00Z"
+    updatedAt: "2026-09-21T09:25:00Z"
   },
   {
     id: "queue-2",
@@ -1059,7 +1060,7 @@ export const MOCK_TREATMENT_JOBS: TreatmentJob[] = [
   },
   {
     id: "treatment-job-3",
-    visitId: "visit-2",
+    visitId: "visit-3",
     patientId: "patient-2",
     branchId: "branch-gebang",
     doctorId: "doc-syafira",
@@ -2887,14 +2888,13 @@ export const MOCK_DOCTOR_SCHEDULES: DoctorSchedule[] = [
 
 export function generateCurrentWeekDoctorSchedules(): DoctorSchedule[] {
   const d = new Date();
-  const day = d.getDay(); // 0 is Sunday
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(d.setDate(diff));
-  monday.setHours(0, 0, 0, 0);
+  const day = d.getUTCDay();
+  const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), diff));
 
   const getDateStr = (dayOffset: number) => {
     const target = new Date(monday);
-    target.setDate(target.getDate() + dayOffset);
+    target.setUTCDate(target.getUTCDate() + dayOffset);
     return target.toISOString().split("T")[0];
   };
 
@@ -2949,6 +2949,23 @@ export function generateCurrentWeekDoctorSchedules(): DoctorSchedule[] {
   });
 
   return schedules;
+}
+
+export function refreshCurrentWeekGeneratedDoctorSchedules(
+  storedSchedules: DoctorSchedule[],
+  currentWeekSchedules: DoctorSchedule[] = generateCurrentWeekDoctorSchedules()
+): DoctorSchedule[] {
+  const scheduleDates = currentWeekSchedules.map((schedule) => schedule.date).sort();
+  const firstScheduleDate = new Date(`${scheduleDates[0]}T00:00:00Z`);
+  firstScheduleDate.setUTCDate(firstScheduleDate.getUTCDate() - 1);
+  const firstGeneratedDate = firstScheduleDate.toISOString().slice(0, 10);
+  const lastGeneratedDate = scheduleDates[scheduleDates.length - 1];
+  const preservedSchedules = storedSchedules.filter(
+    (schedule) => !schedule.id.startsWith("sched-curr-") ||
+      schedule.date < firstGeneratedDate ||
+      schedule.date > lastGeneratedDate
+  );
+  return [...preservedSchedules, ...currentWeekSchedules];
 }
 
 export const MOCK_STAFF_SHIFT_ASSIGNMENTS: StaffShiftAssignment[] = [
@@ -3513,10 +3530,33 @@ export const MOCK_PROMOTIONS: PromotionMedia[] = [
 
 const isRunningTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || Boolean(process.env.VITEST));
 const useMockSeedData = isRunningTestEnv || isLocalPatientDemoEnabled;
-const mockDatabaseStorageKey = isLocalPatientDemoEnabled ? "lala_patient_demo_db_v1" : "lala_dentist_db_v1";
+const mockDatabaseStorageKey = isFullAppDemoEnabled
+  ? "lala_full_app_demo_db_v1"
+  : isLocalPatientDemoEnabled
+    ? "lala_patient_demo_db_v1"
+    : "lala_dentist_db_v1";
+const currentWeekDoctorScheduleSeedVersion = 2;
 const initialMockBookings = () => JSON.parse(JSON.stringify(
   isLocalPatientDemoEnabled ? MOCK_BOOKINGS.filter((booking) => booking.patientId !== "patient-1") : MOCK_BOOKINGS
 ));
+
+function shiftMockDatesToCurrentDay<T>(value: T, offsetMs: number): T {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)) {
+    const shiftedDate = new Date(Date.parse(value) + offsetMs);
+    if (!Number.isNaN(shiftedDate.getTime())) {
+      return (value.includes("T") ? shiftedDate.toISOString() : shiftedDate.toISOString().slice(0, 10)) as T;
+    }
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => shiftMockDatesToCurrentDay(item, offsetMs)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, shiftMockDatesToCurrentDay(item, offsetMs)])
+    ) as T;
+  }
+  return value;
+}
 
 // Helper database object to easily export everything and allow CRUD in simulation
 export class MockDatabase {
@@ -3560,19 +3600,44 @@ export class MockDatabase {
   static getInstance(): MockDatabase {
     if (!this.instance) {
       this.instance = new MockDatabase();
-      this.instance.loadFromStorage();
+      const hasStoredData = this.instance.loadFromStorage();
+      if (isFullAppDemoEnabled && !hasStoredData) {
+        this.instance.shiftSeedDatesToCurrentDay();
+      }
     }
     return this.instance;
   }
 
-  loadFromStorage(): void {
+  private shiftSeedDatesToCurrentDay(): void {
+    const today = new Date();
+    const todayStart = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const seedStart = Date.UTC(2026, 8, 21);
+    const offsetMs = todayStart - seedStart;
+
+    this.bookings = shiftMockDatesToCurrentDay(this.bookings, offsetMs);
+    this.confirmations = shiftMockDatesToCurrentDay(this.confirmations, offsetMs);
+    this.visits = shiftMockDatesToCurrentDay(this.visits, offsetMs);
+    this.queueItems = shiftMockDatesToCurrentDay(this.queueItems, offsetMs);
+    this.treatmentJobs = shiftMockDatesToCurrentDay(this.treatmentJobs, offsetMs);
+    this.treatmentActivities = shiftMockDatesToCurrentDay(this.treatmentActivities, offsetMs);
+    this.invoices = shiftMockDatesToCurrentDay(this.invoices, offsetMs);
+    this.invoiceItems = shiftMockDatesToCurrentDay(this.invoiceItems, offsetMs);
+    this.payments = shiftMockDatesToCurrentDay(this.payments, offsetMs);
+    this.accruals = shiftMockDatesToCurrentDay(this.accruals, offsetMs);
+    this.payrolls = shiftMockDatesToCurrentDay(this.payrolls, offsetMs);
+    this.payrollItems = shiftMockDatesToCurrentDay(this.payrollItems, offsetMs);
+    this.journals = shiftMockDatesToCurrentDay(this.journals, offsetMs);
+    this.attendances = shiftMockDatesToCurrentDay(this.attendances, offsetMs);
+  }
+
+  loadFromStorage(): boolean {
     if (isRunningTestEnv || typeof window === "undefined" || !window.localStorage) {
-      return;
+      return false;
     }
     try {
       const dataStr = window.localStorage.getItem(mockDatabaseStorageKey);
-      if (dataStr) {
-        const stored = JSON.parse(dataStr);
+      if (!dataStr) return false;
+      const stored = JSON.parse(dataStr);
         if (Array.isArray(stored.rules)) this.rules = stored.rules;
         if (Array.isArray(stored.staff)) {
           const existingIds = new Set(stored.staff.map((s: any) => s.id));
@@ -3654,7 +3719,9 @@ export class MockDatabase {
         if (Array.isArray(stored.doctorSchedules)) {
           const todayStr = new Date().toISOString().split("T")[0];
           const hasCurrentMonthSchedules = stored.doctorSchedules.some((s: any) => s.date && s.date.slice(0, 7) === todayStr.slice(0, 7));
-          if (!hasCurrentMonthSchedules && stored.doctorSchedules.length > 0) {
+          if ((stored.doctorScheduleSeedVersion ?? 0) < currentWeekDoctorScheduleSeedVersion) {
+            this.doctorSchedules = refreshCurrentWeekGeneratedDoctorSchedules(stored.doctorSchedules);
+          } else if (!hasCurrentMonthSchedules && stored.doctorSchedules.length > 0) {
             this.doctorSchedules = [...stored.doctorSchedules, ...generateCurrentWeekDoctorSchedules()];
           } else {
             this.doctorSchedules = stored.doctorSchedules;
@@ -3672,9 +3739,10 @@ export class MockDatabase {
         if (Array.isArray(stored.patientMedicalProfiles)) this.patientMedicalProfiles = stored.patientMedicalProfiles;
         if (Array.isArray(stored.promotions)) this.promotions = stored.promotions;
         if (stored.clinicBranding) this.clinicBranding = stored.clinicBranding;
-      }
+      return true;
     } catch (e) {
       console.warn("Could not load from localStorage:", e);
+      return false;
     }
   }
 
@@ -3708,6 +3776,7 @@ export class MockDatabase {
         journals: this.journals,
         doctorBranchAssignments: this.doctorBranchAssignments,
         doctorSchedules: this.doctorSchedules,
+        doctorScheduleSeedVersion: currentWeekDoctorScheduleSeedVersion,
         workShifts: this.workShifts,
         staffShiftAssignments: this.staffShiftAssignments,
         staffShiftRotationTemplates: this.staffShiftRotationTemplates,

@@ -1,13 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
+import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = isLocalPatientDemoEnabled ? undefined : import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = isLocalPatientDemoEnabled ? undefined : import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
 export { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 export const hasSupabaseServiceRoleKey = false;
 
-if (!isSupabaseConfigured) {
+if (!isSupabaseConfigured && !isLocalPatientDemoEnabled) {
   console.warn(
     "⚠️ Supabase configuration is missing. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment/secrets. Auth will run in simulated fallback mode."
   );

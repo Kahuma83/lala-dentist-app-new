@@ -139,6 +139,7 @@ import { getNextMedicalRecordNumber, checkRMUniqueness } from "../utils/rmUtils"
 import { isBranchMatch } from "../utils/branchUtils";
 import { allocateInvoiceNetToLines } from "../utils/invoiceLineAllocation";
 import { getOperationalDateString, toOperationalDateTime } from "../utils/dateUtils";
+import { hasMockRecordedTreatmentInventoryUsage } from "../services/inventoryService";
 
 const db = MockDatabase.getInstance();
 
@@ -552,9 +553,16 @@ export class MockPatientRepository implements PatientRepository {
     db.patients = [];
     db.visits = [];
     db.bookings = [];
+    db.confirmations = [];
     db.queueItems = [];
     db.treatmentJobs = [];
+    db.treatmentActivities = [];
+    db.invoices = [];
+    db.invoiceItems = [];
+    db.payments = [];
+    db.accruals = [];
     db.medicalRecords = [];
+    db.patientMedicalProfiles = [];
     if (typeof window !== "undefined" && window.localStorage) {
       try {
         window.localStorage.removeItem("lala_patients");
@@ -2612,6 +2620,12 @@ export class MockVisitRepository implements VisitRepository {
 }
 
 export class MockQueueRepository implements QueueRepository {
+  private isDoctorAssignedToQueue(doctorId: string, currentUserId: string): boolean {
+    return doctorId === currentUserId || db.userAccounts.some(
+      (account) => account.id === currentUserId && account.doctorId === doctorId
+    );
+  }
+
   private async syncVisitStatus(item: QueueItem, role?: UserRole, branchId?: string | null): Promise<void> {
     const visitStatus = getVisitStatusForQueueStatus(item.status);
     if (!visitStatus) return;
@@ -2645,7 +2659,7 @@ export class MockQueueRepository implements QueueRepository {
     userBranchId?: string | null,
     currentUserId?: string | null
   ): Promise<QueueItem[]> {
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && currentUserId !== doctorId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(doctorId, currentUserId)) {
       throw new Error("Access denied: Doctor cannot access another doctor queue");
     }
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
@@ -2676,7 +2690,7 @@ export class MockQueueRepository implements QueueRepository {
     if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && branchId !== userBranchId) {
       throw new Error("Access denied: Asisten / Branch Admin tidak dapat mengakses antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && doctorId && currentUserId !== doctorId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && doctorId && !this.isDoctorAssignedToQueue(doctorId, currentUserId)) {
       throw new Error("Access denied: Doctor cannot access another doctor queue");
     }
 
@@ -2993,7 +3007,7 @@ export class MockQueueRepository implements QueueRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat mengelola antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(item.doctorId, currentUserId)) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
 
@@ -3022,7 +3036,7 @@ export class MockQueueRepository implements QueueRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat mengelola antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(item.doctorId, currentUserId)) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
 
@@ -3077,6 +3091,7 @@ export class MockQueueRepository implements QueueRepository {
       treatment.visitId === occupiedQueue.visitId
       && treatment.status !== TreatmentJobStatus.SELESAI
       && treatment.status !== TreatmentJobStatus.DISERAHKAN
+      && treatment.status !== TreatmentJobStatus.DIBATALKAN
     );
     if (unfinishedTreatment) {
       throw new Error("Treatment pasien sebelumnya belum selesai. Selesaikan semua treatment sebelum memanggil pasien berikutnya.");
@@ -3099,7 +3114,7 @@ export class MockQueueRepository implements QueueRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat mengelola antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(item.doctorId, currentUserId)) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
 
@@ -3134,7 +3149,7 @@ export class MockQueueRepository implements QueueRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat mengelola antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(item.doctorId, currentUserId)) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
     if (item.status === QueueStatus.IN_PREPARATION || item.status === QueueStatus.IN_CONSULTATION) {
@@ -3161,7 +3176,7 @@ export class MockQueueRepository implements QueueRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat mengelola antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(item.doctorId, currentUserId)) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
     if (item.status === QueueStatus.IN_PREPARATION || item.status === QueueStatus.IN_CONSULTATION) {
@@ -3187,7 +3202,7 @@ export class MockQueueRepository implements QueueRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat mengelola antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(item.doctorId, currentUserId)) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
 
@@ -3217,7 +3232,7 @@ export class MockQueueRepository implements QueueRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && item.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat menghapus antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(item.doctorId, currentUserId)) {
       throw new Error("Dokter tidak dapat menghapus antrean dokter lain");
     }
 
@@ -3251,7 +3266,7 @@ export class MockQueueRepository implements QueueRepository {
     ) {
       throw new Error("Akses ditolak: Asisten / Branch Admin tidak dapat mengelola antrean cabang lain");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && item.doctorId !== currentUserId) {
+    if (currentUserRole === UserRole.DOCTOR && currentUserId && !this.isDoctorAssignedToQueue(item.doctorId, currentUserId)) {
       throw new Error("Dokter tidak dapat mengelola antrean dokter lain");
     }
 
@@ -3407,6 +3422,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
       serviceId: string;
       doctorId: string;
       priceSnapshot?: number;
+      patientApprovalConfirmed?: boolean;
       estimatedDurationMinutes?: number;
       notes?: string;
       customId?: string;
@@ -3464,7 +3480,10 @@ export class MockTreatmentRepository implements TreatmentRepository {
     if (!doctor) {
       throw new Error("Dokter tidak ditemukan");
     }
-    if (currentUserRole === UserRole.DOCTOR && currentUserId && data.doctorId !== currentUserId) {
+    const currentDoctorId = currentUserId
+      ? db.userAccounts.find((account) => account.id === currentUserId)?.doctorId || currentUserId
+      : null;
+    if (currentUserRole === UserRole.DOCTOR && currentDoctorId && data.doctorId !== currentDoctorId) {
       throw new Error("Dokter tidak dapat membuat treatment untuk dokter lain");
     }
 
@@ -3480,7 +3499,15 @@ export class MockTreatmentRepository implements TreatmentRepository {
     if (data.priceSnapshot !== undefined && currentUserRole !== UserRole.DOCTOR) {
       throw new Error("Hanya dokter yang dapat menyesuaikan harga tindakan.");
     }
-    if (data.priceSnapshot !== undefined && (!Number.isSafeInteger(data.priceSnapshot) || data.priceSnapshot < 0)) {
+    if (data.priceSnapshot !== undefined && currentUserRole === UserRole.DOCTOR
+      && (!currentDoctorId || data.doctorId !== currentDoctorId)) {
+      throw new Error("Hanya dokter penanggung jawab yang dapat menyesuaikan harga tindakan.");
+    }
+    if (data.priceSnapshot !== undefined && (
+      !Number.isSafeInteger(data.priceSnapshot)
+      || data.priceSnapshot < 0
+      || data.priceSnapshot > Number.MAX_SAFE_INTEGER
+    )) {
       throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
     }
     const branchTariff = db.tariffs.find(
@@ -3500,6 +3527,11 @@ export class MockTreatmentRepository implements TreatmentRepository {
       serviceNameSnapshot: service.name,
       doctorNameSnapshot: doctor.name,
       priceSnapshot: data.priceSnapshot ?? branchTariff?.customPrice ?? service.basePrice,
+      ...(data.patientApprovalConfirmed ? {
+        patientApprovalMethod: "VERBAL" as const,
+        patientApprovedAt: now,
+        patientApprovedBy: currentUserId || undefined
+      } : {}),
       estimatedDurationMinutes: data.estimatedDurationMinutes || service.estimatedDurationMinutes || 30,
       notes: data.notes || "",
       createdAt: now,
@@ -3507,6 +3539,17 @@ export class MockTreatmentRepository implements TreatmentRepository {
     };
 
     db.treatmentJobs.push(newItem);
+    const officialPrice = branchTariff?.customPrice ?? service.basePrice;
+    if (newItem.priceSnapshot !== officialPrice) {
+      await new MockTreatmentActivityRepository().addActivity({
+        treatmentId: newItem.id,
+        actorId: currentUserId || doctor.id,
+        actorRole: currentUserRole || UserRole.DOCTOR,
+        actorNameSnapshot: doctor.name,
+        activityType: TreatmentActivityType.OTHER,
+        notes: `Harga tindakan disesuaikan dari tarif cabang Rp ${officialPrice.toLocaleString("id-ID")} menjadi Rp ${newItem.priceSnapshot?.toLocaleString("id-ID")}.`
+      });
+    }
     return { ...newItem };
   }
 
@@ -3565,6 +3608,82 @@ export class MockTreatmentRepository implements TreatmentRepository {
       currentUserId
     );
 
+    return { ...job };
+  }
+
+  async cancelTreatmentJob(
+    id: string,
+    reason: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string },
+    notPerformedConfirmed = false
+  ): Promise<TreatmentJob> {
+    const job = db.treatmentJobs.find((treatment) => treatment.id === id);
+    if (!job) throw new Error("TreatmentJob tidak ditemukan");
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new Error("Alasan pembatalan wajib diisi.");
+    const currentDoctorId = currentUserId
+      ? db.userAccounts.find((account) => account.id === currentUserId)?.doctorId || currentUserId
+      : null;
+    if (currentUserRole === UserRole.DOCTOR
+      && (!currentDoctorId || (job.assignedDoctorId || job.doctorId) !== currentDoctorId)) {
+      throw new Error("Dokter tidak ditugaskan pada tindakan ini.");
+    }
+    if (currentUserRole === UserRole.DOCTOR_ASSISTANT && userBranchId !== job.branchId) {
+      throw new Error("Asisten tidak memiliki izin tindakan di cabang ini.");
+    }
+    if (currentUserRole && ![
+      UserRole.DOCTOR,
+      UserRole.DOCTOR_ASSISTANT,
+      UserRole.SUPER_ADMIN
+    ].includes(currentUserRole)) {
+      throw new Error("Role tidak memiliki izin membatalkan rencana tindakan.");
+    }
+    if (currentUserRole === UserRole.SUPER_ADMIN && !job.externalDoctorId) {
+      throw new Error("Super Admin hanya dapat mengelola tindakan dokter eksternal.");
+    }
+    if (job.status !== TreatmentJobStatus.BELUM_DIMULAI
+      && job.status !== TreatmentJobStatus.DALAM_PROSES) {
+      throw new Error("Hanya rencana yang belum dimulai atau belum dikerjakan yang dapat dibatalkan.");
+    }
+    if (job.status === TreatmentJobStatus.DALAM_PROSES) {
+      if (!notPerformedConfirmed) {
+        throw new Error("Konfirmasi bahwa tindakan belum dikerjakan dan belum memakai bahan wajib diisi.");
+      }
+      if (hasMockRecordedTreatmentInventoryUsage(job.id)) {
+        throw new Error("Item tidak dapat dibatalkan karena pemakaian bahan sudah tercatat.");
+      }
+      if (db.treatmentActivities.some((activity) =>
+        (activity.treatmentId === job.id || activity.treatmentJobId === job.id)
+        && activity.activityType !== TreatmentActivityType.STARTED
+      )) {
+        throw new Error("Item tidak dapat dibatalkan karena aktivitas tindakan selain mulai sudah tercatat.");
+      }
+    }
+    if (db.invoices.some((invoice) =>
+      invoice.visitId === job.visitId && invoice.status !== InvoiceStatus.CANCELLED
+    )) {
+      throw new Error("Rencana tindakan tidak dapat dibatalkan setelah invoice diterbitkan.");
+    }
+
+    const now = AppClock.nowISO();
+    job.status = TreatmentJobStatus.DIBATALKAN;
+    job.cancelledAt = now;
+    job.cancelledBy = actorData?.actorId || currentUserId || undefined;
+    job.cancellationReason = normalizedReason;
+    job.updatedAt = now;
+
+    const activityRepo = new MockTreatmentActivityRepository();
+    await activityRepo.addActivity({
+      treatmentId: job.id,
+      actorId: actorData?.actorId || currentUserId || job.doctorId || "actor-system",
+      actorRole: actorData?.actorRole || currentUserRole || UserRole.DOCTOR,
+      actorNameSnapshot: actorData?.actorNameSnapshot || job.doctorNameSnapshot,
+      activityType: TreatmentActivityType.CANCELLED,
+      notes: normalizedReason
+    }, currentUserRole, userBranchId, currentUserId);
     return { ...job };
   }
 
@@ -3727,8 +3846,8 @@ export class MockTreatmentRepository implements TreatmentRepository {
     }
     const normalizedReason = reason.trim();
     if (!normalizedReason) throw new Error("Alasan pengembalian wajib diisi.");
-    if (job.status !== TreatmentJobStatus.DISERAHKAN) {
-      throw new Error("Hanya tindakan yang sudah diserahkan ke kasir yang dapat dikembalikan.");
+    if (job.status !== TreatmentJobStatus.SELESAI && job.status !== TreatmentJobStatus.DISERAHKAN) {
+      throw new Error("Hanya tindakan yang sudah selesai dan belum ditagihkan yang dapat dikembalikan.");
     }
 
     const visitInvoices = db.invoices.filter((invoice) => invoice.visitId === job.visitId);
@@ -3762,6 +3881,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
     correctedNotes: string,
     serviceId: string,
     priceSnapshot: number,
+    patientApprovalConfirmed: boolean,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null,
@@ -3779,22 +3899,32 @@ export class MockTreatmentRepository implements TreatmentRepository {
     }
     const normalizedNotes = correctedNotes.trim();
     if (!normalizedNotes) throw new Error("Catatan tindakan yang sudah dikoreksi wajib diisi.");
-    if (!Number.isSafeInteger(priceSnapshot) || priceSnapshot < 0) {
-      throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
+    if (!patientApprovalConfirmed) {
+      throw new Error("Persetujuan lisan pasien atas harga koreksi wajib dicatat.");
     }
     if (job.status !== TreatmentJobStatus.PERLU_REVISI) {
       throw new Error("Tindakan tidak sedang menunggu revisi dokter.");
     }
     const service = db.services.find((item) => item.id === serviceId && item.isActive);
     if (!service) throw new Error("Jenis tindakan aktif tidak ditemukan.");
+    if (!Number.isSafeInteger(priceSnapshot) || priceSnapshot < 0 || priceSnapshot > Number.MAX_SAFE_INTEGER) {
+      throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
+    }
+    const branchTariff = db.tariffs.find(
+      (tariff) => tariff.branchId === job.branchId && tariff.serviceId === service.id && tariff.isActive
+    );
+    const officialPrice = branchTariff?.customPrice ?? service.basePrice;
+    const previousPrice = job.priceSnapshot ?? officialPrice;
 
     const now = AppClock.nowISO();
     job.notes = normalizedNotes;
     job.serviceId = service.id;
     job.serviceNameSnapshot = service.name;
     job.priceSnapshot = priceSnapshot;
-    job.status = TreatmentJobStatus.DISERAHKAN;
-    job.handedOverAt = now;
+    job.patientApprovalMethod = "VERBAL";
+    job.patientApprovedAt = now;
+    job.patientApprovedBy = actorData?.actorId || currentUserId;
+    job.status = TreatmentJobStatus.SELESAI;
     job.updatedAt = now;
 
     const activityRepo = new MockTreatmentActivityRepository();
@@ -3804,7 +3934,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
       actorRole: actorData?.actorRole || currentUserRole,
       actorNameSnapshot: actorData?.actorNameSnapshot,
       activityType: TreatmentActivityType.REVISION_RESUBMITTED,
-      notes: "Dokter memperbarui catatan tindakan dan menyerahkan kembali ke kasir."
+      notes: `Dokter memperbarui catatan tindakan; tarif dasar cabang Rp ${officialPrice.toLocaleString("id-ID")}, harga tindakan Rp ${priceSnapshot.toLocaleString("id-ID")} (sebelumnya Rp ${previousPrice.toLocaleString("id-ID")}); tindakan siap ditagihkan.`
     });
     return { ...job };
   }
@@ -4051,6 +4181,30 @@ export class MockInvoiceRepository implements InvoiceRepository {
 
     if (!data.items || data.items.length === 0) {
       throw new Error("Invoice harus memiliki minimal satu item tindakan/layanan");
+    }
+
+    const linkedTreatmentIds = data.items.flatMap((item) =>
+      item.treatmentJobId ? [item.treatmentJobId] : []
+    );
+    if (linkedTreatmentIds.length > 0) {
+      const visitTreatments = db.treatmentJobs.filter((treatment) => treatment.visitId === data.visitId);
+      const completedTreatments = visitTreatments.filter((treatment) =>
+        treatment.status === TreatmentJobStatus.SELESAI
+        || treatment.status === TreatmentJobStatus.DISERAHKAN
+      );
+      const planIsClosed = visitTreatments.every((treatment) =>
+        treatment.status === TreatmentJobStatus.SELESAI
+        || treatment.status === TreatmentJobStatus.DISERAHKAN
+        || treatment.status === TreatmentJobStatus.DIBATALKAN
+      );
+      const linkedIds = new Set(linkedTreatmentIds);
+      if (!planIsClosed || completedTreatments.length === 0) {
+        throw new Error("Invoice hanya dapat dibuat setelah semua rencana selesai atau dibatalkan dan ada tindakan yang selesai.");
+      }
+      if (linkedIds.size !== completedTreatments.length
+        || completedTreatments.some((treatment) => !linkedIds.has(treatment.id))) {
+        throw new Error("Invoice harus memuat seluruh tindakan selesai dan tidak boleh memuat rencana yang dibatalkan.");
+      }
     }
 
     const now = AppClock.nowISO();

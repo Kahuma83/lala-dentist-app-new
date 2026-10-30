@@ -15,6 +15,10 @@ Panduan ini menjelaskan pekerjaan setiap pengguna, dari pasien membuat janji sam
 
 **Tidak ada pengguna khusus bernama Kasir.** Penerimaan pembayaran dilakukan Admin Cabang atau Super Admin yang sedang menjalankan tugas kasir. Dokter, Asisten Dokter, dan OB tidak menerima pembayaran pasien.
 
+### Demo seluruh alur aplikasi
+
+Pada halaman login, pilih **Coba Demo Semua Alur Aplikasi**. Demo memakai akun contoh untuk Admin Cabang, Dokter, dan Asisten Dokter beserta data mock aplikasi, sehingga menu dan alur tiap peran dapat dicoba tanpa akun operasional. Semua perubahan tersimpan di browser ini pada penyimpanan demo yang terpisah; demo tidak memakai database Supabase. URL akan diawali `/demo/` agar mode tetap aktif ketika berpindah menu atau memuat ulang halaman. Gunakan **Keluar Demo** untuk kembali ke login resmi. Menghapus data situs pada browser akan menghapus progres demo.
+
 ## Fungsi setiap menu berdasarkan pengguna
 
 Menu di bawah adalah panduan untuk mengenali kegunaannya. Tidak semua menu tampil pada setiap akun. Jika nama menu tidak terlihat, lanjutkan pekerjaan hanya melalui menu yang tersedia untuk akun Anda.
@@ -39,8 +43,8 @@ Semua data dan transaksi Admin Cabang terbatas pada cabang yang menjadi tanggung
 | **Jadwal Pasien** | Mencari atau menambahkan pasien ke jadwal, membuat booking, mengubah jadwal, dan mencatat pasien Walk-In. |
 | **Check-In Pasien** | Mencatat kedatangan pasien yang sudah hadir dan siap dilayani. Check-in menyiapkan kunjungan serta antrean; jangan digunakan dua kali untuk pasien yang sama. |
 | **Antrean Klinik** | Memantau pasien yang menunggu, dipanggil, sedang dilayani, atau telah selesai. Admin membantu kelancaran operasional; keputusan klinis tetap milik Dokter. |
-| **Daftar Treatment** | Melihat tindakan yang sedang berjalan atau siap ditagihkan. Admin menunggu Dokter menyelesaikan dan menyerahkan tindakan sebelum membuat tagihan. |
-| **Invoice & Tagihan** | Memeriksa tindakan yang siap ditagihkan, mengembalikan catatan tindakan yang salah kepada Dokter sebelum invoice dibuat, membuat tagihan, dan menerima pembayaran. |
+| **Daftar Treatment** | Melihat rencana tindakan, status pelaksanaan, dan tindakan yang siap ditagihkan. Rencana yang dibatalkan tidak masuk tagihan. |
+| **Invoice & Tagihan** | Memeriksa tindakan yang selesai, mengembalikan catatan yang salah kepada Dokter, membuat satu invoice per kunjungan, dan menerima pembayaran. |
 | **Riwayat Pembayaran & Kwitansi** | Mencari transaksi yang sudah diterima dan membuka, mencetak, mengunduh, atau mengirim kwitansinya. |
 | **Pengeluaran** | Mencatat pengeluaran cabang berdasarkan bukti pembayaran, kategori, tanggal, dan akun kas/bank yang benar. |
 | **Inventori Stok → Daftar Stok** | Melihat barang, jumlah tersedia, batas minimum, lokasi, dan status stok cabang. |
@@ -60,7 +64,7 @@ Semua data dan transaksi Admin Cabang terbatas pada cabang yang menjadi tanggung
 |---|---|
 | **Antrean Dokter** | Melihat pasien yang menunggu Dokter, memeriksa urutan, memanggil pasien, dan mengikuti status kunjungan. |
 | **Pasien & Rekam Medis** | Membuka data pasien dan mencatat pemeriksaan, diagnosis, rencana, serta informasi klinis lainnya. Cocokkan identitas sebelum mengisi. |
-| **Treatment** | Membuat atau memeriksa tindakan, mencatat prosesnya, menyelesaikan tindakan yang benar-benar selesai, memperbaiki catatan yang dikembalikan kasir, dan menyerahkannya kembali untuk penagihan. |
+| **Treatment** | Menyusun rencana tindakan setelah persetujuan lisan pasien dan estimasi biaya dicatat, memulai serta menyelesaikan tindakan yang benar-benar dilakukan, membatalkan item yang belum dimulai atau yang belum dikerjakan/tidak memakai bahan setelah konfirmasi dan mengisi alasan, serta memperbaiki catatan yang dikembalikan kasir. Tarif cabang menjadi nilai awal; dokter penanggung jawab dapat menyesuaikan harga tiap tindakan. |
 | **Persetujuan Resep Stok** | Menilai usulan perubahan resep bahan dari cabang yang menjadi wewenang Dokter. Resep baru digunakan setelah disetujui. |
 
 ### Asisten Dokter — Web Admin
@@ -69,7 +73,7 @@ Semua data dan transaksi Admin Cabang terbatas pada cabang yang menjadi tanggung
 |---|---|
 | **Antrean Klinik** | Melihat pasien dan perkembangan antrean pada cabang yang dapat diakses. |
 | **Pasien** | Membuka informasi pasien yang diperlukan untuk membantu pelayanan. Gunakan hanya sesuai tugas dan jaga kerahasiaannya. |
-| **Treatment** | Melihat tugas tindakan, membantu persiapan, memulai tindakan bila tersedia, dan mencatat pekerjaan yang dilakukan. Untuk tindakan biasa Dokter yang memeriksa, menyelesaikan, dan menyerahkan ke kasir. |
+| **Treatment** | Membantu persiapan dan memulai tindakan yang sudah direncanakan, membatalkan item yang belum dimulai atau yang belum dikerjakan/tidak memakai bahan setelah konfirmasi dan mengisi alasan, serta mencatat pekerjaan. Untuk tindakan biasa, Dokter yang memeriksa dan menyelesaikannya. |
 | **Inventori Stok → Daftar Stok** | Memeriksa ketersediaan bahan dan perlengkapan. |
 | **Inventori Stok → Usulan Resep Bahan** | Mengajukan perubahan resep bahan beserta alasan. Usulan tidak langsung mengubah resep aktif. |
 | **Inventori Stok → Riwayat Perubahan Stok** | Memeriksa catatan barang masuk dan pemakaian. |
@@ -161,7 +165,7 @@ OB menggunakan **Portal Pegawai** untuk melihat ringkasan kerja, melakukan absen
 
 1. Cari pasien berdasarkan nama atau nomor rekam medis sebelum membuat data baru.
 2. Cocokkan identitas agar tidak membuat data pasien ganda.
-3. Jika pasien belum terdaftar, pilih **Tambah Pasien Baru** atau **+ Pasien Baru** dari formulir jadwal dan isi informasi yang diminta.
+3. Jika pasien belum terdaftar, pilih **Tambah Pasien Baru** atau **+ Pasien Baru** dari formulir jadwal. NIK atau nomor paspor boleh dikosongkan jika pasien belum membawanya; lengkapi profil saat kunjungan berikutnya. Jika nomor identitas diisi, pastikan formatnya benar.
 4. Untuk pasien lama, masukkan nomor rekam medis lama dengan teliti dan pilih cabang asal yang benar. Jika nomor ditolak atau tampak digunakan pasien lain, berhenti dan minta Super Admin memeriksa data sebelum menyimpan.
 5. Pasien baru dapat memperoleh nomor rekam medis saat check-in pertamanya. Jangan membuat nomor baru sendiri jika sistem akan menerbitkannya.
 
@@ -196,10 +200,10 @@ Status konfirmasi sehari sebelumnya hanya catatan tindak lanjut. Pasien tetap pe
 
 **Menu:** **Invoice & Tagihan** serta **Riwayat Pembayaran & Kwitansi**.
 
-1. Tunggu sampai Dokter menyelesaikan tindakan dan menyerahkannya untuk ditagihkan.
+1. Tunggu sampai seluruh tindakan dalam kunjungan berstatus selesai; tindakan tersebut otomatis siap ditagihkan.
 2. Pada daftar tindakan yang siap ditagihkan, pilih pasien dan kunjungan yang benar.
 3. Jika catatan tindakan perlu koreksi, pilih **Kembalikan ke Dokter** sebelum menerbitkan invoice dan tulis alasan dengan jelas. Tindakan yang menunggu revisi tidak dapat ditagihkan; pantau bagian **Menunggu Revisi Dokter**.
-4. Pilih **Buat Invoice** setelah tindakan yang dikembalikan sudah diserahkan kembali oleh Dokter. Periksa nama pasien, layanan, tarif, jumlah, diskon, dan pajak sebelum menerbitkannya.
+4. Pilih **Buat Invoice** setelah tindakan yang dikembalikan sudah dikoreksi Dokter dan kembali berstatus selesai. Periksa nama pasien, layanan, tarif, jumlah, diskon, dan pajak sebelum menerbitkannya.
 5. Jelaskan jumlah tagihan kepada pasien. Invoice adalah tagihan, bukan bukti bahwa pasien sudah membayar.
 6. Saat menerima pembayaran, pilih **Bayar**, pilih metode yang sesuai dengan uang yang benar-benar diterima, lalu masukkan jumlahnya. Pembayaran dapat dicatat bertahap jika pasien belum melunasi.
 7. Periksa nominal, metode, dan nomor referensi bila ada sebelum menekan **Konfirmasi Pembayaran**.
@@ -249,15 +253,18 @@ Gunakan **Kontrol & Perawatan Lanjutan** untuk menghubungi pasien yang perlu dii
 
 ### Membuat dan menyelesaikan tindakan
 
-1. Buka **Treatment** dan pastikan tindakan terhubung ke pasien serta kunjungan yang benar.
-2. Buat atau periksa tindakan, layanan, lama tindakan, serta informasi yang diminta.
-3. Asisten dapat membantu memulai tindakan. Dokter bertanggung jawab memeriksa hasilnya. Jika Asisten ditugaskan secara khusus menangani tindakan Dokter pengganti eksternal, ikuti penugasan dan arahan yang diberikan untuk tindakan tersebut.
-4. Sebelum menyelesaikan, periksa bahan resep dan pilihan bahan khusus yang tampil pada tindakan.
-5. Pilih **Selesaikan** setelah tindakan benar-benar selesai. Aplikasi mencatat pemakaian bahan yang tersedia dan memberi tahu bila masih ada kekurangan.
-6. Bila bahan kurang, beri tahu Admin Cabang agar pengadaan dicatat. Kekurangan yang tertinggal akan dipotong otomatis saat stok barang tersebut masuk.
-7. Pilih **Serahkan ke Kasir** jika tindakan siap ditagihkan. Jika kunjungan berisi beberapa tindakan, pastikan semuanya sudah selesai dan diserahkan.
-8. Hanya Dokter yang tercatat sebagai penanggung jawab tindakan yang dapat menyelesaikan dan menyerahkannya ke kasir. Jika perlu diganti, minta penugasan Dokter pengganti terlebih dahulu. Untuk tindakan Dokter pengganti eksternal, Asisten atau Super Admin hanya dapat melanjutkan langkah yang memang tersedia dan ditugaskan untuk tindakan tersebut.
-9. Jika kasir mengembalikan tindakan sebelum invoice diterbitkan, buka filter **Perlu Revisi**, baca alasan koreksi, perbarui jenis tindakan, harga Rupiah, dan catatan tindakan bila diperlukan, lalu pilih **Simpan & Serahkan ke Kasir**. Pengiriman ulang tidak mengubah pencatatan stok atau akrual kompensasi yang sudah ada; selisih harus disesuaikan manual oleh Admin.
+1. Buka **Treatment** dan pastikan pasien serta kunjungan yang dipilih benar.
+2. Susun rencana dengan memilih satu atau beberapa tindakan. Tarif cabang terisi sebagai harga awal; dokter penanggung jawab dapat menyesuaikan harga setiap item sesuai kondisi atau luas tindakan.
+3. Jelaskan rencana dan estimasi biaya terbaru kepada pasien sebelum menyimpan. Catat persetujuan lisan hanya setelah pasien menyetujuinya; tanda tangan atau persetujuan tertulis tidak diwajibkan oleh alur aplikasi. Persetujuan dan waktu pencatatannya tersimpan pada rencana.
+4. Rencana belum berarti tindakan sudah dilakukan. Mulai tindakan hanya setelah pasien menyetujui rencana dan biaya. Tindakan dalam satu kunjungan tampil sebagai satu rencana; mulai dan selesaikan item yang memenuhi syarat bersama-sama. Status, durasi, dan pemakaian bahan tetap tercatat per item.
+5. Asisten dapat membantu memulai tindakan. Dokter bertanggung jawab memeriksa hasilnya. Jika Asisten ditugaskan secara khusus menangani tindakan Dokter pengganti eksternal, ikuti penugasan dan arahan yang diberikan untuk tindakan tersebut.
+6. Sebelum menyelesaikan, periksa bahan resep dan pilihan bahan khusus yang tampil pada tindakan.
+7. Pilih **Selesaikan** setelah tindakan benar-benar selesai. Aplikasi mencatat pemakaian bahan yang tersedia dan memberi tahu bila masih ada kekurangan.
+8. Bila bahan kurang, beri tahu Admin Cabang agar pengadaan dicatat. Kekurangan yang tertinggal akan dipotong otomatis saat stok barang tersebut masuk.
+9. Jika pasien membatalkan sebagian tindakan, pilih **Batalkan item** serta tulis alasannya. Item yang belum dimulai dapat dibatalkan. Item yang sudah berstatus berjalan hanya dapat dibatalkan jika belum dikerjakan dan belum memakai bahan; centang konfirmasi yang tersedia. Sistem menolak pembatalan jika pemakaian bahan atau aktivitas tindakan selain mulai sudah tercatat. Item yang dibatalkan tidak ditagihkan; tindakan lain yang selesai tetap dapat masuk satu invoice kunjungan.
+10. Admin Cabang dapat membuat invoice setelah semua rencana dalam kunjungan selesai atau dibatalkan. Invoice hanya mencakup tindakan yang selesai.
+11. Hanya Dokter yang tercatat sebagai penanggung jawab tindakan yang dapat menyelesaikannya. Jika perlu diganti, minta penugasan Dokter pengganti terlebih dahulu. Untuk tindakan Dokter pengganti eksternal, Asisten atau Super Admin hanya dapat melanjutkan langkah yang memang tersedia dan ditugaskan untuk tindakan tersebut.
+12. Jika kasir mengembalikan tindakan sebelum invoice diterbitkan, buka filter **Perlu Revisi**, baca alasan koreksi, perbarui jenis tindakan dan catatan bila diperlukan, lalu pilih **Simpan Koreksi**. Tarif resmi cabang diterapkan otomatis. Tindakan kembali siap ditagihkan. Koreksi tidak mengulang pencatatan stok atau akrual kompensasi; selisih harus disesuaikan manual oleh Admin.
 
 ### Meninjau resep bahan
 
@@ -374,7 +381,7 @@ OB menggunakan Portal Pegawai untuk kebutuhan pribadi dan kehadiran saja. OB tid
 ### Admin Cabang
 
 - Pasien dan cabang benar; tidak ada check-in atau antrean ganda.
-- Semua tindakan sudah diserahkan oleh Dokter sebelum invoice diterbitkan.
+- Semua tindakan dalam kunjungan sudah selesai sebelum invoice diterbitkan.
 - Pembayaran sesuai uang yang diterima dan kwitansi cocok dengan transaksinya.
 - Penerimaan serta pemakaian stok tercatat; pembelian juga dicatat sebagai pengeluaran dengan bukti.
 

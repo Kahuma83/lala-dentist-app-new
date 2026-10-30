@@ -167,4 +167,23 @@ describe("Patient Registration & Branch Admin Global Filter", () => {
     expect(legacy.identityDocumentNumber).toBe("");
     expect((await patientRepo.getPatientById(legacy.id))?.placeOfBirth).toBe("");
   });
+
+  it("allows registering a patient without an identity document and adding it later", async () => {
+    const patient = await patientRepo.createPatient({
+      name: "Pasien Tanpa KTP",
+      phone: "",
+      dateOfBirth: "1995-04-12",
+      gender: "P",
+      address: "Jember"
+    });
+
+    expect(patient.identityDocumentNumber).toBe("");
+
+    const completedProfile = await patientRepo.updatePatient(patient.id, {
+      identityDocumentType: "NIK",
+      identityDocumentNumber: "3201010101900001"
+    });
+
+    expect(completedProfile.identityDocumentNumber).toBe("3201010101900001");
+  });
 });

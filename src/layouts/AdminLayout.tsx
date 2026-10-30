@@ -6,7 +6,7 @@ import { UserRole } from "../types/domain";
 import { AuthService } from "../services/authService";
 import { ProfileSecurityModal } from "../components/ProfileSecurityModal";
 import { isSupabaseConfigured } from "../lib/supabase";
-import { isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
+import { isFullAppDemoEnabled, isLocalPatientDemoEnabled } from "../utils/localPatientDemo";
 import {
   LayoutDashboard,
   Users,
@@ -302,10 +302,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "PRAKTIK DOKTER",
       items: [
-        { name: "Antrean Dokter", path: "/doctor/queue", icon: ListOrdered },
-        { name: "Pasien & Rekam Medis", path: "/doctor/patients", icon: FileText },
-        { name: "Treatment", path: "/doctor/treatments", icon: Activity },
-        { name: "Persetujuan Resep Stok", path: "/doctor/inventory/recipes", icon: ClipboardList }
+        { name: "Monitor Praktik Hari Ini", path: "/doctor/queue", icon: LayoutDashboard },
+        { name: "Antrean Pasien", path: "/doctor/queue/manage", icon: ListOrdered },
+        { name: "Tindakan & Perawatan", path: "/doctor/treatments", icon: Activity }
+      ]
+    },
+    {
+      title: "LAINNYA",
+      items: [
+        { name: "Persetujuan Resep Bahan", path: "/doctor/inventory/recipes", icon: ClipboardList },
+        { name: "Pasien & Rekam Medis", path: "/doctor/patients", icon: FileText }
       ]
     }
   ];
@@ -358,7 +364,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     <div className="min-h-screen bg-[#fafaf8] text-slate-800 font-sans flex flex-col" id="app-container">
       
       {/* 1. PREMIUM FULL-WIDTH NAVIGATION HEADER WITH GOLDEN SILK GRADIENT */}
-      <header className="h-20 bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c] flex items-center justify-between px-6 sticky top-0 z-50 shadow-md relative">
+      <header className="h-20 bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c] flex items-center justify-between px-3 sm:px-6 sticky top-0 z-50 shadow-md relative">
         
         {/* Absolute Shimmering Silk Wave Lines & Decorators in a clipped wrapper container */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -379,7 +385,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         </div>
 
         {/* Brand & Branch Selector (Left Area) */}
-        <div className="flex items-center gap-6 relative z-10">
+        <div className="flex items-center gap-2 sm:gap-6 relative z-10">
           
           {/* Mobile Menu Trigger */}
           <button
@@ -429,7 +435,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         </div>
 
         {/* Global Search and Personal Controls (Middle-Right Area) */}
-        <div className="flex items-center gap-5 relative z-10">
+        <div className="flex items-center gap-1 sm:gap-5 relative z-10">
           
           {/* Main White Capsule Search Bar */}
           <div className="relative hidden lg:block w-96">
@@ -445,7 +451,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           </div>
 
           {/* Utility Action Buttons */}
-          <div className="flex items-center gap-1">
+          <div className="hidden items-center gap-1 sm:flex">
             {/* Notification Bell */}
             <div className="relative">
               <button className="p-2 text-slate-300 hover:text-[#ebd4a8] rounded-full hover:bg-white/5 transition-colors relative" aria-label="Notifikasi">
@@ -473,9 +479,20 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           )}
 
           {isLocalPatientDemoEnabled ? (
-            <span className="text-[10px] text-white/90 bg-white/5 px-2.5 py-1 rounded-md border border-white/15 font-bold">
-              DEMO LOKAL
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-white/90 bg-white/5 px-2.5 py-1 rounded-md border border-white/15 font-bold">
+                DEMO LOKAL
+              </span>
+              {isFullAppDemoEnabled && (
+                <button
+                  type="button"
+                  onClick={() => window.location.assign("/login")}
+                  className="rounded-md border border-amber-200/30 px-2 py-1 text-[10px] font-bold text-amber-100 hover:bg-white/10"
+                >
+                  Keluar Demo
+                </button>
+              )}
+            </div>
           ) : isSupabaseConfigured && (
             <span
               title={realtimeSyncStatus.error || realtimeSyncStatus.channelName || "Menunggu koneksi realtime Supabase"}
@@ -487,7 +504,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           )}
 
           {/* User Profile Block */}
-          <div className="relative border-l border-white/10 pl-5">
+          <div className="relative border-l border-white/10 pl-2 sm:pl-5">
             <button
               onClick={() => setShowProfileMenu(!showProfileMenu)}
               className="flex items-center gap-3 p-1 rounded-full hover:bg-white/5 transition-colors"

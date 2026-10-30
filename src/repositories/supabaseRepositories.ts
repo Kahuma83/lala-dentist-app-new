@@ -3850,6 +3850,9 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       serviceNameSnapshot: row.service_name_snapshot,
       doctorNameSnapshot: row.doctor_name_snapshot,
       priceSnapshot: row.price_snapshot == null ? undefined : Number(row.price_snapshot),
+      patientApprovalMethod: row.patient_approval_method ?? undefined,
+      patientApprovedAt: row.patient_approved_at ?? undefined,
+      patientApprovedBy: row.patient_approved_by ?? undefined,
       estimatedDurationMinutes: row.estimated_duration_minutes,
       notes: row.notes ?? undefined,
       assignedDoctorId: row.assigned_doctor_id ?? undefined,
@@ -3859,6 +3862,9 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       handedOverAt: row.handed_over_at ?? undefined,
       returnedAt: row.returned_at ?? undefined,
       returnReason: row.return_reason ?? undefined,
+      cancelledAt: row.cancelled_at ?? undefined,
+      cancelledBy: row.cancelled_by ?? undefined,
+      cancellationReason: row.cancellation_reason ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -3933,6 +3939,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       doctorId: string;
       externalDoctorId?: string | null;
       priceSnapshot?: number;
+      patientApprovalConfirmed?: boolean;
       estimatedDurationMinutes?: number;
       notes?: string;
       customId?: string;
@@ -3944,6 +3951,12 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     _currentUserId?: string | null
   ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
+    if (data.patientApprovalConfirmed !== true || !_currentUserId) {
+      throw new Error("Persetujuan pasien atas rencana tindakan dan estimasi biaya wajib dicatat.");
+    }
+    if (data.priceSnapshot !== undefined && currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat menyesuaikan harga tindakan.");
+    }
 
     // Look up visit to ensure valid branch & patient
     const { data: visit, error: vErr } = await supabase
@@ -4007,9 +4020,6 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
 
     const serviceName = srv.name;
     const estDur = data.estimatedDurationMinutes || srv.estimated_duration_minutes || 30;
-    if (data.priceSnapshot !== undefined && currentUserRole !== UserRole.DOCTOR) {
-      throw new Error("Hanya dokter yang dapat menyesuaikan harga tindakan.");
-    }
     if (data.priceSnapshot !== undefined && (!Number.isSafeInteger(data.priceSnapshot) || data.priceSnapshot < 0)) {
       throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
     }
@@ -4033,6 +4043,9 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       service_name_snapshot: serviceName,
       doctor_name_snapshot: doctorName,
       price_snapshot: data.priceSnapshot ?? Number(tariff?.custom_price ?? srv.base_price),
+      patient_approval_method: "VERBAL",
+      patient_approved_at: new Date().toISOString(),
+      patient_approved_by: _currentUserId,
       estimated_duration_minutes: estDur,
       notes: data.notes || null
     };
@@ -4088,6 +4101,29 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     }
 
     return this.mapTreatmentFromDb(data);
+  }
+
+  async cancelTreatmentJob(
+    id: string,
+    reason: string,
+    _currentUserRole?: UserRole,
+    _userBranchId?: string | null,
+    _currentUserId?: string | null,
+    _actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string },
+    notPerformedConfirmed = false
+  ): Promise<TreatmentJob> {
+    ensureSupabaseConnected();
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new Error("Alasan pembatalan wajib diisi.");
+    const { data, error } = await supabase.rpc("cancel_treatment_job_secure", {
+      p_treatment_id: id,
+      p_reason: normalizedReason,
+      p_not_performed_confirmed: notPerformedConfirmed
+    });
+    if (error) throw new Error(`Gagal membatalkan rencana tindakan: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Gagal membatalkan rencana tindakan: data tidak ditemukan");
+    return this.mapTreatmentFromDb(row);
   }
 
   async completeTreatmentJob(
@@ -4181,20 +4217,26 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     id: string,
     correctedNotes: string,
     serviceId: string,
-    priceSnapshot: number
+    priceSnapshot: number,
+    patientApprovalConfirmed: boolean,
+    _currentUserRole?: UserRole
   ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
     const normalizedNotes = correctedNotes.trim();
     if (!normalizedNotes) throw new Error("Catatan tindakan yang sudah dikoreksi wajib diisi.");
     if (!serviceId) throw new Error("Jenis tindakan hasil koreksi wajib dipilih.");
-    if (!Number.isSafeInteger(priceSnapshot) || priceSnapshot < 0) {
+    if (patientApprovalConfirmed !== true) {
+      throw new Error("Persetujuan lisan pasien atas harga koreksi wajib dicatat.");
+    }
+    if (!Number.isSafeInteger(priceSnapshot) || priceSnapshot < 0 || priceSnapshot > Number.MAX_SAFE_INTEGER) {
       throw new Error("Harga tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
     }
     const { data, error } = await supabase.rpc("resubmit_treatment_to_cashier_secure", {
       p_treatment_id: id,
       p_corrected_notes: normalizedNotes,
       p_service_id: serviceId,
-      p_price_snapshot: priceSnapshot
+      p_price_snapshot: priceSnapshot,
+      p_patient_approval_confirmed: patientApprovalConfirmed
     });
     if (error) throw new Error(`Gagal menyerahkan ulang tindakan ke kasir: ${error.message}`);
     const row = Array.isArray(data) ? data[0] : data;
@@ -4491,6 +4533,40 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
 
     if (!data.items || data.items.length === 0) {
       throw new Error("Invoice harus memiliki minimal satu item tindakan");
+    }
+
+    const linkedTreatmentIds = data.items.flatMap((item) =>
+      item.treatmentJobId ? [item.treatmentJobId] : []
+    );
+    if (linkedTreatmentIds.length > 0
+      && isSupabaseConfigured
+      && supabase
+      && isValidUUID(data.visitId)) {
+      const { data: visitTreatments, error: treatmentError } = await supabase
+        .from("treatment_jobs")
+        .select("id,status")
+        .eq("visit_id", data.visitId);
+      if (treatmentError) {
+        throw new Error(`Gagal memeriksa status rencana tindakan sebelum invoice: ${treatmentError.message}`);
+      }
+
+      const completedTreatments = (visitTreatments || []).filter((treatment: any) =>
+        treatment.status === TreatmentJobStatus.SELESAI
+        || treatment.status === TreatmentJobStatus.DISERAHKAN
+      );
+      const allPlansClosed = (visitTreatments || []).every((treatment: any) =>
+        treatment.status === TreatmentJobStatus.SELESAI
+        || treatment.status === TreatmentJobStatus.DISERAHKAN
+        || treatment.status === TreatmentJobStatus.DIBATALKAN
+      );
+      const linkedIds = new Set(linkedTreatmentIds);
+      if (!allPlansClosed || completedTreatments.length === 0) {
+        throw new Error("Invoice hanya dapat dibuat setelah semua rencana selesai atau dibatalkan dan ada tindakan yang selesai.");
+      }
+      if (linkedIds.size !== completedTreatments.length
+        || completedTreatments.some((treatment: any) => !linkedIds.has(treatment.id))) {
+        throw new Error("Invoice harus memuat seluruh tindakan selesai dan tidak boleh memuat rencana yang dibatalkan.");
+      }
     }
 
     const now = AppClock.nowISO();

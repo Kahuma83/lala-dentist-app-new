@@ -22,6 +22,18 @@ export function calculateQueueEstimates(
       };
       const rankDiff = rank(a.status) - rank(b.status);
       if (rankDiff !== 0) return rankDiff;
+      if (rank(a.status) === 3) {
+        const aBooking = bookings.find((booking) => booking.id === a.bookingId);
+        const bBooking = bookings.find((booking) => booking.id === b.bookingId);
+        const aBookingTime = aBooking?.bookingDateTime || a.bookingTimeSnapshot;
+        const bBookingTime = bBooking?.bookingDateTime || b.bookingTimeSnapshot;
+        if (aBookingTime && bBookingTime) {
+          const bookingDiff = new Date(aBookingTime).getTime() - new Date(bBookingTime).getTime();
+          if (Number.isFinite(bookingDiff) && bookingDiff !== 0) return bookingDiff;
+        } else if (aBookingTime || bBookingTime) {
+          return aBookingTime ? -1 : 1;
+        }
+      }
       const arrivalDiff = new Date(a.arrivalAt || a.checkInTime || 0).getTime() -
         new Date(b.arrivalAt || b.checkInTime || 0).getTime();
       if (arrivalDiff !== 0) return arrivalDiff;
@@ -53,8 +65,9 @@ export function calculateQueueEstimates(
 
   const nowMs = new Date(referenceTime).getTime();
   let runningMs = nowMs;
+  const scheduledItems: QueueItem[] = [];
 
-  return activeItems.map((item) => {
+  const scheduleItem = (item: QueueItem, isWalkIn: boolean): QueueItem => {
     const durationMs = Math.max(1, item.estimatedDurationMinutes || 30) * 60_000;
     if (item.status === QueueStatus.IN_CONSULTATION) {
       const startAt = item.actualServiceStartAt || item.startTime || item.arrivalAt || referenceTime;
@@ -65,15 +78,19 @@ export function calculateQueueEstimates(
     const arrivalMs = new Date(item.arrivalAt || item.checkInTime || referenceTime).getTime();
     let candidateMs = Math.max(arrivalMs, runningMs);
     const linkedBooking = bookings.find((booking) => booking.id === item.bookingId);
-    if (linkedBooking && getOperationalDateString(linkedBooking.bookingDateTime) === operationalDate) {
-      const bookedStartMs = new Date(linkedBooking.bookingDateTime).getTime();
+    const bookingTime = linkedBooking?.bookingDateTime || item.bookingTimeSnapshot;
+    if (bookingTime && getOperationalDateString(bookingTime) === operationalDate) {
+      const bookedStartMs = new Date(bookingTime).getTime();
       if (Number.isFinite(bookedStartMs)) candidateMs = Math.max(candidateMs, bookedStartMs);
     }
     const preferredStartMs = item.preferredServiceAt ? new Date(item.preferredServiceAt).getTime() : NaN;
     if (Number.isFinite(preferredStartMs)) candidateMs = Math.max(candidateMs, preferredStartMs);
 
+    const conflictingBookings = isWalkIn
+      ? reservedBookings
+      : reservedBookings.filter((booking) => booking.booking.id !== linkedBooking?.id);
     while (true) {
-      const conflict = reservedBookings.find(
+      const conflict = conflictingBookings.find(
         (booking) => candidateMs < booking.endMs && candidateMs + durationMs > booking.startMs
       );
       if (!conflict) break;
@@ -86,7 +103,71 @@ export function calculateQueueEstimates(
       estimatedServiceAt: new Date(candidateMs).toISOString(),
       updatedAt: referenceTime
     };
+  };
+
+  const inProgressItems = activeItems.filter((item) =>
+    item.status === QueueStatus.IN_CONSULTATION || item.status === QueueStatus.IN_PREPARATION
+  );
+  const appointmentItems = activeItems.filter((item) =>
+    item.status !== QueueStatus.IN_CONSULTATION &&
+    item.status !== QueueStatus.IN_PREPARATION &&
+    Boolean(item.bookingId)
+  );
+  const walkInItems = activeItems.filter((item) =>
+    item.status !== QueueStatus.IN_CONSULTATION &&
+    item.status !== QueueStatus.IN_PREPARATION &&
+    !item.bookingId
+  ).sort((a, b) => {
+    const aArrival = new Date(a.arrivalAt || a.checkInTime || referenceTime).getTime();
+    const bArrival = new Date(b.arrivalAt || b.checkInTime || referenceTime).getTime();
+    const aPreferred = a.preferredServiceAt ? new Date(a.preferredServiceAt).getTime() : aArrival;
+    const bPreferred = b.preferredServiceAt ? new Date(b.preferredServiceAt).getTime() : bArrival;
+    return Math.max(aArrival, aPreferred) - Math.max(bArrival, bPreferred);
   });
+
+  inProgressItems.forEach((item) => scheduledItems.push(scheduleItem(item, false)));
+
+  const pendingWalkIns = [...walkInItems];
+  for (const appointment of appointmentItems) {
+    const appointmentBooking = bookings.find((booking) => booking.id === appointment.bookingId);
+    const appointmentStartMs = appointmentBooking
+      ? new Date(appointmentBooking.bookingDateTime).getTime()
+      : appointment.bookingTimeSnapshot
+        ? new Date(appointment.bookingTimeSnapshot).getTime()
+      : Number.NaN;
+
+    while (pendingWalkIns.length > 0) {
+      const fittingWalkInIndex = pendingWalkIns.findIndex((walkIn) => {
+        const arrivalMs = new Date(walkIn.arrivalAt || walkIn.checkInTime || referenceTime).getTime();
+        const preferredStartMs = walkIn.preferredServiceAt
+          ? new Date(walkIn.preferredServiceAt).getTime()
+          : Number.NaN;
+        let walkInStartMs = Math.max(
+          runningMs,
+          Number.isFinite(arrivalMs) ? arrivalMs : nowMs,
+          Number.isFinite(preferredStartMs) ? preferredStartMs : nowMs
+        );
+        const durationMs = Math.max(1, walkIn.estimatedDurationMinutes || 30) * 60_000;
+        while (true) {
+          const conflict = reservedBookings.find(
+            (booking) => walkInStartMs < booking.endMs && walkInStartMs + durationMs > booking.startMs
+          );
+          if (!conflict) break;
+          walkInStartMs = conflict.endMs;
+        }
+        return Number.isFinite(appointmentStartMs) && walkInStartMs + durationMs <= appointmentStartMs;
+      });
+
+      if (fittingWalkInIndex < 0) break;
+      const [walkIn] = pendingWalkIns.splice(fittingWalkInIndex, 1);
+      scheduledItems.push(scheduleItem(walkIn, true));
+    }
+
+    scheduledItems.push(scheduleItem(appointment, false));
+  }
+
+  pendingWalkIns.forEach((item) => scheduledItems.push(scheduleItem(item, true)));
+  return scheduledItems;
 }
 
 export function getAvailableWalkInServiceTimes(

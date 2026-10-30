@@ -20,8 +20,9 @@ describe("Automatic compensation for paid invoices", () => {
     const invoiceRepo = new MockInvoiceRepository();
     const paymentRepo = new MockPaymentRepository();
     const compRepo = new MockCompensationRepository();
-    const treatmentRepo = new MockTreatmentRepository();
     const treatment = MockDatabase.getInstance().treatmentJobs.find((job) => job.id === "treatment-job-1")!;
+    treatment.visitId = "visit-compensation-test";
+    const treatmentRepo = new MockTreatmentRepository();
     await treatmentRepo.completeTreatmentJob(treatment.id);
 
     const invoice = await invoiceRepo.createInvoice({
@@ -53,6 +54,7 @@ describe("Automatic compensation for paid invoices", () => {
     const invoiceRepo = new MockInvoiceRepository();
     const compRepo = new MockCompensationRepository();
     const treatment = MockDatabase.getInstance().treatmentJobs.find((job) => job.id === "treatment-job-1")!;
+    treatment.visitId = "visit-compensation-test";
     const treatmentRepo = new MockTreatmentRepository();
     await treatmentRepo.completeTreatmentJob(treatment.id);
     const invoice = await invoiceRepo.createInvoice({
