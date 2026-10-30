@@ -29,7 +29,7 @@ CREATE OR REPLACE FUNCTION public.get_booking_referral_staff()
 RETURNS TABLE (
   id UUID,
   full_name TEXT,
-  position TEXT,
+  staff_position TEXT,
   branch_id UUID
 )
 LANGUAGE plpgsql

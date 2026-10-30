@@ -76,14 +76,14 @@ type BookingReferralStaffOption = Pick<Staff, "id" | "fullName" | "position" | "
 const isBookingReferralStaffOption = (value: unknown): value is {
   id: string;
   full_name: string;
-  position: StaffPosition.BRANCH_ADMIN | StaffPosition.ASSISTANT;
+  staff_position: StaffPosition.BRANCH_ADMIN | StaffPosition.ASSISTANT;
   branch_id: string | null;
 } => {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
   return typeof row.id === "string"
     && typeof row.full_name === "string"
-    && (row.position === StaffPosition.BRANCH_ADMIN || row.position === StaffPosition.ASSISTANT)
+    && (row.staff_position === StaffPosition.BRANCH_ADMIN || row.staff_position === StaffPosition.ASSISTANT)
     && (typeof row.branch_id === "string" || row.branch_id === null);
 };
 
@@ -253,7 +253,7 @@ export const BookingManagement: React.FC = () => {
             .map((row) => ({
               id: row.id,
               fullName: row.full_name,
-              position: row.position,
+              position: row.staff_position,
               branchId: row.branch_id
             }))
             .sort((a, b) => a.fullName.localeCompare(b.fullName, "id"))
