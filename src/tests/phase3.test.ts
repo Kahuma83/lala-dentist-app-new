@@ -245,6 +245,12 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
     ).rejects.toThrow("Access denied");
   });
 
+  it("allows a doctor to access their assigned branch when its identifier is an alias", async () => {
+    await expect(
+      queueRepo.getQueueByBranch("branch-gebang", UserRole.DOCTOR, "GEB")
+    ).resolves.toBeDefined();
+  });
+
   it("8. should throw error if Branch Admin attempts check-in for another branch", async () => {
     const visit = await visitRepo.createVisit({
       patientId: "patient-1",
