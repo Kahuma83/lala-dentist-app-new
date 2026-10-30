@@ -84,6 +84,8 @@ export const TreatmentManagement: React.FC = () => {
   const [activityNotes, setActivityNotes] = useState<string>("");
   const [addingActivity, setAddingActivity] = useState<boolean>(false);
   const [correctedTreatmentNotes, setCorrectedTreatmentNotes] = useState("");
+  const [revisedServiceId, setRevisedServiceId] = useState("");
+  const [revisedTreatmentPrice, setRevisedTreatmentPrice] = useState("");
   const [submittingRevision, setSubmittingRevision] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [completingTreatment, setCompletingTreatment] = useState(false);
@@ -196,6 +198,8 @@ export const TreatmentManagement: React.FC = () => {
   useEffect(() => {
     if (selectedTreatment) {
       setCorrectedTreatmentNotes(selectedTreatment.notes || "");
+      setRevisedServiceId(selectedTreatment.serviceId);
+      setRevisedTreatmentPrice(String(selectedTreatment.priceSnapshot ?? 0));
       setApprovedRecipeMaterials(null);
       loadActivities(selectedTreatment.id);
       void listInventoryItems(selectedTreatment.branchId)
@@ -460,12 +464,19 @@ export const TreatmentManagement: React.FC = () => {
 
   const handleResubmitTreatment = async (treatment: TreatmentJob) => {
     if (!canReviseTreatment(treatment) || submittingRevision) return;
+    const parsedPrice = Number(revisedTreatmentPrice);
+    if (!revisedServiceId || !revisedTreatmentPrice.trim() || !Number.isSafeInteger(parsedPrice) || parsedPrice < 0) {
+      setError("Pilih jenis tindakan dan masukkan harga Rupiah bulat yang tidak negatif.");
+      return;
+    }
     setSubmittingRevision(true);
     setError(null);
     try {
       const updatedTreatment = await treatmentRepo.resubmitTreatmentToCashier(
         treatment.id,
         correctedTreatmentNotes,
+        revisedServiceId,
+        parsedPrice,
         currentUser?.role,
         currentUser?.assignedBranchId,
         currentUser?.doctorId,
@@ -476,7 +487,7 @@ export const TreatmentManagement: React.FC = () => {
         }
       );
       setSelectedTreatment(updatedTreatment);
-      setSuccessMsg("Catatan tindakan berhasil diperbaiki dan diserahkan kembali ke kasir.");
+      setSuccessMsg("Jenis tindakan, harga, dan catatan berhasil diperbarui lalu diserahkan kembali ke kasir.");
       await loadData();
     } catch (err: any) {
       setError(err.message || "Gagal mengirim ulang koreksi tindakan");
@@ -1367,6 +1378,41 @@ export const TreatmentManagement: React.FC = () => {
                 )}
                 {canReviseTreatment(selectedTreatment) && (
                   <div className="rounded-xl border border-rose-200 bg-white p-3 space-y-2">
+                    <label htmlFor="treatment-revision-service" className="block text-[10px] uppercase text-rose-800 font-bold">
+                      Jenis tindakan hasil koreksi
+                    </label>
+                    <select
+                      id="treatment-revision-service"
+                      value={revisedServiceId}
+                      onChange={(event) => {
+                        const service = services.find((item) => item.id === event.target.value);
+                        setRevisedServiceId(event.target.value);
+                        if (service) setRevisedTreatmentPrice(String(service.basePrice));
+                      }}
+                      required
+                      className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                    >
+                      {services
+                        .filter((service) => service.isActive || service.id === selectedTreatment.serviceId)
+                        .map((service) => (
+                          <option key={service.id} value={service.id}>
+                            {service.name}{service.isActive ? "" : " (nonaktif)"}
+                          </option>
+                        ))}
+                    </select>
+                    <label htmlFor="treatment-revision-price" className="block text-[10px] uppercase text-rose-800 font-bold">
+                      Harga tindakan (Rp)
+                    </label>
+                    <input
+                      id="treatment-revision-price"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={revisedTreatmentPrice}
+                      onChange={(event) => setRevisedTreatmentPrice(event.target.value)}
+                      required
+                      className="w-full rounded-lg border border-slate-200 p-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                    />
                     <label htmlFor="treatment-revision-notes" className="text-[10px] uppercase text-rose-800 font-bold">
                       Perbaiki catatan tindakan
                     </label>
@@ -1380,7 +1426,7 @@ export const TreatmentManagement: React.FC = () => {
                       placeholder="Tulis catatan tindakan yang sudah dikoreksi"
                     />
                     <p className="text-[10px] text-slate-500">
-                      Setelah dikirim, tindakan kembali ke kasir tanpa mengulang pemotongan stok atau akrual kompensasi.
+                      Perubahan jenis tindakan atau harga tidak mengubah catatan stok dan akrual kompensasi yang sudah tercatat. Jika ada selisih, minta Admin melakukan penyesuaian manual.
                     </p>
                   </div>
                 )}
@@ -1520,7 +1566,14 @@ export const TreatmentManagement: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => void handleResubmitTreatment(selectedTreatment)}
-                    disabled={submittingRevision || !correctedTreatmentNotes.trim()}
+                    disabled={
+                      submittingRevision
+                      || !correctedTreatmentNotes.trim()
+                      || !revisedServiceId
+                      || !revisedTreatmentPrice.trim()
+                      || !Number.isSafeInteger(Number(revisedTreatmentPrice))
+                      || Number(revisedTreatmentPrice) < 0
+                    }
                     className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
                   >
                     <Send className="h-3.5 w-3.5" />

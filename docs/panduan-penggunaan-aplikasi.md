@@ -257,7 +257,7 @@ Gunakan **Kontrol & Perawatan Lanjutan** untuk menghubungi pasien yang perlu dii
 6. Bila bahan kurang, beri tahu Admin Cabang agar pengadaan dicatat. Kekurangan yang tertinggal akan dipotong otomatis saat stok barang tersebut masuk.
 7. Pilih **Serahkan ke Kasir** jika tindakan siap ditagihkan. Jika kunjungan berisi beberapa tindakan, pastikan semuanya sudah selesai dan diserahkan.
 8. Hanya Dokter yang tercatat sebagai penanggung jawab tindakan yang dapat menyelesaikan dan menyerahkannya ke kasir. Jika perlu diganti, minta penugasan Dokter pengganti terlebih dahulu. Untuk tindakan Dokter pengganti eksternal, Asisten atau Super Admin hanya dapat melanjutkan langkah yang memang tersedia dan ditugaskan untuk tindakan tersebut.
-9. Jika kasir mengembalikan tindakan sebelum invoice diterbitkan, buka filter **Perlu Revisi**, baca alasan koreksi, perbaiki catatan tindakan, lalu pilih **Simpan & Serahkan ke Kasir**. Pengiriman ulang tidak mengulang pencatatan stok atau akrual kompensasi.
+9. Jika kasir mengembalikan tindakan sebelum invoice diterbitkan, buka filter **Perlu Revisi**, baca alasan koreksi, perbarui jenis tindakan, harga Rupiah, dan catatan tindakan bila diperlukan, lalu pilih **Simpan & Serahkan ke Kasir**. Pengiriman ulang tidak mengubah pencatatan stok atau akrual kompensasi yang sudah ada; selisih harus disesuaikan manual oleh Admin.
 
 ### Meninjau resep bahan
 
