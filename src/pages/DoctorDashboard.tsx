@@ -10,13 +10,15 @@ import {
   Play,
   RefreshCw,
   Stethoscope,
-  Users
+  Users,
+  X
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { useRouter } from "../components/Router";
 import {
   Booking,
   BookingStatus,
+  PatientProfile,
   QueueItem,
   QueueStatus,
   ScheduleStatus
@@ -25,8 +27,9 @@ import { AppClock } from "../utils/clock";
 import { formatIndonesianDate, getOperationalDateString } from "../utils/dateUtils";
 import {
   ClinicalDocumentType,
-  DoctorClinicalDocumentExample
-} from "../components/documents/DoctorClinicalDocumentExample";
+  DoctorClinicalDocument
+} from "../components/documents/DoctorClinicalDocument";
+import { TreatmentManagement } from "./TreatmentManagement";
 
 const isWaiting = (item: QueueItem) =>
   item.status === QueueStatus.WAITING ||
@@ -85,7 +88,12 @@ export const DoctorDashboard: React.FC = () => {
   const [queueActionError, setQueueActionError] = useState<string | null>(null);
   const [queueActionSuccess, setQueueActionSuccess] = useState<string | null>(null);
   const [startingQueueId, setStartingQueueId] = useState<string | null>(null);
-  const [clinicalDocumentType, setClinicalDocumentType] = useState<ClinicalDocumentType | null>(null);
+  const [clinicalDocumentContext, setClinicalDocumentContext] = useState<{
+    type: ClinicalDocumentType;
+    queueItem: QueueItem;
+    patient: PatientProfile;
+  } | null>(null);
+  const [workflowPatient, setWorkflowPatient] = useState<QueueItem | null>(null);
 
   const loadToday = useCallback(async (isRefresh = false) => {
     if (!currentUser) return;
@@ -181,11 +189,14 @@ export const DoctorDashboard: React.FC = () => {
   const currentPatientName = activePatient ? getPatientName(activePatient, patients) : null;
   const nextPatientName = nextPatient ? getPatientName(nextPatient, patients) : null;
 
-  const openPatientRecord = (patientId: string) => {
-    navigate(`/doctor/patients?patientId=${encodeURIComponent(patientId)}`);
-  };
-  const openTreatment = (item: QueueItem) => {
-    navigate(`/doctor/treatments?visitId=${encodeURIComponent(item.visitId)}`);
+  const openPatientRecord = (item: QueueItem) => {
+    if (!item.patientId || !item.visitId) return;
+    const params = new URLSearchParams({
+      patientId: item.patientId,
+      visitId: item.visitId,
+      returnTo: "/doctor/queue"
+    });
+    navigate(`/doctor/patients?${params.toString()}`);
   };
   const startNextConsultation = async (item: QueueItem) => {
     if (!currentUser || activePatient || startingQueueId) return;
@@ -193,13 +204,14 @@ export const DoctorDashboard: React.FC = () => {
     setQueueActionSuccess(null);
     setStartingQueueId(item.id);
     try {
-      await repos.queue.startService(
+      const startedPatient = await repos.queue.startService(
         item.id,
         currentUser.role,
         currentUser.assignedBranchId,
         currentUser.id
       );
       setQueueActionSuccess(`${getPatientName(item, patients)} masuk ke pemeriksaan.`);
+      setWorkflowPatient(startedPatient);
       await loadToday(true);
     } catch (error: unknown) {
       console.error("Gagal memulai pemeriksaan dari dashboard dokter:", error);
@@ -208,16 +220,26 @@ export const DoctorDashboard: React.FC = () => {
       setStartingQueueId(null);
     }
   };
+  const closePatientWorkflow = () => {
+    setWorkflowPatient(null);
+    void loadToday(true);
+  };
+  const openClinicalDocument = (type: ClinicalDocumentType) => {
+    if (!activePatient?.patientId || !activePatient.visitId) return;
+    const patient = patients.find((item) => item.id === activePatient.patientId);
+    if (!patient) return;
+    setClinicalDocumentContext({ type, queueItem: activePatient, patient });
+  };
 
   return (
     <div className="min-h-full space-y-5 bg-[linear-gradient(145deg,#fbf8f0_0%,#fffdf9_52%,#f8f3e8_100%)] p-4 sm:p-6" id="doctor-dashboard">
-      <header className="relative isolate flex min-h-28 flex-col gap-4 overflow-hidden rounded-2xl border border-[#eadbb9] bg-gradient-to-r from-white via-[#fffdf8] to-[#f7e9c9] p-5 shadow-[0_8px_24px_rgba(138,111,39,0.09)] sm:flex-row sm:items-center sm:justify-between sm:p-6">
-        <div className="pointer-events-none absolute -right-10 -top-20 -z-10 h-56 w-56 rounded-full bg-[#ebd4a8]/45 blur-3xl" />
-        <div className="pointer-events-none absolute right-4 top-1/2 hidden -translate-y-1/2 text-[#a98232]/15 sm:block">
+      <header className="relative isolate flex min-h-28 flex-col gap-4 overflow-hidden rounded-2xl border border-[#d6b96f] bg-[radial-gradient(ellipse_at_80%_50%,rgba(255,255,255,0.28),transparent_38%),linear-gradient(112deg,#9b7625_0%,#bd963e_38%,#e0c36f_62%,#9b7625_100%)] p-5 text-white shadow-[0_10px_28px_rgba(138,111,39,0.2)] sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div className="pointer-events-none absolute -right-10 -top-20 -z-10 h-56 w-56 rounded-full bg-white/25 blur-3xl" />
+        <div className="pointer-events-none absolute right-4 top-1/2 hidden -translate-y-1/2 text-white/15 sm:block">
           <Stethoscope className="h-36 w-36 -rotate-12" strokeWidth={1.1} aria-hidden="true" />
         </div>
         <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#d8bd7d] bg-gradient-to-br from-[#fffdf8] to-[#e6c875] p-1 shadow-[0_3px_10px_rgba(138,111,39,0.2)] sm:h-[68px] sm:w-[68px]">
+          <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-white/70 bg-gradient-to-br from-[#fffdf8] to-[#e6c875] p-1 shadow-[0_3px_10px_rgba(60,43,9,0.25)] sm:h-[68px] sm:w-[68px]">
             {doctorPhotoUrl && failedDoctorPhotoUrl !== doctorPhotoUrl ? (
               <img
                 src={doctorPhotoUrl}
@@ -233,21 +255,21 @@ export const DoctorDashboard: React.FC = () => {
           </div>
           <div className="relative min-w-0">
             <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#eadbb9] bg-white/80 text-[#9b7625]">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/60 bg-white/80 text-[#9b7625]">
                 <Stethoscope className="h-4 w-4" />
               </span>
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#8a6f27]">Dashboard Dokter</p>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-white">Dashboard Dokter</p>
             </div>
-            <h1 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
+            <h1 className="mt-1 text-xl font-bold text-white sm:text-2xl">
               {getGreeting()}{doctorGreeting ? `, ${doctorGreeting}` : ""}
             </h1>
-            <p className="mt-1 text-sm text-slate-600">Ringkasan pelayanan {branchName} · {formatIndonesianDate(today)}</p>
+            <p className="mt-1 text-sm text-white/85">Ringkasan pelayanan {branchName} · {formatIndonesianDate(today)}</p>
           </div>
         </div>
         <div className="relative z-10 flex flex-wrap items-center gap-3">
           {todaySchedule && (
-            <span className="inline-flex items-center gap-2 rounded-full border border-[#e5d3aa] bg-[#faf6ec] px-3 py-2 text-xs font-semibold text-[#80651f]">
-              <span className="h-2 w-2 rounded-full bg-[#c5a059]" />
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/85 px-3 py-2 text-xs font-semibold text-[#735b20]">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
               Praktik {todaySchedule.startTime}–{todaySchedule.endTime}
             </span>
           )}
@@ -255,7 +277,7 @@ export const DoctorDashboard: React.FC = () => {
             type="button"
             onClick={() => void loadToday(true)}
             disabled={loading || refreshing}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#e5d7b8] bg-white/80 px-3 py-2 text-xs font-semibold text-[#735b20] transition hover:border-[#c5a059] hover:bg-[#faf6ec] disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/60 bg-white/85 px-3 py-2 text-xs font-semibold text-[#735b20] transition hover:bg-white disabled:opacity-50"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
             Perbarui
@@ -282,6 +304,7 @@ export const DoctorDashboard: React.FC = () => {
           value={todayVisitCount}
           detail={`${bookings.length} booking · ${notArrivedBookingCount} belum check-in`}
           icon={<Users className="h-5 w-5" />}
+          iconColor="gold"
           loading={loading}
         />
         <MetricCard
@@ -289,6 +312,7 @@ export const DoctorDashboard: React.FC = () => {
           value={waitingPatients.length}
           detail="Termasuk yang sudah dipanggil"
           icon={<Clock3 className="h-5 w-5" />}
+          iconColor="orange"
           loading={loading}
         />
         <MetricCard
@@ -296,6 +320,7 @@ export const DoctorDashboard: React.FC = () => {
           value={activePatient ? 1 : 0}
           detail={currentPatientName || "Belum ada pemeriksaan aktif"}
           icon={<Stethoscope className="h-5 w-5" />}
+          iconColor="teal"
           loading={loading}
         />
         <MetricCard
@@ -303,6 +328,7 @@ export const DoctorDashboard: React.FC = () => {
           value={completedPatients.length}
           detail="Kunjungan selesai"
           icon={<CheckCircle2 className="h-5 w-5" />}
+          iconColor="green"
           loading={loading}
         />
       </section>
@@ -386,7 +412,7 @@ export const DoctorDashboard: React.FC = () => {
 
         <div className="space-y-5">
           <section className="relative overflow-hidden rounded-2xl border border-[#e6d5ad] bg-gradient-to-br from-white via-white to-[#faf4e5] p-5 shadow-[0_8px_24px_rgba(138,111,39,0.07)]">
-            <div className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full bg-[#ebd4a8]/35 blur-2xl" />
+            <div className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full bg-[#ebd4a8]/45 blur-2xl" />
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wide text-[#8a6f27]">
@@ -422,19 +448,24 @@ export const DoctorDashboard: React.FC = () => {
                   )}
                   <button
                     type="button"
-                    onClick={() => openPatientRecord((activePatient || nextPatient)!.patientId || "")}
-                    disabled={!(activePatient || nextPatient)?.patientId}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-3 py-2.5 text-xs font-bold text-white shadow-sm transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
+                    onClick={() => activePatient && openPatientRecord(activePatient)}
+                    disabled={!activePatient?.patientId || !activePatient.visitId}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#bca66c] bg-white/90 px-3 py-2.5 text-xs font-bold text-[#735b20] shadow-sm transition hover:border-[#9b7625] hover:bg-[#faf6ec] disabled:opacity-50"
                   >
                     <FileText className="h-4 w-4" /> Buka Rekam Medis
                   </button>
                   <button
                     type="button"
-                    onClick={() => openTreatment((activePatient || nextPatient)!)}
-                    disabled={!(activePatient || nextPatient)?.visitId}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#e5d7b8] bg-white/80 px-3 py-2.5 text-xs font-bold text-[#735b20] transition hover:border-[#c5a059] hover:bg-[#faf6ec] disabled:opacity-50"
+                    onClick={() => {
+                      if (!activePatient) return;
+                      setQueueActionError(null);
+                      setQueueActionSuccess(null);
+                      setWorkflowPatient(activePatient);
+                    }}
+                    disabled={!activePatient?.visitId}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-3 py-2.5 text-xs font-bold text-white shadow-sm transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
                   >
-                    <Activity className="h-4 w-4" /> Tindakan &amp; Perawatan
+                    <Activity className="h-4 w-4" /> Lanjutkan Pemeriksaan
                   </button>
                 </div>
               </>
@@ -449,14 +480,18 @@ export const DoctorDashboard: React.FC = () => {
               <h2 className="text-sm font-bold text-slate-900">Dokumen Kunjungan</h2>
             </div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              Resep obat, surat sakit, dan surat rujukan akan dibuat dari kunjungan aktif agar otomatis tertaut ke pasien dan rekam medis.
+              Buat dokumen dari kunjungan aktif. Dokumen tersimpan permanen pada rekam medis pasien dan dapat dicetak.
             </p>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <DocumentShortcut icon={<Pill className="h-4 w-4" />} label="Resep" onClick={() => setClinicalDocumentType("prescription")} />
-              <DocumentShortcut icon={<FileText className="h-4 w-4" />} label="Surat Sakit" onClick={() => setClinicalDocumentType("sick-note")} />
-              <DocumentShortcut icon={<ArrowRight className="h-4 w-4" />} label="Rujukan" onClick={() => setClinicalDocumentType("referral")} />
+              <DocumentShortcut icon={<Pill className="h-4 w-4" />} label="Resep" color="rose" disabled={!activePatient?.patientId} onClick={() => openClinicalDocument("prescription")} />
+              <DocumentShortcut icon={<FileText className="h-4 w-4" />} label="Surat Sakit" color="green" disabled={!activePatient?.patientId} onClick={() => openClinicalDocument("sick-note")} />
+              <DocumentShortcut icon={<ArrowRight className="h-4 w-4" />} label="Rujukan" color="blue" disabled={!activePatient?.patientId} onClick={() => openClinicalDocument("referral")} />
             </div>
-            <p className="mt-3 rounded-lg bg-[#fcfaf5] px-2.5 py-2 text-[10px] leading-4 text-[#8a7650]">Pilih dokumen untuk melihat contoh format. Contoh tidak disimpan dan bukan dokumen resmi.</p>
+            <p className="mt-3 rounded-lg bg-[#fcfaf5] px-2.5 py-2 text-[10px] leading-4 text-[#8a7650]">
+              {activePatient?.patientId
+                ? `Dokumen akan ditautkan ke ${getPatientName(activePatient, patients)} dan kunjungan yang sedang diperiksa.`
+                : "Mulai pemeriksaan pasien terlebih dahulu untuk membuat dokumen klinis."}
+            </p>
           </section>
 
           <section className="rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)]">
@@ -478,14 +513,64 @@ export const DoctorDashboard: React.FC = () => {
           </section>
         </div>
       </div>
-      {clinicalDocumentType && (
-        <DoctorClinicalDocumentExample
-          type={clinicalDocumentType}
+      {workflowPatient?.visitId && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-2 backdrop-blur-sm sm:p-5"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="doctor-visit-workflow-title"
+        >
+          <section className="flex max-h-[96vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-[#d6b96f] bg-[#fbfaf7] shadow-2xl">
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[#eadbb9] bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] px-4 py-3 text-white sm:px-6">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-white/85">Alur pasien dari Dashboard Dokter</p>
+                <h2 id="doctor-visit-workflow-title" className="truncate text-base font-bold text-white">
+                  {getPatientName(workflowPatient, patients)}
+                </h2>
+                <p className="text-[11px] text-white/85">
+                  Antrean {workflowPatient.queueNumber} · Kelola rencana dan tindakan sampai pemeriksaan selesai
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closePatientWorkflow}
+                className="shrink-0 rounded-lg p-2 text-white/85 transition hover:bg-white/15 hover:text-white"
+                aria-label="Tutup alur pasien"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <TreatmentManagement
+                key={workflowPatient.visitId}
+                embeddedVisitId={workflowPatient.visitId}
+                onVisitFinished={(message, error) => {
+                  setWorkflowPatient(null);
+                  setQueueActionSuccess(message);
+                  setQueueActionError(error || null);
+                  void loadToday(true);
+                }}
+              />
+            </div>
+            <footer className="shrink-0 border-t border-[#eadfc7] bg-white px-4 py-2 text-[10px] text-slate-500 sm:px-6">
+              Invoice dan pembayaran tetap diproses Admin/Kasir setelah pemeriksaan.
+            </footer>
+          </section>
+        </div>
+      )}
+      {clinicalDocumentContext && (
+        <DoctorClinicalDocument
+          type={clinicalDocumentContext.type}
+          visitId={clinicalDocumentContext.queueItem.visitId}
+          initialComplaint={
+            bookings.find((booking) => booking.id === clinicalDocumentContext.queueItem.bookingId)?.complaint || ""
+          }
+          patient={clinicalDocumentContext.patient}
           branch={branches.find((item) => item.id === branchId)}
           branding={branding}
           doctor={doctor}
           today={today}
-          onClose={() => setClinicalDocumentType(null)}
+          onClose={() => setClinicalDocumentContext(null)}
         />
       )}
     </div>
@@ -497,28 +582,53 @@ interface MetricCardProps {
   value: string | number;
   detail: string;
   icon: React.ReactNode;
+  iconColor: "gold" | "orange" | "teal" | "green";
   loading: boolean;
 }
 
-const MetricCard: React.FC<MetricCardProps> = ({ label, value, detail, icon, loading }) => (
-  <div className="group flex min-h-28 min-w-0 items-center gap-3 rounded-2xl border border-[#e8dcc3] bg-gradient-to-br from-white to-[#fffdf8] p-4 shadow-[0_6px_18px_rgba(138,111,39,0.06)] transition duration-200 hover:-translate-y-0.5 hover:border-[#d8c18f] hover:shadow-[0_10px_24px_rgba(138,111,39,0.11)] sm:gap-4 sm:p-5">
-    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[#eadbb9] bg-gradient-to-br from-[#fffdf8] to-[#e6c875] text-[#8a6f27] shadow-[0_3px_10px_rgba(138,111,39,0.12)] transition-transform duration-200 group-hover:scale-105">{icon}</div>
+const MetricCard: React.FC<MetricCardProps> = ({ label, value, detail, icon, iconColor, loading }) => {
+  const iconColorClass = {
+    gold: "border-[#eadbb9] bg-gradient-to-br from-[#fff8df] to-[#dfbd69] text-[#80651f] shadow-[0_3px_12px_rgba(197,160,89,0.3)]",
+    orange: "border-orange-300 bg-gradient-to-br from-orange-400 to-orange-600 text-white shadow-[0_3px_12px_rgba(234,88,12,0.3)]",
+    teal: "border-cyan-300 bg-gradient-to-br from-cyan-500 to-teal-700 text-white shadow-[0_3px_12px_rgba(8,145,178,0.3)]",
+    green: "border-emerald-300 bg-gradient-to-br from-emerald-400 to-green-700 text-white shadow-[0_3px_12px_rgba(16,185,129,0.3)]"
+  }[iconColor];
+
+  return (
+  <div className="group flex min-h-28 min-w-0 items-center gap-3 rounded-2xl border border-[#e8dcc3] bg-white p-4 shadow-[0_6px_18px_rgba(74,58,25,0.1)] transition duration-200 hover:-translate-y-0.5 hover:border-[#d8c18f] hover:shadow-[0_10px_24px_rgba(138,111,39,0.15)] sm:gap-4 sm:p-5">
+    <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full border ${iconColorClass} transition-transform duration-200 group-hover:scale-105`}>{icon}</div>
     <div className="min-w-0">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-0.5 text-3xl font-bold leading-tight tracking-tight text-slate-900">{loading ? "—" : value}</p>
       <p className="mt-1 truncate text-[11px] text-slate-500">{loading ? "Memuat..." : detail}</p>
     </div>
   </div>
-);
+  );
+};
 
-const DocumentShortcut: React.FC<{ icon: React.ReactNode; label: string; onClick: () => void }> = ({ icon, label, onClick }) => (
+const DocumentShortcut: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  color: "rose" | "green" | "blue";
+  disabled?: boolean;
+  onClick: () => void;
+}> = ({ icon, label, color, disabled = false, onClick }) => {
+  const colorClass = {
+    rose: "bg-gradient-to-br from-rose-500 to-rose-700 text-white shadow-[0_3px_10px_rgba(225,29,72,0.3)]",
+    green: "bg-gradient-to-br from-emerald-500 to-green-700 text-white shadow-[0_3px_10px_rgba(16,185,129,0.3)]",
+    blue: "bg-gradient-to-br from-sky-500 to-blue-700 text-white shadow-[0_3px_10px_rgba(2,132,199,0.3)]"
+  }[color];
+
+  return (
   <button
     type="button"
     onClick={onClick}
-    title={`Lihat contoh ${label}`}
-    className="flex min-h-[72px] flex-col items-center justify-center gap-1.5 rounded-xl border border-[#eadfc7] bg-gradient-to-b from-white to-[#fcfaf5] px-2 py-2 text-[11px] font-semibold text-[#8a6f27] transition hover:border-[#c5a059] hover:bg-[#faf6ec] focus:outline-none focus:ring-2 focus:ring-[#c5a059]/30"
+    disabled={disabled}
+    title={`Buat ${label} untuk pasien aktif`}
+    className="flex min-h-[72px] flex-col items-center justify-center gap-2 rounded-xl border border-[#eadfc7] bg-gradient-to-b from-white to-[#fcfaf5] px-2 py-2 text-[11px] font-semibold text-[#735b20] transition hover:border-[#c5a059] hover:bg-[#faf6ec] focus:outline-none focus:ring-2 focus:ring-[#c5a059]/30 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-[#eadfc7] disabled:hover:bg-white"
   >
-    {icon}
+    <span className={`flex h-8 w-8 items-center justify-center rounded-full ${colorClass}`}>{icon}</span>
     {label}
   </button>
-);
+  );
+};

@@ -92,6 +92,8 @@ import {
   TreatmentJobStatus,
   ClinicalConsentDocument,
   ClinicalConsentScope,
+  ClinicalVisitDocument,
+  ClinicalVisitDocumentType,
   AccountType,
   NormalBalance,
   AccountCategory,
@@ -7544,6 +7546,72 @@ function assertMedicalRecordAccess(
 }
 
 export class MockMedicalRecordRepository implements MedicalRecordRepository {
+  async getClinicalVisitDocuments(
+    visitId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<ClinicalVisitDocument[]> {
+    assertMedicalRecordRole(currentUserRole);
+    const db = MockDatabase.getInstance();
+    const visit = db.visits.find((item) => item.id === visitId);
+    if (!visit) throw new Error("Data kunjungan tidak ditemukan.");
+    assertMedicalRecordAccess(currentUserRole, userBranchId, visit.branchId);
+    return JSON.parse(JSON.stringify(
+      db.clinicalVisitDocuments
+        .filter((document) => document.visitId === visitId)
+        .sort((first, second) => second.createdAt.localeCompare(first.createdAt))
+    ));
+  }
+
+  async createClinicalVisitDocument(
+    data: {
+      visitId: string;
+      patientId: string;
+      branchId: string;
+      doctorId: string;
+      type: ClinicalVisitDocumentType;
+      formData: Record<string, string>;
+    },
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<ClinicalVisitDocument> {
+    assertMedicalRecordRole(currentUserRole);
+    if (currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat membuat dokumen klinis.");
+    }
+    if (!["PRESCRIPTION", "SICK_NOTE", "REFERRAL"].includes(data.type)) {
+      throw new Error("Jenis dokumen klinis tidak valid.");
+    }
+    if (!data.formData || Object.values(data.formData).some((value) => typeof value !== "string")) {
+      throw new Error("Isi dokumen klinis tidak valid.");
+    }
+    if (new TextEncoder().encode(JSON.stringify(data.formData)).length > 32_768) {
+      throw new Error("Isi dokumen klinis melebihi batas ukuran.");
+    }
+    const db = MockDatabase.getInstance();
+    const visit = db.visits.find((item) => item.id === data.visitId);
+    if (!visit) throw new Error("Data kunjungan tidak ditemukan.");
+    if (visit.patientId !== data.patientId || visit.branchId !== data.branchId) {
+      throw new Error("Data pasien atau cabang tidak sesuai dengan kunjungan.");
+    }
+    if (visit.doctorId && visit.doctorId !== data.doctorId) {
+      throw new Error("Dokter tidak sesuai dengan kunjungan.");
+    }
+    assertMedicalRecordAccess(currentUserRole, userBranchId, visit.branchId);
+    const now = AppClock.nowISO();
+    const document: ClinicalVisitDocument = {
+      ...data,
+      formData: { ...data.formData },
+      id: `clinical-doc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      createdAt: now,
+      createdBy: currentUserId || data.doctorId
+    };
+    db.clinicalVisitDocuments.push(document);
+    db.saveToStorage();
+    return JSON.parse(JSON.stringify(document));
+  }
+
   async getConsentDocumentsByVisit(
     visitId: string,
     currentUserRole?: UserRole,

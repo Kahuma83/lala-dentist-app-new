@@ -69,6 +69,8 @@ import {
   ClinicFormData,
   ClinicalConsentDocument,
   ClinicalConsentScope,
+  ClinicalVisitDocument,
+  ClinicalVisitDocumentType,
   PromotionMedia,
   BackupJob,
   BackupManifest,
@@ -722,6 +724,26 @@ export interface TreatmentActivityRepository {
 }
 
 export interface MedicalRecordRepository {
+  getClinicalVisitDocuments(
+    visitId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<ClinicalVisitDocument[]>;
+
+  createClinicalVisitDocument(
+    data: {
+      visitId: string;
+      patientId: string;
+      branchId: string;
+      doctorId: string;
+      type: ClinicalVisitDocumentType;
+      formData: Record<string, string>;
+    },
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<ClinicalVisitDocument>;
+
   getConsentDocumentsByVisit(
     visitId: string,
     currentUserRole?: UserRole,

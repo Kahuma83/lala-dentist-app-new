@@ -70,6 +70,8 @@ import {
   PatientMedicalProfile,
   ClinicalConsentDocument,
   ClinicalConsentScope,
+  ClinicalVisitDocument,
+  ClinicalVisitDocumentType,
   Invoice,
   InvoiceItem,
   InvoiceStatus,
@@ -2030,6 +2032,98 @@ export class SupabaseQueueRepository implements QueueRepository {
 // 4. SUPABASE MEDICAL RECORD REPOSITORY
 // =====================================================================
 export class SupabaseMedicalRecordRepository implements MedicalRecordRepository {
+  async getClinicalVisitDocuments(
+    visitId: string,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<ClinicalVisitDocument[]> {
+    this.assertClinicalVisitDocumentRole(currentUserRole);
+    ensureSupabaseConnected();
+    const { data, error } = await supabase
+      .from("clinical_visit_documents")
+      .select("*")
+      .eq("visit_id", visitId)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(`Gagal membaca dokumen klinis kunjungan: ${error.message}`);
+    return (data || []).map((row) => this.mapClinicalVisitDocumentFromDb(row));
+  }
+
+  async createClinicalVisitDocument(
+    data: {
+      visitId: string;
+      patientId: string;
+      branchId: string;
+      doctorId: string;
+      type: ClinicalVisitDocumentType;
+      formData: Record<string, string>;
+    },
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<ClinicalVisitDocument> {
+    if (currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat membuat dokumen klinis.");
+    }
+    if (!["PRESCRIPTION", "SICK_NOTE", "REFERRAL"].includes(data.type)) {
+      throw new Error("Jenis dokumen klinis tidak valid.");
+    }
+    if (!data.formData || Object.values(data.formData).some((value) => typeof value !== "string")) {
+      throw new Error("Isi dokumen klinis tidak valid.");
+    }
+    if (new TextEncoder().encode(JSON.stringify(data.formData)).length > 32_768) {
+      throw new Error("Isi dokumen klinis melebihi batas ukuran.");
+    }
+    if (userBranchId && data.branchId !== userBranchId) {
+      throw new Error("Dokumen hanya dapat dibuat pada cabang akun dokter.");
+    }
+
+    ensureSupabaseConnected();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError) throw new Error(`Gagal memverifikasi pengguna dokumen klinis: ${authError.message}`);
+    if (!authData.user) throw new Error("Sesi pengguna tidak tersedia untuk menyimpan dokumen klinis.");
+
+    const { data: account, error: accountError } = await supabase
+      .from("user_accounts")
+      .select("doctor_id")
+      .eq("auth_user_id", authData.user.id)
+      .eq("active", true)
+      .eq("role", UserRole.DOCTOR)
+      .single();
+    if (accountError) throw new Error(`Gagal memeriksa akun dokter: ${accountError.message}`);
+    if (account.doctor_id !== data.doctorId) {
+      throw new Error("Dokumen hanya dapat dibuat oleh dokter yang terhubung ke akun ini.");
+    }
+
+    const { data: visit, error: visitError } = await supabase
+      .from("patient_visits")
+      .select("patient_id, branch_id, doctor_id")
+      .eq("id", data.visitId)
+      .single();
+    if (visitError) throw new Error(`Gagal memeriksa kunjungan dokumen klinis: ${visitError.message}`);
+    if (
+      visit.patient_id !== data.patientId ||
+      visit.branch_id !== data.branchId ||
+      visit.doctor_id !== data.doctorId
+    ) {
+      throw new Error("Pasien, cabang, atau dokter tidak sesuai dengan kunjungan.");
+    }
+
+    const { data: saved, error: saveError } = await supabase
+      .from("clinical_visit_documents")
+      .insert({
+        visit_id: data.visitId,
+        patient_id: data.patientId,
+        branch_id: data.branchId,
+        doctor_id: data.doctorId,
+        document_type: data.type,
+        form_data: data.formData,
+        created_by: authData.user.id
+      })
+      .select("*")
+      .single();
+    if (saveError) throw new Error(`Gagal menyimpan dokumen klinis: ${saveError.message}`);
+    return this.mapClinicalVisitDocumentFromDb(saved);
+  }
+
   async getConsentDocumentsByVisit(
     visitId: string,
     currentUserRole?: UserRole,
@@ -2194,6 +2288,50 @@ export class SupabaseMedicalRecordRepository implements MedicalRecordRepository 
     if (role !== UserRole.DOCTOR && role !== UserRole.SUPER_ADMIN) {
       throw new Error("Hanya Dokter atau Super Admin yang dapat mengakses dokumen consent.");
     }
+  }
+
+  private assertClinicalVisitDocumentRole(role?: UserRole): void {
+    if (role !== UserRole.DOCTOR && role !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Dokter atau Super Admin yang dapat mengakses dokumen klinis.");
+    }
+  }
+
+  private mapClinicalVisitDocumentFromDb(row: {
+    id: string;
+    visit_id: string;
+    patient_id: string;
+    branch_id: string;
+    doctor_id: string;
+    document_type: ClinicalVisitDocumentType;
+    form_data: unknown;
+    created_at: string;
+    created_by: string;
+  }): ClinicalVisitDocument {
+    if (
+      !row.form_data ||
+      typeof row.form_data !== "object" ||
+      Array.isArray(row.form_data)
+    ) {
+      throw new Error("Data formulir dokumen klinis dari database tidak valid.");
+    }
+    const formData: Record<string, string> = {};
+    for (const [key, value] of Object.entries(row.form_data)) {
+      if (typeof value !== "string") {
+        throw new Error("Data formulir dokumen klinis dari database tidak valid.");
+      }
+      formData[key] = value;
+    }
+    return {
+      id: row.id,
+      visitId: row.visit_id,
+      patientId: row.patient_id,
+      branchId: row.branch_id,
+      doctorId: row.doctor_id,
+      type: row.document_type,
+      formData,
+      createdAt: row.created_at,
+      createdBy: row.created_by
+    };
   }
 
   private mapConsentDocumentFromDb(row: {
