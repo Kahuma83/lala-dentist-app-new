@@ -2646,7 +2646,7 @@ export class MockQueueRepository implements QueueRepository {
         currentUserRole === UserRole.DOCTOR ||
         currentUserRole === UserRole.DOCTOR_ASSISTANT) &&
       userBranchId &&
-      branchId !== userBranchId
+      !isBranchMatch(branchId, userBranchId, db.branches)
     ) {
       throw new Error("Access denied: Staff is isolated to their assigned branch");
     }
