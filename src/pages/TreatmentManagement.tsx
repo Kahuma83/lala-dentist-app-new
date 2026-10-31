@@ -1406,6 +1406,74 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             </table>
           </div>
         )}
+        {(isFinishVisitConfirmOpen || planAwaitingCompletion) && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+            <section
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="treatment-confirm-title"
+              className="w-full max-w-md overflow-hidden rounded-2xl border border-[#d6b96f] bg-[#fffdf8] shadow-2xl"
+            >
+              <header className="bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] px-5 py-4 text-white">
+                <h2 id="treatment-confirm-title" className="text-sm font-bold">
+                  {planAwaitingCompletion ? "Selesaikan Rencana Tindakan" : "Akhiri Pemeriksaan"}
+                </h2>
+              </header>
+              <div className="space-y-3 p-5 text-xs leading-relaxed text-slate-700">
+                {planAwaitingCompletion ? (
+                  <>
+                    <p>
+                      Selesaikan bersama {planAwaitingCompletion.treatments.filter((treatment) =>
+                        treatment.status === TreatmentJobStatus.DALAM_PROSES
+                      ).length} tindakan untuk {getTreatmentPatientName(planAwaitingCompletion.treatments[0])}?
+                    </p>
+                    <p className="rounded-lg border border-[#eadbb9] bg-[#faf6ec] p-3 text-[#735b20]">
+                      Pemakaian stok dan pencatatan selesai akan diproses per tindakan.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p>Yakin ingin mengakhiri pemeriksaan pasien ini?</p>
+                    <p className="rounded-lg border border-[#eadbb9] bg-[#faf6ec] p-3 text-[#735b20]">
+                      Konsultasi tanpa tindakan tetap dapat diakhiri. Jika ada tindakan, semuanya harus selesai atau dibatalkan terlebih dahulu. Invoice tetap diproses Admin/Kasir.
+                    </p>
+                  </>
+                )}
+              </div>
+              <footer className="flex justify-end gap-2 border-t border-[#eadfc7] bg-[#fcfaf5] px-5 py-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsFinishVisitConfirmOpen(false);
+                    setPlanAwaitingCompletion(null);
+                  }}
+                  disabled={confirmingWorkflowAction}
+                  className="rounded-lg border border-[#e5d7b8] bg-white px-4 py-2 text-xs font-semibold text-[#735b20] transition hover:bg-[#faf6ec] disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setConfirmingWorkflowAction(true);
+                    try {
+                      if (planAwaitingCompletion) await confirmCompleteVisitPlan();
+                      else await handleFinishEmbeddedVisit();
+                    } finally {
+                      setConfirmingWorkflowAction(false);
+                    }
+                  }}
+                  disabled={confirmingWorkflowAction}
+                  className="rounded-lg bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-4 py-2 text-xs font-bold text-white transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
+                >
+                  {confirmingWorkflowAction
+                    ? "Memproses..."
+                    : planAwaitingCompletion ? "Ya, Selesaikan" : "Ya, Akhiri Pemeriksaan"}
+                </button>
+              </footer>
+            </section>
+          </div>
+        )}
       </div>
       {embeddedVisitId && currentUser?.role === UserRole.DOCTOR && (
         <footer className="flex flex-col gap-3 rounded-2xl border border-[#eadbb9] bg-gradient-to-r from-white via-[#fffdf8] to-[#f7e9c9] p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -1851,74 +1919,6 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                     {selectedTreatment.cancelledAt && (
                       <div className="text-[10px] text-slate-500">
                         Dibatalkan: {formatActivityDateTime(selectedTreatment.cancelledAt)}
-                      </div>
-                    )}
-                    {(isFinishVisitConfirmOpen || planAwaitingCompletion) && (
-                      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
-                        <section
-                          role="alertdialog"
-                          aria-modal="true"
-                          aria-labelledby="treatment-confirm-title"
-                          className="w-full max-w-md overflow-hidden rounded-2xl border border-[#d6b96f] bg-[#fffdf8] shadow-2xl"
-                        >
-                          <header className="bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] px-5 py-4 text-white">
-                            <h2 id="treatment-confirm-title" className="text-sm font-bold">
-                              {planAwaitingCompletion ? "Selesaikan Rencana Tindakan" : "Akhiri Pemeriksaan"}
-                            </h2>
-                          </header>
-                          <div className="space-y-3 p-5 text-xs leading-relaxed text-slate-700">
-                            {planAwaitingCompletion ? (
-                              <>
-                                <p>
-                                  Selesaikan bersama {planAwaitingCompletion.treatments.filter((treatment) =>
-                                    treatment.status === TreatmentJobStatus.DALAM_PROSES
-                                  ).length} tindakan untuk {getTreatmentPatientName(planAwaitingCompletion.treatments[0])}?
-                                </p>
-                                <p className="rounded-lg border border-[#eadbb9] bg-[#faf6ec] p-3 text-[#735b20]">
-                                  Pemakaian stok dan pencatatan selesai akan diproses per tindakan.
-                                </p>
-                              </>
-                            ) : (
-                              <>
-                                <p>Yakin ingin mengakhiri pemeriksaan pasien ini?</p>
-                                <p className="rounded-lg border border-[#eadbb9] bg-[#faf6ec] p-3 text-[#735b20]">
-                                  Konsultasi tanpa tindakan tetap dapat diakhiri. Jika ada tindakan, semuanya harus selesai atau dibatalkan terlebih dahulu. Invoice tetap diproses Admin/Kasir.
-                                </p>
-                              </>
-                            )}
-                          </div>
-                          <footer className="flex justify-end gap-2 border-t border-[#eadfc7] bg-[#fcfaf5] px-5 py-3">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsFinishVisitConfirmOpen(false);
-                                setPlanAwaitingCompletion(null);
-                              }}
-                              disabled={confirmingWorkflowAction}
-                              className="rounded-lg border border-[#e5d7b8] bg-white px-4 py-2 text-xs font-semibold text-[#735b20] transition hover:bg-[#faf6ec] disabled:opacity-50"
-                            >
-                              Batal
-                            </button>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                setConfirmingWorkflowAction(true);
-                                try {
-                                  if (planAwaitingCompletion) await confirmCompleteVisitPlan();
-                                  else await handleFinishEmbeddedVisit();
-                                } finally {
-                                  setConfirmingWorkflowAction(false);
-                                }
-                              }}
-                              disabled={confirmingWorkflowAction}
-                              className="rounded-lg bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-4 py-2 text-xs font-bold text-white transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
-                            >
-                              {confirmingWorkflowAction
-                                ? "Memproses..."
-                                : planAwaitingCompletion ? "Ya, Selesaikan" : "Ya, Akhiri Pemeriksaan"}
-                            </button>
-                          </footer>
-                        </section>
                       </div>
                     )}
                   </div>

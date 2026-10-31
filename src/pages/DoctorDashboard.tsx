@@ -34,6 +34,7 @@ import {
   getDoctorPracticeBranchIds,
   resolveDoctorPracticeBranchId
 } from "../utils/doctorPracticeSchedule";
+import { getNotArrivedDoctorBookings } from "../utils/doctorDashboardUtils";
 
 const isWaiting = (item: QueueItem) =>
   item.status === QueueStatus.WAITING ||
@@ -71,7 +72,7 @@ const getGreeting = () => {
 };
 
 export const DoctorDashboard: React.FC = () => {
-  const { currentUser, repos, branches, doctors, doctorSchedules, patients, branding } = useApp();
+  const { currentUser, repos, branches, doctors, doctorSchedules, patients, visits, branding } = useApp();
   const { navigate } = useRouter();
   const today = AppClock.todayDateString();
   const doctorId = currentUser?.doctorId || "";
@@ -198,10 +199,9 @@ export const DoctorDashboard: React.FC = () => {
   );
   const todayVisitCount = queueItems.length + bookings.filter((booking) => !queueBookingIds.has(booking.id)).length;
   const notArrivedBookings = useMemo(() =>
-    bookings
-      .filter((booking) => !queueBookingIds.has(booking.id))
+    getNotArrivedDoctorBookings(bookings, queueItems, visits)
       .sort((first, second) => first.bookingDateTime.localeCompare(second.bookingDateTime)),
-  [bookings, queueBookingIds]);
+  [bookings, queueItems, visits]);
   const notArrivedBookingCount = notArrivedBookings.length;
   const todaySchedules = doctorSchedules.filter((schedule) =>
     schedule.doctorId === doctorId &&
