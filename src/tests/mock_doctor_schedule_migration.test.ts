@@ -59,5 +59,15 @@ describe("Current-week demo doctor schedule refresh", () => {
       )
       .map((schedule) => schedule.doctorId);
     expect(fridayGebangDoctors).toContain("doc-syafira");
+
+    const saturdaySyafiraSchedule = schedules.find((schedule) =>
+      new Date(`${schedule.date}T00:00:00Z`).getUTCDay() === 6 &&
+      schedule.branchId === "branch-gebang" &&
+      schedule.doctorId === "doc-syafira"
+    );
+    expect(saturdaySyafiraSchedule).toMatchObject({
+      startTime: "08:00",
+      endTime: "17:00"
+    });
   });
 });

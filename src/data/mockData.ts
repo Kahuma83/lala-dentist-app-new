@@ -2930,7 +2930,8 @@ export function generateCurrentWeekDoctorSchedules(): DoctorSchedule[] {
     { doc: "doc-vio", br: "branch-gebang", day: 5, s: "08:00", e: "14:00", notes: "Praktek Pagi" },
     { doc: "doc-lala", br: "branch-gebang", day: 5, s: "14:00", e: "18:00", notes: "Praktek Siang" },
     { doc: "doc-ulfa", br: "branch-ambulu", day: 5, s: "08:00", e: "13:00", notes: "Praktek Pagi" },
-    { doc: "doc-yuni", br: "branch-lengkong-mumbul", day: 5, s: "09:00", e: "15:00", notes: "Praktek Siang" }
+    { doc: "doc-yuni", br: "branch-lengkong-mumbul", day: 5, s: "09:00", e: "15:00", notes: "Praktek Siang" },
+    { doc: "doc-syafira", br: "branch-gebang", day: 5, s: "08:00", e: "17:00", notes: "Praktek Demo" }
   ];
 
   const nowIso = new Date().toISOString();
@@ -3536,7 +3537,7 @@ const mockDatabaseStorageKey = isFullAppDemoEnabled
   : isLocalPatientDemoEnabled
     ? "lala_patient_demo_db_v1"
     : "lala_dentist_db_v1";
-const currentWeekDoctorScheduleSeedVersion = 2;
+const currentWeekDoctorScheduleSeedVersion = 3;
 const initialMockBookings = () => JSON.parse(JSON.stringify(
   isLocalPatientDemoEnabled ? MOCK_BOOKINGS.filter((booking) => booking.patientId !== "patient-1") : MOCK_BOOKINGS
 ));
