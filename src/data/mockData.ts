@@ -3533,6 +3533,55 @@ export const MOCK_PROMOTIONS: PromotionMedia[] = [
 
 const isRunningTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || Boolean(process.env.VITEST));
 const useMockSeedData = isRunningTestEnv || isLocalPatientDemoEnabled;
+const createMockPrescriptionMedicineSeeds = (): PrescriptionMedicine[] => {
+  const medicines = [
+    ["Amoxicillin", "Amoksisilin", "500 mg", "kapsul"],
+    ["Amoxicillin + Clavulanic acid", "Co-amoxiclav; Augmentin", "625 mg", "tablet"],
+    ["Clindamycin", "Dalacin C", "300 mg", "kapsul"],
+    ["Metronidazole", "Flagyl", "500 mg", "tablet"],
+    ["Azithromycin", "Zithromax", "500 mg", "tablet"],
+    ["Cefadroxil", "Duricef", "500 mg", "kapsul"],
+    ["Doxycycline", "Doksisiklin", "100 mg", "kapsul"],
+    ["Paracetamol", "Parasetamol; Sanmol; Panadol", "500 mg", "tablet"],
+    ["Asam mefenamat", "Ponstan; Mefinal", "500 mg", "tablet"],
+    ["Ibuprofen", "Proris; Brufen", "400 mg", "tablet"],
+    ["Natrium diklofenak", "Voltaren; Cataflam", "50 mg", "tablet"],
+    ["Ketorolac", "Ketorolac tromethamine; Toradol", "10 mg", "tablet"],
+    ["Meloxicam", "Mobic", "15 mg", "tablet"],
+    ["Dexamethasone", "Dexametason", "0,5 mg", "tablet"],
+    ["Methylprednisolone", "Metilprednisolon; Medrol", "4 mg", "tablet"],
+    ["Asam traneksamat", "Transamin; Tranexamic acid", "500 mg", "tablet"],
+    ["Omeprazole", "Omeprazol", "20 mg", "kapsul"],
+    ["Lansoprazole", "Prosogan", "30 mg", "kapsul"],
+    ["Nystatin", "Mycostatin; Nistatin", "100.000 IU/mL", "drops"],
+    ["Miconazole oral gel", "Daktarin oral gel", "2%", "gel"],
+    ["Fluconazole", "Diflucan; Fluconazol", "150 mg", "kapsul"],
+    ["Acyclovir", "Aciclovir; Zovirax", "200 mg", "tablet"],
+    ["Acyclovir cream", "Zovirax cream", "5%", "krim"],
+    ["Chlorhexidine gluconate", "Minosep; Chlorhexidine", "0,2%", "obat kumur"],
+    ["Povidone iodine", "Betadine gargle; Betadine kumur", "1%", "obat kumur"],
+    ["Benzydamine HCl", "Tantum Verde", "0,15%", "obat kumur"],
+    ["Triamcinolone acetonide in orabase", "Kenalog in orabase; Orabase TA", "0,1%", "pasta oral"],
+    ["Cetirizine", "Cetirizin; Incidal", "10 mg", "tablet"],
+    ["Loratadine", "Claritin; Loratadin", "10 mg", "tablet"],
+    ["Chlorpheniramine maleate (CTM)", "CTM; Klorfeniramin", "4 mg", "tablet"],
+    ["Vitamin B complex", "Neurobion; Vitamin B kompleks", "-", "tablet"],
+    ["Vitamin C", "Asam askorbat; Redoxon", "500 mg", "tablet"]
+  ] as const;
+  const now = new Date().toISOString();
+  return medicines.map(([genericName, brandName, strength, dosageForm], index) => ({
+    id: `seed-prescription-medicine-${index + 1}`,
+    genericName,
+    brandName,
+    strength,
+    dosageForm,
+    approvalStatus: "PENDING",
+    submittedBy: null,
+    isActive: false,
+    createdAt: now,
+    updatedAt: now
+  }));
+};
 const mockDatabaseStorageKey = isFullAppDemoEnabled
   ? "lala_full_app_demo_db_v1"
   : isLocalPatientDemoEnabled
@@ -3568,7 +3617,7 @@ export class MockDatabase {
   patients: PatientProfile[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PATIENTS)) : [];
   doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
   services = JSON.parse(JSON.stringify(MOCK_SERVICES));
-  prescriptionMedicines: PrescriptionMedicine[] = [];
+  prescriptionMedicines: PrescriptionMedicine[] = isLocalPatientDemoEnabled ? createMockPrescriptionMedicineSeeds() : [];
   tariffs = JSON.parse(JSON.stringify(MOCK_BRANCH_TARIFFS));
   bookings: Booking[] = useMockSeedData ? initialMockBookings() : [];
   confirmations: BookingConfirmationH1[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_CONFIRMATIONS)) : [];
@@ -3702,7 +3751,11 @@ export class MockDatabase {
           this.services = JSON.parse(JSON.stringify(MOCK_SERVICES));
         }
         if (Array.isArray(stored.tariffs)) this.tariffs = stored.tariffs;
-        if (Array.isArray(stored.prescriptionMedicines)) this.prescriptionMedicines = stored.prescriptionMedicines;
+        if (Array.isArray(stored.prescriptionMedicines)) {
+          this.prescriptionMedicines = stored.prescriptionMedicines.length > 0
+            ? stored.prescriptionMedicines
+            : isLocalPatientDemoEnabled ? createMockPrescriptionMedicineSeeds() : [];
+        }
         if (Array.isArray(stored.bookings)) this.bookings = stored.bookings;
         if (Array.isArray(stored.confirmations)) this.confirmations = stored.confirmations;
         if (Array.isArray(stored.visits)) this.visits = stored.visits;
@@ -3822,7 +3875,7 @@ export class MockDatabase {
     this.instance.patients = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PATIENTS)) : [];
     this.instance.doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
     this.instance.services = JSON.parse(JSON.stringify(MOCK_SERVICES));
-    this.instance.prescriptionMedicines = [];
+    this.instance.prescriptionMedicines = isLocalPatientDemoEnabled ? createMockPrescriptionMedicineSeeds() : [];
     this.instance.tariffs = JSON.parse(JSON.stringify(MOCK_BRANCH_TARIFFS));
     this.instance.bookings = initialMockBookings();
     this.instance.confirmations = JSON.parse(JSON.stringify(MOCK_CONFIRMATIONS));

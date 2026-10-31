@@ -228,7 +228,7 @@ export const PrescriptionMedicineCatalog: React.FC = () => {
         <p className="text-xs text-slate-500">
           {isSuperAdmin
             ? `${medicines.filter((medicine) => medicine.approvalStatus === "PENDING").length} menunggu persetujuan · ${medicines.filter((medicine) => medicine.isActive).length} aktif · ${medicines.length} total`
-            : `${medicines.filter((medicine) => medicine.approvalStatus === "APPROVED" && medicine.isActive).length} obat aktif · ${medicines.filter((medicine) => medicine.approvalStatus === "PENDING").length} usulan Anda menunggu`}
+            : `${medicines.filter((medicine) => medicine.approvalStatus === "APPROVED" && medicine.isActive).length} obat aktif · ${medicines.filter((medicine) => medicine.approvalStatus === "PENDING").length} usulan menunggu persetujuan`}
         </p>
         <label className="relative block sm:w-80">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -285,7 +285,8 @@ export const PrescriptionMedicineCatalog: React.FC = () => {
                       </>
                     )}
                   </div>
-                ) : medicine.approvalStatus === "PENDING" && (
+                ) : medicine.approvalStatus === "PENDING"
+                  && medicine.submittedBy === (currentUser?.authUserId || currentUser?.id) && (
                   <button
                     type="button"
                     onClick={() => void withdrawSuggestion(medicine)}

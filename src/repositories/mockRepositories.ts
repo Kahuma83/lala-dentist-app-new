@@ -5613,11 +5613,7 @@ export class MockConfigurationRepository implements ConfigurationRepository {
         currentUserRole === UserRole.SUPER_ADMIN
         || (
           ((medicine.approvalStatus ?? "APPROVED") === "APPROVED" && medicine.isActive)
-          || (
-            medicine.approvalStatus === "PENDING"
-            && !!currentUserAuthId
-            && medicine.submittedBy === currentUserAuthId
-          )
+          || medicine.approvalStatus === "PENDING"
         )
       )
       .map((medicine) => ({ ...medicine, approvalStatus: medicine.approvalStatus ?? "APPROVED" }));
