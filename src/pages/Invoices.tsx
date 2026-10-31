@@ -47,6 +47,7 @@ import { accrueCompensationForPaidInvoice } from "../services/paidInvoiceCompens
 import { getTreatmentInvoiceUnitPrice } from "../utils/treatmentPricing";
 
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
+import { getInvoiceDoctorName } from "../utils/receiptUtils";
 
 export const Invoices: React.FC = () => {
   const {
@@ -151,18 +152,7 @@ export const Invoices: React.FC = () => {
   };
 
   const getDoctorNameForInvoice = (inv: Invoice | null) => {
-    if (!inv) return undefined;
-    const tr = treatments.find(
-      (t) => t.visitId === inv.visitId || (t.patientId === inv.patientId && t.branchId === inv.branchId)
-    );
-    if (tr?.doctorNameSnapshot) return tr.doctorNameSnapshot;
-    if (tr?.doctorId) {
-      const doc = doctors.find((d) => d.id === tr.doctorId);
-      if (doc) return doc.name || doc.fullName;
-    }
-    const branchDoc = doctors.find((d) => d.assignedBranchId === inv.branchId && (d.active ?? true));
-    if (branchDoc) return branchDoc.name || branchDoc.fullName;
-    return undefined;
+    return getInvoiceDoctorName(inv, treatments, doctors);
   };
 
   const handleConfirmDeleteInvoice = async () => {

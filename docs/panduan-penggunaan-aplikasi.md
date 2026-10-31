@@ -211,7 +211,9 @@ Status konfirmasi sehari sebelumnya hanya catatan tindak lanjut. Pasien tetap pe
 9. Pilih **Cetak**, **Unduh PDF**, atau **Kirim WhatsApp**. Pastikan nomor tujuan benar sebelum mengirim.
 10. Jika pembayaran dilakukan beberapa kali, setiap penerimaan memiliki bukti tersendiri. Cetak kwitansi dari transaksi yang sesuai.
 
-Jangan mencatat pembayaran sebelum uang atau konfirmasi pembayaran benar-benar diterima. Jika transaksi salah, jangan menghapus atau membuat transaksi pengganti tanpa mengikuti prosedur koreksi yang tersedia dan meminta persetujuan yang diperlukan.
+Kwitansi lama yang belum menyimpan snapshot saldo akan menampilkan pemberitahuan bahwa saldo saat transaksi tidak tersedia. Sistem tidak menggantinya dengan saldo invoice terkini. Nama Dokter pada kwitansi hanya ditampilkan jika tersedia dari treatment pada kunjungan invoice tersebut.
+
+Jangan mencatat pembayaran sebelum uang atau konfirmasi pembayaran benar-benar diterima. Jika dana pembayaran sudah dikembalikan kepada pasien, Admin dapat memilih **Batalkan / Balikkan Pembayaran** pada transaksi, mengisi alasan (5–500 karakter), lalu mengonfirmasi. Sistem mempertahankan kwitansi dan transaksi sebagai **REFUNDED**, menghitung ulang saldo invoice, serta membuat jurnal pembalik untuk jurnal pembayaran yang sudah diposting. Jangan gunakan alur ini hanya untuk memperbaiki transaksi yang sebenarnya tidak diterima; minta Super Admin menangani koreksi tersebut agar tidak tercatat sebagai pengembalian dana.
 
 ### 5. Mengelola stok bahan dan perlengkapan
 

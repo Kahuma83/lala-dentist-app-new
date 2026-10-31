@@ -933,6 +933,9 @@ export interface PaymentTransaction {
   transactionDateTime: string; // ISO date-time
   staffId: string; // recorded by whom
   status: "SUCCESS" | "REFUNDED" | "FAILED";
+  reversalReason?: string;
+  reversedAt?: string;
+  reversedBy?: string;
   createdAt: string;
   updatedAt: string;
 }

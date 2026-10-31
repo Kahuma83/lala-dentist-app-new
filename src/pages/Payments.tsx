@@ -25,10 +25,11 @@ import {
   BookOpen,
   RefreshCw,
   Printer,
-  Trash2,
+  Undo2,
   AlertTriangle
 } from "lucide-react";
 import { ReceiptDocumentModal } from "../components/documents/ReceiptDocumentModal";
+import { getInvoiceDoctorName } from "../utils/receiptUtils";
 
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 
@@ -61,9 +62,10 @@ export const Payments: React.FC = () => {
 
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<PaymentTransaction | null>(null);
-  const [paymentToDelete, setPaymentToDelete] = useState<PaymentTransaction | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [paymentToReverse, setPaymentToReverse] = useState<PaymentTransaction | null>(null);
+  const [reversalReason, setReversalReason] = useState("");
+  const [isReversing, setIsReversing] = useState(false);
+  const [reversalError, setReversalError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [methodFilter, setMethodFilter] = useState<string>("ALL");
@@ -104,24 +106,15 @@ export const Payments: React.FC = () => {
   const getDoctorNameForInvoice = (invoiceId?: string) => {
     if (!invoiceId) return undefined;
     const inv = invoices.find((i) => i.id === invoiceId);
-    if (!inv) return undefined;
-    const tr = treatments.find(
-      (t) => t.visitId === inv.visitId || (t.patientId === inv.patientId && t.branchId === inv.branchId)
-    );
-    if (tr?.doctorNameSnapshot) return tr.doctorNameSnapshot;
-    if (tr?.doctorId) {
-      const doc = doctors.find((d) => d.id === tr.doctorId);
-      if (doc) return doc.name || doc.fullName;
-    }
-    const branchDoc = doctors.find((d) => d.assignedBranchId === inv.branchId && (d.active ?? true));
-    if (branchDoc) return branchDoc.name || branchDoc.fullName;
-    return undefined;
+    return getInvoiceDoctorName(inv, treatments, doctors);
   };
 
   const getPaymentJournal = (paymentId: string) => {
-    return journals.find(
+    const journal = journals.find(
       (j) => j.sourceType === JournalSourceType.PAYMENT && j.sourceId === paymentId
     );
+    if (!journal) return undefined;
+    return journals.find((entry) => entry.reversalOfJournalId === journal.id) || journal;
   };
 
   const handleSyncPayment = async (paymentId: string) => {
@@ -150,19 +143,30 @@ export const Payments: React.FC = () => {
     }
   };
 
-  const handleConfirmDeletePayment = async () => {
-    if (!paymentToDelete) return;
-    setIsDeleting(true);
-    setDeleteError(null);
+  const handleConfirmReversePayment = async () => {
+    if (!paymentToReverse) return;
+    if (reversalReason.trim().length < 5 || reversalReason.trim().length > 500) {
+      setReversalError("Alasan pembatalan wajib diisi 5 sampai 500 karakter.");
+      return;
+    }
+    setIsReversing(true);
+    setReversalError(null);
     try {
-      await paymentRepo.deletePayment(paymentToDelete.id, currentUser?.role, currentUser?.branchId);
+      await paymentRepo.reversePayment(
+        paymentToReverse.id,
+        reversalReason.trim(),
+        currentUser?.name || "Admin",
+        currentUser?.role,
+        currentUser?.branchId
+      );
       await loadData();
       await refreshData();
-      setPaymentToDelete(null);
+      setPaymentToReverse(null);
+      setReversalReason("");
     } catch (err: any) {
-      setDeleteError(err.message || "Gagal menghapus transaksi pembayaran");
+      setReversalError(err.message || "Gagal membatalkan pembayaran.");
     } finally {
-      setIsDeleting(false);
+      setIsReversing(false);
     }
   };
 
@@ -197,14 +201,15 @@ export const Payments: React.FC = () => {
   };
 
   // Metrics
-  const totalCollected = payments.reduce((sum, p) => sum + p.amount, 0);
-  const qrisCollected = payments
+  const successfulPayments = payments.filter((payment) => payment.status === "SUCCESS");
+  const totalCollected = successfulPayments.reduce((sum, p) => sum + p.amount, 0);
+  const qrisCollected = successfulPayments
     .filter((p) => p.paymentMethod === PaymentMethod.QRIS)
     .reduce((sum, p) => sum + p.amount, 0);
-  const cashCollected = payments
+  const cashCollected = successfulPayments
     .filter((p) => p.paymentMethod === PaymentMethod.CASH)
     .reduce((sum, p) => sum + p.amount, 0);
-  const cardCollected = payments
+  const cardCollected = successfulPayments
     .filter(
       (p) =>
         p.paymentMethod === PaymentMethod.TRANSFER ||
@@ -458,10 +463,19 @@ export const Payments: React.FC = () => {
                         Rp {p.amount.toLocaleString("id-ID")}
                       </td>
                       <td className="py-3.5 px-4 text-center">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <CheckCircle2 className="w-3 h-3" />
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold border ${
+                          p.status === "SUCCESS"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-rose-50 text-rose-700 border-rose-200"
+                        }`}>
+                          {p.status === "SUCCESS" && <CheckCircle2 className="w-3 h-3" />}
                           {p.status}
                         </span>
+                        {p.reversalReason && (
+                          <div className="mt-1 max-w-40 text-left text-[10px] text-rose-700" title={p.reversalReason}>
+                            Alasan: {p.reversalReason}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         {jrn ? (
@@ -473,7 +487,7 @@ export const Payments: React.FC = () => {
                             <BookOpen className="w-3 h-3" />
                             {jrn.journalNumber}
                           </button>
-                        ) : (
+                        ) : p.status === "SUCCESS" ? (
                           <button
                             onClick={() => handleSyncPayment(p.id)}
                             disabled={syncingId === p.id}
@@ -483,6 +497,8 @@ export const Payments: React.FC = () => {
                             <RefreshCw className={`w-3 h-3 ${syncingId === p.id ? "animate-spin" : ""}`} />
                             Sync
                           </button>
+                        ) : (
+                          <span className="text-[10px] font-medium text-slate-400">Tidak ada jurnal aktif</span>
                         )}
                         {syncMessage?.paymentId === p.id && syncMessage.isError && (
                           <div role="alert" className="mt-1 max-w-48 text-left text-[10px] text-rose-700">
@@ -500,16 +516,17 @@ export const Payments: React.FC = () => {
                             <Printer className="w-3.5 h-3.5 text-teal-600" />
                             <span>Kwitansi</span>
                           </button>
-                          {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
+                          {p.status === "SUCCESS" && (currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
                             <button
                               onClick={() => {
-                                setDeleteError(null);
-                                setPaymentToDelete(p);
+                                setReversalError(null);
+                                setReversalReason("");
+                                setPaymentToReverse(p);
                               }}
                               className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
-                              title="Hapus Transaksi (Koreksi Admin)"
+                              title="Batalkan / balikkan pembayaran"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Undo2 className="w-3.5 h-3.5" />
                             </button>
                           )}
                         </div>
@@ -538,8 +555,8 @@ export const Payments: React.FC = () => {
         />
       )}
 
-      {/* Modal: Delete Payment Confirmation */}
-      {paymentToDelete && (
+      {/* Modal: Reverse Payment Confirmation */}
+      {paymentToReverse && (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
             <div className="flex items-center gap-3 text-rose-600">
@@ -547,57 +564,75 @@ export const Payments: React.FC = () => {
                 <AlertTriangle className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-900 text-base">Konfirmasi Hapus Pembayaran</h3>
-                <p className="text-xs text-slate-500">Koreksi Transaksi Keuangan Admin</p>
+                <h3 className="font-bold text-slate-900 text-base">Konfirmasi Pembatalan Pembayaran</h3>
+                <p className="text-xs text-slate-500">Pembalikan saldo invoice dan jurnal keuangan</p>
               </div>
             </div>
 
-            {deleteError && (
+            {reversalError && (
               <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-medium">
-                {deleteError}
+                {reversalError}
               </div>
             )}
 
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100 text-xs space-y-2">
               <div className="flex justify-between">
                 <span className="text-slate-500">No. Kwitansi:</span>
-                <span className="font-mono font-bold text-slate-900">{paymentToDelete.receiptNumber || "Nomor kwitansi belum tersedia"}</span>
+                <span className="font-mono font-bold text-slate-900">{paymentToReverse.receiptNumber || "Nomor kwitansi belum tersedia"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Nominal:</span>
-                <span className="font-bold text-slate-900">Rp {paymentToDelete.amount.toLocaleString("id-ID")}</span>
+                <span className="font-bold text-slate-900">Rp {paymentToReverse.amount.toLocaleString("id-ID")}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Metode Bayar:</span>
-                <span className="font-medium text-slate-800">{paymentToDelete.paymentMethod}</span>
+                <span className="font-medium text-slate-800">{paymentToReverse.paymentMethod}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Pasien:</span>
-                <span className="font-medium text-slate-800">{getPatientNameForInvoice(paymentToDelete.invoiceId)}</span>
+                <span className="font-medium text-slate-800">{getPatientNameForInvoice(paymentToReverse.invoiceId)}</span>
               </div>
             </div>
 
-            <p className="text-xs text-slate-600">
-              Apakah Anda yakin ingin menghapus transaksi pembayaran ini? Sisa tagihan pada invoice terkait akan dikalkulasi ulang secara otomatis.
+            <label className="block text-xs font-semibold text-slate-700">
+              Alasan pembatalan
+              <textarea
+                value={reversalReason}
+                onChange={(event) => setReversalReason(event.target.value)}
+                maxLength={500}
+                rows={3}
+                placeholder="Tuliskan alasan pembatalan, minimal 5 karakter"
+                className="mt-1 w-full resize-y rounded-xl border border-slate-200 p-3 text-xs font-normal text-slate-800 focus:border-rose-400 focus:outline-hidden focus:ring-2 focus:ring-rose-100"
+              />
+              <span className="mt-1 block text-right text-[10px] font-normal text-slate-400">
+                {reversalReason.trim().length}/500
+              </span>
+            </label>
+
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              Gunakan hanya setelah pengembalian dana benar-benar dilakukan. Transaksi akan tetap tersimpan sebagai REFUNDED, saldo invoice dihitung ulang, dan jurnal POSTED dibalik dengan jurnal baru. Kwitansi lama tidak dihapus.
             </p>
 
             <div className="flex justify-end gap-2.5 pt-2">
               <button
                 type="button"
-                onClick={() => setPaymentToDelete(null)}
-                disabled={isDeleting}
+                onClick={() => {
+                  setPaymentToReverse(null);
+                  setReversalReason("");
+                }}
+                disabled={isReversing}
                 className="px-4 py-2 border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
               >
                 Batal
               </button>
               <button
                 type="button"
-                onClick={handleConfirmDeletePayment}
-                disabled={isDeleting}
+                onClick={handleConfirmReversePayment}
+                disabled={isReversing || reversalReason.trim().length < 5 || reversalReason.trim().length > 500}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>{isDeleting ? "Menghapus..." : "Ya, Hapus Transaksi"}</span>
+                <Undo2 className="w-3.5 h-3.5" />
+                <span>{isReversing ? "Memproses pembatalan..." : "Batalkan & Balikkan Pembayaran"}</span>
               </button>
             </div>
           </div>

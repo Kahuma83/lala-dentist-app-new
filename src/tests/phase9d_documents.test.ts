@@ -179,6 +179,22 @@ describe("Phase 9D Document Layer, Invoices, Kwitansi, PDF & WhatsApp Tests", ()
       expect(waMsg).toContain("Rp 250.000");
       expect(waMsg).toContain("LUNAS");
     });
+
+    it("should not claim a current invoice balance when historical receipt data is unavailable", () => {
+      const waMsg = createReceiptWhatsAppMessage({
+        clinicName: "Lala Dentist Clinic",
+        branchName: "Cabang Gebang",
+        receiptNumber: "KWT/GEB/202609/0002",
+        patientName: "Budi Santoso",
+        amountPaid: 50000,
+        paymentMethod: "TUNAI",
+        dateStr: "2026-09-22T14:30:00Z"
+      });
+
+      expect(waMsg).toContain("saldo saat transaksi: tidak tersedia");
+      expect(waMsg).not.toContain("Sisa Tagihan");
+      expect(waMsg).not.toContain("LUNAS");
+    });
   });
 
   describe("4. Clinic Branding Configuration & RBAC Management", () => {

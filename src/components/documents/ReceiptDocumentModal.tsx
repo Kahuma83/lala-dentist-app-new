@@ -10,6 +10,7 @@ import {
 import { ReceiptDocument } from "./ReceiptDocument";
 import { DocumentActionButtons } from "./DocumentActionButtons";
 import { createReceiptWhatsAppMessage } from "../../utils/documentUtils";
+import { getReceiptInvoiceSnapshot } from "../../utils/receiptUtils";
 
 interface ReceiptDocumentModalProps {
   isOpen: boolean;
@@ -39,7 +40,7 @@ export const ReceiptDocumentModal: React.FC<ReceiptDocumentModalProps> = ({
   const receiptNumber = payment.receiptNumber || "Nomor kwitansi belum tersedia";
   const cleanDocNumber = receiptNumber.replace(/[\/\\]/g, "_");
   const fileName = `${cleanDocNumber}.pdf`;
-  const remainingOutstanding = payment.invoiceOutstandingAmountSnapshot ?? invoice?.outstandingAmount ?? 0;
+  const receiptSnapshot = getReceiptInvoiceSnapshot(payment);
 
   const waMessage = createReceiptWhatsAppMessage({
     clinicName: branding.name,
@@ -51,7 +52,7 @@ export const ReceiptDocumentModal: React.FC<ReceiptDocumentModalProps> = ({
     amountPaid: payment.amount,
     paymentMethod: payment.paymentMethod,
     referenceNumber: payment.referenceNumber,
-    remainingOutstanding,
+    remainingOutstanding: receiptSnapshot?.outstandingAmount,
     dateStr: payment.transactionDateTime || payment.createdAt,
     staffName: cashierName
   });

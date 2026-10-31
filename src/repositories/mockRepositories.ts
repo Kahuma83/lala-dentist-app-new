@@ -4320,15 +4320,12 @@ export class MockInvoiceRepository implements InvoiceRepository {
       throw new Error("Branch Admin tidak dapat menghapus Invoice cabang lain");
     }
 
+    if (db.payments.some((payment: PaymentTransaction) => payment.invoiceId === id)) {
+      throw new Error("Invoice memiliki riwayat pembayaran dan tidak dapat dihapus. Batalkan pembayaran melalui alur pembalikan terlebih dahulu.");
+    }
+
     db.invoiceItems = db.invoiceItems.filter((item: InvoiceItem) => item.invoiceId !== id);
     db.invoices.splice(index, 1);
-
-    const relatedPayments = db.payments.filter((p: PaymentTransaction) => p.invoiceId === id);
-    db.payments = db.payments.filter((p: PaymentTransaction) => p.invoiceId !== id);
-
-    relatedPayments.forEach((p) => {
-      db.journals = db.journals.filter((j) => j.sourceId !== p.id);
-    });
     db.journals = db.journals.filter((j) => j.sourceId !== id);
 
     db.saveToStorage();
@@ -4454,45 +4451,106 @@ export class MockPaymentRepository implements PaymentRepository {
     return { ...newPayment };
   }
 
-  async deletePayment(
+  async reversePayment(
     id: string,
+    reason: string,
+    reversedBy: string,
     currentUserRole?: UserRole,
     userBranchId?: string | null
-  ): Promise<boolean> {
+  ): Promise<PaymentTransaction> {
     if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
-      throw new Error("Akses ditolak: Hanya Admin yang dapat menghapus pembayaran");
+      throw new Error("Akses ditolak: Hanya Admin yang dapat membatalkan pembayaran");
+    }
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 500) {
+      throw new Error("Alasan pembatalan wajib diisi 5 sampai 500 karakter.");
     }
 
-    const index = db.payments.findIndex((p: PaymentTransaction) => p.id === id);
-    if (index === -1) return false;
-
-    const pmt = db.payments[index];
+    const pmt = db.payments.find((p: PaymentTransaction) => p.id === id);
+    if (!pmt) throw new Error("Transaksi pembayaran tidak ditemukan.");
+    if (pmt.status === "REFUNDED") {
+      if (pmt.reversalReason === cleanReason) return { ...pmt };
+      throw new Error("Pembayaran ini sudah dibatalkan dengan alasan yang berbeda.");
+    }
+    if (pmt.status !== "SUCCESS") throw new Error("Hanya pembayaran berstatus SUCCESS yang dapat dibatalkan.");
     const inv = db.invoices.find((i: Invoice) => i.id === pmt.invoiceId);
-
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && inv && inv.branchId !== userBranchId) {
-      throw new Error("Branch Admin tidak dapat menghapus Pembayaran cabang lain");
+      throw new Error("Branch Admin tidak dapat membatalkan pembayaran cabang lain.");
     }
+    if (!inv) throw new Error("Invoice pembayaran tidak ditemukan.");
 
-    db.payments.splice(index, 1);
-
-    if (inv) {
-      const remainingPayments = db.payments.filter((p: PaymentTransaction) => p.invoiceId === inv.id);
-      const newPaid = remainingPayments.reduce((sum, p) => sum + p.amount, 0);
-      inv.paidAmount = newPaid;
-      inv.outstandingAmount = Math.max(0, inv.netAmount - newPaid);
-      if (newPaid === 0) {
-        inv.status = InvoiceStatus.OPEN;
-      } else if (inv.outstandingAmount <= 0) {
-        inv.status = InvoiceStatus.PAID;
-      } else {
-        inv.status = InvoiceStatus.PARTIALLY_PAID;
+    const now = AppClock.nowISO();
+    const paymentJournal = db.journals.find((journal: JournalEntry) =>
+      journal.sourceType === JournalSourceType.PAYMENT && journal.sourceId === pmt.id
+    );
+    let reversalJournal: JournalEntry | null = null;
+    if (paymentJournal?.status === JournalStatus.POSTED) {
+      if (db.journals.some((journal: JournalEntry) => journal.reversalOfJournalId === paymentJournal.id)) {
+        throw new Error("Jurnal pembayaran sudah memiliki jurnal pembalik.");
       }
-      inv.updatedAt = AppClock.nowISO();
+      if (paymentJournal.lines.length < 2) throw new Error("Baris jurnal pembayaran tidak ditemukan.");
+      const reversalId = `journal-reversal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const reversalDate = now.slice(0, 10);
+      const lines: JournalLine[] = paymentJournal.lines.map((line, index) => ({
+        id: `${reversalId}-line-${index + 1}`,
+        journalEntryId: reversalId,
+        accountId: line.accountId,
+        branchId: paymentJournal.branchId,
+        debit: line.credit,
+        credit: line.debit,
+        description: line.description ? `Pembalik: ${line.description}` : "Jurnal pembalik pembayaran"
+      }));
+      const totalDebit = lines.reduce((sum, line) => sum + line.debit, 0);
+      const totalCredit = lines.reduce((sum, line) => sum + line.credit, 0);
+      if (totalDebit <= 0 || totalDebit !== totalCredit) {
+        throw new Error("Jurnal pembayaran tidak seimbang; pembatalan tidak dapat dilanjutkan.");
+      }
+      reversalJournal = {
+        id: reversalId,
+        journalNumber: `JRN-REV-${reversalId}`,
+        journalDate: reversalDate,
+        branchId: paymentJournal.branchId,
+        description: `Pembalik ${paymentJournal.journalNumber}: ${cleanReason}`,
+        sourceType: JournalSourceType.REVERSAL,
+        sourceId: paymentJournal.id,
+        status: JournalStatus.POSTED,
+        totalDebit,
+        totalCredit,
+        lines,
+        createdBy: reversedBy,
+        createdAt: now,
+        postedAt: now,
+        postedBy: reversedBy,
+        reversalOfJournalId: paymentJournal.id,
+        reversalReason: cleanReason,
+        updatedAt: now
+      };
     }
 
-    db.journals = db.journals.filter((j) => j.sourceId !== id);
+    pmt.status = "REFUNDED";
+    pmt.reversalReason = cleanReason;
+    pmt.reversedAt = now;
+    pmt.reversedBy = reversedBy;
+    pmt.updatedAt = now;
+    const newPaid = db.payments
+      .filter((payment: PaymentTransaction) => payment.invoiceId === inv.id && payment.status === "SUCCESS")
+      .reduce((sum, payment: PaymentTransaction) => sum + payment.amount, 0);
+    inv.paidAmount = newPaid;
+    inv.outstandingAmount = Math.max(0, inv.netAmount - newPaid);
+    if (inv.status !== InvoiceStatus.CANCELLED) {
+      inv.status = newPaid === 0
+        ? InvoiceStatus.OPEN
+        : inv.outstandingAmount === 0
+          ? InvoiceStatus.PAID
+          : InvoiceStatus.PARTIALLY_PAID;
+    }
+    inv.updatedAt = now;
+    if (paymentJournal?.status === JournalStatus.DRAFT) {
+      db.journals = db.journals.filter((journal: JournalEntry) => journal.id !== paymentJournal.id);
+    }
+    if (reversalJournal) db.journals.push(reversalJournal);
     db.saveToStorage();
-    return true;
+    return { ...pmt };
   }
 }
 

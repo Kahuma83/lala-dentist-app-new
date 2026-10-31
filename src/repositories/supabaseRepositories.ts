@@ -4519,6 +4519,22 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
     }
   }
 
+  private getFallbackPayments(): PaymentTransaction[] {
+    if (!useRepositoryTestFallbacks()) return [];
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("lala_payments");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch (error) {
+        console.warn("Error loading payments while checking invoice deletion:", error);
+      }
+    }
+    return [...MOCK_PAYMENTS];
+  }
+
   private mapInvoiceFromDb(row: any): Invoice {
     return {
       id: row.id,
@@ -4895,18 +4911,33 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       throw new Error("Akses ditolak: Hanya Admin yang dapat menghapus invoice");
     }
 
-    if (isValidUUID(id)) {
-      try {
-        await supabase.from("payment_transactions").delete().eq("invoice_id", id);
-        await supabase.from("invoice_items").delete().eq("invoice_id", id);
-        const { error } = await supabase.from("invoices").delete().eq("id", id);
-        if (error) console.warn("[Supabase] deleteInvoice remote error/permission denied:", error.message);
-      } catch (e: any) {
-        console.warn("[Supabase] deleteInvoice error:", e?.message);
+    if (!useRepositoryTestFallbacks()) {
+      if (!isValidUUID(id)) throw new Error("Invoice tidak dapat dihapus: ID invoice tidak valid.");
+      const { data: payment, error: paymentError } = await supabase
+        .from("payment_transactions")
+        .select("id")
+        .eq("invoice_id", id)
+        .limit(1)
+        .maybeSingle();
+      if (paymentError) {
+        throw new Error(`Gagal memeriksa transaksi invoice sebelum penghapusan: ${paymentError.message}`);
       }
+      if (payment) {
+        throw new Error("Invoice memiliki riwayat pembayaran dan tidak dapat dihapus. Batalkan pembayaran melalui alur pembalikan terlebih dahulu.");
+      }
+      const { error: itemsError } = await supabase.from("invoice_items").delete().eq("invoice_id", id);
+      if (itemsError) throw new Error(`Gagal menghapus rincian invoice: ${itemsError.message}`);
+      const { data, error } = await supabase.from("invoices").delete().eq("id", id).select("id").maybeSingle();
+      if (error) throw new Error(`Gagal menghapus invoice: ${error.message}`);
+      if (!data) throw new Error("Invoice tidak ditemukan atau tidak dapat dihapus.");
+      return true;
     }
 
-    // Delete from local fallback
+    const relatedPayments = this.getFallbackPayments().filter((payment) => payment.invoiceId === id);
+    if (relatedPayments.length > 0) {
+      throw new Error("Invoice memiliki riwayat pembayaran dan tidak dapat dihapus. Batalkan pembayaran melalui alur pembalikan terlebih dahulu.");
+    }
+    if (!this.getFallbackInvoices().some((invoice) => invoice.id === id)) return false;
     const fallbacks = this.getFallbackInvoices().filter((i) => i.id !== id);
     this.saveFallbackInvoices(fallbacks);
 
@@ -4994,6 +5025,9 @@ export class SupabasePaymentRepository implements PaymentRepository {
       transactionDateTime: row.transaction_date_time,
       staffId: row.staff_id,
       status: row.status,
+      reversalReason: row.reversal_reason ?? undefined,
+      reversedAt: row.reversed_at ?? undefined,
+      reversedBy: row.reversed_by ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -5162,87 +5196,78 @@ export class SupabasePaymentRepository implements PaymentRepository {
     return fallbackPayment;
   }
 
-  async deletePayment(id: string, currentUserRole?: UserRole, _userBranchId?: string | null): Promise<boolean> {
+  async reversePayment(
+    id: string,
+    reason: string,
+    _reversedBy: string,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<PaymentTransaction> {
     ensureSupabaseConnected();
     if (currentUserRole && currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
-      throw new Error("Akses ditolak: Hanya Admin yang dapat menghapus pembayaran");
+      throw new Error("Akses ditolak: Hanya Admin yang dapat membatalkan pembayaran");
+    }
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 500) {
+      throw new Error("Alasan pembatalan wajib diisi 5 sampai 500 karakter.");
     }
 
-    let invoiceId: string | null = null;
-    const fallbackPayments = this.getFallbackPayments();
-    const target = fallbackPayments.find((p) => p.id === id);
-    if (target) {
-      invoiceId = target.invoiceId;
-    }
-
-    // Delete remotely if UUID
-    if (isValidUUID(id)) {
-      try {
-        const { data: pmt, error: fetchError } = await supabase.from("payment_transactions").select("*").eq("id", id).single();
-        if (fetchError) {
-          throw new Error(fetchError.message);
-        }
-        if (pmt) {
-          invoiceId = pmt.invoice_id;
-          const { error: deleteError } = await supabase.from("payment_transactions").delete().eq("id", id);
-          if (deleteError) {
-            throw new Error(deleteError.message);
-          }
-        }
-      } catch (e: any) {
-        console.warn("[Supabase] deletePayment remote error:", e?.message);
-        return false;
+    if (!useRepositoryTestFallbacks()) {
+      ensureSupabaseConnected();
+      if (!isValidUUID(id)) {
+        throw new Error("Pembayaran tidak dapat dibatalkan: ID transaksi tidak valid.");
       }
-    }
-
-    // Remove from fallback
-    const remainingPayments = fallbackPayments.filter((p) => p.id !== id);
-    this.saveFallbackPayments(remainingPayments);
-
-    // Recalculate invoice paid amount
-    if (invoiceId) {
-      const invPayments = remainingPayments.filter((p) => p.invoiceId === invoiceId);
-      const newPaid = invPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-
-      const fallbackInvoices = this.getFallbackInvoices();
-      const invIdx = fallbackInvoices.findIndex((i) => i.id === invoiceId);
-      if (invIdx >= 0) {
-        const inv = fallbackInvoices[invIdx];
-        const newOutstanding = Math.max(0, Number(inv.netAmount || 0) - newPaid);
-        let newStatus = InvoiceStatus.OPEN;
-        if (newPaid > 0 && newOutstanding > 0) newStatus = InvoiceStatus.PARTIALLY_PAID;
-        else if (newPaid > 0 && newOutstanding <= 0) newStatus = InvoiceStatus.PAID;
-
-        fallbackInvoices[invIdx] = {
-          ...inv,
-          paidAmount: newPaid,
-          outstandingAmount: newOutstanding,
-          status: newStatus,
-          updatedAt: AppClock.nowISO()
-        };
-        this.saveFallbackInvoices(fallbackInvoices);
-
-        // Update remote invoice if UUID
-        if (isValidUUID(invoiceId)) {
-          try {
-            const { error: updateError } = await supabase.from("invoices").update({
-              paid_amount: newPaid,
-              outstanding_amount: newOutstanding,
-              status: newStatus,
-              updated_at: AppClock.nowISO()
-            }).eq("id", invoiceId);
-            if (updateError) {
-              throw new Error(updateError.message);
-            }
-          } catch (e: any) {
-            console.warn("[Supabase] deletePayment update remote invoice error:", e?.message);
-            return false;
-          }
-        }
+      const { data, error } = await supabase.rpc("reverse_invoice_payment_atomic", {
+        p_payment_id: id,
+        p_reason: cleanReason
+      });
+      if (error) throw new Error(`Gagal membatalkan pembayaran: ${error.message}`);
+      const paymentRow = Array.isArray(data) ? data[0] : data;
+      if (!paymentRow?.id) {
+        throw new Error("Supabase tidak mengembalikan transaksi pembayaran yang dibatalkan.");
       }
+      return this.mapPaymentFromDb(paymentRow);
     }
 
-    return true;
+    const payments = this.getFallbackPayments();
+    const payment = payments.find((item) => item.id === id);
+    if (!payment) throw new Error("Transaksi pembayaran tidak ditemukan.");
+    if (payment.status === "REFUNDED") {
+      if (payment.reversalReason === cleanReason) return payment;
+      throw new Error("Pembayaran ini sudah dibatalkan dengan alasan yang berbeda.");
+    }
+    if (payment.status !== "SUCCESS") throw new Error("Hanya pembayaran berstatus SUCCESS yang dapat dibatalkan.");
+
+    const invoices = this.getFallbackInvoices();
+    const invoice = invoices.find((item) => item.id === payment.invoiceId);
+    if (!invoice) throw new Error("Invoice pembayaran tidak ditemukan.");
+    if (currentUserRole === UserRole.BRANCH_ADMIN && _userBranchId && invoice.branchId !== _userBranchId) {
+      throw new Error("Branch Admin tidak dapat membatalkan pembayaran cabang lain.");
+    }
+
+    const now = AppClock.nowISO();
+    payment.status = "REFUNDED";
+    payment.reversalReason = cleanReason;
+    payment.reversedAt = now;
+    payment.reversedBy = _reversedBy;
+    payment.updatedAt = now;
+    const successfulPayments = payments.filter((item) =>
+      item.invoiceId === invoice.id && item.status === "SUCCESS"
+    );
+    const newPaid = successfulPayments.reduce((sum, item) => sum + item.amount, 0);
+    invoice.paidAmount = newPaid;
+    invoice.outstandingAmount = Math.max(0, invoice.netAmount - newPaid);
+    if (invoice.status !== InvoiceStatus.CANCELLED) {
+      invoice.status = newPaid === 0
+        ? InvoiceStatus.OPEN
+        : invoice.outstandingAmount === 0
+          ? InvoiceStatus.PAID
+          : InvoiceStatus.PARTIALLY_PAID;
+    }
+    invoice.updatedAt = now;
+    this.saveFallbackPayments(payments);
+    this.saveFallbackInvoices(invoices);
+    return { ...payment };
   }
 }
 

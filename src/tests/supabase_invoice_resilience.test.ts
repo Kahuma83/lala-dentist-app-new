@@ -116,6 +116,81 @@ describe("Supabase Invoice & Payment Resilience", () => {
     expect(settledInv?.status).toBe(InvoiceStatus.PAID);
   });
 
+  it("should reverse a payment without deleting its receipt and recalculate the invoice from successful payments", async () => {
+    const inv = await invoiceRepo.createInvoice({
+      visitId: `visit-payment-reversal-${Date.now()}`,
+      patientId: "pat-2",
+      branchId: "branch-kampus",
+      items: [{
+        serviceId: "service-restoration",
+        descriptionSnapshot: "Tambal Gigi Komposit",
+        unitPriceSnapshot: 200000,
+        quantity: 1
+      }]
+    });
+    const first = await paymentRepo.createPayment({
+      invoiceId: inv.id,
+      amount: 80000,
+      paymentMethod: PaymentMethod.CASH,
+      staffId: "staff-1"
+    });
+    const second = await paymentRepo.createPayment({
+      invoiceId: inv.id,
+      amount: 50000,
+      paymentMethod: PaymentMethod.QRIS,
+      staffId: "staff-1"
+    });
+
+    const reversed = await paymentRepo.reversePayment(
+      first.id,
+      "Dana dikembalikan kepada pasien",
+      "Admin Uji"
+    );
+    const invoiceAfter = await invoiceRepo.getInvoiceById(inv.id);
+    const paymentsAfter = await paymentRepo.getPaymentsByInvoice(inv.id);
+
+    expect(reversed.status).toBe("REFUNDED");
+    expect(reversed.reversalReason).toBe("Dana dikembalikan kepada pasien");
+    expect(reversed.reversedAt).toBeDefined();
+    expect(paymentsAfter.map((payment) => payment.id)).toContain(first.id);
+    expect(invoiceAfter?.paidAmount).toBe(second.amount);
+    expect(invoiceAfter?.outstandingAmount).toBe(inv.netAmount - second.amount);
+    expect(invoiceAfter?.status).toBe(InvoiceStatus.PARTIALLY_PAID);
+
+    const retry = await paymentRepo.reversePayment(
+      first.id,
+      "Dana dikembalikan kepada pasien",
+      "Admin Uji"
+    );
+    expect(retry.status).toBe("REFUNDED");
+    expect((await paymentRepo.getPaymentsByInvoice(inv.id))).toHaveLength(2);
+  });
+
+  it("should prevent deleting an invoice with payment history", async () => {
+    const inv = await invoiceRepo.createInvoice({
+      visitId: `visit-protected-invoice-delete-${Date.now()}`,
+      patientId: "pat-2",
+      branchId: "branch-kampus",
+      items: [{
+        serviceId: "service-restoration",
+        descriptionSnapshot: "Tambal Gigi Komposit",
+        unitPriceSnapshot: 100000,
+        quantity: 1
+      }]
+    });
+    const payment = await paymentRepo.createPayment({
+      invoiceId: inv.id,
+      amount: 50000,
+      paymentMethod: PaymentMethod.CASH,
+      staffId: "staff-1"
+    });
+
+    await expect(invoiceRepo.deleteInvoice(inv.id)).rejects.toThrow(/memiliki riwayat pembayaran/);
+    expect(await invoiceRepo.getInvoiceById(inv.id)).not.toBeNull();
+    expect(await paymentRepo.getPaymentsByInvoice(inv.id)).toHaveLength(1);
+    expect(payment.status).toBe("SUCCESS");
+  });
+
   it("should reject a payment above the current invoice balance without changing payment or invoice data", async () => {
     const inv = await invoiceRepo.createInvoice({
       visitId: `visit-overpayment-${Date.now()}`,
