@@ -34,7 +34,10 @@ import {
   getDoctorPracticeBranchIds,
   resolveDoctorPracticeBranchId
 } from "../utils/doctorPracticeSchedule";
-import { getNotArrivedDoctorBookings } from "../utils/doctorDashboardUtils";
+import {
+  getCompletedDoctorBookings,
+  getNotArrivedDoctorBookings
+} from "../utils/doctorDashboardUtils";
 
 const isWaiting = (item: QueueItem) =>
   item.status === QueueStatus.WAITING ||
@@ -198,6 +201,10 @@ export const DoctorDashboard: React.FC = () => {
     [queueItems]
   );
   const todayVisitCount = queueItems.length + bookings.filter((booking) => !queueBookingIds.has(booking.id)).length;
+  const completedBookings = useMemo(() =>
+    getCompletedDoctorBookings(bookings, queueItems, visits)
+      .sort((first, second) => first.bookingDateTime.localeCompare(second.bookingDateTime)),
+  [bookings, queueItems, visits]);
   const notArrivedBookings = useMemo(() =>
     getNotArrivedDoctorBookings(bookings, queueItems, visits)
       .sort((first, second) => first.bookingDateTime.localeCompare(second.bookingDateTime)),
@@ -406,7 +413,9 @@ export const DoctorDashboard: React.FC = () => {
             </div>
           ) : (
             <div className="divide-y divide-[#f1eadb]">
-              {orderedQueue.length > 0 ? orderedQueue.slice(0, 6).map((item) => {
+              {orderedQueue.length > 0 || completedBookings.length > 0 || notArrivedBookings.length > 0 ? (
+                <>
+                  {orderedQueue.slice(0, 6).map((item) => {
                 const isActive = item.status === QueueStatus.IN_CONSULTATION;
                 const isDone = item.status === QueueStatus.COMPLETED;
                 const statusText = isActive ? "Sedang diperiksa" : isDone ? "Selesai" :
@@ -434,30 +443,50 @@ export const DoctorDashboard: React.FC = () => {
                     }`}>{statusText}</span>
                   </div>
                 );
-              }) : (
+                  })}
+                  {completedBookings.map((booking) => {
+                    const patient = patients.find((item) => item.id === booking.patientId);
+                    return (
+                      <div key={booking.id} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[#fcfaf5]">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-300" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{formatTime(booking.bookingDateTime)}</span>
+                            <span className="truncate text-sm font-semibold text-slate-800">
+                              {booking.patientNameSnapshot || patient?.fullName || patient?.name || "Nama pasien tidak tersedia"}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-slate-500">Booking · kunjungan selesai</p>
+                        </div>
+                        <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-600">Selesai</span>
+                      </div>
+                    );
+                  })}
+                  {notArrivedBookings.slice(0, 5).map((booking) => {
+                    const patient = patients.find((item) => item.id === booking.patientId);
+                    return (
+                      <div key={booking.id} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[#fcfaf5]">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#dfbf78]" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="rounded-md bg-[#faf6ec] px-1.5 py-0.5 text-[10px] font-bold text-[#80651f]">{formatTime(booking.bookingDateTime)}</span>
+                            <span className="truncate text-sm font-semibold text-slate-800">
+                              {booking.patientNameSnapshot || patient?.fullName || patient?.name || "Nama pasien tidak tersedia"}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-slate-500">Booking · belum check-in</p>
+                        </div>
+                        <span className="shrink-0 rounded-full border border-[#eadbb9] bg-[#faf6ec] px-2.5 py-1 text-[10px] font-semibold text-[#80651f]">Belum datang</span>
+                      </div>
+                    );
+                  })}
+                </>
+              ) : (
                 <div className="px-5 py-8 text-center">
                   <CalendarDays className="mx-auto h-7 w-7 text-slate-300" />
-                  <p className="mt-2 text-sm font-semibold text-slate-700">Belum ada pasien check-in</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-700">Belum ada pasien hari ini</p>
                 </div>
               )}
-              {notArrivedBookings.slice(0, 5).map((booking) => {
-                const patient = patients.find((item) => item.id === booking.patientId);
-                return (
-                  <div key={booking.id} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[#fcfaf5]">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#dfbf78]" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="rounded-md bg-[#faf6ec] px-1.5 py-0.5 text-[10px] font-bold text-[#80651f]">{formatTime(booking.bookingDateTime)}</span>
-                        <span className="truncate text-sm font-semibold text-slate-800">
-                          {booking.patientNameSnapshot || patient?.fullName || patient?.name || "Nama pasien tidak tersedia"}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-[11px] text-slate-500">Booking · belum check-in</p>
-                    </div>
-                    <span className="shrink-0 rounded-full border border-[#eadbb9] bg-[#faf6ec] px-2.5 py-1 text-[10px] font-semibold text-[#80651f]">Belum datang</span>
-                  </div>
-                );
-              })}
             </div>
           )}
         </section>

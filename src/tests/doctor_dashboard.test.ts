@@ -8,7 +8,10 @@ import {
   VisitStatus,
   VisitType
 } from "../types/domain";
-import { getNotArrivedDoctorBookings } from "../utils/doctorDashboardUtils";
+import {
+  getCompletedDoctorBookings,
+  getNotArrivedDoctorBookings
+} from "../utils/doctorDashboardUtils";
 
 const makeBooking = (id: string, status: BookingStatus): Booking => ({
   id,
@@ -48,5 +51,32 @@ describe("doctor dashboard booking status", () => {
 
     expect(getNotArrivedDoctorBookings(bookings, queueItems, visits).map((booking) => booking.id))
       .toEqual(["confirmed-booking"]);
+  });
+
+  it("shows completed bookings without queue links and avoids duplicating completed queue rows", () => {
+    const bookings = [
+      makeBooking("completed-booking", BookingStatus.COMPLETED),
+      makeBooking("completed-visit-booking", BookingStatus.CONFIRMED),
+      makeBooking("checked-in-booking", BookingStatus.CONFIRMED)
+    ];
+    const queueItems = [{
+      id: "queue-1",
+      bookingId: "checked-in-booking",
+      status: QueueStatus.COMPLETED
+    } as QueueItem];
+    const visits = [{
+      id: "visit-1",
+      patientId: "patient-completed-visit-booking",
+      branchId: "branch-ambulu",
+      visitDateTime: "2026-10-31T04:00:00.000Z",
+      visitType: VisitType.BOOKING,
+      visitStatus: VisitStatus.COMPLETED,
+      bookingId: "completed-visit-booking",
+      createdAt: "",
+      updatedAt: ""
+    } as PatientVisit];
+
+    expect(getCompletedDoctorBookings(bookings, queueItems, visits).map((booking) => booking.id))
+      .toEqual(["completed-booking", "completed-visit-booking"]);
   });
 });
