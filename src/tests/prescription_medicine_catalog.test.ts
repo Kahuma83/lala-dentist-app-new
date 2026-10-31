@@ -40,7 +40,10 @@ describe("Prescription medicine catalog", () => {
       activeMedicine,
       suggestedMedicine
     ]);
-    await expect(repository.getPrescriptionMedicines(UserRole.DOCTOR, "doctor-auth-2")).resolves.toEqual([activeMedicine]);
+    await expect(repository.getPrescriptionMedicines(UserRole.DOCTOR, "doctor-auth-2")).resolves.toEqual([
+      activeMedicine,
+      suggestedMedicine
+    ]);
     await expect(repository.getPrescriptionMedicines(UserRole.SUPER_ADMIN)).resolves.toEqual([
       activeMedicine,
       inactiveMedicine,
@@ -136,6 +139,31 @@ describe("Prescription medicine catalog", () => {
     expect(migration).toContain("submitted_by = auth.uid()");
     expect(migration).toContain("WITH CHECK (public.is_super_admin())");
     expect(migration).toContain("USING (public.is_super_admin())");
+  });
+
+  it("allows doctors to review pending seeds while keeping all non-pending management restricted", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270125000000_doctors_read_pending_prescription_medicines.sql"),
+      "utf-8"
+    );
+    expect(migration).toContain("OR approval_status = 'PENDING'");
+    expect(migration).toContain("approval_status = 'APPROVED' AND is_active = true");
+    expect(migration).toContain("approval_status = 'REJECTED' AND submitted_by = auth.uid()");
+    expect(migration).not.toContain("FOR UPDATE");
+    expect(migration).not.toContain("FOR DELETE");
+  });
+
+  it("provides the medicine draft catalog in local demo mode", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "src/data/mockData.ts"), "utf-8");
+    const seedFactory = source.slice(
+      source.indexOf("const createMockPrescriptionMedicineSeeds"),
+      source.indexOf("const mockDatabaseStorageKey")
+    );
+    expect(seedFactory.match(/^\s+\["/gm)).toHaveLength(32);
+    expect(seedFactory).toContain('approvalStatus: "PENDING"');
+    expect(seedFactory).toContain("submittedBy: null");
+    expect(seedFactory).toContain("isActive: false");
+    expect(seedFactory).not.toContain("default_instruction");
   });
 
   it("seeds all CSV medicines as inactive suggestions without prescription instructions", () => {
