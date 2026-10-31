@@ -30,6 +30,10 @@ import {
   DoctorClinicalDocument
 } from "../components/documents/DoctorClinicalDocument";
 import { TreatmentManagement } from "./TreatmentManagement";
+import {
+  getDoctorPracticeBranchIds,
+  resolveDoctorPracticeBranchId
+} from "../utils/doctorPracticeSchedule";
 
 const isWaiting = (item: QueueItem) =>
   item.status === QueueStatus.WAITING ||
@@ -71,7 +75,20 @@ export const DoctorDashboard: React.FC = () => {
   const { navigate } = useRouter();
   const today = AppClock.todayDateString();
   const doctorId = currentUser?.doctorId || "";
-  const branchId = currentUser?.assignedBranchId || "";
+  const assignedBranchId = currentUser?.assignedBranchId || "";
+  const scheduledBranchIds = useMemo(
+    () => getDoctorPracticeBranchIds(doctorSchedules, doctorId, today).sort((first, second) =>
+      (branches.find((branch) => branch.id === first)?.name || first)
+        .localeCompare(branches.find((branch) => branch.id === second)?.name || second, "id")
+    ),
+    [branches, doctorSchedules, doctorId, today]
+  );
+  const [selectedPracticeBranchId, setSelectedPracticeBranchId] = useState("");
+  const branchId = resolveDoctorPracticeBranchId(
+    scheduledBranchIds,
+    selectedPracticeBranchId,
+    assignedBranchId
+  );
   const doctor = doctors.find((item) => item.id === doctorId);
   const doctorName = doctor?.fullName || doctor?.name || "";
   const doctorGreeting = doctorName
@@ -79,7 +96,6 @@ export const DoctorDashboard: React.FC = () => {
     : "";
   const doctorPhotoUrl = doctor?.photoUrl || doctor?.avatarUrl || doctor?.profileImage || null;
   const [failedDoctorPhotoUrl, setFailedDoctorPhotoUrl] = useState<string | null>(null);
-  const branchName = branches.find((item) => item.id === branchId)?.name || "Cabang praktik";
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,7 +130,8 @@ export const DoctorDashboard: React.FC = () => {
         repos.queue.getQueueByBranch(
           branchId,
           currentUser.role,
-          currentUser.assignedBranchId
+          currentUser.assignedBranchId,
+          doctorId
         ),
         repos.booking.getBookings(currentUser.role, currentUser.assignedBranchId)
       ]);
@@ -145,6 +162,12 @@ export const DoctorDashboard: React.FC = () => {
   useEffect(() => {
     void loadToday();
   }, [loadToday]);
+
+  useEffect(() => {
+    if (selectedPracticeBranchId && !scheduledBranchIds.includes(selectedPracticeBranchId)) {
+      setSelectedPracticeBranchId("");
+    }
+  }, [scheduledBranchIds, selectedPracticeBranchId]);
 
   useEffect(() => {
     const handleDemoDatabaseUpdate = () => void loadToday(true);
@@ -180,7 +203,7 @@ export const DoctorDashboard: React.FC = () => {
       .sort((first, second) => first.bookingDateTime.localeCompare(second.bookingDateTime)),
   [bookings, queueBookingIds]);
   const notArrivedBookingCount = notArrivedBookings.length;
-  const todaySchedule = doctorSchedules.find((schedule) =>
+  const todaySchedules = doctorSchedules.filter((schedule) =>
     schedule.doctorId === doctorId &&
     schedule.branchId === branchId &&
     schedule.date === today &&
@@ -188,6 +211,7 @@ export const DoctorDashboard: React.FC = () => {
   );
   const currentPatientName = activePatient ? getPatientName(activePatient, patients) : null;
   const nextPatientName = nextPatient ? getPatientName(nextPatient, patients) : null;
+  const branchName = branches.find((item) => item.id === branchId)?.name || "Cabang praktik";
 
   const openPatientRecord = (item: QueueItem) => {
     if (!item.patientId || !item.visitId) return;
@@ -207,7 +231,7 @@ export const DoctorDashboard: React.FC = () => {
       const startedPatient = await repos.queue.startService(
         item.id,
         currentUser.role,
-        currentUser.assignedBranchId,
+        branchId,
         currentUser.id
       );
       setQueueActionSuccess(`${getPatientName(item, patients)} masuk ke pemeriksaan.`);
@@ -267,10 +291,35 @@ export const DoctorDashboard: React.FC = () => {
           </div>
         </div>
         <div className="relative z-10 flex flex-wrap items-center gap-3">
-          {todaySchedule && (
+          {scheduledBranchIds.length > 1 ? (
+            <label className="flex items-center gap-2 rounded-full border border-white/60 bg-white/85 px-3 py-1.5 text-xs font-semibold text-[#735b20]">
+              <span>Cabang praktik</span>
+              <select
+                aria-label="Pilih cabang praktik hari ini"
+                value={branchId}
+                onChange={(event) => setSelectedPracticeBranchId(event.target.value)}
+                className="max-w-40 bg-transparent font-semibold outline-none"
+              >
+                {scheduledBranchIds.map((scheduledBranchId) => (
+                  <option key={scheduledBranchId} value={scheduledBranchId}>
+                    {branches.find((item) => item.id === scheduledBranchId)?.name || scheduledBranchId}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : scheduledBranchIds.length === 1 ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/85 px-3 py-2 text-xs font-semibold text-[#735b20]">
+              {branchName}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/85 px-3 py-2 text-xs font-semibold text-[#735b20]">
+              Tidak ada jadwal praktik hari ini
+            </span>
+          )}
+          {todaySchedules.length > 0 && (
             <span className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/85 px-3 py-2 text-xs font-semibold text-[#735b20]">
               <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              Praktik {todaySchedule.startTime}–{todaySchedule.endTime}
+              Praktik {todaySchedules.map((schedule) => `${schedule.startTime}–${schedule.endTime}`).join(", ")}
             </span>
           )}
           <button
@@ -342,7 +391,10 @@ export const DoctorDashboard: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => navigate("/doctor/queue/manage")}
+              onClick={() => {
+                const params = new URLSearchParams({ branchId, date: today });
+                navigate(`/doctor/queue/manage?${params.toString()}`);
+              }}
               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
             >
               Lihat semua <ArrowRight className="h-3.5 w-3.5" />
@@ -499,10 +551,14 @@ export const DoctorDashboard: React.FC = () => {
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#faf6ec] text-[#8a6f27]"><CalendarDays className="h-4 w-4" /></span>
               <h2 className="text-sm font-bold text-slate-900">Jadwal Praktik Hari Ini</h2>
             </div>
-            {todaySchedule ? (
+            {todaySchedules.length > 0 ? (
               <div className="mt-3 flex items-center justify-between rounded-xl border border-[#eee4cf] bg-[#fcfaf5] px-3.5 py-3">
                 <div>
-                  <p className="text-sm font-semibold text-slate-800">{todaySchedule.startTime} – {todaySchedule.endTime}</p>
+                  {todaySchedules.map((schedule) => (
+                    <p key={schedule.id} className="text-sm font-semibold text-slate-800">
+                      {schedule.startTime} – {schedule.endTime}
+                    </p>
+                  ))}
                   <p className="mt-0.5 text-xs text-slate-500">{doctor?.fullName || doctor?.name || "Dokter"}</p>
                 </div>
                 <span className="rounded-full border border-[#e5d3aa] bg-[#faf6ec] px-2.5 py-1 text-[10px] font-semibold text-[#80651f]">Hari ini</span>

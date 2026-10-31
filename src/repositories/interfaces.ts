@@ -485,7 +485,8 @@ export interface QueueRepository {
   getQueueByBranch(
     branchId: string,
     currentUserRole?: UserRole,
-    userBranchId?: string | null
+    userBranchId?: string | null,
+    currentDoctorId?: string | null
   ): Promise<QueueItem[]>;
   getQueueByDoctor(
     doctorId: string,
