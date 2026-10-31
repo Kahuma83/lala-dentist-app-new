@@ -569,6 +569,71 @@ describe("Lala Dentist Web Admin - Phase 4A Treatment Core Tests", () => {
     expect(completed.completedAt).toBeDefined();
   });
 
+  it("records the final price and an audit activity when the assigned doctor completes treatment", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira",
+      patientApprovalConfirmed: true
+    }, UserRole.DOCTOR, "branch-gebang", "doc-syafira");
+    await treatmentRepo.startTreatmentJob(treatment.id, UserRole.DOCTOR, "branch-gebang", "doc-syafira");
+
+    const completed = await treatmentRepo.completeTreatmentJob(
+      treatment.id,
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira",
+      { actorId: "doc-syafira", actorRole: UserRole.DOCTOR, notes: "Selesai" },
+      { finalPriceSnapshot: 125_000, patientApprovalConfirmed: true }
+    );
+
+    expect(completed).toMatchObject({
+      status: TreatmentJobStatus.SELESAI,
+      priceSnapshot: 125_000
+    });
+    const activities = await new MockTreatmentActivityRepository().listActivitiesByTreatment(treatment.id);
+    expect(activities.some((activity) =>
+      activity.activityType === TreatmentActivityType.OTHER
+      && activity.notes?.includes("Harga final Rp 125.000 dicatat setelah tindakan")
+    )).toBe(true);
+  });
+
+  it("rejects final-price completion without recorded patient approval", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira",
+      patientApprovalConfirmed: true
+    }, UserRole.DOCTOR, "branch-gebang", "doc-syafira");
+    await treatmentRepo.startTreatmentJob(treatment.id, UserRole.DOCTOR, "branch-gebang", "doc-syafira");
+
+    await expect(treatmentRepo.completeTreatmentJob(
+      treatment.id,
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira",
+      undefined,
+      { finalPriceSnapshot: 125_000, patientApprovalConfirmed: false }
+    )).rejects.toThrow("harga final sebelum tindakan");
+    await expect(treatmentRepo.getTreatmentJobById(treatment.id)).resolves.toMatchObject({
+      status: TreatmentJobStatus.DALAM_PROSES
+    });
+  });
+
   it("16. SELESAI -> DISERAHKAN", async () => {
     const visit = await visitRepo.createVisit({
       patientId: "patient-1",

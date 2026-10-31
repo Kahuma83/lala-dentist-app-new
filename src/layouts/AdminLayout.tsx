@@ -45,6 +45,7 @@ import {
   Boxes,
   ClipboardList,
   Plus,
+  Pill,
   Clock3,
   type LucideIcon
 } from "lucide-react";
@@ -304,7 +305,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       items: [
         { name: "Dashboard", path: "/doctor/queue", icon: LayoutDashboard },
         { name: "Antrean Pasien", path: "/doctor/queue/manage", icon: ListOrdered },
-        { name: "Tindakan & Perawatan", path: "/doctor/treatments", icon: Activity }
+        { name: "Tindakan & Perawatan", path: "/doctor/treatments", icon: Activity },
+        { name: "Master Obat Resep", path: "/doctor/prescription-medicines", icon: Pill }
       ]
     },
     {

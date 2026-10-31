@@ -24,6 +24,7 @@ import {
   PayrollItem,
   PayrollStatus,
   MasterService,
+  PrescriptionMedicine,
   BranchServiceTariff,
   DentalDoctor,
   Staff,
@@ -662,7 +663,8 @@ export interface TreatmentRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null,
-    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string },
+    completionData?: { finalPriceSnapshot: number; patientApprovalConfirmed: boolean }
   ): Promise<TreatmentJob>;
   handOverTreatmentJob(
     id: string,
@@ -953,6 +955,21 @@ export interface ConfigurationRepository {
     id: string,
     updates: Partial<Omit<MasterService, "id" | "createdAt" | "updatedAt">>
   ): Promise<MasterService>;
+  getPrescriptionMedicines(currentUserRole?: UserRole, currentUserAuthId?: string): Promise<PrescriptionMedicine[]>;
+  createPrescriptionMedicine(
+    data: Omit<PrescriptionMedicine, "id" | "createdAt" | "updatedAt" | "approvalStatus"> & {
+      approvalStatus?: PrescriptionMedicine["approvalStatus"];
+      id?: string;
+    },
+    currentUserRole?: UserRole,
+    currentUserAuthId?: string
+  ): Promise<PrescriptionMedicine>;
+  withdrawPrescriptionMedicineSuggestion(id: string, currentUserRole?: UserRole, currentUserAuthId?: string): Promise<void>;
+  updatePrescriptionMedicine(
+    id: string,
+    updates: Partial<Omit<PrescriptionMedicine, "id" | "createdAt" | "updatedAt">>,
+    currentUserRole?: UserRole
+  ): Promise<PrescriptionMedicine>;
   getBranchTariffs(branchId: string): Promise<BranchServiceTariff[]>;
   setBranchTariff(
     branchId: string,

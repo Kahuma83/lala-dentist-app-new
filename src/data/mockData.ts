@@ -4,6 +4,7 @@ import {
   DentalDoctor,
   DoctorAssistantPairing,
   MasterService,
+  PrescriptionMedicine,
   BranchServiceTariff,
   Booking,
   BookingConfirmationH1,
@@ -3567,6 +3568,7 @@ export class MockDatabase {
   patients: PatientProfile[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PATIENTS)) : [];
   doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
   services = JSON.parse(JSON.stringify(MOCK_SERVICES));
+  prescriptionMedicines: PrescriptionMedicine[] = [];
   tariffs = JSON.parse(JSON.stringify(MOCK_BRANCH_TARIFFS));
   bookings: Booking[] = useMockSeedData ? initialMockBookings() : [];
   confirmations: BookingConfirmationH1[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_CONFIRMATIONS)) : [];
@@ -3700,6 +3702,7 @@ export class MockDatabase {
           this.services = JSON.parse(JSON.stringify(MOCK_SERVICES));
         }
         if (Array.isArray(stored.tariffs)) this.tariffs = stored.tariffs;
+        if (Array.isArray(stored.prescriptionMedicines)) this.prescriptionMedicines = stored.prescriptionMedicines;
         if (Array.isArray(stored.bookings)) this.bookings = stored.bookings;
         if (Array.isArray(stored.confirmations)) this.confirmations = stored.confirmations;
         if (Array.isArray(stored.visits)) this.visits = stored.visits;
@@ -3763,6 +3766,7 @@ export class MockDatabase {
         patients: this.patients,
         branches: this.branches,
         services: this.services,
+        prescriptionMedicines: this.prescriptionMedicines,
         tariffs: this.tariffs,
         bookings: this.bookings,
         confirmations: this.confirmations,
@@ -3818,6 +3822,7 @@ export class MockDatabase {
     this.instance.patients = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PATIENTS)) : [];
     this.instance.doctors = JSON.parse(JSON.stringify(MOCK_DOCTORS));
     this.instance.services = JSON.parse(JSON.stringify(MOCK_SERVICES));
+    this.instance.prescriptionMedicines = [];
     this.instance.tariffs = JSON.parse(JSON.stringify(MOCK_BRANCH_TARIFFS));
     this.instance.bookings = initialMockBookings();
     this.instance.confirmations = JSON.parse(JSON.stringify(MOCK_CONFIRMATIONS));

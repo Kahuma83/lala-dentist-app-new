@@ -92,6 +92,7 @@ import {
   CompensationAccrual,
   StaffCompensationRule,
   MasterService,
+  PrescriptionMedicine,
   BranchServiceTariff,
   ClinicBranding,
   PromotionMedia,
@@ -4276,7 +4277,8 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null,
-    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string },
+    completionData?: { finalPriceSnapshot: number; patientApprovalConfirmed: boolean }
   ): Promise<TreatmentJob> {
     ensureSupabaseConnected();
     if (currentUserRole && currentUserRole !== UserRole.DOCTOR) {
@@ -4296,10 +4298,17 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       }
     }
 
-    const { data, error } = await supabase.rpc("complete_treatment_job_secure", {
-      p_treatment_id: id,
-      p_notes: actorData?.notes || "Penyelesaian tindakan medis"
-    });
+    const { data, error } = completionData
+      ? await supabase.rpc("complete_treatment_job_with_final_price_secure", {
+        p_treatment_id: id,
+        p_notes: actorData?.notes || "Penyelesaian tindakan medis",
+        p_final_price_snapshot: completionData.finalPriceSnapshot,
+        p_patient_approval_confirmed: completionData.patientApprovalConfirmed
+      })
+      : await supabase.rpc("complete_treatment_job_secure", {
+        p_treatment_id: id,
+        p_notes: actorData?.notes || "Penyelesaian tindakan medis"
+      });
     if (error) throw new Error(`Supabase error: ${error.message}`);
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) throw new Error("Gagal menyelesaikan treatment: data tidak ditemukan");
@@ -5997,6 +6006,118 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
     const { data, error } = await supabase.from("master_services").update(payload).eq("id", id).select().single();
     if (error) throw new Error(`Supabase error: ${error.message}`);
     return this.mapServiceFromDb(data);
+  }
+
+  private mapPrescriptionMedicineFromDb(row: any): PrescriptionMedicine {
+    return {
+      id: row.id,
+      genericName: row.generic_name,
+      brandName: row.brand_name || "",
+      strength: row.strength,
+      dosageForm: row.dosage_form,
+      approvalStatus: row.approval_status || "APPROVED",
+      submittedBy: row.submitted_by ?? null,
+      isActive: row.is_active,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  async getPrescriptionMedicines(currentUserRole?: UserRole, _currentUserAuthId?: string): Promise<PrescriptionMedicine[]> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya dokter dan Super Admin yang dapat melihat katalog obat.");
+    }
+    let query = supabase.from("prescription_medicines").select("*").order("generic_name");
+    const { data, error } = await query;
+    if (error) throw new Error(`Gagal memuat master obat: ${error.message}`);
+    const medicines = (data || []).map((row) => this.mapPrescriptionMedicineFromDb(row));
+    return currentUserRole === UserRole.SUPER_ADMIN
+      ? medicines
+      : medicines.filter((medicine) =>
+        (medicine.approvalStatus === "APPROVED" && medicine.isActive)
+        || (medicine.approvalStatus === "PENDING" && medicine.submittedBy === _currentUserAuthId)
+      );
+  }
+
+  async createPrescriptionMedicine(
+    data: Omit<PrescriptionMedicine, "id" | "createdAt" | "updatedAt" | "approvalStatus"> & {
+      approvalStatus?: PrescriptionMedicine["approvalStatus"];
+      id?: string;
+    },
+    currentUserRole?: UserRole,
+    _currentUserAuthId?: string
+  ): Promise<PrescriptionMedicine> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat mengusulkan obat dan Super Admin yang dapat mengelola master obat.");
+    }
+    const genericName = data.genericName.trim();
+    const strength = data.strength.trim();
+    const dosageForm = data.dosageForm.trim();
+    if (!genericName || !strength || !dosageForm) {
+      throw new Error("Nama generik, kekuatan, dan bentuk sediaan wajib diisi.");
+    }
+    const payload: Record<string, unknown> = {
+      generic_name: genericName,
+      brand_name: data.brandName.trim(),
+      strength,
+      dosage_form: dosageForm,
+      approval_status: currentUserRole === UserRole.DOCTOR ? "PENDING" : data.approvalStatus ?? "APPROVED",
+      is_active: currentUserRole === UserRole.DOCTOR ? false : data.isActive
+    };
+    if (data.id) payload.id = data.id;
+    const { data: created, error } = await supabase
+      .from("prescription_medicines")
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw new Error(`Gagal menambahkan master obat: ${error.message}`);
+    return this.mapPrescriptionMedicineFromDb(created);
+  }
+
+  async withdrawPrescriptionMedicineSuggestion(
+    id: string,
+    currentUserRole?: UserRole,
+    _currentUserAuthId?: string
+  ): Promise<void> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat menarik usulan obat.");
+    }
+    const { error } = await supabase.rpc("withdraw_pending_prescription_medicine", {
+      p_medicine_id: id
+    });
+    if (error) throw new Error(`Gagal menarik usulan obat: ${error.message}`);
+  }
+
+  async updatePrescriptionMedicine(
+    id: string,
+    updates: Partial<Omit<PrescriptionMedicine, "id" | "createdAt" | "updatedAt">>,
+    currentUserRole?: UserRole
+  ): Promise<PrescriptionMedicine> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat mengelola master obat.");
+    }
+    const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (updates.genericName !== undefined) payload.generic_name = updates.genericName.trim();
+    if (updates.brandName !== undefined) payload.brand_name = updates.brandName.trim();
+    if (updates.strength !== undefined) payload.strength = updates.strength.trim();
+    if (updates.dosageForm !== undefined) payload.dosage_form = updates.dosageForm.trim();
+    if (updates.approvalStatus !== undefined) payload.approval_status = updates.approvalStatus;
+    if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+    if (payload.generic_name === "" || payload.strength === "" || payload.dosage_form === "") {
+      throw new Error("Nama generik, kekuatan, dan bentuk sediaan wajib diisi.");
+    }
+    const { data, error } = await supabase
+      .from("prescription_medicines")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw new Error(`Gagal memperbarui master obat: ${error.message}`);
+    return this.mapPrescriptionMedicineFromDb(data);
   }
 
   async getBranchTariffs(branchId: string): Promise<BranchServiceTariff[]> {

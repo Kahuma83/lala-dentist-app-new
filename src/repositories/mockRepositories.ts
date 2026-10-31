@@ -70,6 +70,7 @@ import {
   PayrollItem,
   PayrollStatus,
   MasterService,
+  PrescriptionMedicine,
   BranchServiceTariff,
   DentalDoctor,
   Staff,
@@ -3721,7 +3722,8 @@ export class MockTreatmentRepository implements TreatmentRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null,
-    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string },
+    completionData?: { finalPriceSnapshot: number; patientApprovalConfirmed: boolean }
   ): Promise<TreatmentJob> {
     const job = db.treatmentJobs.find((t) => t.id === id);
     if (!job) {
@@ -3756,11 +3758,26 @@ export class MockTreatmentRepository implements TreatmentRepository {
     if (!job.startedAt) {
       throw new Error("Treatment tidak dapat diselesaikan tanpa startedAt");
     }
+    if (completionData) {
+      if (currentUserRole !== UserRole.DOCTOR) {
+        throw new Error("Hanya dokter penanggung jawab yang dapat mencatat harga final tindakan.");
+      }
+      if (!completionData.patientApprovalConfirmed) {
+        throw new Error("Konfirmasi bahwa pasien menyetujui harga final sebelum tindakan wajib dicatat.");
+      }
+      if (!Number.isSafeInteger(completionData.finalPriceSnapshot)
+        || completionData.finalPriceSnapshot < 0
+        || completionData.finalPriceSnapshot > Number.MAX_SAFE_INTEGER) {
+        throw new Error("Harga final harus berupa angka Rupiah bulat dan tidak boleh negatif.");
+      }
+    }
 
     const now = AppClock.nowISO();
+    const previousPrice = job.priceSnapshot;
     job.status = TreatmentJobStatus.SELESAI;
     job.completedAt = now;
     job.updatedAt = now;
+    if (completionData) job.priceSnapshot = completionData.finalPriceSnapshot;
 
     // Automatic Activity Logging
     const actRepo = new MockTreatmentActivityRepository();
@@ -3784,6 +3801,16 @@ export class MockTreatmentRepository implements TreatmentRepository {
       userBranchId,
       currentUserId
     );
+    if (completionData) {
+      await actRepo.addActivity({
+        treatmentId: job.id,
+        actorId: actorData?.actorId || currentUserId || job.doctorId || "actor-system",
+        actorRole: actorData?.actorRole || currentUserRole || UserRole.DOCTOR,
+        actorNameSnapshot: actorData?.actorNameSnapshot || job.doctorNameSnapshot || "Petugas Klinik",
+        activityType: TreatmentActivityType.OTHER,
+        notes: `Harga final Rp ${completionData.finalPriceSnapshot.toLocaleString("id-ID")} dicatat setelah tindakan. Dokter mengonfirmasi pasien telah menyetujuinya sebelum tindakan${previousPrice == null ? "" : ` (estimasi sebelumnya Rp ${previousPrice.toLocaleString("id-ID")})`}.`
+      }, currentUserRole, userBranchId, currentUserId);
+    }
 
     return { ...job };
   }
@@ -5575,6 +5602,122 @@ export class MockConfigurationRepository implements ConfigurationRepository {
     Object.assign(s, updates, { updatedAt: AppClock.nowISO() });
     db.saveToStorage();
     return { ...s };
+  }
+
+  async getPrescriptionMedicines(currentUserRole?: UserRole, currentUserAuthId?: string): Promise<PrescriptionMedicine[]> {
+    if (currentUserRole !== UserRole.DOCTOR && currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya dokter dan Super Admin yang dapat melihat katalog obat.");
+    }
+    return db.prescriptionMedicines
+      .filter((medicine) =>
+        currentUserRole === UserRole.SUPER_ADMIN
+        || (
+          ((medicine.approvalStatus ?? "APPROVED") === "APPROVED" && medicine.isActive)
+          || (
+            medicine.approvalStatus === "PENDING"
+            && !!currentUserAuthId
+            && medicine.submittedBy === currentUserAuthId
+          )
+        )
+      )
+      .map((medicine) => ({ ...medicine, approvalStatus: medicine.approvalStatus ?? "APPROVED" }));
+  }
+
+  async createPrescriptionMedicine(
+    data: Omit<PrescriptionMedicine, "id" | "createdAt" | "updatedAt" | "approvalStatus"> & {
+      approvalStatus?: PrescriptionMedicine["approvalStatus"];
+      id?: string;
+    },
+    currentUserRole?: UserRole,
+    currentUserAuthId?: string
+  ): Promise<PrescriptionMedicine> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat mengusulkan obat dan Super Admin yang dapat mengelola master obat.");
+    }
+    const now = AppClock.nowISO();
+    const isDoctorSubmission = currentUserRole === UserRole.DOCTOR;
+    const medicine: PrescriptionMedicine = {
+      ...data,
+      id: data.id || `medicine-${Date.now()}-${db.prescriptionMedicines.length + 1}`,
+      genericName: data.genericName.trim(),
+      brandName: data.brandName.trim(),
+      strength: data.strength.trim(),
+      dosageForm: data.dosageForm.trim(),
+      approvalStatus: isDoctorSubmission ? "PENDING" : data.approvalStatus ?? "APPROVED",
+      submittedBy: isDoctorSubmission ? currentUserAuthId ?? null : data.submittedBy ?? null,
+      isActive: isDoctorSubmission ? false : data.isActive,
+      createdAt: now,
+      updatedAt: now
+    };
+    if (!medicine.genericName || !medicine.strength || !medicine.dosageForm) {
+      throw new Error("Nama generik, kekuatan, dan bentuk sediaan wajib diisi.");
+    }
+    if (db.prescriptionMedicines.some((item) =>
+      item.genericName.toLowerCase() === medicine.genericName.toLowerCase()
+      && item.brandName.toLowerCase() === medicine.brandName.toLowerCase()
+      && item.strength.toLowerCase() === medicine.strength.toLowerCase()
+      && item.dosageForm.toLowerCase() === medicine.dosageForm.toLowerCase()
+    )) {
+      throw new Error("Obat dengan nama, kekuatan, dan bentuk sediaan tersebut sudah ada.");
+    }
+    db.prescriptionMedicines.push(medicine);
+    db.saveToStorage();
+    return { ...medicine };
+  }
+
+  async withdrawPrescriptionMedicineSuggestion(
+    id: string,
+    currentUserRole?: UserRole,
+    currentUserAuthId?: string
+  ): Promise<void> {
+    if (currentUserRole !== UserRole.DOCTOR || !currentUserAuthId) {
+      throw new Error("Hanya dokter yang mengajukan obat dapat menarik usulannya.");
+    }
+    const medicine = db.prescriptionMedicines.find((item) =>
+      item.id === id
+      && item.submittedBy === currentUserAuthId
+      && item.approvalStatus === "PENDING"
+      && !item.isActive
+    );
+    if (!medicine) throw new Error("Usulan obat tidak ditemukan atau sudah diproses.");
+    medicine.approvalStatus = "REJECTED";
+    medicine.updatedAt = AppClock.nowISO();
+    db.saveToStorage();
+  }
+
+  async updatePrescriptionMedicine(
+    id: string,
+    updates: Partial<Omit<PrescriptionMedicine, "id" | "createdAt" | "updatedAt">>,
+    currentUserRole?: UserRole
+  ): Promise<PrescriptionMedicine> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat mengelola master obat.");
+    }
+    const medicine = db.prescriptionMedicines.find((item) => item.id === id);
+    if (!medicine) throw new Error("Obat tidak ditemukan.");
+    const updated = {
+      ...updates,
+      genericName: updates.genericName?.trim() ?? medicine.genericName,
+      brandName: updates.brandName?.trim() ?? medicine.brandName,
+      strength: updates.strength?.trim() ?? medicine.strength,
+      dosageForm: updates.dosageForm?.trim() ?? medicine.dosageForm,
+      updatedAt: AppClock.nowISO()
+    };
+    if (!updated.genericName || !updated.strength || !updated.dosageForm) {
+      throw new Error("Nama generik, kekuatan, dan bentuk sediaan wajib diisi.");
+    }
+    if (db.prescriptionMedicines.some((item) =>
+      item.id !== id
+      && item.genericName.toLowerCase() === updated.genericName.toLowerCase()
+      && item.brandName.toLowerCase() === updated.brandName.toLowerCase()
+      && item.strength.toLowerCase() === updated.strength.toLowerCase()
+      && item.dosageForm.toLowerCase() === updated.dosageForm.toLowerCase()
+    )) {
+      throw new Error("Obat dengan nama, kekuatan, dan bentuk sediaan tersebut sudah ada.");
+    }
+    Object.assign(medicine, updated);
+    db.saveToStorage();
+    return { ...medicine };
   }
 
   async getBranchTariffs(branchId: string): Promise<BranchServiceTariff[]> {

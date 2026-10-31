@@ -60,6 +60,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const { currentUser, repos, branches, services, patients, bookings, doctorSchedules } = useApp();
   const { navigate } = useRouter();
   const processedVisitQuery = useRef<string | null>(null);
+  const plannedTariffRequestId = useRef(0);
 
   const [treatments, setTreatments] = useState<TreatmentJob[]>([]);
   const [visits, setVisits] = useState<PatientVisit[]>([]);
@@ -82,6 +83,8 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const [officialTreatmentPrices, setOfficialTreatmentPrices] = useState<Record<string, number>>({});
   const [treatmentPrices, setTreatmentPrices] = useState<Record<string, number>>({});
   const [treatmentDurations, setTreatmentDurations] = useState<Record<string, number>>({});
+  const [loadingPlannedTariffs, setLoadingPlannedTariffs] = useState(false);
+  const [plannedTariffError, setPlannedTariffError] = useState(false);
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
   const [treatmentNotes, setTreatmentNotes] = useState<string>("");
   const [patientApprovalConfirmed, setPatientApprovalConfirmed] = useState(false);
@@ -93,6 +96,8 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     visitId: string;
     treatments: TreatmentJob[];
   } | null>(null);
+  const [finalTreatmentPrices, setFinalTreatmentPrices] = useState<Record<string, string>>({});
+  const [finalPricePatientApprovalConfirmed, setFinalPricePatientApprovalConfirmed] = useState(false);
   const [confirmingWorkflowAction, setConfirmingWorkflowAction] = useState(false);
 
   // Detail Modal & Activity state
@@ -267,6 +272,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       setError("Catat persetujuan pasien atas rencana tindakan dan estimasi biaya sebelum menyimpan.");
       return;
     }
+    if (loadingPlannedTariffs || plannedTariffError) {
+      setError("Tunggu pemuatan tarif cabang selesai dan pastikan tarif dapat dimuat sebelum menyimpan rencana.");
+      return;
+    }
     const visitHasExternalDoctor = selectedVisit?.externalDoctorId != null;
     if (!visitHasExternalDoctor && !doctorsForVisit.some((doctor) => doctor.id === selectedDoctorId)) {
       setError("Pilih dokter yang terjadwal atau dokter penanggung jawab kunjungan ini.");
@@ -287,14 +296,6 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       setError("Durasi setiap tindakan harus antara 5 sampai 300 menit.");
       return;
     }
-    if (currentUser?.role === UserRole.DOCTOR && selectedTreatmentServices.some((service) => {
-      const price = treatmentPrices[service.id] ?? service.basePrice;
-      return !Number.isSafeInteger(price) || price < 0;
-    })) {
-      setError("Harga setiap tindakan harus berupa angka Rupiah bulat dan tidak boleh negatif.");
-      return;
-    }
-
     setSubmitting(true);
     setError(null);
     setSuccessMsg(null);
@@ -306,9 +307,6 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             visitId: selectedVisitId,
             serviceId: service.id,
             doctorId: selectedDoctorId,
-            ...(currentUser?.role === UserRole.DOCTOR
-              ? { priceSnapshot: treatmentPrices[service.id] ?? service.basePrice }
-              : {}),
             externalDoctorId: selectedVisit?.externalDoctorId ?? null,
             patientApprovalConfirmed: true,
             estimatedDurationMinutes: treatmentDurations[service.id] ?? service.estimatedDurationMinutes ?? 30,
@@ -323,7 +321,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
 
       setTreatments((current) => [...createdTreatments, ...current]);
       setSuccessMsg(
-        `${createdTreatments.length} rencana tindakan tersimpan. Mulai tindakan setelah pasien menyetujui rencana dan estimasi biaya; invoice hanya memuat tindakan yang selesai.`
+        `${createdTreatments.length} rencana tindakan tersimpan. Mulai tindakan setelah pasien menyetujui rencana dan estimasi biaya; harga final dicatat saat tindakan diselesaikan.`
       );
       setIsCreateOpen(false);
       if (!embeddedVisitId) setSelectedVisitId("");
@@ -499,7 +497,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     }
   };
 
-  const handleCompleteTreatment = async (treatment: TreatmentJob): Promise<boolean> => {
+  const handleCompleteTreatment = async (
+    treatment: TreatmentJob,
+    finalPriceSnapshot?: number
+  ): Promise<boolean> => {
     if (!canCompleteTreatment(treatment) || completingTreatment) return false;
     setCompletingTreatment(true);
     setError(null);
@@ -562,8 +563,13 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
           actorId: currentUser?.id,
           actorRole: currentUser?.role,
           actorNameSnapshot: currentUser?.name || "User Klinik",
-          notes: "Menyelesaikan tindakan medis"
-        }
+          notes: finalPriceSnapshot === undefined
+            ? "Menyelesaikan tindakan medis"
+            : "Menyelesaikan tindakan medis dan mencatat harga final"
+        },
+        finalPriceSnapshot === undefined
+          ? undefined
+          : { finalPriceSnapshot, patientApprovalConfirmed: true }
       );
       treatmentCompleted = true;
       setSelectedTreatment(null);
@@ -653,7 +659,22 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       || treatment.status === TreatmentJobStatus.DIBATALKAN
     );
     if (!inProgress.length || !canFinishTogether || inProgress.some((treatment) => !canCompleteTreatment(treatment))) return;
+    setError(null);
+    setFinalTreatmentPrices(Object.fromEntries(inProgress
+      .filter((treatment) => canFinalizeTreatment(treatment))
+      .map((treatment) => [treatment.id, String(treatment.priceSnapshot ?? 0)])));
+    setFinalPricePatientApprovalConfirmed(false);
     setPlanAwaitingCompletion({ visitId, treatments: visitTreatments });
+  };
+
+  const requestCompleteTreatment = (treatment: TreatmentJob) => {
+    if (!canCompleteTreatment(treatment) || treatment.status !== TreatmentJobStatus.DALAM_PROSES) return;
+    setError(null);
+    setFinalTreatmentPrices(canFinalizeTreatment(treatment)
+      ? { [treatment.id]: String(treatment.priceSnapshot ?? 0) }
+      : {});
+    setFinalPricePatientApprovalConfirmed(false);
+    setPlanAwaitingCompletion({ visitId: treatment.visitId, treatments: [treatment] });
   };
 
   const confirmCompleteVisitPlan = async () => {
@@ -662,12 +683,29 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     const inProgress = visitTreatments.filter((treatment) =>
       treatment.status === TreatmentJobStatus.DALAM_PROSES
     );
+    const doctorTreatments = inProgress.filter((treatment) => canFinalizeTreatment(treatment));
+    if (doctorTreatments.length > 0 && !finalPricePatientApprovalConfirmed) {
+      setError("Konfirmasi persetujuan pasien atas harga final sebelum tindakan wajib dicatat.");
+      return;
+    }
+    const finalPrices = new Map<string, number>();
+    for (const treatment of doctorTreatments) {
+      const price = Number(finalTreatmentPrices[treatment.id]);
+      if (finalTreatmentPrices[treatment.id]?.trim() === ""
+        || !Number.isSafeInteger(price)
+        || price < 0
+        || price > Number.MAX_SAFE_INTEGER) {
+        setError(`Masukkan harga final yang valid untuk tindakan "${treatment.serviceNameSnapshot}".`);
+        return;
+      }
+      finalPrices.set(treatment.id, price);
+    }
     setPlanAwaitingCompletion(null);
     setProcessingVisitId(visitId);
     let completedCount = 0;
     try {
       for (const treatment of inProgress) {
-        const completed = await handleCompleteTreatment(treatment);
+        const completed = await handleCompleteTreatment(treatment, finalPrices.get(treatment.id));
         if (!completed) {
           setError(`Tindakan selesai sebagian (${completedCount} dari ${inProgress.length}). Periksa status dan stok tiap tindakan sebelum mencoba lagi.`);
           return;
@@ -820,12 +858,89 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     }
   };
 
+  const getVisitPlannedTreatments = (visit: PatientVisit) => {
+    if (visit.plannedTreatments?.length) return visit.plannedTreatments;
+    const booking = bookings.find((item) => item.id === visit.bookingId);
+    if (booking?.plannedTreatments?.length) return booking.plannedTreatments;
+    if (!booking?.serviceId) return [];
+    const service = services.find((item) => item.id === booking.serviceId);
+    return [{
+      serviceId: booking.serviceId,
+      serviceNameSnapshot: service?.name || booking.serviceId,
+      estimatedDurationMinutes: service?.estimatedDurationMinutes
+    }];
+  };
+
+  const prefillVisitTreatmentPlan = async (visit: PatientVisit) => {
+    const requestId = ++plannedTariffRequestId.current;
+    const plannedTreatments = getVisitPlannedTreatments(visit).filter((planned) =>
+      !treatments.some((treatment) =>
+        treatment.visitId === visit.id
+        && treatment.serviceId === planned.serviceId
+        && treatment.status !== TreatmentJobStatus.DIBATALKAN
+      )
+    );
+    const matchedServices = plannedTreatments
+      .map((planned) => services.find((service) =>
+        service.id === planned.serviceId && service.isActive !== false
+      ) || services.find((service) =>
+        service.isActive !== false
+        && service.name.trim().toLocaleLowerCase() === planned.serviceNameSnapshot.trim().toLocaleLowerCase()
+      ))
+      .filter((service): service is MasterService => Boolean(service));
+    const uniqueServices = [...new Map(matchedServices.map((service) => [service.id, service])).values()];
+
+    setSelectedTreatmentServices(uniqueServices);
+    setTreatmentDurations(Object.fromEntries(plannedTreatments.flatMap((planned) => {
+      const service = uniqueServices.find((item) => item.id === planned.serviceId);
+      if (!service) return [];
+      const duration = Number(planned.estimatedDurationMinutes);
+      return [[service.id, Number.isFinite(duration) && duration > 0
+        ? Math.min(300, Math.max(5, Math.round(duration)))
+        : service.estimatedDurationMinutes ?? 30]];
+    })));
+    setPatientApprovalConfirmed(false);
+    setError(null);
+    setPlannedTariffError(false);
+
+    if (uniqueServices.length === 0) {
+      setOfficialTreatmentPrices({});
+      setTreatmentPrices({});
+      setLoadingPlannedTariffs(false);
+      return;
+    }
+
+    setLoadingPlannedTariffs(true);
+    try {
+      const tariffs = await repos.config.getBranchTariffs(visit.branchId);
+      if (requestId !== plannedTariffRequestId.current) return;
+      const prices = Object.fromEntries(uniqueServices.map((service) => {
+        const tariff = tariffs.find((item) => item.serviceId === service.id && item.isActive !== false);
+        return [service.id, tariff?.customPrice ?? service.basePrice];
+      }));
+      setOfficialTreatmentPrices(prices);
+      setTreatmentPrices(prices);
+    } catch (tariffError: unknown) {
+      if (requestId !== plannedTariffRequestId.current) return;
+      setPlannedTariffError(true);
+      setError(tariffError instanceof Error
+        ? `Rencana tindakan terisi, tetapi tarif cabang gagal dimuat: ${tariffError.message}`
+        : "Rencana tindakan terisi, tetapi tarif cabang gagal dimuat.");
+      const prices = Object.fromEntries(uniqueServices.map((service) => [service.id, service.basePrice]));
+      setOfficialTreatmentPrices(prices);
+      setTreatmentPrices(prices);
+    } finally {
+      if (requestId === plannedTariffRequestId.current) setLoadingPlannedTariffs(false);
+    }
+  };
+
   // Filtered treatments
   const activeQueueVisitIds = new Set(
     queueItems.filter((item) => isActiveQueueStatus(item.status)).map((item) => item.visitId)
   );
   const eligibleVisits = visits.filter((visit) => activeQueueVisitIds.has(visit.id));
   const selectedVisit = eligibleVisits.find((visit) => visit.id === selectedVisitId);
+  const selectedVisitPlannedTreatments = selectedVisit ? getVisitPlannedTreatments(selectedVisit) : [];
   const treatmentVisitDate = getOperationalDateString(selectedVisit?.visitDateTime);
   const scheduledDoctorsForVisit = selectedVisit
     ? getActiveDoctorsForSchedule(
@@ -865,6 +980,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     setSelectedVisitId(requestedVisitId);
     const queueItem = queueItems.find((item) => item.visitId === requestedVisitId);
     const visit = eligibleVisits.find((item) => item.id === requestedVisitId);
+    if (visit) void prefillVisitTreatmentPlan(visit);
     const requestedDoctor = resolveDoctor(visit?.doctorId || queueItem?.doctorId || currentUser.doctorId);
     setSelectedDoctorId(
       requestedDoctor?.id || ""
@@ -878,7 +994,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     }
 
     if (!embeddedVisitId) setIsCreateOpen(true);
-  }, [currentUser, eligibleVisits, embeddedVisitId, loading, queueItems, treatments]);
+  }, [currentUser, eligibleVisits, embeddedVisitId, loading, queueItems, treatments, services, bookings]);
 
   useEffect(() => {
     if (!selectedDoctorId || !selectedVisitId) return;
@@ -1044,7 +1160,9 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             )}
           </div>
           <p className="text-xs text-slate-500">
-            Catat beberapa tindakan dalam satu kunjungan. Dokter memulai tindakan dari daftar ini; setelah semuanya selesai, admin memproses satu invoice.
+            {embeddedVisitId
+              ? "Rencana dari booking ditampilkan sebagai draft. Tinjau dan konfirmasi sebelum memulai tindakan; catat harga final setelah tindakan selesai."
+              : "Catat beberapa tindakan dalam satu kunjungan. Dokter memulai tindakan dari daftar ini; setelah semuanya selesai, admin memproses satu invoice."}
           </p>
         </div>
 
@@ -1055,6 +1173,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             onClick={() => {
               setIsCreateOpen(true);
               setPatientApprovalConfirmed(false);
+              if (selectedVisit) void prefillVisitTreatmentPlan(selectedVisit);
               if (currentUser?.role === UserRole.DOCTOR) {
                 setSelectedDoctorId(currentUser.doctorId || "");
               }
@@ -1096,6 +1215,61 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             <X className="w-4 h-4" />
           </button>
         </div>
+      )}
+
+      {embeddedVisitId && selectedVisitPlannedTreatments.length > 0 && (
+        <section className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xs font-bold text-sky-950">Rencana tindakan dari booking</h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-sky-800">
+                Ini masih rencana, belum menjadi tindakan atau tagihan. Tinjau dan koreksi sebelum meminta persetujuan pasien.
+              </p>
+            </div>
+            {canCreateTreatment && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedVisit) void prefillVisitTreatmentPlan(selectedVisit);
+                  if (currentUser?.role === UserRole.DOCTOR) {
+                    setSelectedDoctorId(currentUser.doctorId || "");
+                  }
+                  setIsCreateOpen(true);
+                }}
+                className="inline-flex shrink-0 items-center justify-center rounded-lg bg-sky-700 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-sky-800"
+              >
+                Tinjau & Koreksi Rencana
+              </button>
+            )}
+          </div>
+          <ul className="mt-3 space-y-1.5">
+            {selectedVisitPlannedTreatments.map((planned, index) => {
+              const serviceAvailable = services.some((service) =>
+                service.id === planned.serviceId && service.isActive !== false
+              );
+              const alreadyRecorded = treatments.some((treatment) =>
+                treatment.visitId === embeddedVisitId
+                && treatment.serviceId === planned.serviceId
+                && treatment.status !== TreatmentJobStatus.DIBATALKAN
+              );
+              return (
+                <li
+                  key={`${planned.serviceId}-${index}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-100 bg-white px-3 py-2 text-[11px]"
+                >
+                  <span className="font-semibold text-slate-800">{planned.serviceNameSnapshot}</span>
+                  <span className={alreadyRecorded ? "text-emerald-700" : serviceAvailable ? "text-sky-700" : "text-amber-700"}>
+                    {alreadyRecorded
+                      ? "Sudah dicatat"
+                      : serviceAvailable
+                        ? "Belum dikonfirmasi dokter"
+                        : "Layanan tidak tersedia di katalog aktif"}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
 
       {!embeddedVisitId && <>
@@ -1345,7 +1519,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                                     {getStatusBadge(treatment.status)}
                                     {typeof treatment.priceSnapshot === "number" && (
                                       <span className="text-[10px] font-medium text-slate-500">
-                                        Rp {treatment.priceSnapshot.toLocaleString("id-ID")}
+                                        {treatment.status === TreatmentJobStatus.SELESAI
+                                          || treatment.status === TreatmentJobStatus.DISERAHKAN
+                                          ? "Harga final"
+                                          : "Estimasi"}: Rp {treatment.priceSnapshot.toLocaleString("id-ID")}
                                       </span>
                                     )}
                                   </div>
@@ -1412,7 +1589,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="treatment-confirm-title"
-              className="w-full max-w-md overflow-hidden rounded-2xl border border-[#d6b96f] bg-[#fffdf8] shadow-2xl"
+              className="w-full max-w-lg overflow-hidden rounded-2xl border border-[#d6b96f] bg-[#fffdf8] shadow-2xl"
             >
               <header className="bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] px-5 py-4 text-white">
                 <h2 id="treatment-confirm-title" className="text-sm font-bold">
@@ -1423,13 +1600,60 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                 {planAwaitingCompletion ? (
                   <>
                     <p>
-                      Selesaikan bersama {planAwaitingCompletion.treatments.filter((treatment) =>
+                      Catat penyelesaian {planAwaitingCompletion.treatments.filter((treatment) =>
                         treatment.status === TreatmentJobStatus.DALAM_PROSES
-                      ).length} tindakan untuk {getTreatmentPatientName(planAwaitingCompletion.treatments[0])}?
+                      ).length} tindakan untuk {getTreatmentPatientName(planAwaitingCompletion.treatments[0])}.
                     </p>
+                    {planAwaitingCompletion.treatments
+                      .filter((treatment) =>
+                        treatment.status === TreatmentJobStatus.DALAM_PROSES
+                        && canFinalizeTreatment(treatment)
+                      )
+                      .map((treatment) => (
+                        <label key={treatment.id} className="block rounded-lg border border-slate-200 bg-white p-3 font-semibold text-slate-700">
+                          Harga final — {treatment.serviceNameSnapshot} (Rp)
+                          <input
+                            type="number"
+                            min="0"
+                            max={Number.MAX_SAFE_INTEGER}
+                            step="1"
+                            value={finalTreatmentPrices[treatment.id] ?? ""}
+                            onChange={(event) => setFinalTreatmentPrices((current) => ({
+                              ...current,
+                              [treatment.id]: event.target.value
+                            }))}
+                            required
+                            className="mt-1 w-full rounded-lg border border-slate-200 p-2 text-sm text-slate-800 focus:ring-2 focus:ring-teal-500"
+                          />
+                          <span className="mt-1 block font-normal text-slate-500">
+                            Estimasi sebelumnya: Rp {(treatment.priceSnapshot ?? 0).toLocaleString("id-ID")}
+                          </span>
+                        </label>
+                      ))}
+                    {planAwaitingCompletion.treatments.some((treatment) =>
+                      treatment.status === TreatmentJobStatus.DALAM_PROSES
+                      && canFinalizeTreatment(treatment)
+                    ) && (
+                      <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-950">
+                        <input
+                          type="checkbox"
+                          checked={finalPricePatientApprovalConfirmed}
+                          onChange={(event) => setFinalPricePatientApprovalConfirmed(event.target.checked)}
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-amber-600"
+                        />
+                        <span>
+                          Saya mengonfirmasi harga final telah dijelaskan dan disetujui pasien sebelum tindakan dilakukan. Pencatatan ini dilakukan setelah tindakan selesai.
+                        </span>
+                      </label>
+                    )}
                     <p className="rounded-lg border border-[#eadbb9] bg-[#faf6ec] p-3 text-[#735b20]">
-                      Pemakaian stok dan pencatatan selesai akan diproses per tindakan.
+                      Pemakaian stok, harga final, dan pencatatan selesai akan disimpan per tindakan.
                     </p>
+                    {error && (
+                      <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-700">
+                        {error}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <>
@@ -1446,6 +1670,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                   onClick={() => {
                     setIsFinishVisitConfirmOpen(false);
                     setPlanAwaitingCompletion(null);
+                    setFinalPricePatientApprovalConfirmed(false);
                   }}
                   disabled={confirmingWorkflowAction}
                   className="rounded-lg border border-[#e5d7b8] bg-white px-4 py-2 text-xs font-semibold text-[#735b20] transition hover:bg-[#faf6ec] disabled:opacity-50"
@@ -1463,12 +1688,32 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                       setConfirmingWorkflowAction(false);
                     }
                   }}
-                  disabled={confirmingWorkflowAction}
+                  disabled={confirmingWorkflowAction || Boolean(planAwaitingCompletion && (
+                    (planAwaitingCompletion.treatments.some((treatment) =>
+                      treatment.status === TreatmentJobStatus.DALAM_PROSES
+                      && canFinalizeTreatment(treatment)
+                    ) && !finalPricePatientApprovalConfirmed)
+                    || planAwaitingCompletion.treatments.some((treatment) =>
+                      treatment.status === TreatmentJobStatus.DALAM_PROSES
+                      && canFinalizeTreatment(treatment)
+                      && (finalTreatmentPrices[treatment.id]?.trim() === ""
+                        || !Number.isSafeInteger(Number(finalTreatmentPrices[treatment.id]))
+                        || Number(finalTreatmentPrices[treatment.id]) < 0
+                        || Number(finalTreatmentPrices[treatment.id]) > Number.MAX_SAFE_INTEGER)
+                    )
+                  ))}
                   className="rounded-lg bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-4 py-2 text-xs font-bold text-white transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
                 >
                   {confirmingWorkflowAction
                     ? "Memproses..."
-                    : planAwaitingCompletion ? "Ya, Selesaikan" : "Ya, Akhiri Pemeriksaan"}
+                    : planAwaitingCompletion
+                      ? planAwaitingCompletion.treatments.some((treatment) =>
+                        treatment.status === TreatmentJobStatus.DALAM_PROSES
+                        && canFinalizeTreatment(treatment)
+                      )
+                        ? "Catat Harga & Selesaikan"
+                        : "Selesaikan Tindakan"
+                      : "Ya, Akhiri Pemeriksaan"}
                 </button>
               </footer>
             </section>
@@ -1557,7 +1802,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                       "branch-gebang"
                     }
                     onSelectServices={(nextServices, effectivePrices = {}) => {
+                      plannedTariffRequestId.current += 1;
+                      setLoadingPlannedTariffs(false);
                       setPatientApprovalConfirmed(false);
+                      setPlannedTariffError(false);
                       setSelectedTreatmentServices(nextServices);
                       setOfficialTreatmentPrices((current) => Object.fromEntries(
                         nextServices.map((service) => [
@@ -1607,11 +1855,15 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                             ? nextVisit.doctorId || nextQueueItem?.doctorId || ""
                             : ""
                         );
-                        setSelectedTreatmentServices([]);
-                        setOfficialTreatmentPrices({});
-                        setTreatmentPrices({});
-                        setTreatmentDurations({});
-                        setPatientApprovalConfirmed(false);
+                        if (nextVisit) {
+                          void prefillVisitTreatmentPlan(nextVisit);
+                        } else {
+                          setSelectedTreatmentServices([]);
+                          setOfficialTreatmentPrices({});
+                          setTreatmentPrices({});
+                          setTreatmentDurations({});
+                          setPatientApprovalConfirmed(false);
+                        }
                       }}
                       required
                       disabled={Boolean(lockedVisitId)}
@@ -1628,6 +1880,31 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                       <p className="mt-1.5 text-[11px] text-slate-500">
                         Kunjungan dikunci sesuai pasien dari antrean.
                       </p>
+                    )}
+                    {(selectedVisit?.plannedTreatments?.length || 0) > 0 && (
+                      <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 p-2.5 text-[11px] text-sky-900">
+                        <div className="font-bold">Rencana dari booking — sudah dipilih sebagai draft</div>
+                        <div className="mt-1">
+                          {selectedVisit?.plannedTreatments?.map((planned) => {
+                            const alreadyRecorded = treatments.some((treatment) =>
+                              treatment.visitId === selectedVisit.id
+                              && treatment.serviceId === planned.serviceId
+                              && treatment.status !== TreatmentJobStatus.DIBATALKAN
+                            );
+                            return `${planned.serviceNameSnapshot}${alreadyRecorded ? " (sudah dicatat)" : ""}`;
+                          }).join(", ")}
+                        </div>
+                        <p className="mt-1 text-sky-800">
+                          Dokter dapat mengoreksi pilihan sebelum meminta persetujuan pasien dan memulai tindakan.
+                        </p>
+                        {(selectedVisit?.plannedTreatments || []).some((planned) =>
+                          !services.some((service) => service.id === planned.serviceId && service.isActive !== false)
+                        ) && (
+                          <p className="mt-1 font-semibold text-amber-800">
+                            Sebagian layanan booking tidak tersedia di katalog aktif; pilih layanan pengganti secara manual.
+                          </p>
+                        )}
+                      </div>
                     )}
                     {eligibleVisits.length === 0 && (
                       <p className="mt-1.5 text-[11px] text-amber-700">
@@ -1711,30 +1988,9 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                         <div className="min-w-0">
                           <div className="truncate text-xs font-semibold text-slate-800">{service.name}</div>
                           <div className="text-[10px] font-medium text-amber-700">
-                            Tarif dasar cabang: Rp {(officialTreatmentPrices[service.id] ?? service.basePrice).toLocaleString("id-ID")}
+                            Estimasi tarif: Rp {(officialTreatmentPrices[service.id] ?? service.basePrice).toLocaleString("id-ID")}
                           </div>
                         </div>
-                        {currentUser?.role === UserRole.DOCTOR && (
-                          <label className="text-[10px] font-semibold text-slate-500">
-                            Harga tindakan (Rp)
-                            <input
-                              type="number"
-                              min="0"
-                              max={Number.MAX_SAFE_INTEGER}
-                              step="1"
-                              value={treatmentPrices[service.id] ?? officialTreatmentPrices[service.id] ?? service.basePrice}
-                              onChange={(event) => {
-                                setTreatmentPrices((current) => ({
-                                  ...current,
-                                  [service.id]: event.target.value === "" ? 0 : Number(event.target.value)
-                                }));
-                                setPatientApprovalConfirmed(false);
-                              }}
-                              required
-                              className="mt-1 w-full rounded-lg border border-slate-200 p-2 text-xs text-slate-800 focus:ring-2 focus:ring-teal-500"
-                            />
-                          </label>
-                        )}
                         <label className="text-[10px] font-semibold text-slate-500">
                           Estimasi durasi (menit)
                           <input
@@ -1769,7 +2025,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                     </span>
                   </div>
                   <p className="text-[10px] leading-relaxed text-slate-500">
-                    Tarif cabang menjadi harga awal. Dokter dapat menyesuaikan harga tiap tindakan sesuai kondisi/luas tindakan sebelum menjelaskan estimasi dan mencatat persetujuan lisan pasien. Invoice satu kali per kunjungan hanya memuat tindakan yang selesai.
+                    Pilihan ini adalah rencana awal dan estimasi tarif cabang. Dokter mengoreksi rencana sebelum tindakan; setelah tindakan selesai, dokter mencatat harga final yang telah disetujui pasien. Invoice hanya memuat tindakan yang selesai.
                   </p>
                 </section>
               )}
@@ -1783,7 +2039,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                       className="mt-0.5 h-4 w-4 shrink-0 accent-amber-600"
                     />
                     <span>
-                      Saya mengonfirmasi rencana tindakan dan estimasi biaya telah dijelaskan kepada pasien, dan pasien menyetujuinya. Persetujuan lisan ini akan dicatat sebelum tindakan dimulai.
+                      Saya mengonfirmasi rencana tindakan dan estimasi biaya telah dijelaskan kepada pasien, dan pasien menyetujuinya sebelum tindakan dimulai.
                     </span>
                   </label>
 
@@ -1800,10 +2056,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || !selectedVisitId || selectedTreatmentServices.length === 0 || !selectedDoctorId || !doctorsForVisit.length || !patientApprovalConfirmed}
+                  disabled={submitting || loadingPlannedTariffs || plannedTariffError || !selectedVisitId || selectedTreatmentServices.length === 0 || !selectedDoctorId || !doctorsForVisit.length || !patientApprovalConfirmed}
                   className="rounded-lg bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-4 py-2 font-semibold text-white shadow-sm transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
                 >
-                  {submitting ? "Menyimpan..." : "Simpan Rencana Tindakan"}
+                  {submitting ? "Menyimpan..." : loadingPlannedTariffs ? "Memuat tarif..." : "Simpan Rencana Tindakan"}
                 </button>
               </div>
                 </div>
@@ -2199,12 +2455,16 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                 </button>
                 {canCompleteTreatment(selectedTreatment) && selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && (
                   <button
-                    onClick={() => void handleCompleteTreatment(selectedTreatment)}
+                    onClick={() => requestCompleteTreatment(selectedTreatment)}
                       disabled={completingTreatment}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    {completingTreatment ? "Menyelesaikan..." : "Selesaikan & Kurangi Stok"}
+                    {completingTreatment
+                      ? "Menyelesaikan..."
+                      : canFinalizeTreatment(selectedTreatment)
+                        ? "Selesaikan & Catat Harga Final"
+                        : "Selesaikan & Kurangi Stok"}
                   </button>
                 )}
                 {canReviseTreatment(selectedTreatment) && (
