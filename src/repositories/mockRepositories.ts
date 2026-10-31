@@ -2628,6 +2628,17 @@ export class MockQueueRepository implements QueueRepository {
     );
   }
 
+  private isDoctorAssignedToBranch(doctorId: string, branchId: string): boolean {
+    const doctor = db.doctors.find((item) => item.id === doctorId);
+    if (!doctor) return false;
+    if (doctor.assignedBranchId && isBranchMatch(doctor.assignedBranchId, branchId, db.branches)) return true;
+    return db.doctorBranchAssignments.some((assignment) =>
+      assignment.doctorId === doctorId &&
+      assignment.active &&
+      isBranchMatch(assignment.branchId, branchId, db.branches)
+    );
+  }
+
   private async syncVisitStatus(item: QueueItem, role?: UserRole, branchId?: string | null): Promise<void> {
     const visitStatus = getVisitStatusForQueueStatus(item.status);
     if (!visitStatus) return;
@@ -2641,16 +2652,27 @@ export class MockQueueRepository implements QueueRepository {
   async getQueueByBranch(
     branchId: string,
     currentUserRole?: UserRole,
-    userBranchId?: string | null
+    userBranchId?: string | null,
+    currentDoctorId?: string | null
   ): Promise<QueueItem[]> {
     if (
       (currentUserRole === UserRole.BRANCH_ADMIN ||
         currentUserRole === UserRole.DOCTOR ||
         currentUserRole === UserRole.DOCTOR_ASSISTANT) &&
       userBranchId &&
-      !isBranchMatch(branchId, userBranchId, db.branches)
+      !isBranchMatch(branchId, userBranchId, db.branches) &&
+      (currentUserRole !== UserRole.DOCTOR ||
+        !currentDoctorId ||
+        !this.isDoctorAssignedToBranch(currentDoctorId, branchId))
     ) {
       throw new Error("Access denied: Staff is isolated to their assigned branch");
+    }
+    if (
+      currentUserRole === UserRole.DOCTOR &&
+      !userBranchId &&
+      (!currentDoctorId || !this.isDoctorAssignedToBranch(currentDoctorId, branchId))
+    ) {
+      throw new Error("Access denied: Doctor is not assigned to this branch");
     }
     return db.queueItems.filter((q) => q.branchId === branchId);
   }
@@ -2696,7 +2718,12 @@ export class MockQueueRepository implements QueueRepository {
       throw new Error("Access denied: Doctor cannot access another doctor queue");
     }
 
-    let items = db.queueItems.filter((q) => {
+    let items = (await this.getQueueByBranch(
+      branchId,
+      currentUserRole,
+      userBranchId,
+      currentUserRole === UserRole.DOCTOR ? doctorId : null
+    )).filter((q) => {
       const qDate = (q.arrivalAt || q.checkInTime || "").split("T")[0];
       return q.branchId === branchId && qDate === date;
     });

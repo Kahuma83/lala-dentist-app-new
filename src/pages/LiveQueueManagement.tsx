@@ -46,14 +46,16 @@ export const LiveQueueManagement: React.FC = () => {
 
   // Selected filters
   const [selectedBranchId, setSelectedBranchId] = useState<string>(
-    (isSuper ? checkInParams.get("branchId") : null) ||
+    (isSuper || isDoctor ? checkInParams.get("branchId") : null) ||
       currentUser?.assignedBranchId ||
       "branch-gebang"
   );
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>(
     isDoctor ? currentUser?.doctorId || "" : "ALL"
   );
-  const [selectedDate, setSelectedDate] = useState<string>(AppClock.todayDateString());
+  const [selectedDate, setSelectedDate] = useState<string>(
+    (isDoctor && checkInParams.get("date")) || AppClock.todayDateString()
+  );
 
   const [snapshot, setSnapshot] = useState<LiveQueueSnapshot | null>(null);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -256,7 +258,8 @@ export const LiveQueueManagement: React.FC = () => {
       const items = await repos.queue.getQueueByBranch(
         branchId,
         currentUser?.role,
-        currentUser?.assignedBranchId
+        currentUser?.assignedBranchId,
+        isDoctor ? currentUser?.doctorId : null
       );
 
       const queueScopeItems = items.filter((q) => {

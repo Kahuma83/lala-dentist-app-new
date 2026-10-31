@@ -1403,7 +1403,8 @@ export class SupabaseQueueRepository implements QueueRepository {
   async getQueueByBranch(
     branchId: string,
     currentUserRole?: UserRole,
-    userBranchId?: string | null
+    userBranchId?: string | null,
+    currentDoctorId?: string | null
   ): Promise<QueueItem[]> {
     ensureSupabaseConnected();
     if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId && !isBranchMatch(branchId, userBranchId)) {
@@ -1429,9 +1430,15 @@ export class SupabaseQueueRepository implements QueueRepository {
       }
     }
 
-    const fallback = this.getFallbackQueue().filter((q) => q.branchId === branchId);
+    const fallback = this.getFallbackQueue().filter((q) =>
+      q.branchId === branchId &&
+      (currentUserRole !== UserRole.DOCTOR || !currentDoctorId || q.doctorId === currentDoctorId) &&
+      (currentUserRole !== UserRole.DOCTOR || !userBranchId || isBranchMatch(branchId, userBranchId))
+    );
     const remoteIds = new Set(remoteItems.map((q) => q.id));
-    const localOnly = fallback.filter((q) => !remoteIds.has(q.id));
+    const localOnly = currentUserRole === UserRole.DOCTOR && userBranchId && !isBranchMatch(branchId, userBranchId)
+      ? []
+      : fallback.filter((q) => !remoteIds.has(q.id));
     return [...remoteItems, ...localOnly];
   }
 
@@ -1522,7 +1529,7 @@ export class SupabaseQueueRepository implements QueueRepository {
       throw new Error("Access denied: Doctor cannot access another doctor queue");
     }
 
-    const items = await this.getQueueByBranch(branchId, currentUserRole, userBranchId);
+    const items = await this.getQueueByBranch(branchId, currentUserRole, userBranchId, currentUserRole === UserRole.DOCTOR ? doctorId : null);
     let filtered = items.filter((q) => {
       const qDate = getOperationalDateString(q.arrivalAt || q.checkInTime || q.createdAt);
       return qDate === date;
