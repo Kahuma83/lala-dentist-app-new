@@ -8,6 +8,7 @@ import {
   DentalBranch,
   DentalDoctor,
   PatientProfile,
+  PrescriptionMedicine,
   UserRole
 } from "../../types/domain";
 
@@ -43,6 +44,89 @@ type ClinicalDocumentFields = Record<string, string> & {
   caseDetail: string;
   therapy: string;
 };
+
+interface PrescriptionDraftItem {
+  medicineId: string;
+  medicineName: string;
+  brandName: string;
+  strength: string;
+  dosageForm: string;
+  dose: string;
+  route: string;
+  frequency: string;
+  duration: string;
+  quantity: string;
+  instructions: string;
+}
+
+const createEmptyPrescriptionItem = (): PrescriptionDraftItem => ({
+  medicineId: "",
+  medicineName: "",
+  brandName: "",
+  strength: "",
+  dosageForm: "",
+  dose: "",
+  route: "",
+  frequency: "",
+  duration: "",
+  quantity: "",
+  instructions: ""
+});
+
+const parsePrescriptionItems = (value?: string): PrescriptionDraftItem[] => {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is Record<string, unknown> =>
+        Boolean(item) && typeof item === "object" && !Array.isArray(item)
+      )
+      .filter((item) => typeof item.medicineName === "string")
+      .map((item) => ({
+        medicineId: typeof item.medicineId === "string" ? item.medicineId : "",
+        medicineName: typeof item.medicineName === "string" ? item.medicineName : "",
+        brandName: typeof item.brandName === "string" ? item.brandName : "",
+        strength: typeof item.strength === "string" ? item.strength : "",
+        dosageForm: typeof item.dosageForm === "string" ? item.dosageForm : "",
+        dose: typeof item.dose === "string" ? item.dose : "",
+        route: typeof item.route === "string" ? item.route : "",
+        frequency: typeof item.frequency === "string" ? item.frequency : "",
+        duration: typeof item.duration === "string" ? item.duration : "",
+        quantity: typeof item.quantity === "string" ? item.quantity : "",
+        instructions: typeof item.instructions === "string" ? item.instructions : ""
+      }));
+  } catch {
+    return [];
+  }
+};
+
+const formatPrescriptionItems = (items: PrescriptionDraftItem[]) => items
+  .filter((item) => item.medicineName.trim())
+  .map((item, index) => {
+    const medicine = [
+      item.medicineName.trim(),
+      item.brandName.trim() ? `(${item.brandName.trim()})` : "",
+      item.strength.trim(),
+      item.dosageForm.trim()
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const directions = [
+      item.dose.trim(),
+      item.route.trim(),
+      item.frequency.trim(),
+      item.duration.trim()
+    ].filter(Boolean).join(" · ");
+    return [
+      `${index + 1}. ${medicine}`,
+      `   Aturan pakai: ${directions}`,
+      item.quantity.trim() ? `   Jumlah: ${item.quantity.trim()}` : "",
+      item.instructions.trim() ? `   Catatan: ${item.instructions.trim()}` : ""
+    ].filter(Boolean).join("\n");
+  })
+  .filter(Boolean)
+  .join("\n\n");
 
 const typeToDocumentType: Record<ClinicalDocumentType, ClinicalVisitDocumentType> = {
   prescription: "PRESCRIPTION",
@@ -180,6 +264,12 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
   const [fields, setFields] = useState(() => createInitialFields(patient, today, initialComplaint));
   const [documents, setDocuments] = useState<ClinicalVisitDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<ClinicalVisitDocument | null>(null);
+  const [prescriptionItems, setPrescriptionItems] = useState<PrescriptionDraftItem[]>(
+    () => type === "prescription" ? [createEmptyPrescriptionItem()] : []
+  );
+  const [medicineCatalog, setMedicineCatalog] = useState<PrescriptionMedicine[]>([]);
+  const [medicineSearch, setMedicineSearch] = useState("");
+  const [medicineLoadError, setMedicineLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -197,6 +287,10 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
     [currentDocumentType, documents]
   );
   const isReadOnly = selectedDocument !== null;
+  const prescriptionDisplay = prescriptionItems.length
+    ? formatPrescriptionItems(prescriptionItems)
+    : fields.prescription;
+  const completedPrescriptionItems = prescriptionItems.filter((item) => item.medicineName.trim());
   const documentClinicName = fields.__clinicName || clinicName;
   const documentBranchName = fields.__branchName || branchName;
   const documentAddress = fields.__clinicAddress || address;
@@ -241,6 +335,7 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
           ...createInitialFields(patient, today, initialComplaint),
           ...existingDocument.formData
         });
+        loadPrescriptionItemsFromDocument(existingDocument);
         return;
       }
       setFields((current) => ({
@@ -261,12 +356,53 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
     };
   }, [currentUser, initialComplaint, initialDocumentId, patient, repos.medicalRecord, today, visitId]);
 
+  useEffect(() => {
+    if (type !== "prescription" || !currentUser) return;
+    let cancelled = false;
+    setMedicineLoadError(null);
+    void repos.config.getPrescriptionMedicines(currentUser.role, currentUser.authUserId || currentUser.id)
+      .then((medicines) => {
+        if (!cancelled) {
+          setMedicineCatalog(medicines.filter((medicine) => medicine.approvalStatus === "APPROVED" && medicine.isActive));
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        console.error("Gagal memuat master obat:", error);
+        setMedicineLoadError(error instanceof Error ? error.message : "Master obat gagal dimuat.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, repos.config, type]);
+
   const changeField = (field: keyof ClinicalDocumentFields) => (value: string) =>
     setFields((current) => ({ ...current, [field]: value }));
 
+  const updatePrescriptionItem = (index: number, updates: Partial<PrescriptionDraftItem>) => {
+    setPrescriptionItems((current) => current.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, ...updates } : item
+    ));
+  };
+
+  const loadPrescriptionItemsFromDocument = (document: ClinicalVisitDocument) => {
+    setPrescriptionItems(parsePrescriptionItems(document.formData.prescriptionItems));
+  };
+
   const validationError = () => {
-    if (type === "prescription" && !fields.prescription.trim()) {
-      return "Isi obat dan aturan pakai sebelum menyimpan resep.";
+    if (type === "prescription") {
+      if (prescriptionItems.length === 0) return "Tambahkan minimal satu obat ke resep.";
+      const incompleteItem = prescriptionItems.find((item) =>
+        !item.medicineName.trim()
+        || !item.dose.trim()
+        || !item.route.trim()
+        || !item.frequency.trim()
+        || !item.duration.trim()
+        || !item.quantity.trim()
+      );
+      if (incompleteItem) {
+        return "Lengkapi nama obat, dosis, cara pemberian, frekuensi, durasi, dan jumlah untuk setiap obat.";
+      }
     }
     if (type === "sick-note") {
       const days = Number(fields.restDays);
@@ -290,6 +426,7 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
       fields.complaint || initialComplaint,
       fields.diagnosis
     ));
+    setPrescriptionItems(type === "prescription" ? [createEmptyPrescriptionItem()] : []);
     setSaveError(null);
     setSaveSuccess(null);
   };
@@ -300,6 +437,7 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
       ...createInitialFields(patient, today, initialComplaint),
       ...document.formData
     });
+    loadPrescriptionItemsFromDocument(document);
     setSaveError(null);
     setSaveSuccess(null);
   };
@@ -321,6 +459,12 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
     try {
       const formData: ClinicalDocumentFields = {
         ...fields,
+        ...(type === "prescription"
+          ? {
+            prescription: formatPrescriptionItems(prescriptionItems),
+            prescriptionItems: JSON.stringify(prescriptionItems)
+          }
+          : {}),
         __issuedDate: today,
         __clinicName: clinicName,
         __branchName: branchName,
@@ -346,6 +490,7 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
       setDocuments((current) => [saved, ...current]);
       setSelectedDocument(saved);
       setFields(formData);
+      setPrescriptionItems(parsePrescriptionItems(formData.prescriptionItems));
       setSaveSuccess("Dokumen berhasil disimpan ke rekam medis.");
       window.requestAnimationFrame(() => window.print());
     } catch (error: unknown) {
@@ -454,14 +599,123 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
               {type === "prescription" && (
                 <>
                   <FormInput label="Alamat pasien" value={fields.address} onChange={changeField("address")} readOnly />
-                  <FormTextArea
-                    label="Obat dan aturan pakai"
-                    value={fields.prescription}
-                    onChange={changeField("prescription")}
-                    rows={6}
-                    readOnly={isReadOnly}
-                    placeholder="Isi obat, dosis, cara penggunaan, dan durasi sesuai instruksi dokter."
-                  />
+                  {!isReadOnly && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700">
+                          Cari obat di master
+                          <input
+                            value={medicineSearch}
+                            onChange={(event) => setMedicineSearch(event.target.value)}
+                            className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#c5a059] focus:ring-2 focus:ring-[#c5a059]/20"
+                            placeholder="Cari nama generik, dagang, kekuatan..."
+                          />
+                        </label>
+                        <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                          Dosis, frekuensi, cara pemberian, dan durasi selalu diisi dokter untuk resep ini.
+                        </p>
+                      </div>
+                      {medicineLoadError && (
+                        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[10px] leading-relaxed text-amber-900">
+                          Katalog obat tidak dapat dimuat: {medicineLoadError} Obat masih dapat ditulis manual.
+                        </p>
+                      )}
+                      {medicineCatalog.length === 0 && !medicineLoadError && (
+                        <p className="rounded-lg border border-sky-200 bg-sky-50 p-2.5 text-[10px] leading-relaxed text-sky-900">
+                          Master obat belum berisi pilihan. Tambahkan obat melalui Pengaturan → Master Obat Resep, atau masukkan obat secara manual.
+                        </p>
+                      )}
+                      {prescriptionItems.map((item, index) => {
+                        const searchTerm = medicineSearch.trim().toLocaleLowerCase();
+                        const filteredMedicines = medicineCatalog.filter((medicine) =>
+                          medicine.id === item.medicineId
+                          || !searchTerm
+                          || [
+                            medicine.genericName,
+                            medicine.brandName,
+                            medicine.strength,
+                            medicine.dosageForm
+                          ].some((value) => value.toLocaleLowerCase().includes(searchTerm))
+                        );
+                        return (
+                          <section key={index} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <h4 className="text-xs font-bold text-slate-800">Obat {index + 1}</h4>
+                              {!isReadOnly && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPrescriptionItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                                  className="rounded-md px-2 py-1 text-[10px] font-semibold text-rose-700 hover:bg-rose-50"
+                                >
+                                  Hapus
+                                </button>
+                              )}
+                            </div>
+                            <label className="block text-[10px] font-semibold text-slate-600">
+                              Pilih obat dari master
+                              <select
+                                value={item.medicineId || (item.medicineName ? "__manual__" : "")}
+                                disabled={isReadOnly}
+                                onChange={(event) => {
+                                  const selectedMedicine = medicineCatalog.find((medicine) => medicine.id === event.target.value);
+                                  if (selectedMedicine) {
+                                    updatePrescriptionItem(index, {
+                                      medicineId: selectedMedicine.id,
+                                      medicineName: selectedMedicine.genericName,
+                                      brandName: selectedMedicine.brandName,
+                                      strength: selectedMedicine.strength,
+                                      dosageForm: selectedMedicine.dosageForm
+                                    });
+                                  } else {
+                                    updatePrescriptionItem(index, { medicineId: "" });
+                                  }
+                                }}
+                                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-normal text-slate-800"
+                              >
+                                <option value="">-- Pilih obat --</option>
+                                {filteredMedicines.map((medicine) => (
+                                  <option key={medicine.id} value={medicine.id}>
+                                    {medicine.genericName}{medicine.brandName ? ` (${medicine.brandName})` : ""} · {medicine.strength} · {medicine.dosageForm}
+                                  </option>
+                                ))}
+                                <option value="__manual__">Obat tidak ada di master (isi manual)</option>
+                              </select>
+                            </label>
+                            {!item.medicineId && (
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                <FormInput label="Nama obat *" value={item.medicineName} onChange={(value) => updatePrescriptionItem(index, { medicineName: value })} readOnly={isReadOnly} />
+                                <FormInput label="Kekuatan" value={item.strength} onChange={(value) => updatePrescriptionItem(index, { strength: value })} readOnly={isReadOnly} />
+                                <FormInput label="Bentuk" value={item.dosageForm} onChange={(value) => updatePrescriptionItem(index, { dosageForm: value })} readOnly={isReadOnly} />
+                              </div>
+                            )}
+                            <div className="grid grid-cols-2 gap-2">
+                              <FormInput label="Dosis *" value={item.dose} onChange={(value) => updatePrescriptionItem(index, { dose: value })} readOnly={isReadOnly} />
+                              <FormInput label="Cara pemberian *" value={item.route} onChange={(value) => updatePrescriptionItem(index, { route: value })} readOnly={isReadOnly} />
+                              <FormInput label="Frekuensi *" value={item.frequency} onChange={(value) => updatePrescriptionItem(index, { frequency: value })} readOnly={isReadOnly} />
+                              <FormInput label="Durasi *" value={item.duration} onChange={(value) => updatePrescriptionItem(index, { duration: value })} readOnly={isReadOnly} />
+                              <FormInput label="Jumlah *" value={item.quantity} onChange={(value) => updatePrescriptionItem(index, { quantity: value })} readOnly={isReadOnly} />
+                              <FormInput label="Catatan" value={item.instructions} onChange={(value) => updatePrescriptionItem(index, { instructions: value })} readOnly={isReadOnly} />
+                            </div>
+                          </section>
+                        );
+                      })}
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() => setPrescriptionItems((current) => [...current, createEmptyPrescriptionItem()])}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#d6bd80] bg-[#fffdf8] px-3 py-2 text-xs font-semibold text-[#735b20] hover:bg-[#faf6ec]"
+                        >
+                          + Tambah obat
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {isReadOnly && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+                      <p className="mb-1 font-semibold text-slate-700">Obat dan aturan pakai</p>
+                      <p className="whitespace-pre-wrap leading-6 text-slate-800">{prescriptionDisplay}</p>
+                    </div>
+                  )}
                 </>
               )}
               {type === "referral" && (
@@ -516,30 +770,37 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
           </section>
 
           <div className="flex justify-center rounded-xl bg-[#e9e7e1] p-3 sm:p-6 print:block print:bg-white print:p-0">
-            <article id="doctor-clinical-document" className={`relative w-full bg-white px-7 py-8 text-slate-900 shadow-md sm:px-12 sm:py-10 print:mx-auto print:shadow-none ${type === "prescription" ? "max-w-[148mm] min-h-[205mm]" : "max-w-[190mm] min-h-[265mm]"}`}>
-              <div className="mb-5 border-b-2 border-slate-800 pb-3">
+            <article id="doctor-clinical-document" className={`relative w-full bg-white px-7 py-8 text-slate-900 shadow-md sm:px-12 sm:py-10 print:mx-auto print:shadow-none ${type === "prescription" ? "max-w-[158mm] min-h-[205mm] print:min-h-0" : "max-w-[190mm] min-h-[265mm]"}`}>
+              <div className={`mb-5 border-b-2 border-slate-800 pb-3 ${type === "prescription" ? "border-b-[3px] border-[#9b7625] print:border-slate-800" : ""}`}>
                 <div className="flex items-center gap-3">
-                  <img src={documentLogo} alt="" className="h-14 w-14 object-contain" />
+                  <img src={documentLogo} alt="" className={`${type === "prescription" ? "h-16 w-16" : "h-14 w-14"} object-contain`} />
                   <div className="min-w-0 flex-1 text-center">
-                    <p className="text-sm font-semibold">Praktik Dokter Gigi</p>
-                  <h1 className="text-xl font-extrabold tracking-wide">{documentClinicName.toUpperCase()}</h1>
-                  <p className="text-xs">{documentAddress}{documentBranchName ? ` · ${documentBranchName}` : ""}</p>
-                  {documentPhone && <p className="text-xs">Telepon: {documentPhone}</p>}
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Praktik Dokter Gigi</p>
+                    <h1 className="text-lg font-extrabold tracking-wide">{documentClinicName.toUpperCase()}</h1>
+                    <p className="text-[10px] leading-4">{documentAddress}{documentBranchName ? ` · ${documentBranchName}` : ""}</p>
+                    {documentPhone && <p className="text-[10px]">Telepon: {documentPhone}</p>}
                   </div>
                 </div>
-                <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[9px]">
-                  <span>{documentDoctorName}</span>
-                  {documentDoctorSip && <span>SIP: {documentDoctorSip}</span>}
+                <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[9px] text-slate-600">
+                  <span className="font-semibold">{documentDoctorName}</span>
+                  {documentDoctorSip && <span>No. SIP: {documentDoctorSip}</span>}
                 </div>
               </div>
 
-              <div className="mb-5 text-center">
+              <div className={`mb-5 text-center ${type === "prescription" ? "flex items-center justify-between gap-3 text-left" : ""}`}>
                 <span className={`inline-block border px-3 py-1 text-[9px] font-bold tracking-widest ${
                   isReadOnly ? "border-emerald-700 text-emerald-800" : "border-amber-700 text-amber-800"
                 }`}>
                   {isReadOnly ? "DOKUMEN TERSIMPAN" : "PRATINJAU · BELUM TERSIMPAN"}
                 </span>
-                {type !== "prescription" && (
+                {type === "prescription" ? (
+                  <div className="text-right">
+                    <h2 className="text-sm font-extrabold tracking-[0.16em] text-slate-900">RESEP</h2>
+                    <p className="text-[9px] text-slate-500">
+                      Kunjungan {visitId.slice(0, 8).toUpperCase()} · {formatDate(documentDate)}
+                    </p>
+                  </div>
+                ) : (
                   <h2 className="mt-3 text-base font-bold underline underline-offset-4">
                     {type === "sick-note" ? "SURAT KETERANGAN SAKIT" : "SURAT RUJUKAN"}
                   </h2>
@@ -571,24 +832,103 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
               )}
 
               {type === "prescription" && (
-                <div className="flex min-h-[145mm] flex-col text-sm">
-                  <p className="mb-4 text-2xl font-serif italic">R/</p>
-                  <div className="min-h-32 whitespace-pre-wrap leading-7">{fields.prescription}</div>
-                  <div className="mt-auto space-y-3 pt-8">
-                    <FieldLine label="Pro" value={fields.patientName} />
-                    <FieldLine label="Usia" value={fields.age ? `${fields.age} tahun` : ""} />
-                    <FieldLine label="Alamat" value={fields.address} />
-                    <p className="rounded-md border border-slate-700 px-3 py-2 text-center font-serif italic">
-                      Obat tidak boleh diganti tanpa seizin dokter
-                    </p>
-                    <p className="text-center text-base font-bold italic">Semoga Anda Lekas Sembuh</p>
-                    <p className="pt-2 text-right">{documentBranchName ? `${documentBranchName}, ` : ""}{formatDate(documentDate)}</p>
-                    <div className="ml-auto w-56 text-center">
-                      <p>Dokter,</p>
-                      <div className="h-14" />
-                      <p className="border-t border-slate-500 pt-1 font-semibold">{documentDoctorName}</p>
+                <div className="prescription-sheet flex min-h-[145mm] flex-col text-[11px] leading-5 print:min-h-0">
+                  <section className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 print:border-slate-400 print:bg-white">
+                    <div className="grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-1.5">
+                      <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Pasien</span>
+                      <span className="font-bold text-slate-900">{fields.patientName || "................................................"}</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Usia / JK</span>
+                      <span className="text-slate-800">
+                        {[fields.age ? `${fields.age} tahun` : "", fields.gender].filter(Boolean).join(" · ") || "................................"}
+                      </span>
+                      {fields.address && (
+                        <>
+                          <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Alamat</span>
+                          <span className="text-slate-700">{fields.address}</span>
+                        </>
+                      )}
                     </div>
-                  </div>
+                  </section>
+
+                  <section className="mt-5 flex-1">
+                    <div className="mb-3 flex items-center gap-3">
+                      <span className="font-serif text-3xl italic leading-none text-[#9b7625] print:text-slate-900">R/</span>
+                      <div className="h-px flex-1 bg-slate-200 print:bg-slate-400" />
+                    </div>
+
+                    {completedPrescriptionItems.length > 0 ? (
+                      <ol className="space-y-3">
+                        {completedPrescriptionItems.map((item, index) => (
+                          <li
+                            key={`${item.medicineId || item.medicineName}-${index}`}
+                            className="break-inside-avoid rounded-lg border border-slate-200 p-3 print:border-slate-400"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex min-w-0 gap-2.5">
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#faf6ec] text-[9px] font-bold text-[#735b20] print:border print:border-slate-400 print:bg-white print:text-slate-900">
+                                  {index + 1}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="font-bold text-slate-900">
+                                    {item.medicineName}
+                                    {item.brandName && <span className="ml-1 font-normal text-slate-600">({item.brandName})</span>}
+                                  </p>
+                                  {(item.strength || item.dosageForm) && (
+                                    <p className="text-[10px] text-slate-600">
+                                      {[item.strength, item.dosageForm].filter(Boolean).join(" · ")}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              {item.quantity && (
+                                <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[9px] font-semibold text-slate-700 print:border print:border-slate-400 print:bg-white">
+                                  Jumlah: {item.quantity}
+                                </span>
+                              )}
+                            </div>
+                            <div className="ml-[1.875rem] mt-2 border-t border-dashed border-slate-200 pt-2 print:border-slate-400">
+                              <p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Signatura / aturan pakai</p>
+                              <p className="mt-0.5 font-medium text-slate-800">
+                                {[item.dose, item.route, item.frequency, item.duration].filter(Boolean).join(" · ") || "................................................"}
+                              </p>
+                              {item.instructions && (
+                                <p className="mt-1 text-[10px] text-slate-600">Catatan: {item.instructions}</p>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : fields.prescription.trim() ? (
+                      <div className="whitespace-pre-wrap rounded-lg border border-slate-200 p-4 leading-6 print:border-slate-400">
+                        {fields.prescription}
+                      </div>
+                    ) : (
+                      <div className="flex min-h-28 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-center print:border-slate-400 print:bg-white">
+                        <p className="text-xs font-semibold text-slate-600">Belum ada obat pada resep</p>
+                        <p className="mt-1 max-w-xs text-[10px] leading-4 text-slate-500">
+                          Pilih obat dari master atau tulis nama obat secara manual. Rincian resep akan tampil di area ini.
+                        </p>
+                      </div>
+                    )}
+                  </section>
+
+                  <footer className="mt-8 border-t border-slate-200 pt-4 print:border-slate-400">
+                    <div className="flex items-end justify-between gap-4">
+                      <div className="max-w-[55%] space-y-2">
+                        <p className="text-[9px] leading-4 text-slate-500">
+                          Gunakan obat sesuai aturan pakai. Hubungi klinik apabila muncul reaksi yang tidak diharapkan.
+                        </p>
+                        {documentPhone && <p className="text-[9px] font-medium text-slate-600">{documentPhone}</p>}
+                      </div>
+                      <div className="w-44 shrink-0 text-center text-[10px]">
+                        <p>{documentBranchName ? `${documentBranchName}, ` : ""}{formatDate(documentDate)}</p>
+                        <p className="mt-1">Dokter pemeriksa</p>
+                        <div className="h-14" />
+                        <p className="border-t border-slate-500 pt-1 font-bold">{documentDoctorName}</p>
+                        {documentDoctorSip && <p className="mt-0.5 text-[9px] text-slate-600">SIP: {documentDoctorSip}</p>}
+                      </div>
+                    </div>
+                  </footer>
                 </div>
               )}
 

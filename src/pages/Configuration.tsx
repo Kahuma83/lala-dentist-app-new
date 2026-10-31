@@ -44,10 +44,12 @@ import {
   ArrowUp,
   ArrowDown,
   Database,
-  Hash
+  Hash,
+  Pill
 } from "lucide-react";
 import { DocumentHeader } from "../components/documents/DocumentHeader";
 import { LalaLogo } from "../components/common/LalaLogo";
+import { PrescriptionMedicineCatalog } from "../components/PrescriptionMedicineCatalog";
 import { BackupManagement } from "./BackupManagement";
 import {
   BranchRMSettings,
@@ -55,7 +57,7 @@ import {
   saveBranchRMSettings
 } from "../services/patientBranchRMSettingsService";
 
-type ConfigurationTab = "BRANCHES" | "DOCTORS" | "PROMOTIONS" | "SERVICES" | "TARIFFS" | "RM" | "BRANDING" | "BACKUP";
+type ConfigurationTab = "BRANCHES" | "DOCTORS" | "PROMOTIONS" | "SERVICES" | "MEDICINES" | "TARIFFS" | "RM" | "BRANDING" | "BACKUP";
 
 export const Configuration: React.FC = () => {
   const {
@@ -91,6 +93,7 @@ export const Configuration: React.FC = () => {
     if (tabParam === "DOCTORS") return "DOCTORS";
     if (tabParam === "PROMOTIONS") return "PROMOTIONS";
     if (tabParam === "SERVICES") return "SERVICES";
+    if (tabParam === "MEDICINES") return "MEDICINES";
     if (tabParam === "TARIFFS") return "TARIFFS";
     if (tabParam === "RM") return "RM";
     if (tabParam === "BRANDING") return "BRANDING";
@@ -201,7 +204,7 @@ export const Configuration: React.FC = () => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get("tab")?.toUpperCase();
-      if (tabParam && ["BRANCHES", "DOCTORS", "PROMOTIONS", "SERVICES", "TARIFFS", "RM", "BRANDING", "BACKUP"].includes(tabParam)) {
+      if (tabParam && ["BRANCHES", "DOCTORS", "PROMOTIONS", "SERVICES", "MEDICINES", "TARIFFS", "RM", "BRANDING", "BACKUP"].includes(tabParam)) {
         setActiveTab(tabParam as ConfigurationTab);
       }
     };
@@ -1390,7 +1393,9 @@ export const Configuration: React.FC = () => {
               ? "Atur format dan nomor berikutnya yang diterbitkan untuk pasien baru di cabang."
               : currentUser?.role === UserRole.BRANCH_ADMIN
               ? "Informasi profil resmi, kontak, alamat, logo, dan foto gedung cabang Anda (Mode Baca)."
-              : "Single Source of Truth (SSOT) untuk Master Cabang Klinik, Foto Dokter, Media Promosi, dan Katalog Layanan."}
+              : activeTab === "MEDICINES"
+                ? "Kelola daftar obat yang dapat dipilih dokter saat membuat resep."
+                : "Single Source of Truth (SSOT) untuk Master Cabang Klinik, Foto Dokter, Media Promosi, dan Katalog Layanan."}
           </p>
         </div>
 
@@ -1528,6 +1533,18 @@ export const Configuration: React.FC = () => {
             >
               <Briefcase className="w-4 h-4" />
               <span>Katalog Layanan ({services.length})</span>
+            </button>
+
+            <button
+              onClick={() => changeTab("MEDICINES")}
+              className={`pb-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+                activeTab === "MEDICINES"
+                  ? "border-rose-600 text-rose-600"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              <Pill className="w-4 h-4" />
+              <span>Master Obat Resep</span>
             </button>
 
             <button
@@ -2600,6 +2617,10 @@ export const Configuration: React.FC = () => {
             </tbody>
           </table>
         </div>
+      )}
+
+      {activeTab === "MEDICINES" && currentUser?.role === UserRole.SUPER_ADMIN && (
+        <PrescriptionMedicineCatalog />
       )}
 
       {/* ========================================================================= */}

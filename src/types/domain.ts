@@ -519,6 +519,19 @@ export interface MasterService {
   updatedAt: string;
 }
 
+export interface PrescriptionMedicine {
+  id: string;
+  genericName: string;
+  brandName: string;
+  strength: string;
+  dosageForm: string;
+  approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
+  submittedBy?: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BranchServiceTariff {
   id: string;
   branchId: string;
