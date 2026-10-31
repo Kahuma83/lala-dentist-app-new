@@ -296,7 +296,7 @@ export function createReceiptWhatsAppMessage(params: {
   amountPaid: number;
   paymentMethod: string;
   referenceNumber?: string;
-  remainingOutstanding: number;
+  remainingOutstanding?: number;
   dateStr: string;
   staffName?: string;
 }): string {
@@ -338,7 +338,9 @@ export function createReceiptWhatsAppMessage(params: {
     msg += `Petugas Kasir: ${staffName}\n`;
   }
   msg += `-----------------------------------------\n`;
-  if (remainingOutstanding === 0) {
+  if (remainingOutstanding === undefined) {
+    msg += `Ringkasan saldo saat transaksi: tidak tersedia pada kwitansi lama.\n`;
+  } else if (remainingOutstanding === 0) {
     msg += `Status Tagihan: *LUNAS (Paid)*\n`;
   } else {
     msg += `Sisa Tagihan  : *${formatRupiah(remainingOutstanding)}*\n`;

@@ -897,11 +897,13 @@ export interface PaymentRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<PaymentTransaction>;
-  deletePayment(
+  reversePayment(
     id: string,
+    reason: string,
+    reversedBy: string,
     currentUserRole?: UserRole,
     userBranchId?: string | null
-  ): Promise<boolean>;
+  ): Promise<PaymentTransaction>;
 }
 
 export interface CompensationRepository {

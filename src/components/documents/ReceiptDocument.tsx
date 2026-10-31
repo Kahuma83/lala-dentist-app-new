@@ -14,6 +14,7 @@ import {
   numberToTerbilang,
   sanitizeStaffName
 } from "../../utils/documentUtils";
+import { getReceiptInvoiceSnapshot } from "../../utils/receiptUtils";
 
 interface ReceiptDocumentProps {
   payment: PaymentTransaction;
@@ -36,10 +37,8 @@ export const ReceiptDocument: React.FC<ReceiptDocumentProps> = ({
 }) => {
   const receiptNumber = payment.receiptNumber || "Nomor kwitansi belum tersedia";
   const invoiceNumber = invoice?.invoiceNumber || "Nomor invoice belum tersedia";
-  const snapshotNetAmount = payment.invoiceNetAmountSnapshot ?? invoice?.netAmount ?? 0;
-  const snapshotPaidAmount = payment.invoicePaidAmountSnapshot ?? invoice?.paidAmount ?? 0;
-  const remainingOutstanding = payment.invoiceOutstandingAmountSnapshot ?? invoice?.outstandingAmount ?? 0;
-  const isFullySettled = remainingOutstanding === 0;
+  const receiptSnapshot = getReceiptInvoiceSnapshot(payment);
+  const isFullySettled = receiptSnapshot?.outstandingAmount === 0;
 
   return (
     <div
@@ -55,6 +54,17 @@ export const ReceiptDocument: React.FC<ReceiptDocumentProps> = ({
         documentNumber={receiptNumber}
         documentDate={formatIndoDateTime(payment.transactionDateTime || payment.createdAt)}
       />
+
+      {payment.status === "REFUNDED" && (
+        <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-center text-xs font-bold uppercase tracking-wide text-rose-800">
+          Pembayaran ini telah dibatalkan / dikembalikan
+          {payment.reversalReason && (
+            <span className="mt-1 block font-medium normal-case tracking-normal">
+              Alasan: {payment.reversalReason}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 2. Main Receipt Details Form-style */}
       <div className="space-y-3 mb-5 text-xs border border-slate-200 rounded-lg p-4 bg-slate-50">
@@ -129,28 +139,34 @@ export const ReceiptDocument: React.FC<ReceiptDocumentProps> = ({
       {invoice && (
         <div className="mb-5 p-3 rounded-lg bg-slate-100 border border-slate-200 text-xs">
           <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-            Ringkasan Status Tagihan Faktur ({invoiceNumber})
+            Ringkasan Status Tagihan Faktur ({invoiceNumber}) saat transaksi
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <span className="text-slate-500 block text-[10px]">Total Tagihan Bersih:</span>
-              <span className="font-mono font-bold text-slate-800 text-[11px]">{formatRupiah(snapshotNetAmount)}</span>
+          {receiptSnapshot ? (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <span className="text-slate-500 block text-[10px]">Total Tagihan Bersih:</span>
+                <span className="font-mono font-bold text-slate-800 text-[11px]">{formatRupiah(receiptSnapshot.netAmount)}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block text-[10px]">Total Telah Dibayar:</span>
+                <span className="font-mono font-bold text-emerald-700 text-[11px]">{formatRupiah(receiptSnapshot.paidAmount)}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block text-[10px]">Sisa Tagihan saat transaksi:</span>
+                <span
+                  className={`font-mono font-bold text-[11px] ${
+                    receiptSnapshot.outstandingAmount > 0 ? "text-rose-600" : "text-emerald-700"
+                  }`}
+                >
+                  {formatRupiah(receiptSnapshot.outstandingAmount)}
+                </span>
+              </div>
             </div>
-            <div>
-              <span className="text-slate-500 block text-[10px]">Total Telah Dibayar:</span>
-              <span className="font-mono font-bold text-emerald-700 text-[11px]">{formatRupiah(snapshotPaidAmount)}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 block text-[10px]">Sisa Tagihan Sekarang:</span>
-              <span
-                className={`font-mono font-bold text-[11px] ${
-                  remainingOutstanding > 0 ? "text-rose-600" : "text-emerald-700"
-                }`}
-              >
-                {formatRupiah(remainingOutstanding)}
-              </span>
-            </div>
-          </div>
+          ) : (
+            <p className="text-[11px] text-slate-600">
+              Snapshot saldo saat transaksi tidak tersedia pada kwitansi lama; saldo terkini tidak digunakan sebagai pengganti.
+            </p>
+          )}
         </div>
       )}
 
