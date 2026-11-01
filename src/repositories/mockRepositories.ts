@@ -5007,17 +5007,29 @@ export class MockCompensationRepository implements CompensationRepository {
       const referralRuleId = "STAFF_VISIT_REFERRAL_RP3000_V1";
       const legacyReferralSourceId = `referral:visit:${visit.id}`;
       const referralSourceId = `${legacyReferralSourceId}:treatment:${job.id}`;
-      const legacyReferralExists = db.accruals.some((accrual: CompensationAccrual) =>
+      const legacyReferral = db.accruals.find((accrual: CompensationAccrual) =>
         accrual.sourceId === legacyReferralSourceId && accrual.ruleIdSnapshot === referralRuleId
       );
+      const firstCompletedVisitTreatment = legacyReferral
+        ? db.treatmentJobs
+          .filter((visitJob: TreatmentJob) =>
+            visitJob.visitId === visit.id &&
+            visitJob.completedAt &&
+            (visitJob.status === TreatmentJobStatus.SELESAI || visitJob.status === TreatmentJobStatus.DISERAHKAN)
+          )
+          .sort((left: TreatmentJob, right: TreatmentJob) =>
+            (left.completedAt || "").localeCompare(right.completedAt || "") || left.id.localeCompare(right.id)
+          )[0]
+        : undefined;
+      const legacyCoversTreatment = firstCompletedVisitTreatment?.id === job.id;
       const referralExists = db.accruals.some((accrual: CompensationAccrual) =>
         accrual.sourceId === referralSourceId && accrual.ruleIdSnapshot === referralRuleId
       );
       const referringStaff = db.staff.find((staff: Staff) => staff.id === booking.referringStaffId);
-      if (!legacyReferralExists && !referralExists && referringStaff?.active &&
+      if (!legacyCoversTreatment && !referralExists && referringStaff?.active &&
         (referringStaff.position === StaffPosition.BRANCH_ADMIN || referringStaff.position === StaffPosition.ASSISTANT)) {
-        const serviceName = db.services.find((service: MasterService) => service.id === job.serviceId)?.name
-          || job.serviceNameSnapshot;
+        const serviceName = job.serviceNameSnapshot
+          || db.services.find((service: MasterService) => service.id === job.serviceId)?.name;
         const serviceKey = normalizeReferralServiceName(serviceName);
         const referralRate = db.referralIncentiveRates.find((rate) =>
           rate.isActive &&

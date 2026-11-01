@@ -9,6 +9,7 @@ import {
 } from "../repositories/mockRepositories";
 import {
   AttendanceStatus,
+  CompensationAccrual,
   OvertimeStatus,
   OvertimeType,
   PayrollStatus,
@@ -199,17 +200,19 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     booking.referringStaffId = referringAssistant.id;
     await compRepo.saveReferralIncentiveRate({
       staffPosition: StaffPosition.ASSISTANT,
-      serviceName: "Scaling",
+      serviceName: treatment.serviceNameSnapshot || "Scaling",
       amount: 17000,
       isActive: true
     }, UserRole.SUPER_ADMIN);
     await compRepo.saveReferralIncentiveRate({
       staffPosition: StaffPosition.BRANCH_ADMIN,
-      serviceName: "Scaling",
+      serviceName: treatment.serviceNameSnapshot || "Scaling",
       amount: 17000,
       isActive: true
     }, UserRole.SUPER_ADMIN);
-    expect(db.referralIncentiveRates.filter((rate) => rate.serviceName === "Scaling"))
+    const masterService = db.services.find((service) => service.id === treatment.serviceId);
+    if (masterService) masterService.name = "Current master name changed";
+    expect(db.referralIncentiveRates.filter((rate) => rate.serviceName === treatment.serviceNameSnapshot))
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ staffPosition: StaffPosition.BRANCH_ADMIN, amount: 17000 }),
         expect.objectContaining({ staffPosition: StaffPosition.ASSISTANT, amount: 17000 })
@@ -275,6 +278,55 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
         staffId: referringAdmin.id,
         amount: 17000,
         sourceId: "referral:visit:visit-referral-second:treatment:treatment-referral-second"
+      })
+    ]));
+  });
+
+  it("uses a legacy visit referral accrual for only the earliest completed treatment", async () => {
+    const db = MockDatabase.getInstance();
+    const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
+    const visit = db.visits.find((candidate) => candidate.id === treatment.visitId)!;
+    const booking = db.bookings.find((candidate) => candidate.id === visit.bookingId)!;
+    const referringStaff = db.staff.find((employee) => employee.id === "staff-ast-clary")!;
+    booking.referringStaffId = referringStaff.id;
+    const laterTreatment = {
+      ...treatment,
+      id: "treatment-job-z-later",
+      completedAt: undefined,
+      status: TreatmentJobStatus.DALAM_PROSES
+    };
+    db.treatmentJobs.push(laterTreatment);
+    const legacyAccrual: CompensationAccrual = {
+      id: "legacy-visit-referral",
+      staffId: referringStaff.id,
+      branchId: referringStaff.branchId,
+      ruleIdSnapshot: "STAFF_VISIT_REFERRAL_RP3000_V1",
+      ruleTypeSnapshot: "STAFF_VISIT_REFERRAL",
+      valueSnapshot: 3000,
+      baseAmountSnapshot: 0,
+      amount: 3000,
+      sourceId: `referral:visit:${visit.id}`,
+      accruedAt: AppClock.nowISO()
+    };
+    db.accruals.push(legacyAccrual);
+
+    await treatmentRepo.completeTreatmentJob(treatment.id);
+    await createPaidInvoiceForTreatment(treatment.id);
+    await compRepo.calculateAndAccrueForTreatment(treatment.id);
+    await treatmentRepo.completeTreatmentJob(laterTreatment.id);
+    await createPaidInvoiceForTreatment(laterTreatment.id);
+    await compRepo.calculateAndAccrueForTreatment(laterTreatment.id);
+
+    const visitReferrals = db.accruals.filter((accrual) =>
+      accrual.ruleTypeSnapshot === "STAFF_VISIT_REFERRAL" &&
+      accrual.sourceId.startsWith(`referral:visit:${visit.id}`)
+    );
+    expect(visitReferrals).toHaveLength(2);
+    expect(visitReferrals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: `referral:visit:${visit.id}` }),
+      expect.objectContaining({
+        sourceId: `referral:visit:${visit.id}:treatment:${laterTreatment.id}`,
+        staffId: referringStaff.id
       })
     ]));
   });

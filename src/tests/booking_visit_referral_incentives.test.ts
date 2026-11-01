@@ -100,4 +100,26 @@ describe("Booking visit referral incentives", () => {
     expect(migration).toContain("referral_staff.employment_status = 'ACTIVE'");
     expect(migration).not.toContain("referral_staff.branch_id = NEW.branch_id");
   });
+
+  it("secures shared referral rates and validates clinician-created treatment accruals", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270127000000_secure_shared_referral_incentives.sql"),
+      "utf8"
+    );
+    const repository = fs.readFileSync(
+      path.resolve(process.cwd(), "src/repositories/supabaseRepositories.ts"),
+      "utf8"
+    );
+
+    expect(migration).toContain("CREATE POLICY \"Clinic admins read referral incentive rates\"");
+    expect(migration).toContain("REVOKE INSERT, UPDATE, DELETE ON TABLE public.staff_referral_incentive_rates FROM authenticated");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.save_shared_staff_referral_incentive_rate");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.get_treatment_booking_referral_staff");
+    expect(migration).toContain("CREATE POLICY \"Validated booking referral accrual insert\"");
+    expect(migration).toContain("job.service_name_snapshot");
+    expect(migration).toContain("job.status IN ('SELESAI', 'DISERAHKAN')");
+    expect(repository).toContain('rpc("save_shared_staff_referral_incentive_rate"');
+    expect(repository).toContain('rpc("get_treatment_booking_referral_staff"');
+    expect(repository).not.toContain('.from("staff_referral_incentive_rates")\n          .select("id,service_name,amount")');
+  });
 });

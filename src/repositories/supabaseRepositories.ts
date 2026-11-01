@@ -6982,16 +6982,13 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         rate.staffPosition === data.staffPosition &&
         normalizeReferralServiceName(rate.serviceName) === normalizeReferralServiceName(serviceName)
       );
-    const sourceServiceName = sourceRate?.serviceName ?? serviceName;
-    const pairedRates = existingRates.filter((rate) =>
-      normalizeReferralServiceName(rate.serviceName) === normalizeReferralServiceName(sourceServiceName)
-    );
+    const previousServiceName = sourceRate?.serviceName ?? null;
     if (sourceRate?.serviceName === null && serviceName !== null) {
       throw new Error("Tarif dasar tidak dapat diubah menjadi tarif tindakan khusus.");
     }
     const conflictingRate = existingRates.find((rate) =>
       normalizeReferralServiceName(rate.serviceName) === normalizeReferralServiceName(serviceName) &&
-      !pairedRates.some((paired) => paired.id === rate.id)
+      normalizeReferralServiceName(rate.serviceName) !== normalizeReferralServiceName(previousServiceName)
     );
     if (conflictingRate) {
       throw new Error("Tarif untuk jenis penerima dan tindakan tersebut sudah ada.");
@@ -6999,45 +6996,19 @@ export class SupabaseCompensationRepository implements CompensationRepository {
     if (serviceName === null && !data.isActive) {
       throw new Error("Tarif dasar referral wajib tetap aktif.");
     }
-    const now = AppClock.nowISO();
-    const savedRates: ReferralIncentiveRate[] = [];
-    for (const staffPosition of [StaffPosition.BRANCH_ADMIN, StaffPosition.ASSISTANT]) {
-      const existing = pairedRates.find((rate) => rate.staffPosition === staffPosition);
-      const payload = {
-        staff_position: staffPosition,
-        service_name: serviceName,
-        amount: Math.round(data.amount),
-        is_active: data.isActive,
-        updated_at: now
-      };
-      const result = existing
-        ? await supabase
-          .from("staff_referral_incentive_rates")
-          .update(payload)
-          .eq("id", existing.id)
-          .select("*")
-          .single()
-        : await supabase
-          .from("staff_referral_incentive_rates")
-          .insert(payload)
-          .select("*")
-          .single();
-      if (result.error || !result.data) {
-        throw new Error(`Gagal menyimpan tarif referral bersama untuk ${staffPosition}: ${result.error?.message || "data tidak dikembalikan server"}`);
-      }
-      const row = result.data;
-      savedRates.push({
-        id: row.id,
-        staffPosition: row.staff_position,
-        serviceName: row.service_name ?? null,
-        amount: Number(row.amount) || 0,
-        isActive: row.is_active ?? true,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at
-      });
-    }
-    const saved = savedRates.find((rate) => rate.staffPosition === data.staffPosition);
-    if (!saved) throw new Error("Tarif referral berhasil disimpan tetapi data tidak lengkap.");
+    const { error } = await supabase.rpc("save_shared_staff_referral_incentive_rate", {
+      p_previous_service_name: previousServiceName,
+      p_service_name: serviceName,
+      p_amount: Math.round(data.amount),
+      p_is_active: data.isActive,
+      p_update_existing: Boolean(sourceRate)
+    });
+    if (error) throw new Error(`Gagal menyimpan tarif referral bersama: ${error.message}`);
+    const saved = (await this.getReferralIncentiveRates()).find((rate) =>
+      rate.staffPosition === data.staffPosition &&
+      normalizeReferralServiceName(rate.serviceName) === normalizeReferralServiceName(serviceName)
+    );
+    if (!saved) throw new Error("Tarif referral tersimpan tetapi tidak ditemukan saat memuat ulang.");
     return saved;
   }
 
@@ -7157,22 +7128,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       createdAccruals = (created || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
     }
 
-    const { data: visit, error: visitError } = await supabase
-      .from("patient_visits")
-      .select("booking_id")
-      .eq("id", job.visit_id)
-      .maybeSingle();
-    if (visitError) throw new Error(`Gagal memuat booking kunjungan untuk insentif referral: ${visitError.message}`);
-    if (visit?.booking_id) {
-      const { data: booking, error: bookingError } = await supabase
-        .from("bookings")
-        .select("referring_staff_id")
-        .eq("id", visit.booking_id)
-        .maybeSingle();
-      if (bookingError) throw new Error(`Gagal memuat staf referral booking: ${bookingError.message}`);
-      const referringStaffId = booking?.referring_staff_id;
-      if (!referringStaffId) return createdAccruals;
-
+    {
       const referralRuleId = "STAFF_VISIT_REFERRAL_RP3000_V1";
       const legacyReferralSourceId = `referral:visit:${job.visit_id}`;
       const referralSourceId = `${legacyReferralSourceId}:treatment:${job.id}`;
@@ -7183,7 +7139,22 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         .eq("rule_id_snapshot", referralRuleId)
         .maybeSingle();
       if (legacyReferralError) throw new Error(`Gagal memeriksa insentif referral lama: ${legacyReferralError.message}`);
-      if (!legacyReferral) {
+      let legacyCoversTreatment = false;
+      if (legacyReferral) {
+        const { data: completedVisitJobs, error: completedVisitJobsError } = await supabase
+          .from("treatment_jobs")
+          .select("id, completed_at")
+          .eq("visit_id", job.visit_id)
+          .in("status", ["SELESAI", "DISERAHKAN"])
+          .not("completed_at", "is", null)
+          .order("completed_at", { ascending: true })
+          .order("id", { ascending: true });
+        if (completedVisitJobsError) {
+          throw new Error(`Gagal memeriksa tindakan lama untuk insentif referral: ${completedVisitJobsError.message}`);
+        }
+        legacyCoversTreatment = completedVisitJobs?.[0]?.id === job.id;
+      }
+      if (!legacyCoversTreatment) {
         const { data: existingReferral, error: existingReferralError } = await supabase
           .from("compensation_accruals")
           .select("id")
@@ -7194,47 +7165,29 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         if (existingReferral) return createdAccruals;
 
         const { data: referralStaffRows, error: referralStaffError } = await supabase
-          .rpc("get_booking_referral_staff");
+          .rpc("get_treatment_booking_referral_staff", { p_treatment_job_id: job.id });
         if (referralStaffError) throw new Error(`Gagal memuat pegawai perujuk dari booking: ${referralStaffError.message}`);
-        const referringStaff = (referralStaffRows || []).find((row: any) => row.id === referringStaffId);
-        if (!referringStaff || !["BRANCH_ADMIN", "ASSISTANT"].includes(referringStaff.staff_position)) {
+        const referringStaff = referralStaffRows?.[0];
+        if (!referringStaff) return createdAccruals;
+        if (!["BRANCH_ADMIN", "ASSISTANT"].includes(referringStaff.staff_position)) {
           throw new Error("Pegawai referral booking tidak ditemukan atau bukan Admin/Asisten aktif.");
         }
 
-        let serviceName = job.service_name_snapshot || "";
-        if (job.service_id) {
-          const { data: service, error: serviceError } = await supabase
-            .from("master_services")
-            .select("name")
-            .eq("id", job.service_id)
-            .maybeSingle();
-          if (serviceError) throw new Error(`Gagal memuat nama tindakan untuk insentif referral: ${serviceError.message}`);
-          serviceName = service?.name || serviceName;
-        }
-        const { data: referralRates, error: referralRatesError } = await supabase
-          .from("staff_referral_incentive_rates")
-          .select("id,service_name,amount")
-          .eq("staff_position", referringStaff.staff_position)
-          .eq("is_active", true);
-        if (referralRatesError) throw new Error(`Gagal memuat tarif referral: ${referralRatesError.message}`);
-        const serviceKey = normalizeReferralServiceName(serviceName);
-        const referralRate = (referralRates || []).find((rate: any) =>
-          rate.service_name && normalizeReferralServiceName(rate.service_name) === serviceKey
-        ) || (referralRates || []).find((rate: any) => !rate.service_name);
-        if (!referralRate) {
+        const referralRateAmount = Number(referringStaff.referral_rate_amount);
+        if (!Number.isFinite(referralRateAmount) || referralRateAmount <= 0) {
           throw new Error(`Tarif referral untuk ${referringStaff.staff_position} belum diatur. Atur tarif dasar di menu Kompensasi.`);
         }
 
         const { data: referral, error: referralError } = await supabase
           .from("compensation_accruals")
           .insert({
-            staff_id: referringStaffId,
+            staff_id: referringStaff.id,
             branch_id: referringStaff.branch_id,
             rule_id_snapshot: referralRuleId,
             rule_type_snapshot: "STAFF_VISIT_REFERRAL",
-            value_snapshot: Number(referralRate.amount) || 0,
+            value_snapshot: referralRateAmount,
             base_amount_snapshot: baseAmount,
-            amount: Number(referralRate.amount) || 0,
+            amount: referralRateAmount,
             source_id: referralSourceId,
             accrued_at: accruedAt
           })

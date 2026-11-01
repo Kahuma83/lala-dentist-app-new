@@ -174,7 +174,9 @@ export const Compensation: React.FC = () => {
             : undefined
         ),
         doctorRepo.getDoctorBranchAssignments(),
-        compRepo.getReferralIncentiveRates()
+        currentUser?.role === UserRole.SUPER_ADMIN
+          ? compRepo.getReferralIncentiveRates()
+          : Promise.resolve([])
       ]);
 
       let filteredAccruals = aList;
