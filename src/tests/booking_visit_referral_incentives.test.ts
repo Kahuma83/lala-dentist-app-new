@@ -122,4 +122,16 @@ describe("Booking visit referral incentives", () => {
     expect(repository).toContain('rpc("get_treatment_booking_referral_staff"');
     expect(repository).not.toContain('.from("staff_referral_incentive_rates")\n          .select("id,service_name,amount")');
   });
+
+  it("validates clinician referral accrual rates through a narrowly scoped definer function", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270128000000_fix_referral_accrual_rate_policy.sql"),
+      "utf8"
+    );
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.get_treatment_booking_referral_rate");
+    expect(migration).toContain("SECURITY DEFINER");
+    expect(migration).toContain("referral_staff.id = p_staff_id");
+    expect(migration).toContain("public.user_can_manage_treatment_branch(v_branch_id)");
+    expect(migration).toContain("amount = public.get_treatment_booking_referral_rate(job.id, referral_staff.id)");
+  });
 });

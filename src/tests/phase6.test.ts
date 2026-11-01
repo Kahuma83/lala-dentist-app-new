@@ -282,7 +282,7 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     ]));
   });
 
-  it("uses a legacy visit referral accrual for only the earliest completed treatment", async () => {
+  it("does not create another visit referral accrual when a legacy visit accrual already exists", async () => {
     const db = MockDatabase.getInstance();
     const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
     const visit = db.visits.find((candidate) => candidate.id === treatment.visitId)!;
@@ -321,14 +321,11 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
       accrual.ruleTypeSnapshot === "STAFF_VISIT_REFERRAL" &&
       accrual.sourceId.startsWith(`referral:visit:${visit.id}`)
     );
-    expect(visitReferrals).toHaveLength(2);
-    expect(visitReferrals).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceId: `referral:visit:${visit.id}` }),
-      expect.objectContaining({
-        sourceId: `referral:visit:${visit.id}:treatment:${laterTreatment.id}`,
-        staffId: referringStaff.id
-      })
-    ]));
+    expect(visitReferrals).toHaveLength(1);
+    expect(visitReferrals[0]).toMatchObject({
+      sourceId: `referral:visit:${visit.id}`,
+      staffId: referringStaff.id
+    });
   });
 
   it("Test 7: Generate monthly payroll compiles base salary and accruals accurately", async () => {

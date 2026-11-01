@@ -7139,22 +7139,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         .eq("rule_id_snapshot", referralRuleId)
         .maybeSingle();
       if (legacyReferralError) throw new Error(`Gagal memeriksa insentif referral lama: ${legacyReferralError.message}`);
-      let legacyCoversTreatment = false;
-      if (legacyReferral) {
-        const { data: completedVisitJobs, error: completedVisitJobsError } = await supabase
-          .from("treatment_jobs")
-          .select("id, completed_at")
-          .eq("visit_id", job.visit_id)
-          .in("status", ["SELESAI", "DISERAHKAN"])
-          .not("completed_at", "is", null)
-          .order("completed_at", { ascending: true })
-          .order("id", { ascending: true });
-        if (completedVisitJobsError) {
-          throw new Error(`Gagal memeriksa tindakan lama untuk insentif referral: ${completedVisitJobsError.message}`);
-        }
-        legacyCoversTreatment = completedVisitJobs?.[0]?.id === job.id;
-      }
-      if (!legacyCoversTreatment) {
+      if (!legacyReferral) {
         const { data: existingReferral, error: existingReferralError } = await supabase
           .from("compensation_accruals")
           .select("id")
