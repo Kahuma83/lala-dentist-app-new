@@ -1,9 +1,84 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { MockDatabase } from "../data/mockData";
 import { MockBookingRepository } from "../repositories/mockRepositories";
-import { BookingStatus, BookingSource, UserRole } from "../types/domain";
+import { SupabaseBookingRepository } from "../repositories/supabaseRepositories";
+import * as supabaseLib from "../lib/supabase";
+import {
+  BookingStatus,
+  BookingSource,
+  EmploymentStatus,
+  PayrollStatus,
+  StaffPosition,
+  UserRole
+} from "../types/domain";
+
+function setupMockReferralTransfer(accruedAt = new Date().toISOString()) {
+  const database = MockDatabase.getInstance();
+  const oldStaff = database.staff.find((record) =>
+    record.active &&
+    record.employmentStatus === EmploymentStatus.ACTIVE &&
+    (record.position === StaffPosition.BRANCH_ADMIN || record.position === StaffPosition.ASSISTANT)
+  );
+  const newStaff = database.staff.find((record) =>
+    record.active &&
+    record.employmentStatus === EmploymentStatus.ACTIVE &&
+    record.id !== oldStaff?.id &&
+    (record.position === StaffPosition.BRANCH_ADMIN || record.position === StaffPosition.ASSISTANT)
+  );
+  const baseBooking = database.bookings[0];
+  const baseVisit = database.visits[0];
+  const baseTreatment = database.treatmentJobs[0];
+  if (!oldStaff || !newStaff || !baseBooking || !baseVisit || !baseTreatment) {
+    throw new Error("Mock referral transfer fixtures are incomplete.");
+  }
+
+  const bookingId = "booking-referral-transfer";
+  const visitId = "visit-referral-transfer";
+  const treatmentId = "treatment-referral-transfer";
+  const accrualId = "referral-accrual-transfer";
+  const booking = { ...baseBooking, id: bookingId, referringStaffId: oldStaff.id };
+  const visit = { ...baseVisit, id: visitId, bookingId };
+  const treatment = { ...baseTreatment, id: treatmentId, visitId };
+  const period = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit"
+  }).formatToParts(new Date(accruedAt));
+  const year = Number(period.find((part) => part.type === "year")?.value);
+  const month = Number(period.find((part) => part.type === "month")?.value);
+
+  database.bookings = [booking];
+  database.visits = [visit];
+  database.treatmentJobs = [treatment];
+  database.accruals = [{
+    id: accrualId,
+    staffId: oldStaff.id,
+    branchId: oldStaff.branchId,
+    ruleIdSnapshot: "STAFF_VISIT_REFERRAL_RP3000_V1",
+    ruleTypeSnapshot: "STAFF_VISIT_REFERRAL",
+    valueSnapshot: 3000,
+    baseAmountSnapshot: 100000,
+    amount: 3000,
+    sourceId: `referral:visit:${visitId}:treatment:${treatmentId}`,
+    accruedAt
+  }];
+  database.payrolls = [];
+  database.payrollItems = [];
+  database.journals = [];
+
+  return {
+    database,
+    oldStaff,
+    newStaff,
+    bookingId,
+    accrualId,
+    accruedAt,
+    year,
+    month
+  };
+}
 
 describe("Booking visit referral incentives", () => {
   beforeEach(() => {
@@ -42,6 +117,146 @@ describe("Booking visit referral incentives", () => {
       timeSlot: "09:00",
       referringStaffId: "staff-doc-syafira"
     }, UserRole.SUPER_ADMIN)).rejects.toThrow("Staf referral harus admin atau asisten aktif.");
+  });
+
+  it("moves an accrued referral and updates both DRAFT payrolls in the mock repository", async () => {
+    const {
+      database,
+      oldStaff,
+      newStaff,
+      bookingId,
+      accrualId,
+      accruedAt,
+      year,
+      month
+    } = setupMockReferralTransfer();
+    const oldPayrollId = "payroll-old-referrer";
+    const newPayrollId = "payroll-new-referrer";
+
+    database.payrolls = [
+      {
+        id: oldPayrollId,
+        staffId: oldStaff.id,
+        month,
+        year,
+        baseSalary: 2500000,
+        totalCompensation: 3000,
+        totalDeductions: 0,
+        netSalary: 2503000,
+        status: PayrollStatus.DRAFT,
+        branchId: oldStaff.branchId,
+        createdAt: accruedAt,
+        updatedAt: accruedAt
+      },
+      {
+        id: newPayrollId,
+        staffId: newStaff.id,
+        month,
+        year,
+        baseSalary: 2500000,
+        totalCompensation: 0,
+        totalDeductions: 0,
+        netSalary: 2500000,
+        status: PayrollStatus.DRAFT,
+        branchId: newStaff.branchId,
+        createdAt: accruedAt,
+        updatedAt: accruedAt
+      }
+    ];
+    database.payrollItems = [
+      {
+        id: "old-base-item",
+        payrollId: oldPayrollId,
+        descriptionSnapshot: "Gaji Pokok Periode",
+        amountSnapshot: 2500000,
+        type: "EARNING"
+      },
+      {
+        id: "old-referral-item",
+        payrollId: oldPayrollId,
+        descriptionSnapshot: "Insentif Referral Kunjungan",
+        amountSnapshot: 3000,
+        type: "EARNING",
+        sourceId: accrualId
+      },
+      {
+        id: "new-base-item",
+        payrollId: newPayrollId,
+        descriptionSnapshot: "Gaji Pokok Periode",
+        amountSnapshot: 2500000,
+        type: "EARNING"
+      }
+    ];
+    database.journals = [];
+
+    const result = await new MockBookingRepository().updateBookingReferral(
+      bookingId,
+      newStaff.id,
+      UserRole.SUPER_ADMIN
+    );
+
+    expect(result).toMatchObject({
+      booking: { referringStaffId: newStaff.id },
+      transferredAccrualCount: 1,
+      updatedDraftPayrollCount: 2
+    });
+    expect(database.accruals[0]).toMatchObject({ staffId: newStaff.id, branchId: newStaff.branchId });
+    expect(database.payrollItems.find((item) => item.sourceId === accrualId)?.payrollId).toBe(newPayrollId);
+    expect(database.payrolls.find((payroll) => payroll.id === oldPayrollId)).toMatchObject({
+      totalCompensation: 0,
+      netSalary: 2500000
+    });
+    expect(database.payrolls.find((payroll) => payroll.id === newPayrollId)).toMatchObject({
+      totalCompensation: 3000,
+      netSalary: 2503000
+    });
+  });
+
+  it("rejects referral transfers after the Jakarta payday cutoff", async () => {
+    const nowParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Jakarta",
+      year: "numeric",
+      month: "2-digit"
+    }).formatToParts(new Date());
+    const year = Number(nowParts.find((part) => part.type === "year")?.value);
+    const month = Number(nowParts.find((part) => part.type === "month")?.value);
+    const accruedAt = new Date(Date.UTC(year, month - 2, 15, 12)).toISOString();
+    const { database, oldStaff, newStaff, bookingId, accrualId } = setupMockReferralTransfer(accruedAt);
+
+    await expect(new MockBookingRepository().updateBookingReferral(
+      bookingId,
+      newStaff.id,
+      UserRole.SUPER_ADMIN
+    )).rejects.toThrow("melewati batas pemindahan");
+    expect(database.bookings[0].referringStaffId).toBe(oldStaff.id);
+    expect(database.accruals.find((accrual) => accrual.id === accrualId)?.staffId).toBe(oldStaff.id);
+  });
+
+  it("rejects referral transfers when the source payroll is no longer DRAFT", async () => {
+    const { database, oldStaff, newStaff, bookingId, accruedAt, year, month } =
+      setupMockReferralTransfer();
+    database.payrolls = [{
+      id: "payroll-under-review",
+      staffId: oldStaff.id,
+      month,
+      year,
+      baseSalary: 2500000,
+      totalCompensation: 3000,
+      totalDeductions: 0,
+      netSalary: 2503000,
+      status: PayrollStatus.REVIEW,
+      branchId: oldStaff.branchId,
+      createdAt: accruedAt,
+      updatedAt: accruedAt
+    }];
+
+    await expect(new MockBookingRepository().updateBookingReferral(
+      bookingId,
+      newStaff.id,
+      UserRole.SUPER_ADMIN
+    )).rejects.toThrow("payroll staf lama sudah masuk tahap Review");
+    expect(database.bookings[0].referringStaffId).toBe(oldStaff.id);
+    expect(database.accruals[0].staffId).toBe(oldStaff.id);
   });
 
   it("adds booking-level attribution and one-per-visit uniqueness in Supabase", () => {
@@ -133,5 +348,61 @@ describe("Booking visit referral incentives", () => {
     expect(migration).toContain("referral_staff.id = p_staff_id");
     expect(migration).toContain("public.user_can_manage_treatment_branch(v_branch_id)");
     expect(migration).toContain("amount = public.get_treatment_booking_referral_rate(job.id, referral_staff.id)");
+  });
+
+  it("transfers booking referral incentives only before payday and refreshes draft payroll snapshots", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270129000000_transfer_booking_referral_incentives.sql"),
+      "utf8"
+    );
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.transfer_booking_referral_incentives");
+    expect(migration).toContain("NOT public.is_super_admin()");
+    expect(migration).toContain("accrual.rule_id_snapshot = 'STAFF_VISIT_REFERRAL_RP3000_V1'");
+    expect(migration).toContain("AT TIME ZONE 'Asia/Jakarta'");
+    expect(migration).toContain("Insentif sudah melewati batas pemindahan sebelum tanggal 1 bulan gajian.");
+    expect(migration).toContain("status <> 'DRAFT'");
+    expect(migration).toContain("UPDATE public.compensation_accruals");
+    expect(migration).toContain("UPDATE public.payroll_items");
+    expect(migration).toContain("updated_draft_payroll_count");
+  });
+
+  it("uses the guarded database function to update a referral and transfer accrued incentives", async () => {
+    vi.spyOn(supabaseLib, "isSupabaseConfigured", "get").mockReturnValue(true);
+    const bookingId = "00000000-0000-4000-8000-000000000001";
+    const referringStaffId = "00000000-0000-4000-8000-000000000002";
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({
+      data: {
+        booking_data: {
+          id: bookingId,
+          patient_id: "00000000-0000-4000-8000-000000000003",
+          branch_id: "00000000-0000-4000-8000-000000000004",
+          doctor_id: "00000000-0000-4000-8000-000000000005",
+          booking_date_time: "2026-10-15T02:00:00.000Z",
+          status: "CONFIRMED",
+          referring_staff_id: referringStaffId,
+          created_at: "2026-10-01T00:00:00.000Z",
+          updated_at: "2026-10-20T00:00:00.000Z"
+        },
+        transferred_accrual_count: 2,
+        updated_draft_payroll_count: 1
+      },
+      error: null
+    } as any);
+
+    const result = await new SupabaseBookingRepository().updateBookingReferral(
+      bookingId,
+      referringStaffId,
+      UserRole.SUPER_ADMIN
+    );
+
+    expect(rpc).toHaveBeenCalledWith("transfer_booking_referral_incentives", {
+      p_booking_id: bookingId,
+      p_referring_staff_id: referringStaffId
+    });
+    expect(result).toMatchObject({
+      booking: { id: bookingId, referringStaffId },
+      transferredAccrualCount: 2,
+      updatedDraftPayrollCount: 1
+    });
   });
 });

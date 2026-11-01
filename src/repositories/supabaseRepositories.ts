@@ -2950,6 +2950,61 @@ export class SupabaseStorageRepository implements MediaStorageRepository {
 // 7. SUPABASE BOOKING REPOSITORY
 // =====================================================================
 export class SupabaseBookingRepository implements BookingRepository {
+  async updateBookingReferral(
+    bookingId: string,
+    referringStaffId: string | null,
+    currentUserRole?: UserRole
+  ): Promise<{
+    booking: Booking;
+    transferredAccrualCount: number;
+    updatedDraftPayrollCount: number;
+  }> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat memindahkan referral booking.");
+    }
+    if (!isValidUUID(bookingId) || (referringStaffId && !isValidUUID(referringStaffId))) {
+      throw new Error("ID booking atau staf referral tidak valid.");
+    }
+
+    const { data, error } = await supabase.rpc("transfer_booking_referral_incentives", {
+      p_booking_id: bookingId,
+      p_referring_staff_id: referringStaffId
+    });
+    if (error) throw new Error(`Gagal memindahkan insentif referral: ${error.message}`);
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result?.booking_data || !this.isBookingReferralTransferResult(result)) {
+      throw new Error("Server tidak mengembalikan hasil pemindahan referral yang valid.");
+    }
+
+    const booking = this.mapBookingFromDb(result.booking_data);
+    const fallback = this.getFallbackBookings();
+    const existingIndex = fallback.findIndex((item) => item.id === booking.id);
+    if (existingIndex >= 0) {
+      fallback[existingIndex] = booking;
+      this.saveFallbackBookings(fallback);
+    }
+    return {
+      booking,
+      transferredAccrualCount: result.transferred_accrual_count,
+      updatedDraftPayrollCount: result.updated_draft_payroll_count
+    };
+  }
+
+  private isBookingReferralTransferResult(value: unknown): value is {
+    booking_data: Record<string, unknown>;
+    transferred_accrual_count: number;
+    updated_draft_payroll_count: number;
+  } {
+    if (!value || typeof value !== "object") return false;
+    const row = value as Record<string, unknown>;
+    return !!row.booking_data &&
+      typeof row.transferred_accrual_count === "number" &&
+      Number.isInteger(row.transferred_accrual_count) &&
+      typeof row.updated_draft_payroll_count === "number" &&
+      Number.isInteger(row.updated_draft_payroll_count);
+  }
+
   private getFallbackBookings(): Booking[] {
     if (!useRepositoryTestFallbacks()) return [];
     if (typeof window !== "undefined") {
@@ -6881,10 +6936,17 @@ export class SupabaseCompensationRepository implements CompensationRepository {
     }
     if (updates.ruleTypeSnapshot !== undefined) payload.rule_type_snapshot = updates.ruleTypeSnapshot;
     if (updates.valueSnapshot !== undefined) {
-      if (!Number.isFinite(updates.valueSnapshot) || updates.valueSnapshot <= 0) {
-        throw new Error("Nilai kompensasi harus lebih besar dari 0.");
+      const allowsZero = updates.ruleTypeSnapshot === "TAX_PERCENTAGE";
+      if (
+        !Number.isFinite(updates.valueSnapshot) ||
+        (allowsZero ? updates.valueSnapshot < 0 : updates.valueSnapshot <= 0)
+      ) {
+        throw new Error("Nilai kompensasi tidak valid.");
       }
-      if (updates.ruleTypeSnapshot === "PERCENTAGE" && updates.valueSnapshot > 100) {
+      if (
+        (updates.ruleTypeSnapshot === "PERCENTAGE" || updates.ruleTypeSnapshot === "TAX_PERCENTAGE") &&
+        updates.valueSnapshot > 100
+      ) {
         throw new Error("Persentase kompensasi tidak boleh lebih dari 100%.");
       }
       payload.value_snapshot = updates.valueSnapshot;

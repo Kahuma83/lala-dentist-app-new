@@ -413,6 +413,15 @@ export interface AttendanceRepository {
 }
 
 export interface BookingRepository {
+  updateBookingReferral(
+    bookingId: string,
+    referringStaffId: string | null,
+    currentUserRole?: UserRole
+  ): Promise<{
+    booking: Booking;
+    transferredAccrualCount: number;
+    updatedDraftPayrollCount: number;
+  }>;
   getBookings(currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
   getBookingById(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking | null>;
   getBookingsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
