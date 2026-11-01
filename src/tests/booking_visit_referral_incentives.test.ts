@@ -55,6 +55,23 @@ describe("Booking visit referral incentives", () => {
     expect(migration).toContain("'STAFF_VISIT_REFERRAL_RP3000_V1'");
   });
 
+  it("stores role-specific configurable treatment referral rates with an active default tariff", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20261101000001_staff_referral_incentive_rates.sql"),
+      "utf8"
+    );
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.staff_referral_incentive_rates");
+    expect(migration).toContain("staff_position IN ('BRANCH_ADMIN', 'ASSISTANT')");
+    expect(migration).toContain("staff_position, service_name");
+    expect(migration).toContain("('BRANCH_ADMIN', NULL, 3000.00)");
+    expect(migration).toContain("('ASSISTANT', NULL, 3000.00)");
+    expect(migration).not.toContain("'Insersi Behel RA + RB'");
+    expect(migration).not.toContain("'Insersi Behel RA atau RB saja'");
+    expect(migration).not.toContain("'Insersi GIPAL / Crown PFM'");
+    expect(migration).not.toContain("LIKE '%GIPAL%'");
+    expect(migration).toContain("public.is_super_admin()");
+  });
+
   it("validates active admin and assistant referrers in both booking server endpoints", () => {
     const server = fs.readFileSync(path.resolve(process.cwd(), "server.js"), "utf8");
     const pagesFunction = fs.readFileSync(

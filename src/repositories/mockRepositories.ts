@@ -65,6 +65,7 @@ import {
   PaymentTransaction,
   PaymentMethod,
   StaffCompensationRule,
+  ReferralIncentiveRate,
   CompensationAccrual,
   MonthlyPayroll,
   PayrollItem,
@@ -143,6 +144,7 @@ import { isBranchMatch } from "../utils/branchUtils";
 import { allocateInvoiceNetToLines } from "../utils/invoiceLineAllocation";
 import { getOperationalDateString, toOperationalDateTime } from "../utils/dateUtils";
 import { hasMockRecordedTreatmentInventoryUsage } from "../services/inventoryService";
+import { normalizeReferralServiceName } from "../utils/referralIncentives";
 
 const db = MockDatabase.getInstance();
 
@@ -4811,6 +4813,71 @@ export class MockCompensationRepository implements CompensationRepository {
     return db.accruals.map((a: CompensationAccrual) => ({ ...a }));
   }
 
+  async getReferralIncentiveRates(): Promise<ReferralIncentiveRate[]> {
+    return db.referralIncentiveRates.map((rate) => ({ ...rate }));
+  }
+
+  async saveReferralIncentiveRate(
+    data: Omit<ReferralIncentiveRate, "id" | "createdAt" | "updatedAt"> & { id?: string },
+    currentUserRole?: UserRole
+  ): Promise<ReferralIncentiveRate> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat mengatur tarif insentif referral.");
+    }
+    if (!Number.isFinite(data.amount) || data.amount <= 0) {
+      throw new Error("Nominal insentif referral harus lebih besar dari nol.");
+    }
+    const serviceName = data.serviceName?.trim() || null;
+    if (serviceName && serviceName.length > 120) {
+      throw new Error("Nama tindakan maksimal 120 karakter.");
+    }
+    const sourceRate = (data.id && db.referralIncentiveRates.find((rate) => rate.id === data.id)) ||
+      db.referralIncentiveRates.find((rate) =>
+        rate.staffPosition === data.staffPosition &&
+        normalizeReferralServiceName(rate.serviceName) === normalizeReferralServiceName(serviceName)
+      );
+    const sourceServiceName = sourceRate?.serviceName ?? serviceName;
+    const pairedRates = db.referralIncentiveRates.filter((rate) =>
+      normalizeReferralServiceName(rate.serviceName) === normalizeReferralServiceName(sourceServiceName)
+    );
+    if (sourceRate?.serviceName === null && serviceName !== null) {
+      throw new Error("Tarif dasar tidak dapat diubah menjadi tarif tindakan khusus.");
+    }
+    const conflictingRate = db.referralIncentiveRates.find((rate) =>
+      normalizeReferralServiceName(rate.serviceName) === normalizeReferralServiceName(serviceName) &&
+      !pairedRates.some((paired) => paired.id === rate.id)
+    );
+    if (conflictingRate) {
+      throw new Error("Tarif untuk jenis penerima dan tindakan tersebut sudah ada.");
+    }
+    if (serviceName === null && !data.isActive) {
+      throw new Error("Tarif dasar referral wajib tetap aktif.");
+    }
+    const now = AppClock.nowISO();
+    const savedRates = ([StaffPosition.BRANCH_ADMIN, StaffPosition.ASSISTANT] as const).map((staffPosition) => {
+      const existing = pairedRates.find((rate) => rate.staffPosition === staffPosition);
+      const saved: ReferralIncentiveRate = {
+        id: existing?.id || `referral-rate-${staffPosition.toLowerCase()}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+        staffPosition,
+        serviceName,
+        amount: Math.round(data.amount),
+        isActive: data.isActive,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now
+      };
+      if (existing) Object.assign(existing, saved);
+      else db.referralIncentiveRates.push(saved);
+      return saved;
+    });
+    for (const oldRate of pairedRates) {
+      if (oldRate.serviceName !== null && normalizeReferralServiceName(oldRate.serviceName) !== normalizeReferralServiceName(serviceName)) {
+        db.referralIncentiveRates.splice(db.referralIncentiveRates.indexOf(oldRate), 1);
+      }
+    }
+    db.saveToStorage();
+    return { ...savedRates.find((rate) => rate.staffPosition === data.staffPosition)! };
+  }
+
   async calculateAndAccrueForTreatment(treatmentJobId: string): Promise<CompensationAccrual[]> {
     const job = db.treatmentJobs.find((t: TreatmentJob) => t.id === treatmentJobId);
     if (!job) {
@@ -4937,25 +5004,49 @@ export class MockCompensationRepository implements CompensationRepository {
       ? db.bookings.find((item) => item.id === visit.bookingId)
       : undefined;
     if (visit && booking?.referringStaffId) {
-      const referralSourceId = `referral:visit:${visit.id}`;
       const referralRuleId = "STAFF_VISIT_REFERRAL_RP3000_V1";
+      const legacyReferralSourceId = `referral:visit:${visit.id}`;
+      const referralSourceId = `${legacyReferralSourceId}:treatment:${job.id}`;
+      const legacyReferralExists = db.accruals.some((accrual: CompensationAccrual) =>
+        accrual.sourceId === legacyReferralSourceId && accrual.ruleIdSnapshot === referralRuleId
+      );
       const referralExists = db.accruals.some((accrual: CompensationAccrual) =>
         accrual.sourceId === referralSourceId && accrual.ruleIdSnapshot === referralRuleId
       );
-      if (!referralExists) {
+      const referringStaff = db.staff.find((staff: Staff) => staff.id === booking.referringStaffId);
+      if (!legacyReferralExists && !referralExists && referringStaff?.active &&
+        (referringStaff.position === StaffPosition.BRANCH_ADMIN || referringStaff.position === StaffPosition.ASSISTANT)) {
+        const serviceName = db.services.find((service: MasterService) => service.id === job.serviceId)?.name
+          || job.serviceNameSnapshot;
+        const serviceKey = normalizeReferralServiceName(serviceName);
+        const referralRate = db.referralIncentiveRates.find((rate) =>
+          rate.isActive &&
+          rate.staffPosition === referringStaff.position &&
+          rate.serviceName !== null &&
+          normalizeReferralServiceName(rate.serviceName) === serviceKey
+        ) || db.referralIncentiveRates.find((rate) =>
+          rate.isActive &&
+          rate.staffPosition === referringStaff.position &&
+          rate.serviceName === null
+        );
+        if (!referralRate) {
+          throw new Error(`Tarif referral untuk ${referringStaff.position} belum diatur. Atur tarif dasar di menu Kompensasi.`);
+        }
         const referralAccrual: CompensationAccrual = {
           id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-          staffId: booking.referringStaffId,
+          staffId: referringStaff.id,
+          branchId: referringStaff.branchId || null,
           ruleIdSnapshot: referralRuleId,
           ruleTypeSnapshot: "STAFF_VISIT_REFERRAL",
-          valueSnapshot: 3000,
-          baseAmountSnapshot: invoice.netAmount,
-          amount: 3000,
+          valueSnapshot: referralRate.amount,
+          baseAmountSnapshot: baseAmount,
+          amount: referralRate.amount,
           sourceId: referralSourceId,
           accruedAt: now
         };
         db.accruals.push(referralAccrual);
         createdAccruals.push(referralAccrual);
+        db.saveToStorage();
       }
     }
 

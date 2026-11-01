@@ -19,6 +19,7 @@ import {
   InvoiceItem,
   PaymentTransaction,
   StaffCompensationRule,
+  ReferralIncentiveRate,
   CompensationAccrual,
   MonthlyPayroll,
   PayrollItem,
@@ -3629,6 +3630,10 @@ export class MockDatabase {
   invoiceItems: InvoiceItem[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_INVOICE_ITEMS)) : [];
   payments: PaymentTransaction[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PAYMENTS)) : [];
   rules = JSON.parse(JSON.stringify(MOCK_RULES));
+  referralIncentiveRates: ReferralIncentiveRate[] = [
+    { id: "referral-admin-default", staffPosition: StaffPosition.BRANCH_ADMIN, serviceName: null, amount: 3000, isActive: true, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" },
+    { id: "referral-assistant-default", staffPosition: StaffPosition.ASSISTANT, serviceName: null, amount: 3000, isActive: true, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" }
+  ];
   accruals: CompensationAccrual[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_ACCRUALS)) : [];
   payrolls = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PAYROLLS)) : [];
   payrollItems = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_PAYROLL_ITEMS)) : [];
@@ -3693,6 +3698,7 @@ export class MockDatabase {
       if (!dataStr) return false;
       const stored = JSON.parse(dataStr);
         if (Array.isArray(stored.rules)) this.rules = stored.rules;
+        if (Array.isArray(stored.referralIncentiveRates)) this.referralIncentiveRates = stored.referralIncentiveRates;
         if (Array.isArray(stored.staff)) {
           const existingIds = new Set(stored.staff.map((s: any) => s.id));
           const missingStaff = MOCK_STAFF.filter((s) => !existingIds.has(s.id));
@@ -3813,6 +3819,7 @@ export class MockDatabase {
     try {
       const dataToSave = {
         rules: this.rules,
+        referralIncentiveRates: this.referralIncentiveRates,
         staff: this.staff,
         doctors: this.doctors,
         userAccounts: this.userAccounts,
@@ -3887,6 +3894,7 @@ export class MockDatabase {
     this.instance.invoiceItems = JSON.parse(JSON.stringify(MOCK_INVOICE_ITEMS));
     this.instance.payments = JSON.parse(JSON.stringify(MOCK_PAYMENTS));
     this.instance.rules = JSON.parse(JSON.stringify(MOCK_RULES));
+    this.instance.referralIncentiveRates = JSON.parse(JSON.stringify(new MockDatabase().referralIncentiveRates));
     this.instance.accruals = JSON.parse(JSON.stringify(MOCK_ACCRUALS));
     this.instance.payrolls = JSON.parse(JSON.stringify(MOCK_PAYROLLS));
     this.instance.payrollItems = JSON.parse(JSON.stringify(MOCK_PAYROLL_ITEMS));
