@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
 import { useApp } from "../context/AppContext";
-import { getOperationalDateString } from "../utils/dateUtils";
+import { getOperationalTimeString } from "../utils/dateUtils";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
+import { getDashboardTodayRecords } from "../utils/dashboardMetrics";
 import { useRouter } from "../components/Router";
-import { UserRole, QueueStatus, TreatmentJobStatus, ScheduleStatus } from "../types/domain";
+import { UserRole, ScheduleStatus } from "../types/domain";
 import { formatDateTime, formatDate } from "../utils/formatter";
 import { AppClock } from "../utils/clock";
 import {
@@ -61,50 +62,23 @@ export const Dashboard: React.FC = () => {
     return `${dayName}, ${formatDate(todayStr)}`;
   }, [todayDateObj, todayStr]);
 
-  // 1. PASIEN HARI INI (Source: visits filtered by date & branch)
-  const todayVisits = useMemo(() => {
-    return visits.filter((v) => {
-      const vDate = v.visitDateTime ? v.visitDateTime.split("T")[0] : "";
-      if (vDate !== todayStr) return false;
-      if (effectiveBranchId && v.branchId !== effectiveBranchId) return false;
-      return true;
-    });
-  }, [visits, todayStr, effectiveBranchId]);
+  const { todayVisits, todayBookings, activeQueues, ongoingTreatments } = useMemo(
+    () => getDashboardTodayRecords({
+      visits,
+      bookings,
+      queueItems,
+      treatmentJobs,
+      today: todayStr,
+      branchId: effectiveBranchId
+    }),
+    [visits, bookings, queueItems, treatmentJobs, todayStr, effectiveBranchId]
+  );
 
   const todayPatientsCount = todayVisits.length;
 
-  // 2. BOOKING HARI INI (Source: bookings filtered by date & branch)
-  const todayBookings = useMemo(() => {
-    return bookings.filter((b) => {
-      const bDate = getOperationalDateString(b.bookingDateTime);
-      if (bDate !== todayStr) return false;
-      if (effectiveBranchId && b.branchId !== effectiveBranchId) return false;
-      return true;
-    });
-  }, [bookings, todayStr, effectiveBranchId]);
-
   const todayBookingsCount = todayBookings.length;
 
-  // 3. ANTREAN AKTIF (Source: queueItems filtered by status WAITING / IN_PREPARATION / IN_CONSULTATION & branch)
-  const activeQueues = useMemo(() => {
-    const activeStatuses = [QueueStatus.WAITING, QueueStatus.IN_PREPARATION, QueueStatus.IN_CONSULTATION];
-    return queueItems.filter((q) => {
-      if (!activeStatuses.includes(q.status as QueueStatus)) return false;
-      if (effectiveBranchId && q.branchId !== effectiveBranchId) return false;
-      return true;
-    });
-  }, [queueItems, effectiveBranchId]);
-
   const activeQueuesCount = activeQueues.length;
-
-  // 4. TREATMENT BERJALAN (Source: treatmentJobs filtered by DALAM_PROSES & branch)
-  const ongoingTreatments = useMemo(() => {
-    return treatmentJobs.filter((t) => {
-      if (t.status !== TreatmentJobStatus.DALAM_PROSES) return false;
-      if (effectiveBranchId && t.branchId !== effectiveBranchId) return false;
-      return true;
-    });
-  }, [treatmentJobs, effectiveBranchId]);
 
   const ongoingTreatmentsCount = ongoingTreatments.length;
 
@@ -374,7 +348,7 @@ export const Dashboard: React.FC = () => {
           className="group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] transition-all hover:-translate-y-0.5 hover:border-[#d8bd7d] hover:shadow-md"
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Antrean Aktif</span>
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Antrean Aktif Hari Ini</span>
             <div className="shrink-0 rounded-xl bg-orange-50 p-2 text-orange-600">
               <ListOrdered className="w-4 h-4" />
             </div>
@@ -383,7 +357,7 @@ export const Dashboard: React.FC = () => {
             <p className="text-3xl font-black text-[#17233C]">{loading ? "..." : activeQueuesCount}</p>
           </div>
           <div className="flex items-center justify-between mt-3 border-t border-slate-50 pt-3 text-[10px] text-slate-400 font-medium">
-            <span>Menunggu & Di Ruang Periksa</span>
+            <span>Menunggu & di ruang periksa hari ini</span>
             <span className="flex items-center gap-0.5 font-bold text-orange-600 transition-transform group-hover:translate-x-0.5">
               Kelola <ArrowRight className="w-3 h-3" />
             </span>
@@ -418,7 +392,7 @@ export const Dashboard: React.FC = () => {
           className="group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-[#eadfc7] bg-white p-5 shadow-[0_8px_24px_rgba(138,111,39,0.06)] transition-all hover:-translate-y-0.5 hover:border-[#d8bd7d] hover:shadow-md"
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Treatment Berjalan</span>
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Treatment Berjalan Hari Ini</span>
             <div className="shrink-0 rounded-xl bg-emerald-50 p-2 text-emerald-700">
               <Activity className="w-4 h-4" />
             </div>
@@ -427,7 +401,7 @@ export const Dashboard: React.FC = () => {
             <p className="text-3xl font-black text-[#17233C]">{loading ? "..." : ongoingTreatmentsCount}</p>
           </div>
           <div className="flex items-center justify-between mt-3 border-t border-slate-50 pt-3 text-[10px] text-slate-400 font-medium">
-            <span>Sedang ditangani di dental chair</span>
+            <span>Dimulai hari ini · sedang ditangani</span>
             <span className="flex items-center gap-0.5 font-bold text-emerald-700 transition-transform group-hover:translate-x-0.5">
               Detail <ArrowRight className="w-3 h-3" />
             </span>
@@ -604,7 +578,7 @@ export const Dashboard: React.FC = () => {
                       </div>
                       <div className="flex flex-col items-end gap-1.5 shrink-0 text-right">
                         <span className="text-[9px] text-slate-400 font-bold">
-                          {act.isoTime && act.isoTime.includes("T") ? act.isoTime.split("T")[1].slice(0, 5) : "-"}
+                          {act.isoTime ? getOperationalTimeString(act.isoTime) : "-"}
                         </span>
                         <span className={`px-2 py-0.5 rounded-md text-[8px] font-bold border ${act.colorBg}`}>
                           {act.category}
