@@ -387,6 +387,7 @@ export const HRManagement: React.FC = () => {
   const [doctorForm, setDoctorForm] = useState({
     doctorCode: "",
     name: "",
+    fullName: "",
     specialization: "Dokter Gigi Umum",
     phone: "",
     email: "",
@@ -464,6 +465,7 @@ export const HRManagement: React.FC = () => {
       setDoctorForm({
         doctorCode: doc.doctorCode || "",
         name: doc.name || doc.fullName || "",
+        fullName: doc.fullName || doc.name || "",
         specialization: doc.specialization || "Dokter Gigi Umum",
         phone: doc.phone || "",
         email: doc.email || "",
@@ -485,6 +487,7 @@ export const HRManagement: React.FC = () => {
       setDoctorForm({
         doctorCode: `DRG-${String(doctors.length + 1).padStart(3, "0")}`,
         name: "",
+        fullName: "",
         specialization: "Dokter Gigi Umum",
         phone: "",
         email: "",
@@ -507,13 +510,19 @@ export const HRManagement: React.FC = () => {
 
   const handleSaveDoctor = async (e: React.FormEvent) => {
     e.preventDefault();
+    const displayName = doctorForm.name.trim();
+    const fullName = doctorForm.fullName.trim();
+    if (!displayName || !fullName) {
+      showError("Nama tampilan dan nama lengkap dokter wajib diisi.");
+      return;
+    }
     setIsSubmitting(true);
     try {
       if (editingDoctor) {
         await doctorRepo.updateDoctor(editingDoctor.id, {
           doctorCode: doctorForm.doctorCode,
-          name: doctorForm.name,
-          fullName: doctorForm.name,
+          name: displayName,
+          fullName,
           specialization: doctorForm.specialization,
           phone: doctorForm.phone,
           email: doctorForm.email,
@@ -527,12 +536,12 @@ export const HRManagement: React.FC = () => {
           bankAccountNumber: doctorForm.bankAccountNumber,
           bankAccountHolder: doctorForm.bankAccountHolder
         });
-        showSuccess(`Data dokter ${doctorForm.name} berhasil diperbarui.`);
+        showSuccess(`Data dokter ${displayName} berhasil diperbarui.`);
       } else {
         await doctorRepo.createDoctor({
           doctorCode: doctorForm.doctorCode,
-          name: doctorForm.name,
-          fullName: doctorForm.name,
+          name: displayName,
+          fullName,
           specialization: doctorForm.specialization,
           phone: doctorForm.phone,
           email: doctorForm.email,
@@ -546,7 +555,7 @@ export const HRManagement: React.FC = () => {
           bankAccountNumber: doctorForm.bankAccountNumber,
           bankAccountHolder: doctorForm.bankAccountHolder
         });
-        showSuccess(`Dokter baru ${doctorForm.name} berhasil ditambahkan.`);
+        showSuccess(`Dokter baru ${displayName} berhasil ditambahkan.`);
       }
 
       setIsDoctorModalOpen(false);
@@ -1384,7 +1393,7 @@ export const HRManagement: React.FC = () => {
                 <thead className="bg-slate-50 border-b border-slate-200 font-semibold text-slate-600">
                   <tr>
                     <th className="px-4 py-3">Kode Dokter</th>
-                    <th className="px-4 py-3">Nama Lengkap & Gelar</th>
+                    <th className="px-4 py-3">Nama Tampilan / Nama Lengkap</th>
                     <th className="px-4 py-3">Spesialisasi</th>
                     <th className="px-4 py-3">Kontak & Izin (STR / SIP)</th>
                     <th className="px-4 py-3">Penugasan Cabang</th>
@@ -1434,6 +1443,9 @@ export const HRManagement: React.FC = () => {
                               })()}
                               <div>
                                 <div className="font-semibold text-slate-900">{doc.name || doc.fullName}</div>
+                                {doc.fullName && doc.fullName !== doc.name && (
+                                  <div className="text-[11px] text-slate-500">Dokumen: {doc.fullName}</div>
+                                )}
                                 {doc.notes && <div className="text-[11px] text-slate-400 italic">{doc.notes}</div>}
                               </div>
                             </div>
@@ -2310,15 +2322,29 @@ export const HRManagement: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">Nama Lengkap & Gelar *</label>
+                <label className="block text-slate-600 font-semibold mb-1">Nama tampilan di aplikasi *</label>
                 <input
                   type="text"
                   required
                   value={doctorForm.name}
                   onChange={(e) => setDoctorForm({ ...doctorForm, name: e.target.value })}
-                  placeholder="Contoh: drg. Syafira, Sp.KG"
+                  placeholder="Contoh: drg. Syafira"
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600"
                 />
+                <p className="mt-1 text-[10px] text-slate-500">Nama ini digunakan di booking, antrean, dan tampilan aplikasi.</p>
+              </div>
+
+              <div>
+                <label className="block text-slate-600 font-semibold mb-1">Nama lengkap & gelar untuk dokumen *</label>
+                <input
+                  type="text"
+                  required
+                  value={doctorForm.fullName}
+                  onChange={(e) => setDoctorForm({ ...doctorForm, fullName: e.target.value })}
+                  placeholder="Contoh: drg. Syafira Al-Zahra, Sp.KG"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600"
+                />
+                <p className="mt-1 text-[10px] text-slate-500">Nama ini dicetak pada rekam medis, resep, dan surat resmi.</p>
               </div>
 
               <div>
