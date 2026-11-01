@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useApp } from "../context/AppContext";
+import { getOperationalTimeString } from "../utils/dateUtils";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { getDashboardTodayRecords } from "../utils/dashboardMetrics";
 import { useRouter } from "../components/Router";
@@ -577,7 +578,7 @@ export const Dashboard: React.FC = () => {
                       </div>
                       <div className="flex flex-col items-end gap-1.5 shrink-0 text-right">
                         <span className="text-[9px] text-slate-400 font-bold">
-                          {act.isoTime && act.isoTime.includes("T") ? act.isoTime.split("T")[1].slice(0, 5) : "-"}
+                          {act.isoTime ? getOperationalTimeString(act.isoTime) : "-"}
                         </span>
                         <span className={`px-2 py-0.5 rounded-md text-[8px] font-bold border ${act.colorBg}`}>
                           {act.category}
