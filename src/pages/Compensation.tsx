@@ -14,6 +14,7 @@ import {
   MasterService,
   DentalBranch,
   DoctorBranchAssignment,
+  TreatmentJob,
   TreatmentJobStatus,
   MonthlyPayroll,
   PayrollItem
@@ -96,6 +97,7 @@ export const Compensation: React.FC = () => {
   const [rules, setRules] = useState<StaffCompensationRule[]>([]);
   const [referralRates, setReferralRates] = useState<ReferralIncentiveRate[]>([]);
   const [accruals, setAccruals] = useState<CompensationAccrual[]>([]);
+  const [accrualSourceTreatments, setAccrualSourceTreatments] = useState<Map<string, TreatmentJob[]>>(new Map());
   const [incomePayrolls, setIncomePayrolls] = useState<MonthlyPayroll[]>([]);
   const [incomePayrollItems, setIncomePayrollItems] = useState<PayrollItem[]>([]);
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
@@ -207,9 +209,48 @@ export const Compensation: React.FC = () => {
         );
       }
 
+      const sourceTreatmentIds = new Set<string>();
+      const legacyReferralVisitIds = new Set<string>();
+      for (const accrual of filteredAccruals) {
+        if (accrual.sourceId.startsWith("referral:visit:")) {
+          const referralSource = accrual.sourceId.match(/^referral:visit:([^:]+)(?::treatment:([^:]+))?$/);
+          if (referralSource?.[2]) sourceTreatmentIds.add(referralSource[2]);
+          else if (referralSource?.[1]) legacyReferralVisitIds.add(referralSource[1]);
+        } else {
+          sourceTreatmentIds.add(accrual.sourceId);
+        }
+      }
+      const [sourceTreatments, legacyVisitTreatments] = await Promise.all([
+        Promise.all([...sourceTreatmentIds].map((id) => treatmentRepo.getTreatmentJobById(id))),
+        Promise.all([...legacyReferralVisitIds].map((id) => treatmentRepo.getTreatmentsByVisit(id)))
+      ]);
+      const treatmentsById = new Map(
+        sourceTreatments.filter((treatment): treatment is TreatmentJob => Boolean(treatment))
+          .map((treatment) => [treatment.id, treatment])
+      );
+      const treatmentsByVisitId = new Map(
+        [...legacyReferralVisitIds].map((visitId, index) => [visitId, legacyVisitTreatments[index]])
+      );
+      const sourceTreatmentMap = new Map<string, TreatmentJob[]>();
+      for (const accrual of filteredAccruals) {
+        if (accrual.sourceId.startsWith("referral:visit:")) {
+          const referralSource = accrual.sourceId.match(/^referral:visit:([^:]+)(?::treatment:([^:]+))?$/);
+          if (referralSource?.[2]) {
+            const treatment = treatmentsById.get(referralSource[2]);
+            sourceTreatmentMap.set(accrual.sourceId, treatment ? [treatment] : []);
+          } else if (referralSource?.[1]) {
+            sourceTreatmentMap.set(accrual.sourceId, treatmentsByVisitId.get(referralSource[1]) || []);
+          }
+        } else {
+          const treatment = treatmentsById.get(accrual.sourceId);
+          sourceTreatmentMap.set(accrual.sourceId, treatment ? [treatment] : []);
+        }
+      }
+
       setRules(rList);
       setReferralRates(referralRateList);
       setAccruals(filteredAccruals);
+      setAccrualSourceTreatments(sourceTreatmentMap);
       setIncomePayrolls(pList);
       setIncomePayrollItems(pItems);
       setDoctors(dList);
@@ -1144,7 +1185,7 @@ export const Compensation: React.FC = () => {
               <tr className="bg-slate-50 border-b border-slate-100 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
                 <th className="py-3 px-4">Waktu Akrual</th>
                 <th className="py-3 px-4">Staff Penerima</th>
-                <th className="py-3 px-4">Sumber Tindakan (Job ID)</th>
+                <th className="py-3 px-4">Tindakan & Tanggal</th>
                 <th className="py-3 px-4 text-right">Tarif Dasar</th>
                 <th className="py-3 px-4 text-right">Skema Snapshot</th>
                 <th className="py-3 px-4 text-right">Akrual Komisi</th>
@@ -1181,8 +1222,28 @@ export const Compensation: React.FC = () => {
                         <div>{info.name}</div>
                         <div className="text-[10px] text-slate-400 font-normal">{info.role}</div>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-emerald-700 font-medium">
-                        {a.sourceId}
+                      <td className="py-3.5 px-4 font-medium text-slate-700" title={a.sourceId}>
+                        {accrualSourceTreatments.get(a.sourceId)?.length ? (
+                          <div className="space-y-1">
+                            {accrualSourceTreatments.get(a.sourceId)?.map((treatment) => (
+                              <div key={treatment.id}>
+                                <div className="font-semibold text-emerald-800">{treatment.serviceNameSnapshot || "Tindakan"}</div>
+                                <div className="text-[10px] font-normal text-slate-500">
+                                  {new Date(treatment.completedAt || treatment.handedOverAt || treatment.createdAt || a.accruedAt).toLocaleDateString("id-ID", {
+                                    day: "numeric",
+                                    month: "short",
+                                    year: "numeric"
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-slate-500">Detail tindakan tidak tersedia</div>
+                        )}
+                        <div className="mt-1 max-w-[190px] truncate font-mono text-[9px] font-normal text-slate-400">
+                          ID: {a.sourceId}
+                        </div>
                       </td>
                       <td className="py-3.5 px-4 text-right font-medium text-slate-600">
                         Rp {(a.baseAmountSnapshot ?? a.amount).toLocaleString("id-ID")}
