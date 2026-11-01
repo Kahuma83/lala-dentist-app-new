@@ -88,6 +88,29 @@ describe("PHASE HR-1: Master SDM, Dokter Multi-Cabang, Jadwal Dokter & Shift Sta
     expect(fetched?.name).toBe("drg. Sarah Bella, Sp.Ort");
   });
 
+  it("keeps the application display name separate from the full document name", async () => {
+    const newDoc = await docRepo.createDoctor({
+      doctorCode: "DOC-DISPLAY-NAME",
+      name: "drg. Sari",
+      fullName: "drg. Sari Rahmawati, Sp.KG",
+      specialization: "Konservasi Gigi",
+      phone: "081234567801",
+      assignedBranchId: "branch-gebang",
+      active: true,
+      isActive: true
+    });
+
+    expect(newDoc.name).toBe("drg. Sari");
+    expect(newDoc.fullName).toBe("drg. Sari Rahmawati, Sp.KG");
+
+    const updated = await docRepo.updateDoctor(newDoc.id, {
+      name: "drg. Sari R.",
+      fullName: "drg. Sari Rahmawati, Sp.KG"
+    }, UserRole.SUPER_ADMIN);
+    expect(updated.name).toBe("drg. Sari R.");
+    expect(updated.fullName).toBe("drg. Sari Rahmawati, Sp.KG");
+  });
+
   it("Test 4: Auto-creates DoctorBranchAssignment when doctor created with assignedBranchId", async () => {
     const newDoc = await docRepo.createDoctor({
       doctorCode: "DOC-AUTO-BR",
