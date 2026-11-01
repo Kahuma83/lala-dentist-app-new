@@ -2627,6 +2627,9 @@ export const BookingManagement: React.FC = () => {
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium"
                     id="select-modal-timeslot"
                   >
+                    {requireExplicitTimeSelection && !formTimeSlot && (
+                      <option value="" disabled>Pilih ulang slot waktu</option>
+                    )}
                     {availableTimeSlots.map((slot) => (
                       <option key={slot} value={slot}>
                         {slot} WIB
