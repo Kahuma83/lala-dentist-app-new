@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Clock3,
   Download,
   Home,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import { User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "../../src/lib/supabase";
+import { getOperationalDateString } from "../../src/utils/dateUtils";
 import {
   changeAuthenticatedPassword,
   resetAuthenticatedPassword
@@ -41,6 +43,7 @@ import {
   subscribeToDoctorChat
 } from "./doctorChatService";
 import { DoctorGroupChat } from "./DoctorGroupChat";
+import { getDoctorPortalBookingDateRange } from "../../src/utils/doctorPortalBookingUtils";
 
 type StaffRole = "BRANCH_ADMIN" | "DOCTOR" | "DOCTOR_ASSISTANT" | "OB";
 type AttendanceAction = "check-in" | "check-out";
@@ -73,7 +76,7 @@ type StaffContext = {
   staffId: string;
   userAccountId: string;
 };
-type PortalTab = "home" | "attendance" | "schedule" | "absence" | "overtime" | "medical-services" | "payroll" | "chat" | "profile";
+type PortalTab = "home" | "attendance" | "schedule" | "bookings" | "absence" | "overtime" | "medical-services" | "payroll" | "chat" | "profile";
 type AbsenceRequestType = "SICK" | "LEAVE" | "PERMISSION";
 type PortalAbsenceRequest = {
   id: string;
@@ -101,6 +104,15 @@ type PortalSchedule = {
   endTime: string;
   shiftName: string;
   notes: string | null;
+};
+type DoctorPortalBooking = {
+  id: string;
+  bookingDateTime: string;
+  patientName: string;
+  branchName: string;
+  status: "PENDING" | "CONFIRMED";
+  complaint: string;
+  plannedTreatments: string[];
 };
 type PortalOvertime = {
   id: string;
@@ -164,6 +176,7 @@ const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
   { id: "home", label: "Beranda", icon: Home },
   { id: "attendance", label: "Absensi", icon: BadgeCheck },
   { id: "schedule", label: "Jadwal Saya", icon: CalendarDays },
+  { id: "bookings", label: "Booking Pasien", icon: ClipboardList },
   { id: "absence", label: "Cuti & Izin", icon: CalendarDays },
   { id: "overtime", label: "Lembur Saya", icon: Timer },
   { id: "medical-services", label: "Jasa Medis", icon: HandCoins },
@@ -352,6 +365,7 @@ export function AttendancePortal() {
   const [isPanelLoading, setIsPanelLoading] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [scheduleRows, setScheduleRows] = useState<PortalSchedule[]>([]);
+  const [doctorBookingRows, setDoctorBookingRows] = useState<DoctorPortalBooking[]>([]);
   const [scheduleWeekStart, setScheduleWeekStart] = useState(() => startOfWeek(todayWib()));
   const [absenceRows, setAbsenceRows] = useState<PortalAbsenceRequest[]>([]);
   const [replacementRows, setReplacementRows] = useState<PortalReplacementAssignment[]>([]);
@@ -391,6 +405,7 @@ export function AttendancePortal() {
   const pendingAction = useRef<AttendanceAction | null>(null);
   const today = todayWib();
   const monthStart = `${today.slice(0, 7)}-01`;
+  const upcomingDoctorBookingRange = getDoctorPortalBookingDateRange(today);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -617,6 +632,7 @@ export function AttendancePortal() {
         setAttendanceRows([]);
         setActiveTab("home");
         setScheduleRows([]);
+        setDoctorBookingRows([]);
         setAbsenceRows([]);
         setReplacementRows([]);
         setOvertimeRows([]);
@@ -750,6 +766,7 @@ export function AttendancePortal() {
       setAttendanceRows([]);
       setActiveTab("home");
       setScheduleRows([]);
+      setDoctorBookingRows([]);
       setOvertimeRows([]);
       setMedicalServiceRows([]);
       setMedicalServiceTotalAmount(0);
@@ -829,7 +846,8 @@ export function AttendancePortal() {
     requestedWeekStart = scheduleWeekStart,
     requestedMedicalServiceMonth = medicalServiceMonth
   ) => {
-    if ((tab === "overtime" && staffContext?.role === "DOCTOR") ||
+    if ((tab === "bookings" && staffContext?.role !== "DOCTOR") ||
+      (tab === "overtime" && staffContext?.role === "DOCTOR") ||
       (tab === "medical-services" && staffContext?.role !== "DOCTOR")) return;
 
     setActiveTab(tab);
@@ -838,7 +856,45 @@ export function AttendancePortal() {
 
     setIsPanelLoading(true);
     try {
-      if (tab === "absence") {
+      if (tab === "bookings") {
+        const doctorId = staffContext?.doctorId;
+        if (!doctorId) throw new Error("Data dokter belum tertaut ke akun ini. Hubungi Super Admin.");
+        const { startsAt, endsBefore } = upcomingDoctorBookingRange;
+        const { data, error } = await supabase
+          .from("bookings")
+          .select("id,booking_date_time,patient_name_snapshot,branch_name_snapshot,status,complaint,planned_treatments")
+          .eq("doctor_id", doctorId)
+          .in("status", ["PENDING", "CONFIRMED"])
+          .gte("booking_date_time", startsAt)
+          .lt("booking_date_time", endsBefore)
+          .order("booking_date_time", { ascending: true });
+        if (error) throw new Error(`Gagal memuat booking pasien: ${error.message}`);
+        const rows = (data || []).map((row): DoctorPortalBooking => {
+          if (row.status !== "PENDING" && row.status !== "CONFIRMED") {
+            throw new Error("Status booking pasien tidak valid.");
+          }
+          const plannedTreatments = row.planned_treatments;
+          if (plannedTreatments != null && !Array.isArray(plannedTreatments)) {
+            throw new Error("Rencana tindakan booking tidak valid.");
+          }
+          const plannedTreatmentNames = (plannedTreatments || []).map((treatment: unknown) => {
+            if (!isRecord(treatment) || typeof treatment.serviceNameSnapshot !== "string") {
+              throw new Error("Rincian rencana tindakan booking tidak valid.");
+            }
+            return treatment.serviceNameSnapshot.trim();
+          }).filter(Boolean);
+          return {
+            id: row.id,
+            bookingDateTime: row.booking_date_time,
+            patientName: row.patient_name_snapshot?.trim() || "Nama pasien belum tersedia",
+            branchName: row.branch_name_snapshot?.trim() || "Cabang",
+            status: row.status,
+            complaint: row.complaint?.trim() || "",
+            plannedTreatments: plannedTreatmentNames
+          };
+        });
+        setDoctorBookingRows(rows);
+      } else if (tab === "absence") {
         const [{ data, error }, { data: assignmentData, error: assignmentError }] = await Promise.all([
           supabase
             .from("staff_absence_requests")
@@ -1451,7 +1507,8 @@ export function AttendancePortal() {
         {portalTabs
           .filter(({ id }) =>
             (id !== "chat" || staffContext.role === "DOCTOR") &&
-            (id !== "overtime" || staffContext.role !== "DOCTOR") &&
+              (id !== "bookings" || staffContext.role === "DOCTOR") &&
+              (id !== "overtime" || staffContext.role !== "DOCTOR") &&
             (id !== "medical-services" || staffContext.role === "DOCTOR")
           )
           .map(({ id, label, icon: Icon }) => (
@@ -1495,6 +1552,7 @@ export function AttendancePortal() {
           <div className="quick-links">
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("attendance")}><BadgeCheck /><span><strong>Absensi Saya</strong><small>Absen masuk, pulang, dan lihat riwayat</small></span></button>
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("schedule")}><CalendarDays /><span><strong>Jadwal Saya</strong><small>Lihat jadwal praktik atau shift</small></span></button>
+            {staffContext.role === "DOCTOR" && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("bookings")}><ClipboardList /><span><strong>Booking Pasien</strong><small>Lihat pasien yang dijadwalkan besok dan lusa</small></span></button>}
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("absence")}><CalendarDays /><span><strong>Cuti & Izin</strong><small>Ajukan sakit, cuti, atau izin</small></span></button>
             {staffContext.role === "DOCTOR" && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("medical-services")}><HandCoins /><span><strong>Jasa Medis</strong><small>Pantau pembagian jasa tindakan</small></span></button>}
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("payroll")}><WalletCards /><span><strong>Gaji Saya</strong><small>Lihat slip yang sudah disetujui</small></span></button>
@@ -1691,6 +1749,50 @@ export function AttendancePortal() {
               </div>
             </>
           )}
+        </section>
+      )}
+
+      {activeTab === "bookings" && staffContext.role === "DOCTOR" && (
+        <section className="portal-panel">
+          <div className="panel-heading schedule-heading">
+            <div><p className="eyebrow">JADWAL PASIEN</p><h2>Booking Pasien</h2></div>
+            <span className="schedule-date-range">{formatDate(upcomingDoctorBookingRange.dates[0])} – {formatDate(upcomingDoctorBookingRange.dates[1])}</span>
+          </div>
+          <p className="doctor-booking-note">Daftar ini hanya menampilkan booking aktif untuk dokter yang sedang login. Informasi dibatasi pada data booking dan keluhan untuk persiapan praktik.</p>
+          {isPanelLoading
+            ? <p className="empty-state"><RefreshCw className="spin" /> Memuat booking pasien...</p>
+            : panelError
+            ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div>
+            : (
+              <div className="schedule-week-list">
+                {upcomingDoctorBookingRange.dates.map((date) => {
+                  const dayBookings = doctorBookingRows.filter((booking) =>
+                    getOperationalDateString(booking.bookingDateTime) === date
+                  );
+                  return (
+                    <section className="schedule-day" key={date}>
+                      <h3>{new Intl.DateTimeFormat("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                        weekday: "long",
+                        day: "numeric",
+                        month: "long"
+                      }).format(new Date(`${date}T12:00:00+07:00`))}</h3>
+                      {dayBookings.length === 0 ? <p>Tidak ada booking</p> : dayBookings.map((booking) => (
+                        <article className="doctor-booking-row" key={booking.id}>
+                          <div className="doctor-booking-heading">
+                            <strong>{booking.patientName}</strong>
+                            <span className="doctor-booking-time">{formatTime(booking.bookingDateTime)}</span>
+                          </div>
+                          <p className="doctor-booking-meta">{booking.branchName} · {booking.status === "CONFIRMED" ? "Terkonfirmasi" : "Menunggu konfirmasi"}</p>
+                          {booking.complaint && <p className="doctor-booking-detail"><strong>Keluhan:</strong> {booking.complaint}</p>}
+                          {booking.plannedTreatments.length > 0 && <p className="doctor-booking-detail"><strong>Rencana:</strong> {booking.plannedTreatments.join(", ")}</p>}
+                        </article>
+                      ))}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
         </section>
       )}
 
