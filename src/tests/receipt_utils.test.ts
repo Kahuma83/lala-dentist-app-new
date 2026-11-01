@@ -84,5 +84,25 @@ describe("receipt utilities", () => {
     expect(getInvoiceDoctorName(invoice, [staleTreatment, matchingTreatment], [branchDoctor]))
       .toBe("Dokter Kunjungan");
     expect(getInvoiceDoctorName(invoice, [staleTreatment], [branchDoctor])).toBeUndefined();
+
+    const currentDoctor: DentalDoctor = {
+      ...branchDoctor,
+      id: matchingTreatment.doctorId,
+      name: "drg. Sari",
+      fullName: "drg. Sari Rahmawati, Sp.KG",
+    };
+    const currentDisplayNameTreatment = {
+      ...matchingTreatment,
+      doctorNameSnapshot: currentDoctor.name
+    };
+    const historicalFullNameTreatment = {
+      ...matchingTreatment,
+      doctorNameSnapshot: "drg. Sari Rahmawati"
+    };
+
+    expect(getInvoiceDoctorName(invoice, [currentDisplayNameTreatment], [currentDoctor]))
+      .toBe("drg. Sari Rahmawati, Sp.KG");
+    expect(getInvoiceDoctorName(invoice, [historicalFullNameTreatment], [currentDoctor]))
+      .toBe("drg. Sari Rahmawati");
   });
 });
