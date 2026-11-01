@@ -2023,6 +2023,203 @@ export class MockStaffShiftAssignmentRepository implements StaffShiftAssignmentR
 }
 
 export class MockBookingRepository implements BookingRepository {
+  async updateBookingReferral(
+    bookingId: string,
+    referringStaffId: string | null,
+    currentUserRole?: UserRole
+  ): Promise<{
+    booking: Booking;
+    transferredAccrualCount: number;
+    updatedDraftPayrollCount: number;
+  }> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat memindahkan referral booking.");
+    }
+
+    const booking = db.bookings.find((item) => item.id === bookingId);
+    if (!booking) throw new Error("Booking tidak ditemukan.");
+    if (referringStaffId === booking.referringStaffId) {
+      return { booking: { ...booking }, transferredAccrualCount: 0, updatedDraftPayrollCount: 0 };
+    }
+
+    const targetStaff = referringStaffId
+      ? db.staff.find((item) =>
+          item.id === referringStaffId &&
+          item.active &&
+          item.employmentStatus === EmploymentStatus.ACTIVE &&
+          (item.position === StaffPosition.BRANCH_ADMIN || item.position === StaffPosition.ASSISTANT)
+        )
+      : undefined;
+    if (referringStaffId && !targetStaff) {
+      throw new Error("Penerima referral harus Admin Cabang atau Asisten yang masih aktif.");
+    }
+
+    const visitIds = new Set(db.visits.filter((visit) => visit.bookingId === bookingId).map((visit) => visit.id));
+    const referralSourceIds = new Set<string>();
+    for (const job of db.treatmentJobs.filter((treatment) => visitIds.has(treatment.visitId))) {
+      referralSourceIds.add(`referral:visit:${job.visitId}`);
+      referralSourceIds.add(`referral:visit:${job.visitId}:treatment:${job.id}`);
+    }
+    const referralRuleId = "STAFF_VISIT_REFERRAL_RP3000_V1";
+    const accruals = db.accruals.filter((accrual) =>
+      accrual.ruleIdSnapshot === referralRuleId && referralSourceIds.has(accrual.sourceId)
+    );
+    if (accruals.length > 0 && !targetStaff) {
+      throw new Error("Insentif sudah tercatat. Pilih staf pengganti agar insentif dapat dipindahkan.");
+    }
+
+    const jakartaMonth = (date: Date) => new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Jakarta",
+      year: "numeric",
+      month: "2-digit"
+    }).format(date);
+    const currentPeriod = jakartaMonth(new Date());
+    const payrollItemMoves: Array<{ item: PayrollItem; targetPayrollId: string | null }> = [];
+    const newPayrollItems: PayrollItem[] = [];
+    const affectedPayrollIds = new Set<string>();
+
+    for (const accrual of accruals) {
+      const accrualPeriod = jakartaMonth(new Date(accrual.accruedAt));
+      const [year, month] = accrualPeriod.split("-").map(Number);
+      const duePeriod = month === 12
+        ? `${year + 1}-01`
+        : `${year}-${String(month + 1).padStart(2, "0")}`;
+      if (currentPeriod >= duePeriod) {
+        throw new Error("Insentif ini sudah melewati batas pemindahan sebelum tanggal 1 bulan gajian.");
+      }
+      if (db.journals.some((journal) =>
+        journal.sourceType === "COMPENSATION" && journal.sourceId === accrual.id
+      )) {
+        throw new Error("Insentif ini sudah memiliki jurnal akuntansi dan tidak dapat dipindahkan.");
+      }
+
+      const sourcePayroll = db.payrolls.find((payroll) =>
+        payroll.staffId === accrual.staffId &&
+        payroll.month === month &&
+        payroll.year === year
+      );
+      if (sourcePayroll && sourcePayroll.status !== "DRAFT") {
+        throw new Error("Insentif tidak dapat dipindahkan karena payroll staf lama sudah masuk tahap Review atau lebih lanjut.");
+      }
+      if (sourcePayroll && db.journals.some((journal) =>
+        journal.sourceType === "PAYROLL" && journal.sourceId === sourcePayroll.id
+      )) {
+        throw new Error("Payroll sumber sudah memiliki jurnal akuntansi dan tidak dapat diubah.");
+      }
+
+      const targetPayroll = db.payrolls.find((payroll) =>
+        payroll.staffId === targetStaff?.id &&
+        payroll.month === month &&
+        payroll.year === year
+      );
+      if (targetPayroll && targetPayroll.status !== "DRAFT") {
+        throw new Error("Payroll staf pengganti sudah masuk tahap Review atau lebih lanjut.");
+      }
+      if (targetPayroll && db.journals.some((journal) =>
+        journal.sourceType === "PAYROLL" && journal.sourceId === targetPayroll.id
+      )) {
+        throw new Error("Payroll staf pengganti sudah memiliki jurnal akuntansi dan tidak dapat diubah.");
+      }
+
+      const linkedItems = db.payrollItems.filter((item) => item.sourceId === accrual.id);
+      if (linkedItems.length > 1) {
+        throw new Error("Insentif terhubung ke lebih dari satu rincian payroll; periksa payroll sebelum memindahkan.");
+      }
+      for (const item of linkedItems) {
+        const itemPayroll = db.payrolls.find((payroll) => payroll.id === item.payrollId);
+        if (
+          !itemPayroll ||
+          itemPayroll.staffId !== accrual.staffId ||
+          itemPayroll.month !== month ||
+          itemPayroll.year !== year ||
+          item.type !== "EARNING"
+        ) {
+          throw new Error("Rincian insentif pada payroll tidak cocok dengan data akrual.");
+        }
+        payrollItemMoves.push({ item, targetPayrollId: targetPayroll?.id || null });
+        affectedPayrollIds.add(itemPayroll.id);
+        if (targetPayroll) affectedPayrollIds.add(targetPayroll.id);
+      }
+      if (linkedItems.length === 0 && targetPayroll) {
+        newPayrollItems.push({
+          id: `transfer-${accrual.id}`,
+          payrollId: targetPayroll.id,
+          descriptionSnapshot: `Insentif Referral Kunjungan (#${accrual.sourceId})`,
+          amountSnapshot: accrual.amount,
+          type: "EARNING",
+          sourceId: accrual.id
+        });
+        affectedPayrollIds.add(targetPayroll.id);
+      }
+    }
+
+    for (const payrollId of affectedPayrollIds) {
+      const taxItem = db.payrollItems.find((item) =>
+        item.payrollId === payrollId &&
+        item.type === "DEDUCTION" &&
+        item.descriptionSnapshot.startsWith("Potongan Pajak (")
+      );
+      if (taxItem && !/^Potongan Pajak \(\d+(?:\.\d+)?% dari bruto\)$/.test(taxItem.descriptionSnapshot)) {
+        throw new Error("Format potongan pajak payroll tidak dikenali; payroll Draft perlu diperiksa.");
+      }
+    }
+
+    for (const { item, targetPayrollId } of payrollItemMoves) {
+      if (targetPayrollId) {
+        item.payrollId = targetPayrollId;
+      } else {
+        db.payrollItems = db.payrollItems.filter((payrollItem) => payrollItem.id !== item.id);
+      }
+    }
+    db.payrollItems.push(...newPayrollItems);
+
+    if (targetStaff) {
+      for (const accrual of accruals) {
+        accrual.staffId = targetStaff.id;
+        accrual.branchId = targetStaff.branchId;
+      }
+    }
+    booking.referringStaffId = referringStaffId;
+    booking.updatedAt = new Date().toISOString();
+
+    for (const payrollId of affectedPayrollIds) {
+      const payroll = db.payrolls.find((item) => item.id === payrollId);
+      if (!payroll) continue;
+      const payrollItems = db.payrollItems.filter((item) => item.payrollId === payrollId);
+      const earnings = payrollItems.filter((item) => item.type === "EARNING");
+      const grossIncome = earnings.reduce((sum, item) => sum + item.amountSnapshot, 0);
+      const taxItem = payrollItems.find((item) =>
+        item.type === "DEDUCTION" && item.descriptionSnapshot.startsWith("Potongan Pajak (")
+      );
+      let taxAmount = 0;
+      if (taxItem) {
+        const rate = taxItem.descriptionSnapshot.match(/^Potongan Pajak \((\d+(?:\.\d+)?)% dari bruto\)$/);
+        if (!rate) throw new Error("Format potongan pajak payroll tidak dikenali; payroll Draft perlu diperiksa.");
+        taxAmount = Math.round(grossIncome * Number(rate[1]) / 100);
+        taxItem.amountSnapshot = taxAmount;
+      }
+      const totalDeductions = payrollItems
+        .filter((item) => item.type === "DEDUCTION")
+        .reduce((sum, item) => sum + item.amountSnapshot, 0);
+      payroll.totalCompensation = earnings
+        .filter((item) =>
+          !item.descriptionSnapshot.toLocaleLowerCase("id-ID").startsWith("gaji pokok") &&
+          !item.descriptionSnapshot.toLocaleLowerCase("id-ID").startsWith("lembur disetujui")
+        )
+        .reduce((sum, item) => sum + item.amountSnapshot, 0);
+      payroll.totalDeductions = totalDeductions;
+      payroll.netSalary = grossIncome - totalDeductions;
+      payroll.updatedAt = new Date().toISOString();
+    }
+
+    db.saveToStorage();
+    return {
+      booking: { ...booking },
+      transferredAccrualCount: accruals.length,
+      updatedDraftPayrollCount: affectedPayrollIds.size
+    };
+  }
+
   async getBookings(currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]> {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
       return db.bookings.filter((b) => b.branchId === userBranchId).map((b) => ({ ...b }));
@@ -4764,6 +4961,20 @@ export class MockCompensationRepository implements CompensationRepository {
     const nextEnd = updates.effectiveEndDate !== undefined ? updates.effectiveEndDate : rule.effectiveEndDate;
     const nextService = updates.serviceId !== undefined ? updates.serviceId : rule.serviceId;
     const nextBranch = updates.branchId !== undefined ? updates.branchId : rule.branchId;
+    const nextValue = updates.valueSnapshot !== undefined ? updates.valueSnapshot : rule.valueSnapshot;
+
+    if (
+      !Number.isFinite(nextValue) ||
+      (nextType === "TAX_PERCENTAGE" ? nextValue < 0 : nextValue <= 0)
+    ) {
+      throw new Error("Nilai kompensasi tidak valid.");
+    }
+    if (
+      (nextType === "PERCENTAGE" || nextType === "TAX_PERCENTAGE") &&
+      nextValue > 100
+    ) {
+      throw new Error("Persentase kompensasi tidak boleh lebih dari 100%.");
+    }
 
     if (nextType === "DOCTOR_SITTING_FEE") {
       const isDoc = (db.doctors || []).some((d: DentalDoctor) => d.id === nextStaffId) ||

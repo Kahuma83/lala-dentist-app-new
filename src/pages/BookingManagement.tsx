@@ -116,6 +116,11 @@ export const BookingManagement: React.FC = () => {
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => getWeekStart(getTodayDateString()));
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [isEditingBookingReferral, setIsEditingBookingReferral] = useState(false);
+  const [bookingReferralDraft, setBookingReferralDraft] = useState("");
+  const [isSavingBookingReferral, setIsSavingBookingReferral] = useState(false);
+  const [bookingReferralError, setBookingReferralError] = useState<string | null>(null);
+  const [bookingReferralSuccess, setBookingReferralSuccess] = useState<string | null>(null);
   const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleDoctorId, setRescheduleDoctorId] = useState("");
@@ -1003,6 +1008,42 @@ export const BookingManagement: React.FC = () => {
       }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveBookingReferral = async () => {
+    if (currentUser?.role !== UserRole.SUPER_ADMIN || !selectedBooking) return;
+    if (bookingReferralDraft && !referralStaffOptions.some((employee) => employee.id === bookingReferralDraft)) {
+      setBookingReferralError("Pilih referral dari daftar staf aktif yang tersedia.");
+      return;
+    }
+
+    setIsSavingBookingReferral(true);
+    setBookingReferralError(null);
+    setBookingReferralSuccess(null);
+    try {
+      const result = await repos.booking.updateBookingReferral(
+        selectedBooking.id,
+        bookingReferralDraft || null,
+        currentUser.role
+      );
+      const updatedBooking = result.booking;
+      setBookings((current) => current.map((booking) =>
+        booking.id === updatedBooking.id ? updatedBooking : booking
+      ));
+      setSelectedBooking(updatedBooking);
+      setIsEditingBookingReferral(false);
+      setBookingReferralError(null);
+      setBookingReferralSuccess(
+        result.transferredAccrualCount > 0
+          ? `${result.transferredAccrualCount} insentif dipindahkan ke staf baru${result.updatedDraftPayrollCount > 0 ? ` dan ${result.updatedDraftPayrollCount} payroll Draft diperbarui` : ""}.`
+          : "Referral berhasil diperbarui. Insentif yang belum tercatat akan menggunakan referral ini."
+      );
+    } catch (error) {
+      console.error("Gagal memperbarui referral booking:", error);
+      setBookingReferralError(error instanceof Error ? error.message : "Gagal menyimpan referral booking.");
+    } finally {
+      setIsSavingBookingReferral(false);
     }
   };
 
@@ -2989,24 +3030,98 @@ export const BookingManagement: React.FC = () => {
                 <h3 className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Keluhan / Catatan</h3>
                 <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-slate-700">{selectedBooking.notes || selectedBooking.complaint || "Belum dicatat"}</p>
               </section>
-              {selectedBooking.referringStaffId && (
-                <section className="rounded-2xl border border-violet-200 bg-violet-50/60 p-3.5">
+              <section className="rounded-2xl border border-violet-200 bg-violet-50/60 p-3.5">
+                <div className="flex items-center justify-between gap-2">
                   <h3 className="text-[10px] font-bold uppercase tracking-wide text-violet-700">Referral</h3>
-                  <p className="mt-1.5 text-xs font-semibold text-slate-700">
-                    {referralStaffOptions.find((employee) => employee.id === selectedBooking.referringStaffId)?.fullName
-                      || staff.find((employee) => employee.id === selectedBooking.referringStaffId)?.fullName
-                      || "Staf tidak ditemukan"}
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-slate-500">
-                    {(() => {
-                      const referralStaff = referralStaffOptions.find((employee) => employee.id === selectedBooking.referringStaffId);
-                      return referralStaff
-                        ? branches.find((branch) => isBranchMatch(branch.id, referralStaff.branchId, branches))?.name || (referralStaff.branchId || "Cabang belum ditetapkan")
-                        : "";
-                    })()}
-                  </p>
-                </section>
-              )}
+                  {currentUser?.role === UserRole.SUPER_ADMIN && !isEditingBookingReferral && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBookingReferralDraft(selectedBooking.referringStaffId || "");
+                        setBookingReferralError(null);
+                        setBookingReferralSuccess(null);
+                        setIsEditingBookingReferral(true);
+                      }}
+                      className="rounded-lg border border-violet-200 bg-white px-2.5 py-1 text-[10px] font-bold text-violet-700 hover:bg-violet-100"
+                    >
+                      Edit referral
+                    </button>
+                  )}
+                </div>
+                {bookingReferralSuccess && <p role="status" className="mt-2 text-[10px] text-emerald-700">{bookingReferralSuccess}</p>}
+                {isEditingBookingReferral && currentUser?.role === UserRole.SUPER_ADMIN ? (
+                  <div className="mt-2 space-y-2">
+                    <select
+                      value={bookingReferralDraft}
+                      onChange={(event) => setBookingReferralDraft(event.target.value)}
+                      disabled={referralStaffLoading || isSavingBookingReferral}
+                      aria-label="Pilih referral booking"
+                      className="w-full rounded-lg border border-violet-200 bg-white p-2 text-xs disabled:bg-slate-100"
+                    >
+                      <option value="">Tanpa referral</option>
+                      {referralStaffOptions.map((employee) => {
+                        const branchName = branches.find((branch) =>
+                          isBranchMatch(branch.id, employee.branchId, branches)
+                        )?.name || "Cabang belum ditetapkan";
+                        const positionName = employee.position === StaffPosition.BRANCH_ADMIN ? "Admin Cabang" : "Asisten";
+                        return (
+                          <option key={employee.id} value={employee.id}>
+                            {employee.fullName} · {positionName} · {branchName}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {referralStaffLoading && <p className="text-[10px] text-slate-500">Memuat staf referral aktif...</p>}
+                    {referralStaffError && <p role="alert" className="text-[10px] text-rose-700">{referralStaffError}</p>}
+                    {bookingReferralError && <p role="alert" className="text-[10px] text-rose-700">{bookingReferralError}</p>}
+                    <p className="text-[10px] text-slate-500">
+                      Insentif yang sudah tercatat ikut dipindahkan sebelum tanggal 1, selama payroll masih Draft dan belum memiliki jurnal.
+                    </p>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingBookingReferral(false);
+                          setBookingReferralError(null);
+                          setBookingReferralSuccess(null);
+                        }}
+                        disabled={isSavingBookingReferral}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveBookingReferral}
+                        disabled={referralStaffLoading || !!referralStaffError || isSavingBookingReferral}
+                        className="rounded-lg bg-violet-700 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isSavingBookingReferral ? "Menyimpan..." : "Simpan referral"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="mt-1.5 text-xs font-semibold text-slate-700">
+                      {selectedBooking.referringStaffId
+                        ? referralStaffOptions.find((employee) => employee.id === selectedBooking.referringStaffId)?.fullName
+                          || staff.find((employee) => employee.id === selectedBooking.referringStaffId)?.fullName
+                          || "Staf tidak ditemukan"
+                        : "Belum ada referral"}
+                    </p>
+                    {selectedBooking.referringStaffId && (
+                      <p className="mt-0.5 text-[10px] text-slate-500">
+                        {(() => {
+                          const referralStaff = referralStaffOptions.find((employee) => employee.id === selectedBooking.referringStaffId);
+                          return referralStaff
+                            ? branches.find((branch) => isBranchMatch(branch.id, referralStaff.branchId, branches))?.name || (referralStaff.branchId || "Cabang belum ditetapkan")
+                            : "";
+                        })()}
+                      </p>
+                    )}
+                  </>
+                )}
+              </section>
               {selectedBooking.plannedTreatments && selectedBooking.plannedTreatments.length > 0 && (
                 <section className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-3.5">
                   <h3 className="text-[10px] font-bold uppercase tracking-wide text-amber-800">Rencana tindakan · Estimasi</h3>
