@@ -1,5 +1,5 @@
 export interface DoctorPortalBookingDateRange {
-  dates: [string, string];
+  dates: [string, string, string];
   startsAt: string;
   endsBefore: string;
 }
@@ -14,8 +14,8 @@ export function getDoctorPortalBookingDateRange(today: string): DoctorPortalBook
   const tomorrow = addDays(today, 1);
   const dayAfterTomorrow = addDays(today, 2);
   return {
-    dates: [tomorrow, dayAfterTomorrow],
-    startsAt: `${tomorrow}T00:00:00+07:00`,
+    dates: [today, tomorrow, dayAfterTomorrow],
+    startsAt: `${today}T00:00:00+07:00`,
     endsBefore: `${addDays(dayAfterTomorrow, 1)}T00:00:00+07:00`
   };
 }
