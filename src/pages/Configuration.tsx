@@ -3169,7 +3169,7 @@ export const Configuration: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                    Nama Tampilan Dokter *
+                    Nama Panggilan / Tampilan Aplikasi *
                   </label>
                   <input
                     type="text"
@@ -3184,7 +3184,7 @@ export const Configuration: React.FC = () => {
 
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                    Nama Lengkap untuk Rekam Medis *
+                    Nama Lengkap untuk Dokumen Medis *
                   </label>
                   <input
                     type="text"

@@ -11,6 +11,7 @@ import {
   PrescriptionMedicine,
   UserRole
 } from "../../types/domain";
+import { getDoctorDocumentName } from "../../utils/doctorNameUtils";
 
 export type ClinicalDocumentType = "prescription" | "sick-note" | "referral";
 
@@ -279,7 +280,7 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
   const branchName = branch?.branchName || branch?.name || "";
   const address = branch?.address || branding?.address || "";
   const phone = branch?.phone || branding?.phone || "";
-  const doctorName = doctor?.fullName || doctor?.name || "Dokter";
+  const doctorName = getDoctorDocumentName(doctor);
   const logo = branch?.logoUrl || branding?.logoUrl || "/logo-lala.svg";
   const currentDocumentType = typeToDocumentType[type];
   const matchingDocuments = useMemo(
@@ -295,7 +296,8 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
   const documentBranchName = fields.__branchName || branchName;
   const documentAddress = fields.__clinicAddress || address;
   const documentPhone = fields.__clinicPhone || phone;
-  const documentDoctorName = fields.__doctorName || doctorName;
+  const documentDoctorName = getDoctorDocumentName(doctor, fields.__doctorName)
+    || "Nama lengkap dokter belum dilengkapi";
   const documentDoctorSip = fields.__doctorSip || doctor?.sip || "";
   const documentLogo = fields.__logoUrl || logo;
   const documentDate = fields.__issuedDate || today;
@@ -390,6 +392,7 @@ export const DoctorClinicalDocument: React.FC<DoctorClinicalDocumentProps> = ({
   };
 
   const validationError = () => {
+    if (!doctorName) return "Lengkapi nama lengkap dokter pada pengaturan sebelum membuat dokumen.";
     if (type === "prescription") {
       if (prescriptionItems.length === 0) return "Tambahkan minimal satu obat ke resep.";
       const incompleteItem = prescriptionItems.find((item) =>

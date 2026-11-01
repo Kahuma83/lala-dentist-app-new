@@ -1,3 +1,5 @@
+import { getBookingConflictMessage } from "../_shared/booking-conflicts.js";
+
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: {
@@ -350,7 +352,7 @@ export const onRequestPost = async ({ request, env }) => {
       return jsonResponse({ message: "Unauthorized: sesi login tidak valid." }, 401);
     }
     if (error?.code === "23505") {
-      return jsonResponse({ message: "Slot booking baru saja digunakan. Silakan pilih waktu lain." }, 409);
+      return jsonResponse({ message: getBookingConflictMessage(error, payload?.time_slot) }, 409);
     }
     console.error("[pages-function] Booking request failed:", error);
     return jsonResponse({

@@ -1179,7 +1179,7 @@ export const PatientManagement: React.FC = () => {
               (first.fullName || first.name).localeCompare(second.fullName || second.name, "id")
             )}
           profile={medicalProfile}
-          doctorName={existingMR?.doctorNameSnapshot || currentUser?.name || "Dokter"}
+          doctorNameSnapshot={existingMR?.doctorNameSnapshot}
           record={{
             chiefComplaint: mrForm.chiefComplaint,
             anamnesis: mrForm.anamnesis,

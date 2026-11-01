@@ -50,10 +50,15 @@ import { useRouter } from "../components/Router";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { TreatmentPicker } from "../components/TreatmentPicker";
 import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapshotPlannedTreatments } from "../utils/plannedTreatmentUtils";
-import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
+import {
+  DEFAULT_BOOKING_TIME_SLOTS,
+  getScheduledBookingTimeSlots,
+  syncBookingTimeSlot
+} from "../utils/bookingScheduleUtils";
 import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate, isActiveQueueStatus } from "../utils/bookingQueueGuards";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { getCheckInCancellationBlockReason } from "../utils/bookingCancellation";
+import { WalkInBookingDemo } from "../components/WalkInBookingDemo";
 
 const addCalendarDays = (date: string, days: number) => {
   const value = new Date(`${date}T12:00:00Z`);
@@ -128,6 +133,7 @@ export const BookingManagement: React.FC = () => {
   const [formDoctorId, setFormDoctorId] = useState<string>("");
   const [formDate, setFormDate] = useState<string>(getTomorrowDateString());
   const [formTimeSlot, setFormTimeSlot] = useState<string>("");
+  const [requireExplicitTimeSelection, setRequireExplicitTimeSelection] = useState(false);
   const [formReferringStaffId, setFormReferringStaffId] = useState("");
   const [referringStaffSearch, setReferringStaffSearch] = useState("");
   const [referralStaffOptions, setReferralStaffOptions] = useState<BookingReferralStaffOption[]>([]);
@@ -407,6 +413,7 @@ export const BookingManagement: React.FC = () => {
     setFormDate(getTodayDateString());
     setFormDoctorId("");
     setFormTimeSlot("");
+    setRequireExplicitTimeSelection(false);
     setFormReferringStaffId("");
     setReferringStaffSearch("");
     setSelectedPatient(patient || null);
@@ -532,12 +539,13 @@ export const BookingManagement: React.FC = () => {
 
   // Sync formTimeSlot when availableTimeSlots changes
   useEffect(() => {
-    if (formTimeSlot && !availableTimeSlots.includes(formTimeSlot)) {
-      setFormTimeSlot(availableTimeSlots[0] || "");
-    } else if (!formTimeSlot && availableTimeSlots.length > 0) {
-      setFormTimeSlot(availableTimeSlots[0]);
-    }
-  }, [availableTimeSlots, formTimeSlot]);
+    const syncedSlot = syncBookingTimeSlot(
+      formTimeSlot,
+      availableTimeSlots,
+      requireExplicitTimeSelection
+    );
+    if (syncedSlot !== formTimeSlot) setFormTimeSlot(syncedSlot);
+  }, [availableTimeSlots, formTimeSlot, requireExplicitTimeSelection]);
 
   // Track bookings whose queue or visit has finished
   const completedBookingIds = useMemo(() => {
@@ -983,7 +991,15 @@ export const BookingManagement: React.FC = () => {
         setFormSuccess(null);
       }, 800);
     } catch (err: any) {
-      setFormError(err.message || "Gagal membuat booking");
+      const errorMessage = err instanceof Error ? err.message : "Gagal membuat booking";
+      if (/slot|booking aktif|bertabrakan|konflik/i.test(errorMessage)) {
+        setRequireExplicitTimeSelection(true);
+        setFormTimeSlot("");
+        await loadData();
+        setFormError(`${errorMessage} Slot dan booking telah dimuat ulang.`);
+      } else {
+        setFormError(errorMessage);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -2154,6 +2170,14 @@ export const BookingManagement: React.FC = () => {
               </button>
             </div>
 
+            <WalkInBookingDemo
+              branchId={formBranchId}
+              doctors={doctorsList}
+              schedules={schedulesList}
+              bookings={bookings}
+              queueItems={queueItems}
+            />
+
             {formError && (
               <div className="p-3 bg-rose-50 text-rose-800 border border-rose-200 rounded-lg text-xs font-medium flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -2596,10 +2620,16 @@ export const BookingManagement: React.FC = () => {
                   </label>
                   <select
                     value={formTimeSlot}
-                    onChange={(e) => setFormTimeSlot(e.target.value)}
+                    onChange={(e) => {
+                      setFormTimeSlot(e.target.value);
+                      setRequireExplicitTimeSelection(false);
+                    }}
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium"
                     id="select-modal-timeslot"
                   >
+                    {requireExplicitTimeSelection && !formTimeSlot && (
+                      <option value="" disabled>Pilih ulang slot waktu</option>
+                    )}
                     {availableTimeSlots.map((slot) => (
                       <option key={slot} value={slot}>
                         {slot} WIB

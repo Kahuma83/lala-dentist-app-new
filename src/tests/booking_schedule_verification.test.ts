@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { MockDatabase } from "../data/mockData";
 import { MockBookingRepository, MockDoctorScheduleRepository } from "../repositories/mockRepositories";
 import { BookingStatus, ScheduleStatus } from "../types/domain";
+import { syncBookingTimeSlot } from "../utils/bookingScheduleUtils";
 
 describe("Booking Schedule Verification Tests", () => {
   let bookingRepo: MockBookingRepository;
@@ -160,5 +161,12 @@ describe("Booking Schedule Verification Tests", () => {
 
     // Doctor is NOT scheduled at branch-ambulu on testDate
     expect(isDoctorScheduledAtBranch).toBe(false);
+  });
+
+  it("requires an explicit new time selection after a booking conflict", () => {
+    const refreshedSlots = ["09:30", "10:00"];
+    expect(syncBookingTimeSlot("", refreshedSlots, true)).toBe("");
+    expect(syncBookingTimeSlot("09:30", refreshedSlots, true)).toBe("09:30");
+    expect(syncBookingTimeSlot("", refreshedSlots)).toBe("09:30");
   });
 });
