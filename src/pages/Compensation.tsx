@@ -3,6 +3,7 @@ import { useApp } from "../context/AppContext";
 import { useRouter } from "../components/Router";
 import {
   StaffCompensationRule,
+  ReferralIncentiveRate,
   CompensationAccrual,
   UserRole,
   JournalEntry,
@@ -38,6 +39,41 @@ import {
   ToggleRight,
   Trash2
 } from "lucide-react";
+import { normalizeReferralServiceName } from "../utils/referralIncentives";
+
+type CompensationRuleType = "PERCENTAGE" | "FIXED_PER_TREATMENT" | "BASE_SALARY" | "TAX_PERCENTAGE";
+
+const compensationRuleOptions: Array<{
+  type: CompensationRuleType;
+  label: string;
+  description: string;
+  defaultValue: number;
+}> = [
+  {
+    type: "PERCENTAGE",
+    label: "Bagi hasil persentase tindakan",
+    description: "Persentase komisi dari tindakan yang dikerjakan.",
+    defaultValue: 30
+  },
+  {
+    type: "FIXED_PER_TREATMENT",
+    label: "Flat fee per tindakan",
+    description: "Nominal tetap untuk setiap tindakan.",
+    defaultValue: 50000
+  },
+  {
+    type: "BASE_SALARY",
+    label: "Gaji pokok bulanan",
+    description: "Nominal default gaji pokok saat payroll dibuat.",
+    defaultValue: 2500000
+  },
+  {
+    type: "TAX_PERCENTAGE",
+    label: "Potongan pajak payroll",
+    description: "Persentase potongan dari penghasilan bruto pegawai.",
+    defaultValue: 2.5
+  }
+];
 
 export const Compensation: React.FC = () => {
   const {
@@ -54,6 +90,7 @@ export const Compensation: React.FC = () => {
   const { navigate } = useRouter();
 
   const [rules, setRules] = useState<StaffCompensationRule[]>([]);
+  const [referralRates, setReferralRates] = useState<ReferralIncentiveRate[]>([]);
   const [accruals, setAccruals] = useState<CompensationAccrual[]>([]);
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
   const [staffList, setStaffList] = useState<Staff[]>([]);
@@ -80,13 +117,42 @@ export const Compensation: React.FC = () => {
 
   // Rule Modal state
   const [formStaffId, setFormStaffId] = useState("");
-  const [formName, setFormName] = useState("");
-  const [formType, setFormType] = useState<"PERCENTAGE" | "FIXED_PER_TREATMENT" | "BASE_SALARY" | "TAX_PERCENTAGE">("PERCENTAGE");
-  const [formValue, setFormValue] = useState<number>(30);
-  const [formServiceId, setFormServiceId] = useState<string>("");
+  const [selectedRuleTypes, setSelectedRuleTypes] = useState<CompensationRuleType[]>(["BASE_SALARY"]);
+  const [includeReferralRate, setIncludeReferralRate] = useState(false);
+  const [formValues, setFormValues] = useState<Record<CompensationRuleType, number>>({
+    PERCENTAGE: 30,
+    FIXED_PER_TREATMENT: 50000,
+    BASE_SALARY: 2500000,
+    TAX_PERCENTAGE: 2.5
+  });
+  const [formServiceIds, setFormServiceIds] = useState<Record<"PERCENTAGE" | "FIXED_PER_TREATMENT", string>>({
+    PERCENTAGE: "",
+    FIXED_PER_TREATMENT: ""
+  });
   const [formBranchId, setFormBranchId] = useState("");
   const [formError, setFormError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingReferralRate, setEditingReferralRate] = useState<ReferralIncentiveRate | null>(null);
+  const [referralCustomServiceName, setReferralCustomServiceName] = useState("");
+  const [referralFormAmount, setReferralFormAmount] = useState(0);
+  const [referralFormIsActive, setReferralFormIsActive] = useState(true);
+
+  const sharedReferralRateGroups = useMemo(() => {
+    const groups = new Map<string, ReferralIncentiveRate[]>();
+    for (const rate of referralRates) {
+      const key = normalizeReferralServiceName(rate.serviceName);
+      groups.set(key, [...(groups.get(key) || []), rate]);
+    }
+    return [...groups.values()].map((rates) => ({
+      rates,
+      amount: rates[0].amount,
+      amountsMatch: rates.every((rate) => rate.amount === rates[0].amount),
+      active: rates.every((rate) => rate.isActive),
+      hasBothPositions: rates.some((rate) => rate.staffPosition === StaffPosition.BRANCH_ADMIN) &&
+        rates.some((rate) => rate.staffPosition === StaffPosition.ASSISTANT),
+      statusesMatch: rates.every((rate) => rate.isActive === rates[0].isActive)
+    }));
+  }, [referralRates]);
 
   const isAssistant = currentUser?.role === UserRole.DOCTOR_ASSISTANT;
 
@@ -95,7 +161,7 @@ export const Compensation: React.FC = () => {
     setErrorMessage(null);
     try {
       const assistantStaffId = isAssistant ? (currentUser?.staffId || currentUser?.id) : undefined;
-      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList] = await Promise.all([
+      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList, referralRateList] = await Promise.all([
         compRepo.getCompensationRules(),
         compRepo.getCompensationAccruals(assistantStaffId),
         doctorRepo.getDoctors(),
@@ -107,7 +173,10 @@ export const Compensation: React.FC = () => {
             ? { branchId: currentUser.branchId }
             : undefined
         ),
-        doctorRepo.getDoctorBranchAssignments()
+        doctorRepo.getDoctorBranchAssignments(),
+        currentUser?.role === UserRole.SUPER_ADMIN
+          ? compRepo.getReferralIncentiveRates()
+          : Promise.resolve([])
       ]);
 
       let filteredAccruals = aList;
@@ -118,6 +187,7 @@ export const Compensation: React.FC = () => {
       }
 
       setRules(rList);
+      setReferralRates(referralRateList);
       setAccruals(filteredAccruals);
       setDoctors(dList);
       setStaffList(sList);
@@ -241,13 +311,17 @@ export const Compensation: React.FC = () => {
 
   const handleCreateRule = async (e: React.FormEvent) => {
     e.preventDefault();
+    const referralServiceName = referralCustomServiceName.trim() || null;
     if (
-      !formStaffId ||
-      !formName ||
-      !formBranchId ||
-      formValue < 0 ||
-      (formType !== "TAX_PERCENTAGE" && formValue === 0) ||
-      ((formType === "TAX_PERCENTAGE" || formType === "PERCENTAGE") && formValue > 100)
+      (selectedRuleTypes.length === 0 && !includeReferralRate) ||
+      (selectedRuleTypes.length > 0 && (!formStaffId || !formBranchId)) ||
+      selectedRuleTypes.some((type) =>
+        formValues[type] < 0 ||
+        (type !== "TAX_PERCENTAGE" && formValues[type] === 0) ||
+        ((type === "TAX_PERCENTAGE" || type === "PERCENTAGE") && formValues[type] > 100)
+      ) ||
+      (includeReferralRate && (!Number.isFinite(referralFormAmount) || referralFormAmount <= 0)) ||
+      (includeReferralRate && referralServiceName && referralServiceName.length > 120)
     ) {
       setFormError("Mohon lengkapi semua field dengan benar");
       return;
@@ -255,20 +329,57 @@ export const Compensation: React.FC = () => {
 
     setIsSubmitting(true);
     setFormError("");
+    const createdTypes: CompensationRuleType[] = [];
+    let referralRateSaved = false;
     try {
-      await compRepo.createCompensationRule({
-        staffId: formStaffId,
-        name: formName,
-        ruleTypeSnapshot: formType,
-        valueSnapshot: Number(formValue),
-        serviceId: formType === "PERCENTAGE" || formType === "FIXED_PER_TREATMENT" ? formServiceId || null : null,
-        branchId: formBranchId,
-        isActive: true
-      });
+      for (const type of selectedRuleTypes) {
+        const option = compensationRuleOptions.find((item) => item.type === type);
+        const serviceId = type === "PERCENTAGE" || type === "FIXED_PER_TREATMENT"
+          ? formServiceIds[type] || null
+          : null;
+        const serviceName = serviceId
+          ? services.find((service) => service.id === serviceId)?.name
+          : null;
+        await compRepo.createCompensationRule({
+          staffId: formStaffId,
+          name: `${option?.label || "Aturan kompensasi"}${serviceName ? ` - ${serviceName}` : ""}`,
+          ruleTypeSnapshot: type,
+          valueSnapshot: Number(formValues[type]),
+          serviceId,
+          branchId: formBranchId,
+          isActive: true
+        });
+        createdTypes.push(type);
+      }
+      if (includeReferralRate) {
+        if (currentUser?.role !== UserRole.SUPER_ADMIN) {
+          throw new Error("Hanya Super Admin yang dapat mengatur tarif insentif referral.");
+        }
+        await compRepo.saveReferralIncentiveRate({
+          id: editingReferralRate?.id,
+          staffPosition: StaffPosition.BRANCH_ADMIN,
+          serviceName: referralServiceName,
+          amount: Math.round(referralFormAmount),
+          isActive: referralFormIsActive
+        }, currentUser.role);
+        referralRateSaved = true;
+      }
       setShowRuleModal(false);
+      setEditingReferralRate(null);
       await loadData();
+      setFeedbackMessage("Aturan kompensasi berhasil disimpan.");
     } catch (err: any) {
-      setFormError(err.message || "Gagal membuat aturan kompensasi");
+      if (createdTypes.length > 0 || referralRateSaved) {
+        const remainingTypes = selectedRuleTypes.filter((type) => !createdTypes.includes(type));
+        setSelectedRuleTypes(remainingTypes);
+        if (referralRateSaved) setIncludeReferralRate(false);
+        await loadData();
+        setFormError(
+          `${createdTypes.length + (referralRateSaved ? 1 : 0)} komponen berhasil disimpan. Komponen lainnya gagal: ${err.message || "Gagal membuat aturan kompensasi"}. Silakan periksa daftar aturan sebelum mencoba lagi.`
+        );
+      } else {
+        setFormError(err.message || "Gagal membuat aturan kompensasi");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -400,6 +511,18 @@ export const Compensation: React.FC = () => {
   );
 
   const totalAccruedAmount = accruals.reduce((sum, a) => sum + a.amount, 0);
+  const openReferralRateModal = (rate?: ReferralIncentiveRate) => {
+    setEditingReferralRate(rate || null);
+    setSelectedRuleTypes([]);
+    setIncludeReferralRate(true);
+    setFormStaffId("");
+    setFormBranchId(selectedBranchId);
+    setReferralCustomServiceName(rate?.serviceName || "");
+    setReferralFormAmount(rate?.amount ?? 0);
+    setReferralFormIsActive(rate?.isActive ?? true);
+    setFormError("");
+    setShowRuleModal(true);
+  };
 
   return (
     <div className="space-y-6" id="compensation-page">
@@ -422,11 +545,20 @@ export const Compensation: React.FC = () => {
             onClick={() => {
               const defaultStaff = availableDoctorsFirst();
               setFormStaffId(defaultStaff);
-              setFormName("");
-              setFormType("BASE_SALARY");
-              setFormValue(2500000);
-              setFormServiceId("");
+              setSelectedRuleTypes(["BASE_SALARY"]);
+              setIncludeReferralRate(false);
+              setEditingReferralRate(null);
+              setFormValues({
+                PERCENTAGE: 30,
+                FIXED_PER_TREATMENT: 50000,
+                BASE_SALARY: 2500000,
+                TAX_PERCENTAGE: 2.5
+              });
+              setFormServiceIds({ PERCENTAGE: "", FIXED_PER_TREATMENT: "" });
               setFormBranchId(currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.branchId || "" : selectedBranchId);
+              setReferralCustomServiceName("");
+              setReferralFormAmount(0);
+              setReferralFormIsActive(true);
               setFormError("");
               setShowRuleModal(true);
             }}
@@ -781,6 +913,69 @@ export const Compensation: React.FC = () => {
               </tbody>
             </table>
           </div>
+          {currentUser?.role === UserRole.SUPER_ADMIN && (
+            <section className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
+              <div className="border-b border-slate-100 p-4">
+                <h2 className="text-sm font-bold text-slate-900">Tarif Referral Admin & Asisten</h2>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Satu tarif berlaku untuk Admin maupun Asisten yang dipilih pada Referral di booking.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                      <th className="px-4 py-3">Jenis penerima</th>
+                      <th className="px-4 py-3">Tindakan</th>
+                      <th className="px-4 py-3 text-right">Tarif per tindakan</th>
+                      <th className="px-4 py-3 text-center">Status</th>
+                      <th className="px-4 py-3 text-center">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                    {sharedReferralRateGroups.map(({ rates, amount, amountsMatch, active, hasBothPositions, statusesMatch }) => (
+                      <tr key={normalizeReferralServiceName(rates[0].serviceName)}>
+                        <td className="px-4 py-3 font-semibold">Admin & Asisten</td>
+                        <td className="px-4 py-3">{rates[0].serviceName || "Tarif dasar — tindakan lain"}</td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold">
+                          {amountsMatch ? `Rp ${amount.toLocaleString("id-ID")}` : "Nominal belum seragam"}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                            amountsMatch && hasBothPositions && statusesMatch && active
+                              ? "bg-emerald-50 text-emerald-700"
+                              : amountsMatch && hasBothPositions && statusesMatch
+                              ? "bg-slate-100 text-slate-500"
+                              : "bg-amber-50 text-amber-700"
+                          }`}>
+                            {amountsMatch && hasBothPositions && statusesMatch
+                              ? active ? "Aktif" : "Nonaktif"
+                              : "Perlu disamakan"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => openReferralRateModal(rates[0])}
+                            className="rounded-md border border-slate-200 px-2.5 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            Ubah
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {referralRates.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                          Belum ada tarif referral. Tambahkan tarif melalui jendela aturan kompensasi.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </div>
       )}
 
@@ -910,7 +1105,7 @@ export const Compensation: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Plus className="w-5 h-5 text-emerald-600" />
-                Tambah Aturan Kompensasi & Gaji Pokok
+                {editingReferralRate ? "Ubah Aturan Kompensasi & Insentif Referral" : "Tambah Aturan Kompensasi & Gaji Pokok"}
               </h3>
               <button
                 onClick={() => setShowRuleModal(false)}
@@ -928,6 +1123,8 @@ export const Compensation: React.FC = () => {
                 </div>
               )}
 
+              {selectedRuleTypes.length > 0 && (
+              <>
               {/* Staff Selector */}
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
@@ -984,35 +1181,6 @@ export const Compensation: React.FC = () => {
                 </select>
               </div>
 
-              {/* Rule Type */}
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                  Tipe Aturan Kompensasi *
-                </label>
-                <select
-                  value={formType}
-                  onChange={(e) => {
-                    const nextType = e.target.value as "PERCENTAGE" | "FIXED_PER_TREATMENT" | "BASE_SALARY" | "TAX_PERCENTAGE";
-                    setFormType(nextType);
-                    if (nextType === "TAX_PERCENTAGE" && (formValue <= 0 || formValue > 100)) {
-                      setFormValue(2.5);
-                    } else if (nextType === "BASE_SALARY" && formValue < 1000000) {
-                      setFormValue(2500000);
-                    } else if (nextType === "PERCENTAGE" && formValue > 100) {
-                      setFormValue(35);
-                    } else if (nextType === "FIXED_PER_TREATMENT" && formValue <= 100) {
-                      setFormValue(50000);
-                    }
-                  }}
-                  className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value="PERCENTAGE">Bagi Hasil Persentase Tindakan (%)</option>
-                  <option value="FIXED_PER_TREATMENT">Nominal Flat Fee per Tindakan (Rp)</option>
-                  <option value="BASE_SALARY">Gaji Pokok Tetap Bulanan / Base Salary (Rp)</option>
-                  <option value="TAX_PERCENTAGE">Potongan Pajak Payroll (%)</option>
-                </select>
-              </div>
-
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
                   Cabang *
@@ -1033,83 +1201,185 @@ export const Compensation: React.FC = () => {
                   Cabang mengikuti kartu cabang yang dipilih di halaman ini. Untuk membuat aturan di cabang lain, tutup formulir lalu pilih cabang tersebut.
                 </span>
               </div>
-
-              {/* Service Target (Optional for commissions, disabled for base salary) */}
-              {(formType === "PERCENTAGE" || formType === "FIXED_PER_TREATMENT") && (
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                    Cakupan Layanan Tindakan
-                  </label>
-                  <select
-                    value={formServiceId}
-                    onChange={(e) => setFormServiceId(e.target.value)}
-                    className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="">Semua Layanan Tindakan (Global)</option>
-                    {services.map((srv) => (
-                      <option key={srv.id} value={srv.id}>
-                        {srv.name} (Dasar: Rp {srv.basePrice.toLocaleString("id-ID")})
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-slate-400 mt-1 block">
-                    * Kosongkan jika skema berlaku untuk seluruh tindakan dokter/asisten.
-                  </span>
-                </div>
+              </>
               )}
 
-              {/* Rule Name */}
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                  Nama Skema / Deskripsi *
-                </label>
-                <input
-                  type="text"
-                  placeholder={
-                    formType === "BASE_SALARY"
-                      ? "Contoh: Gaji Pokok Tetap Staff Admin"
-                      : formType === "TAX_PERCENTAGE"
-                      ? "Contoh: Pajak Dokter Cabang Gebang"
-                      : "Contoh: Komisi Tindakan Scaling 35%"
-                  }
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  required
-                  className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              {/* Value Input */}
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                  {formType === "TAX_PERCENTAGE"
-                    ? "Persentase Pajak (%) *"
-                    : formType === "PERCENTAGE"
-                    ? "Persentase Komisi (%) *"
-                    : formType === "BASE_SALARY"
-                    ? "Nominal Gaji Pokok Bulanan (Rp) *"
-                    : "Nominal Flat per Tindakan (Rp) *"}
-                </label>
-                <input
-                  type="number"
-                  min={formType === "TAX_PERCENTAGE" ? "0" : "1"}
-                  max={formType === "PERCENTAGE" || formType === "TAX_PERCENTAGE" ? 100 : undefined}
-                  step={formType === "PERCENTAGE" || formType === "TAX_PERCENTAGE" ? "0.1" : "1"}
-                  value={formValue}
-                  onChange={(e) => setFormValue(parseFloat(e.target.value) || 0)}
-                  required
-                  className="w-full text-sm font-bold border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                />
-                {formType === "BASE_SALARY" && (
-                  <span className="text-[10px] text-indigo-600 mt-1 block">
-                    * Nominal ini akan otomatis ditarik sebagai default gaji pokok saat payroll bulanan di-generate.
-                  </span>
-                )}
-                {formType === "TAX_PERCENTAGE" && (
-                  <span className="text-[10px] text-rose-600 mt-1 block">
-                    Persentase dipotong dari penghasilan bruto dokter pada slip cabang ini; tidak ada porsi pajak yang dibebankan ke klinik.
-                  </span>
-                )}
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <label className="block text-[11px] font-semibold text-slate-700 uppercase">
+                  Pilih Komponen Kompensasi
+                  </label>
+                  <span className="text-[10px] text-slate-400">Komponen tercentang akan disimpan</span>
+                </div>
+                <div className="space-y-2">
+                  {compensationRuleOptions.map((option) => {
+                    const checked = selectedRuleTypes.includes(option.type);
+                    const isPercentage = option.type === "PERCENTAGE" || option.type === "TAX_PERCENTAGE";
+                    const isTreatmentRule = option.type === "PERCENTAGE" || option.type === "FIXED_PER_TREATMENT";
+                    const serviceType = option.type === "PERCENTAGE"
+                      ? "PERCENTAGE"
+                      : "FIXED_PER_TREATMENT";
+                    const valueLabel = option.type === "PERCENTAGE"
+                      ? "Persentase komisi (%)"
+                      : option.type === "TAX_PERCENTAGE"
+                      ? "Persentase potongan pajak (%)"
+                      : option.type === "BASE_SALARY"
+                      ? "Gaji pokok bulanan (Rp)"
+                      : "Flat fee per tindakan (Rp)";
+                    return (
+                      <React.Fragment key={option.type}>
+                      {option.type === "BASE_SALARY" && currentUser?.role === UserRole.SUPER_ADMIN && (
+                        <fieldset className={`rounded-lg border p-3 transition-colors ${includeReferralRate ? "border-emerald-300 bg-emerald-50/40" : "border-slate-200 bg-white"}`}>
+                          <label className="flex cursor-pointer items-start gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={includeReferralRate}
+                              onChange={(event) => setIncludeReferralRate(event.target.checked)}
+                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            <span>
+                              <span className="block text-xs font-semibold text-slate-800">Insentif referral tindakan</span>
+                              <span className="mt-0.5 block text-[10px] text-slate-500">
+                                Tarif yang sama berlaku untuk Admin maupun Asisten yang dipilih sebagai Referral di booking.
+                              </span>
+                            </span>
+                          </label>
+                          {includeReferralRate && (
+                            <div className="mt-3 space-y-3 pl-6">
+                              <div>
+                                <label htmlFor="referral-service-name" className="mb-1 block text-[10px] font-semibold text-slate-600">
+                                  Tindakan (kosongkan untuk tarif dasar)
+                                </label>
+                                <input
+                                  id="referral-service-name"
+                                  list="referral-service-options"
+                                  maxLength={120}
+                                  value={referralCustomServiceName}
+                                  onChange={(event) => setReferralCustomServiceName(event.target.value)}
+                                  placeholder="Tarif dasar — tindakan lain"
+                                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
+                                />
+                                <datalist id="referral-service-options">
+                                  {[...new Set([
+                                    ...services.map((service) => service.name),
+                                    ...referralRates.map((rate) => rate.serviceName).filter((name): name is string => Boolean(name))
+                                  ])].map((name) => (
+                                    <option key={name} value={name} />
+                                  ))}
+                                </datalist>
+                              </div>
+                              <div>
+                                <label htmlFor="referral-rate-amount" className="mb-1 block text-[10px] font-semibold text-slate-600">
+                                  Nominal referral per tindakan (Rp)
+                                </label>
+                                <input
+                                  id="referral-rate-amount"
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  required={includeReferralRate}
+                                  value={referralFormAmount}
+                                  onChange={(event) => setReferralFormAmount(Number(event.target.value))}
+                                  className="w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-sm"
+                                />
+                              </div>
+                              {referralCustomServiceName.trim() && (
+                                <label className="flex items-center gap-2 text-[10px] font-medium text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={referralFormIsActive}
+                                    onChange={(event) => setReferralFormIsActive(event.target.checked)}
+                                    className="rounded border-slate-300 text-emerald-600"
+                                  />
+                                  Tarif aktif untuk tindakan referral ini
+                                </label>
+                              )}
+                              <p className="text-[10px] text-slate-500">
+                                Tarif dasar berlaku untuk tindakan tanpa tarif khusus. Flat fee per tindakan asisten tetap diatur terpisah.
+                              </p>
+                            </div>
+                          )}
+                        </fieldset>
+                      )}
+                      <fieldset
+                        className={`rounded-lg border p-3 transition-colors ${checked ? "border-emerald-300 bg-emerald-50/40" : "border-slate-200 bg-white"}`}
+                      >
+                        <label className="flex cursor-pointer items-start gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              setSelectedRuleTypes((current) => event.target.checked
+                                ? [...current, option.type]
+                                : current.filter((type) => type !== option.type)
+                              );
+                            }}
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <span>
+                            <span className="block text-xs font-semibold text-slate-800">{option.label}</span>
+                            <span className="mt-0.5 block text-[10px] text-slate-500">{option.description}</span>
+                          </span>
+                        </label>
+                        {checked && (
+                          <div className="mt-3 space-y-3 pl-6">
+                            {isTreatmentRule && (
+                              <div>
+                                <label className="mb-1 block text-[10px] font-semibold text-slate-600">
+                                  Cakupan layanan
+                                </label>
+                                <select
+                                  value={formServiceIds[serviceType]}
+                                  onChange={(event) => setFormServiceIds((current) => ({
+                                    ...current,
+                                    [serviceType]: event.target.value
+                                  }))}
+                                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                >
+                                  <option value="">Semua layanan tindakan</option>
+                                  {services.map((service) => (
+                                    <option key={service.id} value={service.id}>
+                                      {service.name} (Dasar: Rp {service.basePrice.toLocaleString("id-ID")})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                            <div>
+                              <label className="mb-1 block text-[10px] font-semibold text-slate-600">
+                                {valueLabel}
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={option.type === "TAX_PERCENTAGE" ? "0" : "1"}
+                                  max={isPercentage ? 100 : undefined}
+                                  step={isPercentage ? "0.1" : "1"}
+                                  value={formValues[option.type]}
+                                  onChange={(event) => setFormValues((current) => ({
+                                    ...current,
+                                    [option.type]: Number.parseFloat(event.target.value) || 0
+                                  }))}
+                                  required
+                                  className="w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                />
+                                <span className="min-w-8 text-xs text-slate-500">
+                                  {isPercentage ? "%" : "Rp"}
+                                </span>
+                              </div>
+                              {option.type === "TAX_PERCENTAGE" && (
+                                <span className="mt-1 block text-[10px] text-rose-600">
+                                  Dipotong dari penghasilan bruto pegawai pada slip payroll cabang ini.
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </fieldset>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
@@ -1122,10 +1392,12 @@ export const Compensation: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || (selectedRuleTypes.length === 0 && !includeReferralRate)}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs disabled:opacity-50"
                 >
-                  {isSubmitting ? "Menyimpan..." : "Simpan Skema"}
+                  {isSubmitting
+                    ? "Menyimpan..."
+                    : `Simpan ${selectedRuleTypes.length + (includeReferralRate ? 1 : 0)} Komponen`}
                 </button>
               </div>
             </form>

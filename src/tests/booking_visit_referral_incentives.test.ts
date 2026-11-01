@@ -55,6 +55,23 @@ describe("Booking visit referral incentives", () => {
     expect(migration).toContain("'STAFF_VISIT_REFERRAL_RP3000_V1'");
   });
 
+  it("stores role-specific configurable treatment referral rates with an active default tariff", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20261101000001_staff_referral_incentive_rates.sql"),
+      "utf8"
+    );
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.staff_referral_incentive_rates");
+    expect(migration).toContain("staff_position IN ('BRANCH_ADMIN', 'ASSISTANT')");
+    expect(migration).toContain("staff_position, service_name");
+    expect(migration).toContain("('BRANCH_ADMIN', NULL, 3000.00)");
+    expect(migration).toContain("('ASSISTANT', NULL, 3000.00)");
+    expect(migration).not.toContain("'Insersi Behel RA + RB'");
+    expect(migration).not.toContain("'Insersi Behel RA atau RB saja'");
+    expect(migration).not.toContain("'Insersi GIPAL / Crown PFM'");
+    expect(migration).not.toContain("LIKE '%GIPAL%'");
+    expect(migration).toContain("public.is_super_admin()");
+  });
+
   it("validates active admin and assistant referrers in both booking server endpoints", () => {
     const server = fs.readFileSync(path.resolve(process.cwd(), "server.js"), "utf8");
     const pagesFunction = fs.readFileSync(
@@ -82,5 +99,39 @@ describe("Booking visit referral incentives", () => {
     expect(migration).toContain("referral_staff.position IN ('BRANCH_ADMIN', 'ASSISTANT')");
     expect(migration).toContain("referral_staff.employment_status = 'ACTIVE'");
     expect(migration).not.toContain("referral_staff.branch_id = NEW.branch_id");
+  });
+
+  it("secures shared referral rates and validates clinician-created treatment accruals", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270127000000_secure_shared_referral_incentives.sql"),
+      "utf8"
+    );
+    const repository = fs.readFileSync(
+      path.resolve(process.cwd(), "src/repositories/supabaseRepositories.ts"),
+      "utf8"
+    );
+
+    expect(migration).toContain("CREATE POLICY \"Clinic admins read referral incentive rates\"");
+    expect(migration).toContain("REVOKE INSERT, UPDATE, DELETE ON TABLE public.staff_referral_incentive_rates FROM authenticated");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.save_shared_staff_referral_incentive_rate");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.get_treatment_booking_referral_staff");
+    expect(migration).toContain("CREATE POLICY \"Validated booking referral accrual insert\"");
+    expect(migration).toContain("job.service_name_snapshot");
+    expect(migration).toContain("job.status IN ('SELESAI', 'DISERAHKAN')");
+    expect(repository).toContain('rpc("save_shared_staff_referral_incentive_rate"');
+    expect(repository).toContain('rpc("get_treatment_booking_referral_staff"');
+    expect(repository).not.toContain('.from("staff_referral_incentive_rates")\n          .select("id,service_name,amount")');
+  });
+
+  it("validates clinician referral accrual rates through a narrowly scoped definer function", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270128000000_fix_referral_accrual_rate_policy.sql"),
+      "utf8"
+    );
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.get_treatment_booking_referral_rate");
+    expect(migration).toContain("SECURITY DEFINER");
+    expect(migration).toContain("referral_staff.id = p_staff_id");
+    expect(migration).toContain("public.user_can_manage_treatment_branch(v_branch_id)");
+    expect(migration).toContain("amount = public.get_treatment_booking_referral_rate(job.id, referral_staff.id)");
   });
 });

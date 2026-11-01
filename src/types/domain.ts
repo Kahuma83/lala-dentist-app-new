@@ -968,6 +968,16 @@ export interface StaffCompensationRule {
   updatedAt: string;
 }
 
+export interface ReferralIncentiveRate {
+  id: string;
+  staffPosition: StaffPosition.BRANCH_ADMIN | StaffPosition.ASSISTANT;
+  serviceName: string | null;
+  amount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CompensationAccrual {
   id: string;
   staffId: string;

@@ -9,9 +9,11 @@ import {
 } from "../repositories/mockRepositories";
 import {
   AttendanceStatus,
+  CompensationAccrual,
   OvertimeStatus,
   OvertimeType,
   PayrollStatus,
+  StaffPosition,
   TreatmentJobStatus,
   UserRole
 } from "../types/domain";
@@ -186,7 +188,7 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     expect(items.some((item) => item.descriptionSnapshot.includes("Lembur Disetujui"))).toBe(false);
   });
 
-  it("records one referral incentive per paid booking visit for its selected branch staff member", async () => {
+  it("records the configured referral rate per completed paid treatment for the booking's selected staff member", async () => {
     const db = MockDatabase.getInstance();
     const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
     const patient = db.patients.find((candidate) => candidate.id === treatment.patientId)!;
@@ -196,6 +198,25 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     const referringAssistant = db.staff.find((employee) => employee.id === "staff-ast-clary")!;
     patient.referringStaffId = referringAdmin.id;
     booking.referringStaffId = referringAssistant.id;
+    await compRepo.saveReferralIncentiveRate({
+      staffPosition: StaffPosition.ASSISTANT,
+      serviceName: treatment.serviceNameSnapshot || "Scaling",
+      amount: 17000,
+      isActive: true
+    }, UserRole.SUPER_ADMIN);
+    await compRepo.saveReferralIncentiveRate({
+      staffPosition: StaffPosition.BRANCH_ADMIN,
+      serviceName: treatment.serviceNameSnapshot || "Scaling",
+      amount: 17000,
+      isActive: true
+    }, UserRole.SUPER_ADMIN);
+    const masterService = db.services.find((service) => service.id === treatment.serviceId);
+    if (masterService) masterService.name = "Current master name changed";
+    expect(db.referralIncentiveRates.filter((rate) => rate.serviceName === treatment.serviceNameSnapshot))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ staffPosition: StaffPosition.BRANCH_ADMIN, amount: 17000 }),
+        expect.objectContaining({ staffPosition: StaffPosition.ASSISTANT, amount: 17000 })
+      ]));
 
     const secondBooking = {
       ...booking,
@@ -240,19 +261,71 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     const referralAccruals = db.accruals.filter((accrual) =>
       accrual.ruleTypeSnapshot === "STAFF_VISIT_REFERRAL"
     );
-    expect(referralAccruals).toHaveLength(2);
+    expect(referralAccruals).toHaveLength(3);
     expect(referralAccruals).toEqual(expect.arrayContaining([
       expect.objectContaining({
         staffId: referringAssistant.id,
-        amount: 3000,
-        sourceId: "referral:visit:visit-1"
+        branchId: referringAssistant.branchId,
+        amount: 17000,
+        sourceId: "referral:visit:visit-1:treatment:treatment-job-1"
+      }),
+      expect.objectContaining({
+        staffId: referringAssistant.id,
+        amount: 17000,
+        sourceId: "referral:visit:visit-1:treatment:treatment-referral-same-visit"
       }),
       expect.objectContaining({
         staffId: referringAdmin.id,
-        amount: 3000,
-        sourceId: "referral:visit:visit-referral-second"
+        amount: 17000,
+        sourceId: "referral:visit:visit-referral-second:treatment:treatment-referral-second"
       })
     ]));
+  });
+
+  it("does not create another visit referral accrual when a legacy visit accrual already exists", async () => {
+    const db = MockDatabase.getInstance();
+    const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
+    const visit = db.visits.find((candidate) => candidate.id === treatment.visitId)!;
+    const booking = db.bookings.find((candidate) => candidate.id === visit.bookingId)!;
+    const referringStaff = db.staff.find((employee) => employee.id === "staff-ast-clary")!;
+    booking.referringStaffId = referringStaff.id;
+    const laterTreatment = {
+      ...treatment,
+      id: "treatment-job-z-later",
+      completedAt: undefined,
+      status: TreatmentJobStatus.DALAM_PROSES
+    };
+    db.treatmentJobs.push(laterTreatment);
+    const legacyAccrual: CompensationAccrual = {
+      id: "legacy-visit-referral",
+      staffId: referringStaff.id,
+      branchId: referringStaff.branchId,
+      ruleIdSnapshot: "STAFF_VISIT_REFERRAL_RP3000_V1",
+      ruleTypeSnapshot: "STAFF_VISIT_REFERRAL",
+      valueSnapshot: 3000,
+      baseAmountSnapshot: 0,
+      amount: 3000,
+      sourceId: `referral:visit:${visit.id}`,
+      accruedAt: AppClock.nowISO()
+    };
+    db.accruals.push(legacyAccrual);
+
+    await treatmentRepo.completeTreatmentJob(treatment.id);
+    await createPaidInvoiceForTreatment(treatment.id);
+    await compRepo.calculateAndAccrueForTreatment(treatment.id);
+    await treatmentRepo.completeTreatmentJob(laterTreatment.id);
+    await createPaidInvoiceForTreatment(laterTreatment.id);
+    await compRepo.calculateAndAccrueForTreatment(laterTreatment.id);
+
+    const visitReferrals = db.accruals.filter((accrual) =>
+      accrual.ruleTypeSnapshot === "STAFF_VISIT_REFERRAL" &&
+      accrual.sourceId.startsWith(`referral:visit:${visit.id}`)
+    );
+    expect(visitReferrals).toHaveLength(1);
+    expect(visitReferrals[0]).toMatchObject({
+      sourceId: `referral:visit:${visit.id}`,
+      staffId: referringStaff.id
+    });
   });
 
   it("Test 7: Generate monthly payroll compiles base salary and accruals accurately", async () => {

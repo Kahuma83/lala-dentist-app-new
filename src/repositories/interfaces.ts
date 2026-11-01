@@ -19,6 +19,7 @@ import {
   PaymentTransaction,
   PaymentMethod,
   StaffCompensationRule,
+  ReferralIncentiveRate,
   CompensationAccrual,
   MonthlyPayroll,
   PayrollItem,
@@ -920,6 +921,11 @@ export interface CompensationRepository {
     updates: Partial<Omit<StaffCompensationRule, "id" | "createdAt" | "updatedAt">>
   ): Promise<StaffCompensationRule>;
   getCompensationAccruals(staffId?: string): Promise<CompensationAccrual[]>;
+  getReferralIncentiveRates(): Promise<ReferralIncentiveRate[]>;
+  saveReferralIncentiveRate(
+    data: Omit<ReferralIncentiveRate, "id" | "createdAt" | "updatedAt"> & { id?: string },
+    currentUserRole?: UserRole
+  ): Promise<ReferralIncentiveRate>;
   calculateAndAccrueForTreatment(treatmentJobId: string): Promise<CompensationAccrual[]>;
   deleteAccrual(id: string, currentUserRole?: UserRole): Promise<boolean>;
   deleteCompensationRule(id: string, currentUserRole?: UserRole): Promise<boolean>;
