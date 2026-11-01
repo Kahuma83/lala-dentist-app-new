@@ -137,6 +137,7 @@ import { canViewPatientPhone, redactPatientPhone } from "../utils/patientPrivacy
 import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentUtils";
 import { checkRMUniqueness, getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { normalizeReferralServiceName } from "../utils/referralIncentives";
+import { selectMostSpecificTreatmentRules } from "../utils/compensationRules";
 
 const attendanceSelectColumns = [
   "id", "staff_id", "branch_id", "date", "attendance_status",
@@ -7132,7 +7133,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
     if (rulesError) throw new Error(`Gagal memuat aturan kompensasi tindakan: ${rulesError.message}`);
 
     const treatmentDate = (job.completed_at || invoice.updated_at || AppClock.nowISO()).slice(0, 10);
-    const applicableRules = (ruleRows || [])
+    const applicableRules = selectMostSpecificTreatmentRules((ruleRows || [])
       .map((row: any) => this.mapCompensationRuleFromDb(row))
       .filter((rule) =>
         !job.external_doctor_id
@@ -7145,7 +7146,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         && (!rule.branchId || rule.branchId === job.branch_id)
         && (!rule.effectiveStartDate || rule.effectiveStartDate <= treatmentDate)
         && (!rule.effectiveEndDate || rule.effectiveEndDate >= treatmentDate)
-      );
+      ));
     const { data: existingRows, error: existingError } = await supabase
       .from("compensation_accruals")
       .select("staff_id, rule_id_snapshot")
