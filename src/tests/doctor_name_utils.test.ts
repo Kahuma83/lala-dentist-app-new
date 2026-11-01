@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getDoctorDisplayName, getDoctorDocumentName } from "../utils/doctorNameUtils";
+import {
+  getBookingDoctorDisplayName,
+  getDoctorDisplayName,
+  getDoctorDocumentName
+} from "../utils/doctorNameUtils";
 
 describe("doctor name display rules", () => {
   const doctor = {
@@ -9,6 +13,20 @@ describe("doctor name display rules", () => {
 
   it("uses the display name in the application", () => {
     expect(getDoctorDisplayName(doctor)).toBe("drg. Sari");
+  });
+
+  it("uses the current display name instead of an older booking snapshot", () => {
+    expect(getBookingDoctorDisplayName(
+      { doctorId: "doctor-1", doctorNameSnapshot: "drg. Sari Rahmawati, Sp.KG" },
+      [{ id: "doctor-1", name: doctor.name }]
+    )).toBe("drg. Sari");
+  });
+
+  it("falls back to the saved booking name if the doctor profile is unavailable", () => {
+    expect(getBookingDoctorDisplayName(
+      { doctorId: "doctor-1", doctorNameSnapshot: "drg. Sari Rahmawati, Sp.KG" },
+      []
+    )).toBe("drg. Sari Rahmawati, Sp.KG");
   });
 
   it("uses the full name on documents", () => {

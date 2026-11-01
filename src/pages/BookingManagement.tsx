@@ -59,6 +59,7 @@ import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate, isAct
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { getCheckInCancellationBlockReason } from "../utils/bookingCancellation";
 import { WalkInBookingDemo } from "../components/WalkInBookingDemo";
+import { getBookingDoctorDisplayName } from "../utils/doctorNameUtils";
 
 const addCalendarDays = (date: string, days: number) => {
   const value = new Date(`${date}T12:00:00Z`);
@@ -862,14 +863,14 @@ export const BookingManagement: React.FC = () => {
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const pName = (b.patientNameSnapshot || "").toLowerCase();
-        const dName = (b.doctorNameSnapshot || "").toLowerCase();
+        const dName = getBookingDoctorDisplayName(b, doctorsList).toLowerCase();
         const notes = (b.notes || "").toLowerCase();
         return pName.includes(q) || dName.includes(q) || notes.includes(q);
       }
 
       return true;
     });
-  }, [bookings, branchFilter, statusFilter, searchQuery, currentUser, completedBookingIds]);
+  }, [bookings, branchFilter, statusFilter, searchQuery, currentUser, completedBookingIds, doctorsList]);
 
   const calendarDates = useMemo(
     () => Array.from({ length: 7 }, (_, index) => addCalendarDays(calendarWeekStart, index)),
@@ -1945,7 +1946,7 @@ export const BookingManagement: React.FC = () => {
                         </div>
                         <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-[18px] text-[10px] leading-3.5 text-slate-500">
                           <Stethoscope className="h-3 w-3 shrink-0 text-slate-400" aria-hidden="true" />
-                          <span className="truncate">{booking.doctorNameSnapshot || "Dokter"}</span>
+                          <span className="truncate">{getBookingDoctorDisplayName(booking, doctorsList)}</span>
                           {booking.plannedTreatments && booking.plannedTreatments.length > 0 && (
                             <>
                               <span className="shrink-0 text-slate-300">·</span>
@@ -2032,19 +2033,19 @@ export const BookingManagement: React.FC = () => {
                                 {docPhoto ? (
                                   <img
                                     src={docPhoto}
-                                    alt={b.doctorNameSnapshot || "Dokter"}
+                                    alt={getBookingDoctorDisplayName(b, doctorsList)}
                                     className="w-full h-full object-cover"
                                     onError={(e) => {
                                       (e.target as HTMLElement).style.display = "none";
                                     }}
                                   />
                                 ) : (
-                                  <span>{(b.doctorNameSnapshot || "D").replace(/^(drg\.|dr\.)\s*/i, "").charAt(0) || "D"}</span>
+                                  <span>{getBookingDoctorDisplayName(b, doctorsList).replace(/^(drg\.|dr\.)\s*/i, "").charAt(0) || "D"}</span>
                                 )}
                               </div>
                               <div>
                                 <div className="font-semibold text-slate-800 flex items-center gap-1">
-                                  {b.doctorNameSnapshot || "drg. Praktek"}
+                                  {getBookingDoctorDisplayName(b, doctorsList, "drg. Praktek")}
                                 </div>
                                 <div className="text-slate-500 text-[11px] mt-0.5 flex items-center gap-1">
                                   <Building2 className="w-3 h-3 text-slate-400" />
@@ -2977,7 +2978,7 @@ export const BookingManagement: React.FC = () => {
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-900/[0.02]">
                   <span className="block text-[9px] font-bold uppercase tracking-wide text-slate-400">Dokter</span>
-                  <span className="mt-1 block truncate text-xs font-bold text-slate-800">{selectedBooking.doctorNameSnapshot || "Dokter"}</span>
+                  <span className="mt-1 block truncate text-xs font-bold text-slate-800">{getBookingDoctorDisplayName(selectedBooking, doctorsList)}</span>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-900/[0.02]">
                   <span className="block text-[9px] font-bold uppercase tracking-wide text-slate-400">Cabang</span>
@@ -3032,7 +3033,7 @@ export const BookingManagement: React.FC = () => {
                   <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3.5 text-xs">
                     <p className="font-bold text-amber-900">Jadwal pengganti</p>
                     <p className="mt-1 text-slate-700">
-                      {formatIndonesianDate(getOperationalDateString(replacement.bookingDateTime))} pukul {getOperationalTimeString(replacement.bookingDateTime)} · {replacement.doctorNameSnapshot || "Dokter"}
+                      {formatIndonesianDate(getOperationalDateString(replacement.bookingDateTime))} pukul {getOperationalTimeString(replacement.bookingDateTime)} · {getBookingDoctorDisplayName(replacement, doctorsList)}
                     </p>
                     {replacement.rescheduleReason && <p className="mt-1 text-slate-600">Alasan: {replacement.rescheduleReason}</p>}
                   </div>
