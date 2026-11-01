@@ -43,8 +43,16 @@ export function getInvoiceDoctorName(
 ): string | undefined {
   if (!invoice) return undefined;
   const treatment = treatments.find((item) => item.visitId === invoice.visitId);
-  if (treatment?.doctorNameSnapshot) return treatment.doctorNameSnapshot;
-  if (!treatment?.doctorId) return undefined;
+  const savedDoctorName = treatment?.doctorNameSnapshot?.trim();
+  if (!treatment?.doctorId) return savedDoctorName || undefined;
   const doctor = doctors.find((item) => item.id === treatment.doctorId);
-  return doctor?.name || doctor?.fullName || undefined;
+  if (
+    doctor?.fullName?.trim()
+    && savedDoctorName
+    && savedDoctorName === doctor.name?.trim()
+  ) {
+    return doctor.fullName.trim();
+  }
+  if (savedDoctorName) return savedDoctorName;
+  return doctor?.fullName?.trim() || doctor?.name?.trim() || undefined;
 }
