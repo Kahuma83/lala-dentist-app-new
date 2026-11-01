@@ -38,6 +38,7 @@ import {
   getCompletedDoctorBookings,
   getNotArrivedDoctorBookings
 } from "../utils/doctorDashboardUtils";
+import { getDoctorDisplayName } from "../utils/doctorNameUtils";
 
 const isWaiting = (item: QueueItem) =>
   item.status === QueueStatus.WAITING ||
@@ -94,7 +95,7 @@ export const DoctorDashboard: React.FC = () => {
     assignedBranchId
   );
   const doctor = doctors.find((item) => item.id === doctorId);
-  const doctorName = doctor?.fullName || doctor?.name || "";
+  const doctorName = getDoctorDisplayName(doctor, "");
   const doctorGreeting = doctorName
     ? (/^drg?\./i.test(doctorName) ? doctorName : `dr. ${doctorName}`)
     : "";
@@ -588,7 +589,7 @@ export const DoctorDashboard: React.FC = () => {
                       {schedule.startTime} – {schedule.endTime}
                     </p>
                   ))}
-                  <p className="mt-0.5 text-xs text-slate-500">{doctor?.fullName || doctor?.name || "Dokter"}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">{getDoctorDisplayName(doctor)}</p>
                 </div>
                 <span className="rounded-full border border-[#e5d3aa] bg-[#faf6ec] px-2.5 py-1 text-[10px] font-semibold text-[#80651f]">Hari ini</span>
               </div>

@@ -54,6 +54,7 @@ import { DEFAULT_BOOKING_TIME_SLOTS, getScheduledBookingTimeSlots } from "../uti
 import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate, isActiveQueueStatus } from "../utils/bookingQueueGuards";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { getCheckInCancellationBlockReason } from "../utils/bookingCancellation";
+import { WalkInBookingDemo } from "../components/WalkInBookingDemo";
 
 const addCalendarDays = (date: string, days: number) => {
   const value = new Date(`${date}T12:00:00Z`);
@@ -983,7 +984,14 @@ export const BookingManagement: React.FC = () => {
         setFormSuccess(null);
       }, 800);
     } catch (err: any) {
-      setFormError(err.message || "Gagal membuat booking");
+      const errorMessage = err instanceof Error ? err.message : "Gagal membuat booking";
+      if (/slot|booking aktif|bertabrakan|konflik/i.test(errorMessage)) {
+        setFormTimeSlot("");
+        await loadData();
+        setFormError(`${errorMessage} Slot dan booking telah dimuat ulang.`);
+      } else {
+        setFormError(errorMessage);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -2153,6 +2161,14 @@ export const BookingManagement: React.FC = () => {
                 ✕
               </button>
             </div>
+
+            <WalkInBookingDemo
+              branchId={formBranchId}
+              doctors={doctorsList}
+              schedules={schedulesList}
+              bookings={bookings}
+              queueItems={queueItems}
+            />
 
             {formError && (
               <div className="p-3 bg-rose-50 text-rose-800 border border-rose-200 rounded-lg text-xs font-medium flex items-start gap-2">

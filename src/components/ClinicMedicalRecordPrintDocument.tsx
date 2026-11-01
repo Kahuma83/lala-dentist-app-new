@@ -12,6 +12,7 @@ import {
 } from "../types/domain";
 import "./ClinicMedicalRecordPrintDocument.css";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
+import { getDoctorDocumentName } from "../utils/doctorNameUtils";
 import {
   ANTERIOR_TOOTH_DIVIDER_PATH,
   getOdontogramSurfaceShapes,
@@ -85,7 +86,6 @@ interface ClinicMedicalRecordPrintDocumentProps {
     | "odontogram"
     | "clinicFormData"
   >;
-  doctorName: string;
 }
 
 const formatDate = (value?: string) => {
@@ -205,7 +205,6 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
   branchDoctors = [],
   profile,
   record,
-  doctorName
 }) => {
   const assessment = record.clinicFormData?.dentalAssessment || {};
   const odontogramTeeth = record.odontogram?.teeth || {};
@@ -216,7 +215,7 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
   ].filter((item) => item?.trim()).join("\n");
   const treatmentText = [record.treatmentPlan, record.doctorNotes].filter((item) => item?.trim()).join("\n");
   const medicalDate = formatDate(visit.visitDateTime);
-  const printedDoctorName = doctor?.fullName || doctor?.name || doctorName;
+  const printedDoctorName = getDoctorDocumentName(doctor) || "Nama lengkap dokter belum dilengkapi";
 
   return (
     <div className="clinic-medical-print">
@@ -240,7 +239,9 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
           </div>
           <div className="clinic-print-doctors">
             {branchDoctors.map((branchDoctor) => (
-              <div key={branchDoctor.id}>{branchDoctor.fullName || branchDoctor.name}</div>
+              <div key={branchDoctor.id}>
+                {getDoctorDocumentName(branchDoctor) || "Nama lengkap dokter belum dilengkapi"}
+              </div>
             ))}
           </div>
         </header>
@@ -303,7 +304,7 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
               <td className="clinic-print-pre-wrap">{treatmentText}</td>
               <td className="clinic-print-pre-wrap">{record.clinicFormData?.noteB || ""}</td>
               <td className="clinic-print-pre-wrap">{record.clinicFormData?.noteL || ""}</td>
-              <td className="clinic-print-doctor-sign">{doctorName}</td>
+              <td className="clinic-print-doctor-sign">{printedDoctorName}</td>
             </tr>
           </tbody>
         </table>

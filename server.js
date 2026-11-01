@@ -14,6 +14,7 @@ import {
   updateGroupSubtitle as updateDoctorChatGroupSubtitle
 } from './functions/_shared/doctor-chat.js';
 import { handlePatientCardError } from './functions/_shared/patient-card.js';
+import { getBookingConflictMessage } from './functions/_shared/booking-conflicts.js';
 import { onRequestPost as issuePatientCardToken } from './functions/api/patient-card/token.js';
 import { onRequestPost as verifyPatientCardToken } from './functions/api/patient-card/verify.js';
 
@@ -815,7 +816,9 @@ app.post('/api/bookings', async (req, res) => {
     if (error) {
       console.error('[server] booking insert failed:', error);
       return res.status(error.code === '23505' ? 409 : 400).json({
-        message: `Gagal menyimpan booking: ${error.message || 'Unknown error'}`
+        message: error.code === '23505'
+          ? getBookingConflictMessage(error, payload.time_slot)
+          : `Gagal menyimpan booking: ${error.message || 'Unknown error'}`
       });
     }
 
