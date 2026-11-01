@@ -179,7 +179,7 @@ const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
   { id: "bookings", label: "Booking Pasien", icon: ClipboardList },
   { id: "absence", label: "Cuti & Izin", icon: CalendarDays },
   { id: "overtime", label: "Lembur Saya", icon: Timer },
-  { id: "medical-services", label: "Jasa Medis", icon: HandCoins },
+  { id: "medical-services", label: "JAPEL", icon: HandCoins },
   { id: "payroll", label: "Gaji Saya", icon: WalletCards },
   { id: "chat", label: "Chat Grup", icon: MessagesSquare }
 ];
@@ -1554,7 +1554,7 @@ export function AttendancePortal() {
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("schedule")}><CalendarDays /><span><strong>Jadwal Saya</strong><small>Lihat jadwal praktik atau shift</small></span></button>
             {staffContext.role === "DOCTOR" && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("bookings")}><ClipboardList /><span><strong>Booking Pasien</strong><small>Lihat pasien yang dijadwalkan besok dan lusa</small></span></button>}
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("absence")}><CalendarDays /><span><strong>Cuti & Izin</strong><small>Ajukan sakit, cuti, atau izin</small></span></button>
-            {staffContext.role === "DOCTOR" && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("medical-services")}><HandCoins /><span><strong>Jasa Medis</strong><small>Pantau pembagian jasa tindakan</small></span></button>}
+            {staffContext.role === "DOCTOR" && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("medical-services")}><HandCoins /><span><strong>JAPEL</strong><small>Pantau jasa pelayanan tindakan</small></span></button>}
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("payroll")}><WalletCards /><span><strong>Gaji Saya</strong><small>Lihat slip yang sudah disetujui</small></span></button>
           </div>
           <p className="portal-footnote">Menu pegawai menampilkan data dari sistem klinik dan hanya untuk akun Anda.</p>
@@ -1799,7 +1799,7 @@ export function AttendancePortal() {
       {activeTab === "medical-services" && staffContext.role === "DOCTOR" && (
         <section className="portal-panel">
           <div className="medical-services-heading">
-            <div><p className="eyebrow">PENGHASILAN TINDAKAN</p><h2>Jasa Medis Saya</h2></div>
+            <div><p className="eyebrow">JASA PELAYANAN</p><h2>JAPEL Saya</h2></div>
             <label className="medical-service-month">
               Bulan
               <input
