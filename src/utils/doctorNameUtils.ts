@@ -13,10 +13,6 @@ export const getDoctorDocumentName = (
   savedName?: string
 ): string => {
   const savedDocumentName = savedName?.trim();
-  const displayName = doctor?.name?.trim();
-  if (savedDocumentName && displayName && savedDocumentName !== displayName) {
-    return savedDocumentName;
-  }
-
+  if (savedDocumentName) return savedDocumentName;
   return doctor?.fullName?.trim() || "";
 };

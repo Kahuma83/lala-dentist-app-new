@@ -74,6 +74,7 @@ interface ClinicMedicalRecordPrintDocumentProps {
   doctor?: DentalDoctor;
   branchDoctors?: DentalDoctor[];
   profile: PatientMedicalProfile;
+  doctorNameSnapshot?: string;
   record: Pick<
     MedicalRecord,
     | "chiefComplaint"
@@ -204,6 +205,7 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
   doctor,
   branchDoctors = [],
   profile,
+  doctorNameSnapshot,
   record,
 }) => {
   const assessment = record.clinicFormData?.dentalAssessment || {};
@@ -215,7 +217,9 @@ export const ClinicMedicalRecordPrintDocument: React.FC<ClinicMedicalRecordPrint
   ].filter((item) => item?.trim()).join("\n");
   const treatmentText = [record.treatmentPlan, record.doctorNotes].filter((item) => item?.trim()).join("\n");
   const medicalDate = formatDate(visit.visitDateTime);
-  const printedDoctorName = getDoctorDocumentName(doctor) || "Nama lengkap dokter belum dilengkapi";
+  const printedDoctorName = getDoctorDocumentName(doctor)
+    || doctorNameSnapshot?.trim()
+    || "Nama lengkap dokter belum dilengkapi";
 
   return (
     <div className="clinic-medical-print">

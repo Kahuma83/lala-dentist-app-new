@@ -34,3 +34,16 @@ export const getScheduledBookingTimeSlots = (schedule?: DoctorSchedule): string[
 
   return createSlots(startMinutes, endMinutes);
 };
+
+export const syncBookingTimeSlot = (
+  currentSlot: string,
+  availableSlots: string[],
+  requireExplicitSelection = false
+): string => {
+  if (requireExplicitSelection) {
+    return currentSlot && availableSlots.includes(currentSlot) ? currentSlot : "";
+  }
+  if (currentSlot && !availableSlots.includes(currentSlot)) return availableSlots[0] || "";
+  if (!currentSlot && availableSlots.length > 0) return availableSlots[0];
+  return currentSlot;
+};

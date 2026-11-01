@@ -19,19 +19,19 @@ describe("doctor name display rules", () => {
     expect(getDoctorDocumentName({ name: doctor.name })).toBe("");
   });
 
-  it("preserves a saved document name only when it differs from the display name", () => {
-    expect(getDoctorDocumentName({ name: doctor.name }, "drg. Sari")).toBe("");
-    expect(getDoctorDocumentName({ name: doctor.name }, "drg. Sari Rahmawati")).toBe("drg. Sari Rahmawati");
+  it("always preserves the name saved with a document", () => {
+    expect(getDoctorDocumentName(doctor, "drg. Sari")).toBe("drg. Sari");
+    expect(getDoctorDocumentName(doctor, "drg. Sari Rahmawati")).toBe("drg. Sari Rahmawati");
   });
 
-  it("preserves the full name saved on an older document", () => {
+  it("preserves an older document's identity if the doctor profile changes", () => {
     expect(getDoctorDocumentName(
       { name: doctor.name, fullName: "drg. Sari Rahmawati yang baru" },
       "drg. Sari Rahmawati"
     )).toBe("drg. Sari Rahmawati");
   });
 
-  it("does not trust a saved name when the doctor's display identity is unavailable", () => {
-    expect(getDoctorDocumentName(undefined, "drg. Sari")).toBe("");
+  it("preserves a saved document name when the doctor is no longer available", () => {
+    expect(getDoctorDocumentName(undefined, "drg. Sari")).toBe("drg. Sari");
   });
 });
