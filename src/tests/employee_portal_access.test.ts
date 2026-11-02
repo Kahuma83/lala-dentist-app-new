@@ -21,9 +21,12 @@ describe("employee portal navigation and row-level access", () => {
 
   it("exposes the employee portal navigation sections", () => {
     const portal = fs.readFileSync(portalPath, "utf-8");
-    for (const section of ["Beranda", "Absensi", "Jadwal Saya", "Cuti & Izin", "Lembur Saya", "Gaji Saya"]) {
+    for (const section of ["Beranda", "Absensi", "Jadwal Saya", "Cuti & Izin", "Lembur Saya", "Insentif Saya", "Gaji Saya"]) {
       expect(portal).toContain(`label: "${section}"`);
     }
+    expect(portal).toContain('(id !== "incentives" || staffContext.role === "BRANCH_ADMIN" || staffContext.role === "DOCTOR_ASSISTANT")');
+    expect(portal).toContain('.eq("staff_id", staffContext!.staffId)');
+    expect(portal).toContain('"STAFF_VISIT_REFERRAL_RP3000_V1", "ASSISTANT_TREATMENT_BASE_V1"');
     expect(portal).not.toContain('label: "Profil"');
     expect(portal).toContain('<details className="account-menu">');
     expect(portal).toContain("<Settings aria-hidden=\"true\" />");
