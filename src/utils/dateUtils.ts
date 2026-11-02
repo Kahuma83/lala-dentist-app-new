@@ -43,6 +43,12 @@ export function getOperationalDateString(value: string | undefined): string {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+export function isValidCalendarDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsedDate = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsedDate.getTime()) && parsedDate.toISOString().slice(0, 10) === value;
+}
+
 export function getOperationalTimeString(value: string | undefined): string {
   if (!value) return "--:--";
   const date = new Date(value);

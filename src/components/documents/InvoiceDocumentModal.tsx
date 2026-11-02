@@ -53,7 +53,7 @@ export const InvoiceDocumentModal: React.FC<InvoiceDocumentModalProps> = ({
     paidAmount: invoice.paidAmount,
     outstandingAmount: invoice.outstandingAmount,
     status: invoice.status,
-    dateStr: invoice.createdAt
+    dateStr: invoice.invoiceDate ? `${invoice.invoiceDate}T12:00:00` : invoice.createdAt
   });
 
   return (

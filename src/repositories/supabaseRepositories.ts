@@ -133,6 +133,13 @@ import {
   AccountBalanceResult
 } from "./interfaces";
 import { AppClock } from "../utils/clock";
+import {
+  getOperationalDateString,
+  getOperationalTimeString,
+  getTodayDateString,
+  isValidCalendarDateString,
+  toOperationalDateTime
+} from "../utils/dateUtils";
 import { canViewPatientPhone, redactPatientPhone } from "../utils/patientPrivacy";
 import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentUtils";
 import { checkRMUniqueness, getPatientMedicalRecordNumber } from "../utils/rmUtils";
@@ -210,7 +217,6 @@ function mapAttendanceFromDb(row: any): Attendance {
 
 import { isBranchMatch } from "../utils/branchUtils";
 import { allocateInvoiceNetToLines } from "../utils/invoiceLineAllocation";
-import { getOperationalDateString, getOperationalTimeString, toOperationalDateTime } from "../utils/dateUtils";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
 import { hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 import { calculateQueueEstimates } from "../utils/queueScheduleUtils";
@@ -4613,6 +4619,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
     return {
       id: row.id,
       invoiceNumber: row.invoice_number,
+      invoiceDate: row.invoice_date || getOperationalDateString(row.created_at),
       visitId: row.visit_id,
       visitNumber: row.visit_number ?? undefined,
       patientId: row.patient_id,
@@ -4749,6 +4756,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       }>;
       discountAmount?: number;
       taxAmount?: number;
+      invoiceDate?: string;
       customId?: string;
       customInvoiceNumber?: string;
     },
@@ -4759,8 +4767,23 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       throw new Error("Branch Admin tidak dapat membuat invoice untuk cabang lain");
     }
 
+    if (data.invoiceDate
+      && data.invoiceDate < getTodayDateString()
+      && currentUserRole !== UserRole.SUPER_ADMIN
+      && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Hanya Super Admin dan Admin Cabang yang dapat memilih tanggal invoice mundur.");
+    }
+
     if (!data.items || data.items.length === 0) {
       throw new Error("Invoice harus memiliki minimal satu item tindakan");
+    }
+
+    const invoiceDate = data.invoiceDate || getTodayDateString();
+    if (!isValidCalendarDateString(invoiceDate)) {
+      throw new Error("Tanggal invoice tidak valid.");
+    }
+    if (invoiceDate > getTodayDateString()) {
+      throw new Error("Tanggal invoice tidak boleh melebihi tanggal hari ini.");
     }
 
     const linkedTreatmentIds = data.items.flatMap((item) =>
@@ -4772,7 +4795,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       && isValidUUID(data.visitId)) {
       const { data: visitTreatments, error: treatmentError } = await supabase
         .from("treatment_jobs")
-        .select("id,status")
+        .select("id,status,completed_at,handed_over_at,updated_at,created_at")
         .eq("visit_id", data.visitId);
       if (treatmentError) {
         throw new Error(`Gagal memeriksa status rencana tindakan sebelum invoice: ${treatmentError.message}`);
@@ -4782,6 +4805,19 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
         treatment.status === TreatmentJobStatus.SELESAI
         || treatment.status === TreatmentJobStatus.DISERAHKAN
       );
+      const lastTreatmentDate = completedTreatments
+        .map((treatment: any) => getOperationalDateString(
+          treatment.completed_at || treatment.handed_over_at || treatment.updated_at || treatment.created_at
+        ))
+        .filter(Boolean)
+        .sort()
+        .at(-1);
+      if (lastTreatmentDate && invoiceDate > lastTreatmentDate) {
+        throw new Error("Tanggal invoice tidak boleh setelah tanggal tindakan terakhir selesai.");
+      }
+      if (!lastTreatmentDate && invoiceDate < getTodayDateString()) {
+        throw new Error("Tanggal invoice mundur hanya dapat dipilih untuk kunjungan dengan tanggal tindakan selesai.");
+      }
       const allPlansClosed = (visitTreatments || []).every((treatment: any) =>
         treatment.status === TreatmentJobStatus.SELESAI
         || treatment.status === TreatmentJobStatus.DISERAHKAN
@@ -4828,7 +4864,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
     const invoiceId = data.customId || generatedId;
 
     const existingInvoices = this.getFallbackInvoices();
-    const invoiceNumber = data.customInvoiceNumber || generateInvoiceNumber(data.branchId, now, existingInvoices, MOCK_BRANCHES);
+    const invoiceNumber = data.customInvoiceNumber || generateInvoiceNumber(data.branchId, invoiceDate, existingInvoices, MOCK_BRANCHES);
 
     const fallbackItems: InvoiceItem[] = normalizedItems.map((i, index) => {
       const itemAmount = i.amount;
@@ -4850,6 +4886,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
     const fallbackInvoice: Invoice = {
       id: invoiceId,
       invoiceNumber,
+      invoiceDate,
       visitId: data.visitId,
       patientId: data.patientId,
       branchId: data.branchId,
@@ -4887,6 +4924,7 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
           visit_id: data.visitId,
           patient_id: data.patientId,
           branch_id: data.branchId,
+          invoice_date: invoiceDate,
           total_amount: totalAmt,
           discount_amount: disc,
           tax_amount: tax,

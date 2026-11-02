@@ -868,6 +868,7 @@ export interface InvoiceRepository {
       }>;
       discountAmount?: number;
       taxAmount?: number;
+      invoiceDate?: string;
       customId?: string;
       customInvoiceNumber?: string;
     },

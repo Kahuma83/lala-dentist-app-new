@@ -9,6 +9,7 @@ import {
 } from "../../types/domain";
 import { DocumentHeader } from "./DocumentHeader";
 import { getPatientMedicalRecordNumber } from "../../utils/rmUtils";
+import { getOperationalDateString } from "../../utils/dateUtils";
 import {
   formatRupiah,
   formatIndoDate,
@@ -53,7 +54,7 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
         branch={branch}
         documentType="FAKTUR TAGIHAN"
         documentNumber={invoiceNumber}
-        documentDate={formatIndoDate(invoice.createdAt)}
+        documentDate={formatIndoDate(`${invoice.invoiceDate || getOperationalDateString(invoice.createdAt)}T12:00:00`)}
       />
 
       {/* 2. Patient & Treatment Info Grid */}
