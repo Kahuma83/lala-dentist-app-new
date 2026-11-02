@@ -76,7 +76,7 @@ type StaffContext = {
   staffId: string;
   userAccountId: string;
 };
-type PortalTab = "home" | "attendance" | "schedule" | "bookings" | "absence" | "overtime" | "medical-services" | "payroll" | "chat" | "profile";
+type PortalTab = "home" | "attendance" | "schedule" | "bookings" | "absence" | "overtime" | "medical-services" | "incentives" | "payroll" | "chat" | "profile";
 type AbsenceRequestType = "SICK" | "LEAVE" | "PERMISSION";
 type PortalAbsenceRequest = {
   id: string;
@@ -154,6 +154,13 @@ type PortalMedicalServicePage = {
   rows: PortalMedicalService[];
   hasMore: boolean;
 };
+type PortalIncentive = {
+  id: string;
+  type: "REFERRAL" | "ASSISTANT_TREATMENT";
+  branchName: string;
+  accruedAt: string;
+  amount: number;
+};
 type InstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
@@ -180,6 +187,7 @@ const portalTabs: { id: PortalTab; label: string; icon: typeof Home }[] = [
   { id: "absence", label: "Cuti & Izin", icon: CalendarDays },
   { id: "overtime", label: "Lembur Saya", icon: Timer },
   { id: "medical-services", label: "JAPEL", icon: HandCoins },
+  { id: "incentives", label: "Insentif Saya", icon: HandCoins },
   { id: "payroll", label: "Gaji Saya", icon: WalletCards },
   { id: "chat", label: "Chat Grup", icon: MessagesSquare }
 ];
@@ -424,6 +432,7 @@ export function AttendancePortal() {
   const [medicalServiceTotalAmount, setMedicalServiceTotalAmount] = useState(0);
   const [medicalServiceActionCount, setMedicalServiceActionCount] = useState(0);
   const [medicalServiceHasMore, setMedicalServiceHasMore] = useState(false);
+  const [incentiveRows, setIncentiveRows] = useState<PortalIncentive[]>([]);
   const [payrollRows, setPayrollRows] = useState<PortalPayroll[]>([]);
   const [payrollItems, setPayrollItems] = useState<PortalPayrollItem[]>([]);
   const [username, setUsername] = useState("");
@@ -683,6 +692,7 @@ export function AttendancePortal() {
         setMedicalServiceTotalAmount(0);
         setMedicalServiceActionCount(0);
         setMedicalServiceHasMore(false);
+        setIncentiveRows([]);
         setPayrollRows([]);
         setPayrollItems([]);
         setProfilePhotoUrl(null);
@@ -815,6 +825,7 @@ export function AttendancePortal() {
       setMedicalServiceTotalAmount(0);
       setMedicalServiceActionCount(0);
       setMedicalServiceHasMore(false);
+      setIncentiveRows([]);
       setPayrollRows([]);
       setPayrollItems([]);
       setProfilePhotoUrl(null);
@@ -891,7 +902,8 @@ export function AttendancePortal() {
   ) => {
     if ((tab === "bookings" && staffContext?.role !== "DOCTOR") ||
       (tab === "overtime" && staffContext?.role === "DOCTOR") ||
-      (tab === "medical-services" && staffContext?.role !== "DOCTOR")) return;
+      (tab === "medical-services" && staffContext?.role !== "DOCTOR") ||
+      (tab === "incentives" && staffContext?.role !== "BRANCH_ADMIN" && staffContext?.role !== "DOCTOR_ASSISTANT")) return;
 
     setActiveTab(tab);
     setPanelError(null);
@@ -1064,6 +1076,23 @@ export function AttendancePortal() {
         setMedicalServiceTotalAmount(page.totalAmount);
         setMedicalServiceActionCount(page.actionCount);
         setMedicalServiceHasMore(page.hasMore);
+      } else if (tab === "incentives") {
+        const { data, error } = await supabase
+          .from("compensation_accruals")
+          .select("id,rule_id_snapshot,branch_id,amount,accrued_at")
+          .eq("staff_id", staffContext!.staffId)
+          .in("rule_id_snapshot", ["STAFF_VISIT_REFERRAL_RP3000_V1", "ASSISTANT_TREATMENT_BASE_V1"])
+          .order("accrued_at", { ascending: false })
+          .limit(100);
+        if (error) throw new Error(`Gagal memuat riwayat insentif: ${error.message}`);
+        const branchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
+        setIncentiveRows((data || []).map((row): PortalIncentive => ({
+          id: row.id,
+          type: row.rule_id_snapshot === "ASSISTANT_TREATMENT_BASE_V1" ? "ASSISTANT_TREATMENT" : "REFERRAL",
+          branchName: row.branch_id ? branchNames.get(row.branch_id) || "Cabang" : "Cabang",
+          accruedAt: row.accrued_at,
+          amount: Number(row.amount) || 0
+        })));
       } else if (tab === "overtime") {
         const { data, error } = await supabase
           .from("overtime_records")
@@ -1563,7 +1592,8 @@ export function AttendancePortal() {
             (id !== "chat" || staffContext.role === "DOCTOR") &&
               (id !== "bookings" || staffContext.role === "DOCTOR") &&
               (id !== "overtime" || staffContext.role !== "DOCTOR") &&
-            (id !== "medical-services" || staffContext.role === "DOCTOR")
+            (id !== "medical-services" || staffContext.role === "DOCTOR") &&
+            (id !== "incentives" || staffContext.role === "BRANCH_ADMIN" || staffContext.role === "DOCTOR_ASSISTANT")
           )
           .map(({ id, label, icon: Icon }) => (
           <button
@@ -1609,6 +1639,7 @@ export function AttendancePortal() {
             {staffContext.role === "DOCTOR" && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("bookings")}><ClipboardList /><span><strong>Booking Pasien</strong><small>Lihat pasien yang dijadwalkan besok dan lusa</small></span></button>}
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("absence")}><CalendarDays /><span><strong>Cuti & Izin</strong><small>Ajukan sakit, cuti, atau izin</small></span></button>
             {staffContext.role === "DOCTOR" && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("medical-services")}><HandCoins /><span><strong>JAPEL</strong><small>Pantau jasa pelayanan tindakan</small></span></button>}
+            {(staffContext.role === "BRANCH_ADMIN" || staffContext.role === "DOCTOR_ASSISTANT") && <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("incentives")}><HandCoins /><span><strong>Insentif Saya</strong><small>Lihat insentif referral dan tindakan</small></span></button>}
             <button type="button" className="portal-shortcut" onClick={() => void handleTabChange("payroll")}><WalletCards /><span><strong>Gaji Saya</strong><small>Lihat slip yang sudah disetujui</small></span></button>
           </div>
           <p className="portal-footnote">Menu pegawai menampilkan data dari sistem klinik dan hanya untuk akun Anda.</p>
@@ -2037,6 +2068,38 @@ export function AttendancePortal() {
         </section>
       )}
 
+      {activeTab === "incentives" && (staffContext.role === "BRANCH_ADMIN" || staffContext.role === "DOCTOR_ASSISTANT") && (
+        <section className="portal-panel">
+          <div className="panel-heading">
+            <div><p className="eyebrow">PENDAPATAN TAMBAHAN</p><h2>Insentif Saya</h2><p className="muted">Menampilkan maksimal 100 insentif terbaru yang tercatat untuk akun Anda.</p></div>
+          </div>
+          {isPanelLoading
+            ? <p className="empty-state"><RefreshCw className="spin" /> Memuat riwayat insentif...</p>
+            : panelError
+            ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div>
+            : incentiveRows.length === 0
+            ? <p className="empty-state">Belum ada insentif yang tercatat.</p>
+            : (
+              <div className="portal-list">
+                {incentiveRows.map((row) => (
+                  <article className="portal-list-row" key={row.id}>
+                    <div>
+                      <strong>{row.type === "ASSISTANT_TREATMENT" ? "Insentif tindakan asisten" : "Insentif referral pasien"}</strong>
+                      <span>{new Intl.DateTimeFormat("id-ID", {
+                        timeZone: "Asia/Jakarta",
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric"
+                      }).format(new Date(row.accruedAt))} · {row.branchName}</span>
+                    </div>
+                    <div className="portal-list-end"><strong className="portal-list-value">{formatRupiah(row.amount)}</strong></div>
+                  </article>
+                ))}
+              </div>
+            )}
+        </section>
+      )}
+
       {activeTab === "payroll" && (
         <section className="portal-panel">
           <div className="panel-heading"><div><p className="eyebrow">SLIP GAJI</p><h2>Gaji Saya</h2><p className="muted">Hanya slip yang sudah disetujui atau dibayar yang ditampilkan.</p></div></div>
@@ -2102,7 +2165,7 @@ export function AttendancePortal() {
         </section>
       )}
 
-      {activeTab !== "schedule" && activeTab !== "overtime" && activeTab !== "payroll" && activeTab !== "profile" && activeTab !== "chat" && isPanelLoading && (
+      {activeTab !== "schedule" && activeTab !== "overtime" && activeTab !== "payroll" && activeTab !== "incentives" && activeTab !== "profile" && activeTab !== "chat" && isPanelLoading && (
         <div className="notice warning compact"><RefreshCw className="spin" /> Memuat data portal...</div>
       )}
 
