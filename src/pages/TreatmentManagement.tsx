@@ -83,6 +83,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const [officialTreatmentPrices, setOfficialTreatmentPrices] = useState<Record<string, number>>({});
   const [treatmentPrices, setTreatmentPrices] = useState<Record<string, number>>({});
   const [treatmentDurations, setTreatmentDurations] = useState<Record<string, number>>({});
+  const [treatmentDoctorIds, setTreatmentDoctorIds] = useState<Record<string, string>>({});
   const [loadingPlannedTariffs, setLoadingPlannedTariffs] = useState(false);
   const [plannedTariffError, setPlannedTariffError] = useState(false);
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
@@ -144,6 +145,9 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
   const canReviseTreatment = (treatment: TreatmentJob) =>
     treatment.status === TreatmentJobStatus.PERLU_REVISI && canFinalizeTreatment(treatment);
+
+  const getTreatmentDoctorId = (serviceId: string) =>
+    treatmentDoctorIds[serviceId] || selectedDoctorId;
 
   const treatmentRepo = repos.treatment;
   const visitRepo = repos.visit;
@@ -264,8 +268,8 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
 
   const handleCreateTreatment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedVisitId || selectedTreatmentServices.length === 0 || !selectedDoctorId) {
-      setError("Pilih kunjungan, minimal satu tindakan, dan dokter penanggung jawab");
+    if (!selectedVisitId || selectedTreatmentServices.length === 0) {
+      setError("Pilih kunjungan dan minimal satu tindakan.");
       return;
     }
     if (!patientApprovalConfirmed) {
@@ -277,8 +281,16 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       return;
     }
     const visitHasExternalDoctor = selectedVisit?.externalDoctorId != null;
-    if (!visitHasExternalDoctor && !doctorsForVisit.some((doctor) => doctor.id === selectedDoctorId)) {
-      setError("Pilih dokter yang terjadwal atau dokter penanggung jawab kunjungan ini.");
+    const assignedDoctorIds = selectedTreatmentServices.map((service) => getTreatmentDoctorId(service.id));
+    if (!visitHasExternalDoctor && assignedDoctorIds.some((doctorId) =>
+      !doctorId || !doctorsForVisit.some((doctor) => doctor.id === doctorId)
+    )) {
+      setError("Pilih dokter pelaksana yang terjadwal untuk setiap tindakan.");
+      return;
+    }
+    if (currentUser?.role === UserRole.DOCTOR
+      && assignedDoctorIds.some((doctorId) => doctorId !== currentUser.doctorId)) {
+      setError("Dokter hanya dapat membuat tindakan yang ditugaskan kepada dirinya sendiri.");
       return;
     }
     if (visitHasExternalDoctor && currentUser?.role !== UserRole.SUPER_ADMIN) {
@@ -306,7 +318,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
           {
             visitId: selectedVisitId,
             serviceId: service.id,
-            doctorId: selectedDoctorId,
+            doctorId: getTreatmentDoctorId(service.id),
             externalDoctorId: selectedVisit?.externalDoctorId ?? null,
             patientApprovalConfirmed: true,
             estimatedDurationMinutes: treatmentDurations[service.id] ?? service.estimatedDurationMinutes ?? 30,
@@ -329,6 +341,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       setOfficialTreatmentPrices({});
       setTreatmentPrices({});
       setTreatmentDurations({});
+      setTreatmentDoctorIds({});
       setSelectedDoctorId("");
       setTreatmentNotes("");
       setPatientApprovalConfirmed(false);
@@ -981,7 +994,11 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     const queueItem = queueItems.find((item) => item.visitId === requestedVisitId);
     const visit = eligibleVisits.find((item) => item.id === requestedVisitId);
     if (visit) void prefillVisitTreatmentPlan(visit);
-    const requestedDoctor = resolveDoctor(visit?.doctorId || queueItem?.doctorId || currentUser.doctorId);
+    const requestedDoctor = resolveDoctor(
+      currentUser.role === UserRole.DOCTOR
+        ? currentUser.doctorId
+        : visit?.doctorId || queueItem?.doctorId || currentUser.doctorId
+    );
     setSelectedDoctorId(
       requestedDoctor?.id || ""
     );
@@ -1851,10 +1868,13 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                         const nextVisit = eligibleVisits.find((visit) => visit.id === e.target.value);
                         const nextQueueItem = queueItems.find((item) => item.visitId === e.target.value);
                         setSelectedDoctorId(
-                          nextVisit?.externalDoctorId
+                          currentUser?.role === UserRole.DOCTOR
+                            ? currentUser.doctorId || ""
+                            : nextVisit?.externalDoctorId
                             ? nextVisit.doctorId || nextQueueItem?.doctorId || ""
-                            : ""
+                            : nextVisit?.doctorId || nextQueueItem?.doctorId || ""
                         );
+                        setTreatmentDoctorIds({});
                         if (nextVisit) {
                           void prefillVisitTreatmentPlan(nextVisit);
                         } else {
@@ -1930,7 +1950,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
 
                   <div>
                     <label className="mb-1 block font-semibold text-slate-700">
-                      {selectedVisit?.externalDoctorId ? "Dokter Eksternal yang Ditugaskan" : "Dokter Penanggung Jawab *"}
+                      {selectedVisit?.externalDoctorId ? "Dokter Eksternal yang Ditugaskan" : "Dokter Default Tindakan *"}
                     </label>
                     {selectedVisit?.externalDoctorId ? (
                       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -1941,20 +1961,25 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                         </div>
                       </div>
                     ) : (
-                      <select
-                        value={selectedDoctorId}
-                        onChange={(e) => setSelectedDoctorId(e.target.value)}
-                        required
-                        disabled={currentUser?.role === UserRole.DOCTOR}
-                        className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100"
-                      >
-                        <option value="">-- Pilih Dokter --</option>
-                        {doctorsForVisit.map((doctor: DentalDoctor) => (
-                          <option key={doctor.id} value={doctor.id}>
-                            {doctor.name} ({doctor.specialization})
-                          </option>
-                        ))}
-                      </select>
+                      <>
+                        <select
+                          value={selectedDoctorId}
+                          onChange={(e) => setSelectedDoctorId(e.target.value)}
+                          required
+                          disabled={currentUser?.role === UserRole.DOCTOR}
+                          className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100"
+                        >
+                          <option value="">-- Pilih Dokter Default --</option>
+                          {doctorsForVisit.map((doctor: DentalDoctor) => (
+                            <option key={doctor.id} value={doctor.id}>
+                              {doctor.name} ({doctor.specialization})
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                          Dokter check-in menjadi pilihan awal. Jika dokter pelaksana berbeda, atur dokter pada masing-masing tindakan di ringkasan.
+                        </p>
+                      </>
                     )}
                     {selectedVisitId && doctorsForVisit.length === 0 && (
                       <p className="mt-1.5 text-[11px] text-amber-700">
@@ -1991,6 +2016,32 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                             Estimasi tarif: Rp {(officialTreatmentPrices[service.id] ?? service.basePrice).toLocaleString("id-ID")}
                           </div>
                         </div>
+                        {selectedVisit?.externalDoctorId ? (
+                          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-900">
+                            Pelaksana: {externalDoctors.find((doctor) => doctor.id === selectedVisit.externalDoctorId)?.full_name || "Dokter eksternal"}
+                          </div>
+                        ) : (
+                          <label className="text-[10px] font-semibold text-slate-500">
+                            Dokter pelaksana tindakan *
+                            <select
+                              value={getTreatmentDoctorId(service.id)}
+                              onChange={(event) => setTreatmentDoctorIds((current) => ({
+                                ...current,
+                                [service.id]: event.target.value
+                              }))}
+                              required
+                              disabled={currentUser?.role === UserRole.DOCTOR}
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100"
+                            >
+                              <option value="">-- Pilih Dokter --</option>
+                              {doctorsForVisit.map((doctor: DentalDoctor) => (
+                                <option key={doctor.id} value={doctor.id}>
+                                  {doctor.name} ({doctor.specialization})
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
                         <label className="text-[10px] font-semibold text-slate-500">
                           Estimasi durasi (menit)
                           <input
@@ -2056,7 +2107,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || loadingPlannedTariffs || plannedTariffError || !selectedVisitId || selectedTreatmentServices.length === 0 || !selectedDoctorId || !doctorsForVisit.length || !patientApprovalConfirmed}
+                  disabled={submitting || loadingPlannedTariffs || plannedTariffError || !selectedVisitId || selectedTreatmentServices.length === 0 || (!selectedVisit?.externalDoctorId && selectedTreatmentServices.some((service) => !getTreatmentDoctorId(service.id))) || !doctorsForVisit.length || !patientApprovalConfirmed}
                   className="rounded-lg bg-gradient-to-r from-[#9b7625] to-[#c5a059] px-4 py-2 font-semibold text-white shadow-sm transition hover:from-[#80651f] hover:to-[#a98232] disabled:opacity-50"
                 >
                   {submitting ? "Menyimpan..." : loadingPlannedTariffs ? "Memuat tarif..." : "Simpan Rencana Tindakan"}
