@@ -95,6 +95,8 @@ export const Invoices: React.FC = () => {
   const [deleteInvoiceError, setDeleteInvoiceError] = useState<string | null>(null);
   const [invoiceToCancel, setInvoiceToCancel] = useState<Invoice | null>(null);
   const [isCancellingInvoice, setIsCancellingInvoice] = useState(false);
+  const [cancelInvoiceReason, setCancelInvoiceReason] = useState("");
+  const [cancelInvoiceError, setCancelInvoiceError] = useState("");
   const [treatmentToReturn, setTreatmentToReturn] = useState<TreatmentJob | null>(null);
   const [returnReason, setReturnReason] = useState("");
   const [returnTreatmentError, setReturnTreatmentError] = useState("");
@@ -123,6 +125,8 @@ export const Invoices: React.FC = () => {
   const [payAmount, setPayAmount] = useState<number>(0);
   const [payMethod, setPayMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
   const [payRef, setPayRef] = useState("");
+  const [payDate, setPayDate] = useState(getTodayDateString());
+  const [payDateReason, setPayDateReason] = useState("");
   const [payError, setPayError] = useState("");
   const [paymentPostingWarning, setPaymentPostingWarning] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -326,6 +330,8 @@ export const Invoices: React.FC = () => {
     setPayAmount(inv.outstandingAmount);
     setPayMethod(PaymentMethod.CASH);
     setPayRef("");
+    setPayDate(getTodayDateString());
+    setPayDateReason("");
     setPayError("");
     setShowPaymentModal(true);
   };
@@ -482,6 +488,8 @@ export const Invoices: React.FC = () => {
           amount: Number(payAmount),
           paymentMethod: payMethod,
           referenceNumber: payRef || undefined,
+          paymentDate: payDate,
+          notes: payDate < getTodayDateString() ? payDateReason : undefined,
           staffId: currentUser.staffId
         },
         currentUser?.role,
@@ -548,19 +556,31 @@ export const Invoices: React.FC = () => {
   };
 
   const handleCancelInvoice = (inv: Invoice) => {
+    setCancelInvoiceReason("");
+    setCancelInvoiceError("");
     setInvoiceToCancel(inv);
   };
 
   const handleConfirmCancelInvoice = async () => {
     if (!invoiceToCancel) return;
+    if (cancelInvoiceReason.trim().length < 5 || cancelInvoiceReason.trim().length > 500) {
+      setCancelInvoiceError("Alasan pembatalan wajib diisi 5 sampai 500 karakter.");
+      return;
+    }
     setIsCancellingInvoice(true);
     try {
-      await invoiceRepo.cancelInvoice(invoiceToCancel.id, currentUser?.role, currentUser?.branchId);
+      await invoiceRepo.cancelInvoice(
+        invoiceToCancel.id,
+        cancelInvoiceReason,
+        currentUser?.role,
+        currentUser?.branchId,
+        currentUser?.id
+      );
       await loadData();
       setInvoiceToCancel(null);
       setShowDetailModal(false);
     } catch (err: any) {
-      console.error("Gagal membatalkan invoice:", err);
+      setCancelInvoiceError(err.message || "Gagal membatalkan invoice.");
     } finally {
       setIsCancellingInvoice(false);
     }
@@ -1163,6 +1183,48 @@ export const Invoices: React.FC = () => {
               </div>
 
               <div>
+                <label htmlFor="payment-date" className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Tanggal Pembayaran
+                </label>
+                <input
+                  id="payment-date"
+                  type="date"
+                  value={payDate}
+                  min={selectedInvoice.invoiceDate || getOperationalDateString(selectedInvoice.createdAt)}
+                  max={getTodayDateString()}
+                  onChange={(event) => {
+                    setPayDate(event.target.value);
+                    setPayDateReason("");
+                  }}
+                  required
+                  disabled={currentUser?.role !== UserRole.SUPER_ADMIN && currentUser?.role !== UserRole.BRANCH_ADMIN}
+                  className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-white disabled:bg-slate-100"
+                />
+                <p className="mt-1 text-[10px] text-slate-500">
+                  Tanggal dokumen pembayaran. Waktu pencatatan aktual tetap disimpan untuk audit.
+                </p>
+              </div>
+
+              {payDate < getTodayDateString() && (
+                <div>
+                  <label htmlFor="payment-date-reason" className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                    Alasan Pencatatan Mundur
+                  </label>
+                  <textarea
+                    id="payment-date-reason"
+                    value={payDateReason}
+                    onChange={(event) => setPayDateReason(event.target.value)}
+                    minLength={5}
+                    maxLength={500}
+                    required
+                    rows={2}
+                    placeholder="Contoh: Pembayaran diterima 31 Oktober, terlambat dicatat."
+                    className="w-full text-xs border border-slate-200 rounded-lg p-2"
+                  />
+                </div>
+              )}
+
+              <div>
                 <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
                   Nominal Dibayarkan (Rp)
                 </label>
@@ -1392,8 +1454,11 @@ export const Invoices: React.FC = () => {
                             Rp {p.amount.toLocaleString("id-ID")} ({p.paymentMethod})
                           </div>
                           <div className="text-[10px] text-slate-400">
-                            {new Date(p.transactionDateTime).toLocaleString("id-ID")} • Ref: {p.referenceNumber || "-"}
+                            Tgl bayar {p.paymentDate || getOperationalDateString(p.transactionDateTime)} · Dicatat {new Date(p.transactionDateTime).toLocaleString("id-ID")} • Ref: {p.referenceNumber || "-"}
                           </div>
+                          {p.notes && (
+                            <div className="mt-0.5 text-[10px] text-slate-500">Catatan: {p.notes}</div>
+                          )}
                         </div>
                         <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded text-[10px] font-bold">
                           {p.status}
@@ -1531,8 +1596,30 @@ export const Invoices: React.FC = () => {
             </div>
 
             <p className="text-xs text-slate-600">
-              Apakah Anda yakin ingin membatalkan tagihan <strong>{invoiceToCancel.invoiceNumber || "Nomor belum tersedia"}</strong>? Status invoice akan diubah menjadi <strong>CANCELLED</strong>. Tindakan ini tidak dapat diurungkan.
+              Invoice <strong>{invoiceToCancel.invoiceNumber || "Nomor belum tersedia"}</strong> hanya dapat dibatalkan setelah seluruh pembayaran dibalik. Jika jurnal pendapatan sudah terposting, sistem akan membuat jurnal pembalik secara otomatis.
             </p>
+
+            <label className="block space-y-1.5">
+              <span className="text-xs font-semibold text-slate-700">Alasan pembatalan (wajib)</span>
+              <textarea
+                value={cancelInvoiceReason}
+                onChange={(event) => {
+                  setCancelInvoiceReason(event.target.value);
+                  setCancelInvoiceError("");
+                }}
+                maxLength={500}
+                rows={3}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
+                placeholder="Jelaskan alasan pembatalan invoice"
+                disabled={isCancellingInvoice}
+              />
+            </label>
+
+            {cancelInvoiceError && (
+              <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {cancelInvoiceError}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2.5 pt-2">
               <button
@@ -1546,7 +1633,7 @@ export const Invoices: React.FC = () => {
               <button
                 type="button"
                 onClick={handleConfirmCancelInvoice}
-                disabled={isCancellingInvoice}
+                disabled={isCancellingInvoice || cancelInvoiceReason.trim().length < 5}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
               >
                 <span>{isCancellingInvoice ? "Membatalkan..." : "Ya, Batalkan Invoice"}</span>

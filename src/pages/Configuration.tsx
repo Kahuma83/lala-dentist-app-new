@@ -1252,6 +1252,7 @@ export const Configuration: React.FC = () => {
       }
       setShowServiceModal(false);
       await loadData();
+      await refreshData("master_services");
     } catch (err: any) {
       setErrorMsg(err.message || "Gagal menyimpan layanan");
     } finally {

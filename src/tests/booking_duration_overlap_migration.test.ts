@@ -11,6 +11,10 @@ describe("Doctor booking duration overlap protection", () => {
     path.resolve(process.cwd(), "supabase/migrations/20270126000000_fix_empty_booking_treatment_duration.sql"),
     "utf-8"
   );
+  const realtimeDurationMigration = fs.readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/20270204000000_sync_future_booking_durations_with_services.sql"),
+    "utf-8"
+  );
 
   it("rejects overlapping time intervals using planned treatment durations", () => {
     expect(migration).toContain("planned_treatments");
@@ -33,5 +37,14 @@ describe("Doctor booking duration overlap protection", () => {
     expect(durationFixMigration).toContain("), 0), 30)");
     expect(durationFixMigration).toContain("LEAST(");
     expect(durationFixMigration).not.toContain("LEAST(NULLIF(SUM(");
+  });
+
+  it("synchronizes changed service durations to active future bookings without rewriting history", () => {
+    expect(realtimeDurationMigration).toContain("AFTER UPDATE OF estimated_duration_minutes");
+    expect(realtimeDurationMigration).toContain("OLD.estimated_duration_minutes IS DISTINCT FROM NEW.estimated_duration_minutes");
+    expect(realtimeDurationMigration).toContain("booking.status IN ('PENDING', 'CONFIRMED')");
+    expect(realtimeDurationMigration).toContain("booking.booking_date_time >= now()");
+    expect(realtimeDurationMigration).toContain("jsonb_set(");
+    expect(realtimeDurationMigration).toContain("UPDATE public.bookings AS booking");
   });
 });

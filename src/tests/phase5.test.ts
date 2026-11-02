@@ -4,13 +4,15 @@ import {
   MockInvoiceRepository,
   MockPaymentRepository,
   MockTreatmentRepository,
+  MockVisitRepository,
   AppClock
 } from "../repositories/mockRepositories";
 import {
   UserRole,
   InvoiceStatus,
   PaymentMethod,
-  TreatmentJobStatus
+  TreatmentJobStatus,
+  VisitType
 } from "../types/domain";
 
 describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
@@ -179,6 +181,61 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
     expect(updatedInv?.paidAmount).toBe(100000);
     expect(updatedInv?.outstandingAmount).toBe(200000);
     expect(updatedInv?.status).toBe(InvoiceStatus.PARTIALLY_PAID);
+  });
+
+  it("records an authorized backdated payment date separately from its actual creation time", async () => {
+    const visitRepo = new MockVisitRepository();
+    AppClock.setFixedTime("2026-10-31T05:00:00.000Z");
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+    await treatmentRepo.startTreatmentJob(treatment.id);
+    await treatmentRepo.completeTreatmentJob(treatment.id);
+    AppClock.setFixedTime("2026-11-03T05:00:00.000Z");
+
+    const invoice = await invoiceRepo.createInvoice({
+      visitId: visit.id,
+      patientId: visit.patientId,
+      branchId: visit.branchId,
+      invoiceDate: "2026-10-31",
+      items: [{
+        treatmentJobId: treatment.id,
+        serviceId: treatment.serviceId,
+        descriptionSnapshot: treatment.serviceNameSnapshot,
+        unitPriceSnapshot: treatment.priceSnapshot || 0,
+        quantity: 1
+      }]
+    }, UserRole.SUPER_ADMIN);
+
+    const backdatedPayment = {
+      invoiceId: invoice.id,
+      amount: invoice.netAmount,
+      paymentMethod: PaymentMethod.CASH,
+      staffId: "staff-adm-gebang",
+      paymentDate: "2026-10-31"
+    };
+    await expect(paymentRepo.createPayment(backdatedPayment, UserRole.OB))
+      .rejects.toThrow("Hanya Super Admin dan Branch Admin");
+    await expect(paymentRepo.createPayment(backdatedPayment, UserRole.SUPER_ADMIN))
+      .rejects.toThrow("Alasan pencatatan pembayaran mundur");
+
+    const payment = await paymentRepo.createPayment({
+      ...backdatedPayment,
+      notes: "Diterima tanggal 31 Oktober"
+    }, UserRole.SUPER_ADMIN);
+
+    expect(payment.paymentDate).toBe("2026-10-31");
+    expect(payment.transactionDateTime).toBe("2026-11-03T05:00:00.000Z");
+    expect(payment.receiptNumber).toContain("/202610/");
   });
 
   it("Test 8: Full settlement payment sets status to PAID and outstandingAmount to 0", async () => {
@@ -377,7 +434,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
       ]
     });
 
-    const cancelled = await invoiceRepo.cancelInvoice(invoice.id);
+    const cancelled = await invoiceRepo.cancelInvoice(invoice.id, "Kesalahan input invoice");
     expect(cancelled.status).toBe(InvoiceStatus.CANCELLED);
 
     // Payments on cancelled invoice must be rejected
@@ -413,7 +470,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
     });
 
     await expect(
-      invoiceRepo.cancelInvoice(invoice.id)
-    ).rejects.toThrow("Invoice yang telah memiliki pembayaran tidak dapat dibatalkan secara langsung");
+      invoiceRepo.cancelInvoice(invoice.id, "Koreksi invoice")
+    ).rejects.toThrow("Seluruh pembayaran invoice harus dibalik sebelum invoice dibatalkan.");
   });
 });

@@ -71,6 +71,7 @@ import {
   PaymentMethod,
   StaffCompensationRule,
   ReferralIncentiveRate,
+  AssistantTreatmentIncentiveRate,
   CompensationAccrual,
   MonthlyPayroll,
   PayrollItem,
@@ -4561,6 +4562,9 @@ export class MockInvoiceRepository implements InvoiceRepository {
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && inv.branchId !== userBranchId) {
       throw new Error("Branch Admin tidak dapat mengubah status Invoice cabang lain");
     }
+    if (status === InvoiceStatus.CANCELLED) {
+      throw new Error("Gunakan alur cancelInvoice dengan alasan pembatalan.");
+    }
 
     inv.status = status;
     inv.updatedAt = AppClock.nowISO();
@@ -4569,8 +4573,10 @@ export class MockInvoiceRepository implements InvoiceRepository {
 
   async cancelInvoice(
     id: string,
+    reason: string,
     currentUserRole?: UserRole,
-    userBranchId?: string | null
+    userBranchId?: string | null,
+    currentUserId?: string | null
   ): Promise<Invoice> {
     const inv = db.invoices.find((i: Invoice) => i.id === id);
     if (!inv) {
@@ -4581,12 +4587,78 @@ export class MockInvoiceRepository implements InvoiceRepository {
       throw new Error("Branch Admin tidak dapat membatalkan Invoice cabang lain");
     }
 
-    if (inv.paidAmount > 0) {
-      throw new Error("Invoice yang telah memiliki pembayaran tidak dapat dibatalkan secara langsung. Lakukan void/refund pembayaran terlebih dahulu");
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 500) {
+      throw new Error("Alasan pembatalan invoice wajib diisi 5 sampai 500 karakter.");
+    }
+
+    if (inv.status === InvoiceStatus.CANCELLED) {
+      if (inv.cancellationReason === cleanReason) return { ...inv };
+      throw new Error("Invoice ini sudah dibatalkan dengan alasan yang berbeda.");
+    }
+    if (inv.paidAmount > 0 || db.payments.some((payment) => payment.invoiceId === id && payment.status === "SUCCESS")) {
+      throw new Error("Seluruh pembayaran invoice harus dibalik sebelum invoice dibatalkan.");
+    }
+    if (inv.status !== InvoiceStatus.DRAFT && inv.status !== InvoiceStatus.OPEN) {
+      throw new Error("Invoice harus berstatus DRAFT atau OPEN sebelum dibatalkan.");
+    }
+
+    const invoiceJournal = db.journals.find((journal) =>
+      journal.sourceType === JournalSourceType.INVOICE && journal.sourceId === id
+    );
+    if (invoiceJournal?.status === JournalStatus.POSTED) {
+      if (db.journals.some((journal) => journal.reversalOfJournalId === invoiceJournal.id)) {
+        throw new Error("Jurnal invoice sudah memiliki jurnal pembalik. Periksa transaksi sebelum melanjutkan.");
+      }
+      if (invoiceJournal.lines.length < 2) {
+        throw new Error("Baris jurnal invoice tidak ditemukan; pembatalan tidak dapat dilanjutkan.");
+      }
+      const now = AppClock.nowISO();
+      const reversalDate = getOperationalDateString(now);
+      const reversalId = `journal-reversal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const lines: JournalLine[] = invoiceJournal.lines.map((line, index) => ({
+        id: `${reversalId}-line-${index + 1}`,
+        journalEntryId: reversalId,
+        accountId: line.accountId,
+        branchId: invoiceJournal.branchId,
+        debit: line.credit,
+        credit: line.debit,
+        description: line.description ? `Pembalik: ${line.description}` : "Jurnal pembalik invoice"
+      }));
+      const totalDebit = lines.reduce((total, line) => total + line.debit, 0);
+      const totalCredit = lines.reduce((total, line) => total + line.credit, 0);
+      if (totalDebit <= 0 || totalDebit !== totalCredit) {
+        throw new Error("Jurnal invoice tidak seimbang; pembatalan tidak dapat dilanjutkan.");
+      }
+      db.journals.push({
+        id: reversalId,
+        journalNumber: `JRN-REV-${reversalId}`,
+        journalDate: reversalDate < invoiceJournal.journalDate ? invoiceJournal.journalDate : reversalDate,
+        branchId: invoiceJournal.branchId,
+        description: `Pembalik ${invoiceJournal.journalNumber}: ${cleanReason}`,
+        sourceType: JournalSourceType.REVERSAL,
+        sourceId: invoiceJournal.id,
+        status: JournalStatus.POSTED,
+        totalDebit,
+        totalCredit,
+        lines,
+        createdBy: "System",
+        createdAt: now,
+        postedAt: now,
+        postedBy: "System",
+        reversalOfJournalId: invoiceJournal.id,
+        reversalReason: cleanReason,
+        updatedAt: now
+      });
+    } else if (invoiceJournal?.status === JournalStatus.DRAFT) {
+      db.journals = db.journals.filter((journal) => journal.id !== invoiceJournal.id);
     }
 
     inv.status = InvoiceStatus.CANCELLED;
     inv.updatedAt = AppClock.nowISO();
+    inv.cancellationReason = cleanReason;
+    inv.cancelledAt = inv.updatedAt;
+    inv.cancelledBy = currentUserId || undefined;
     return { ...inv };
   }
 
@@ -4661,6 +4733,7 @@ export class MockPaymentRepository implements PaymentRepository {
       referenceNumber?: string;
       staffId: string;
       notes?: string;
+      paymentDate?: string;
       customId?: string;
       customReceiptNumber?: string;
     },
@@ -4700,10 +4773,24 @@ export class MockPaymentRepository implements PaymentRepository {
       throw new Error(`Nominal pembayaran (Rp ${data.amount.toLocaleString("id-ID")}) melebihi sisa tagihan (Rp ${inv.outstandingAmount.toLocaleString("id-ID")})`);
     }
 
+    const paymentDate = data.paymentDate || AppClock.todayDateString();
+    if (!isValidCalendarDateString(paymentDate)) {
+      throw new Error("Tanggal pembayaran tidak valid.");
+    }
+    if (paymentDate > AppClock.todayDateString()) {
+      throw new Error("Tanggal pembayaran tidak boleh melebihi tanggal hari ini.");
+    }
+    if (paymentDate < (inv.invoiceDate || getOperationalDateString(inv.createdAt))) {
+      throw new Error("Tanggal pembayaran tidak boleh sebelum tanggal invoice.");
+    }
+    if (paymentDate < AppClock.todayDateString() && (!data.notes || data.notes.trim().length < 5)) {
+      throw new Error("Alasan pencatatan pembayaran mundur wajib diisi minimal 5 karakter.");
+    }
+
     const now = AppClock.nowISO();
     const paymentId = data.customId || `pay-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const branchId = inv.branchId || "branch-gebang";
-    const receiptNumber = data.customReceiptNumber || generateReceiptNumber(branchId, now, db.payments, db.branches);
+    const receiptNumber = data.customReceiptNumber || generateReceiptNumber(branchId, paymentDate, db.payments, db.branches);
 
     const newPayment: PaymentTransaction = {
       id: paymentId,
@@ -4714,6 +4801,7 @@ export class MockPaymentRepository implements PaymentRepository {
       paymentMethod: data.paymentMethod,
       referenceNumber: data.referenceNumber,
       notes: data.notes,
+      paymentDate,
       transactionDateTime: now,
       staffId: data.staffId,
       status: "SUCCESS",
@@ -5123,6 +5211,44 @@ export class MockCompensationRepository implements CompensationRepository {
     return { ...savedRates.find((rate) => rate.staffPosition === data.staffPosition)! };
   }
 
+  async getAssistantTreatmentIncentiveRates(): Promise<AssistantTreatmentIncentiveRate[]> {
+    return db.assistantTreatmentIncentiveRates.map((rate) => ({ ...rate }));
+  }
+
+  async saveAssistantTreatmentIncentiveRate(
+    data: Omit<AssistantTreatmentIncentiveRate, "id" | "createdAt" | "updatedAt"> & { id?: string },
+    currentUserRole?: UserRole
+  ): Promise<AssistantTreatmentIncentiveRate> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat mengatur insentif tindakan bersama untuk asisten.");
+    }
+    if (!data.serviceId || !db.services.some((service: MasterService) => service.id === data.serviceId)) {
+      throw new Error("Layanan tindakan untuk insentif asisten tidak ditemukan.");
+    }
+    if (!Number.isSafeInteger(data.amount) || data.amount <= 0) {
+      throw new Error("Nominal insentif tindakan asisten harus berupa Rupiah bulat lebih besar dari nol.");
+    }
+
+    const existing = (data.id && db.assistantTreatmentIncentiveRates.find((rate) => rate.id === data.id))
+      || db.assistantTreatmentIncentiveRates.find((rate) => rate.serviceId === data.serviceId);
+    if (existing && existing.serviceId !== data.serviceId) {
+      throw new Error("Layanan pada tarif yang sudah ada tidak dapat diubah.");
+    }
+    const now = AppClock.nowISO();
+    const saved: AssistantTreatmentIncentiveRate = {
+      id: existing?.id || `assistant-treatment-rate-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      serviceId: data.serviceId,
+      amount: data.amount,
+      isActive: data.isActive,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    if (existing) Object.assign(existing, saved);
+    else db.assistantTreatmentIncentiveRates.push(saved);
+    db.saveToStorage();
+    return { ...saved };
+  }
+
   async calculateAndAccrueForTreatment(treatmentJobId: string): Promise<CompensationAccrual[]> {
     const job = db.treatmentJobs.find((t: TreatmentJob) => t.id === treatmentJobId);
     if (!job) {
@@ -5206,6 +5332,7 @@ export class MockCompensationRepository implements CompensationRepository {
       existingRuleKeys.add(`${job.doctorId}:${rule.id}`);
     }
 
+    let hasIndividualAssistantTreatmentRule = false;
     // Find rules for assistant if assigned
     if (job.picAssistantId) {
       const assistantRules = db.rules.filter((r: StaffCompensationRule) =>
@@ -5216,7 +5343,6 @@ export class MockCompensationRepository implements CompensationRepository {
       for (const rule of assistantRules) {
         if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE" || rule.ruleTypeSnapshot === "TAX_PERCENTAGE") continue;
         if (rule.serviceId && rule.serviceId !== job.serviceId) continue;
-        if (existingRuleKeys.has(`${job.picAssistantId}:${rule.id}`)) continue;
 
         let amount = 0;
         if (rule.ruleTypeSnapshot === "PERCENTAGE") {
@@ -5224,6 +5350,9 @@ export class MockCompensationRepository implements CompensationRepository {
         } else if (rule.ruleTypeSnapshot === "FIXED_PER_TREATMENT") {
           amount = rule.valueSnapshot;
         }
+        if (amount <= 0) continue;
+        hasIndividualAssistantTreatmentRule = true;
+        if (existingRuleKeys.has(`${job.picAssistantId}:${rule.id}`)) continue;
 
         const accrual: CompensationAccrual = {
           id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
@@ -5241,6 +5370,39 @@ export class MockCompensationRepository implements CompensationRepository {
         db.accruals.push(accrual);
         createdAccruals.push(accrual);
         existingRuleKeys.add(`${job.picAssistantId}:${rule.id}`);
+      }
+
+      const assistant = db.staff.find((staff: Staff) =>
+        (staff.id === job.picAssistantId || staff.userAccountId === job.picAssistantId) &&
+        staff.position === StaffPosition.ASSISTANT &&
+        staff.active &&
+        staff.employmentStatus === EmploymentStatus.ACTIVE
+      );
+      const sharedRate = db.assistantTreatmentIncentiveRates.find((rate) =>
+        rate.serviceId === job.serviceId && rate.isActive
+      );
+      const sharedRuleId = "ASSISTANT_TREATMENT_BASE_V1";
+      if (
+        assistant &&
+        sharedRate &&
+        !hasIndividualAssistantTreatmentRule &&
+        !existingRuleKeys.has(`${job.picAssistantId}:${sharedRuleId}`)
+      ) {
+        const accrual: CompensationAccrual = {
+          id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+          staffId: job.picAssistantId,
+          branchId: job.branchId,
+          ruleIdSnapshot: sharedRuleId,
+          ruleTypeSnapshot: "FIXED_PER_TREATMENT",
+          valueSnapshot: sharedRate.amount,
+          baseAmountSnapshot: baseAmount,
+          amount: sharedRate.amount,
+          sourceId: job.id,
+          accruedAt: now
+        };
+        db.accruals.push(accrual);
+        createdAccruals.push(accrual);
+        existingRuleKeys.add(`${assistant.id}:${sharedRuleId}`);
       }
     }
 

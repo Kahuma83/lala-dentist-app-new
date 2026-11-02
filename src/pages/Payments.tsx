@@ -32,6 +32,7 @@ import { ReceiptDocumentModal } from "../components/documents/ReceiptDocumentMod
 import { getInvoiceDoctorName } from "../utils/receiptUtils";
 
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
+import { getOperationalDateString } from "../utils/dateUtils";
 
 export const Payments: React.FC = () => {
   const {
@@ -420,18 +421,28 @@ export const Payments: React.FC = () => {
                     <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3.5 px-4 font-mono text-slate-500">
                         <div>
-                          {new Date(p.transactionDateTime).toLocaleDateString("id-ID", {
+                          {new Date(`${p.paymentDate || getOperationalDateString(p.transactionDateTime)}T12:00:00+07:00`).toLocaleDateString("id-ID", {
                             day: "numeric",
                             month: "short",
-                            year: "numeric"
+                            year: "numeric",
+                            timeZone: "Asia/Jakarta"
                           })}
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          {new Date(p.transactionDateTime).toLocaleTimeString("id-ID", {
+                          Dicatat {new Date(p.transactionDateTime).toLocaleString("id-ID", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
                             hour: "2-digit",
-                            minute: "2-digit"
+                            minute: "2-digit",
+                            timeZone: "Asia/Jakarta"
                           })}
                         </div>
+                        {p.notes && (
+                          <div className="mt-1 max-w-48 text-[10px] text-slate-500">
+                            Catatan: {p.notes}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 font-mono font-medium text-slate-900">
                         <div className="text-slate-900 font-bold">{p.receiptNumber || "Nomor kwitansi belum tersedia"}</div>

@@ -5,6 +5,7 @@ import {
   StaffCompensationRule,
   ReferralIncentiveRate,
   CompensationAccrual,
+  AssistantTreatmentIncentiveRate,
   UserRole,
   JournalEntry,
   JournalSourceType,
@@ -77,7 +78,7 @@ const compensationRuleOptions: Array<{
   }
 ];
 
-export const Compensation: React.FC = () => {
+export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeePortal = false }) => {
   const {
     currentUser,
     compRepo,
@@ -93,6 +94,7 @@ export const Compensation: React.FC = () => {
 
   const [rules, setRules] = useState<StaffCompensationRule[]>([]);
   const [referralRates, setReferralRates] = useState<ReferralIncentiveRate[]>([]);
+  const [assistantTreatmentRates, setAssistantTreatmentRates] = useState<AssistantTreatmentIncentiveRate[]>([]);
   const [accruals, setAccruals] = useState<CompensationAccrual[]>([]);
   const [accrualSourceTreatments, setAccrualSourceTreatments] = useState<Map<string, TreatmentJob[]>>(new Map());
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
@@ -140,6 +142,13 @@ export const Compensation: React.FC = () => {
   const [referralCustomServiceName, setReferralCustomServiceName] = useState("");
   const [referralFormAmount, setReferralFormAmount] = useState(0);
   const [referralFormIsActive, setReferralFormIsActive] = useState(true);
+  const [showAssistantRateModal, setShowAssistantRateModal] = useState(false);
+  const [editingAssistantRate, setEditingAssistantRate] = useState<AssistantTreatmentIncentiveRate | null>(null);
+  const [assistantRateServiceId, setAssistantRateServiceId] = useState("");
+  const [assistantRateAmount, setAssistantRateAmount] = useState(0);
+  const [assistantRateIsActive, setAssistantRateIsActive] = useState(true);
+  const [assistantRateError, setAssistantRateError] = useState("");
+  const [isSavingAssistantRate, setIsSavingAssistantRate] = useState(false);
 
   const sharedReferralRateGroups = useMemo(() => {
     const groups = new Map<string, ReferralIncentiveRate[]>();
@@ -159,34 +168,45 @@ export const Compensation: React.FC = () => {
   }, [referralRates]);
 
   const isAssistant = currentUser?.role === UserRole.DOCTOR_ASSISTANT;
+  const isEmployeePortal = employeePortal && (
+    currentUser?.role === UserRole.BRANCH_ADMIN || isAssistant
+  );
 
   const loadData = async () => {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const assistantStaffId = isAssistant ? (currentUser?.staffId || currentUser?.id) : undefined;
-      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList, referralRateList] = await Promise.all([
-        compRepo.getCompensationRules(),
-        compRepo.getCompensationAccruals(assistantStaffId),
-        doctorRepo.getDoctors(),
-        staffRepo.getStaff(),
-        configRepo.getServices(),
-        branchRepo.getBranches(),
-        accountingRepo.getJournals(
-          currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.branchId
-            ? { branchId: currentUser.branchId }
-            : undefined
-        ),
-        doctorRepo.getDoctorBranchAssignments(),
+      const employeeStaffId = isEmployeePortal ? (currentUser?.staffId || currentUser?.id) : undefined;
+      if (isEmployeePortal && !employeeStaffId) {
+        throw new Error("Akun pegawai belum terhubung dengan data staf.");
+      }
+      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList, referralRateList, assistantTreatmentRateList] = await Promise.all([
+        isEmployeePortal ? Promise.resolve([]) : compRepo.getCompensationRules(),
+        compRepo.getCompensationAccruals(employeeStaffId),
+        isEmployeePortal ? Promise.resolve([]) : doctorRepo.getDoctors(),
+        isEmployeePortal ? Promise.resolve([]) : staffRepo.getStaff(),
+        isEmployeePortal ? Promise.resolve([]) : configRepo.getServices(),
+        isEmployeePortal ? Promise.resolve([]) : branchRepo.getBranches(),
+        isEmployeePortal
+          ? Promise.resolve([])
+          : accountingRepo.getJournals(
+            currentUser?.role === UserRole.BRANCH_ADMIN && currentUser.branchId
+              ? { branchId: currentUser.branchId }
+              : undefined
+          ),
+        isEmployeePortal ? Promise.resolve([]) : doctorRepo.getDoctorBranchAssignments(),
         currentUser?.role === UserRole.SUPER_ADMIN
           ? compRepo.getReferralIncentiveRates()
+          : Promise.resolve([]),
+        currentUser?.role === UserRole.SUPER_ADMIN
+          ? compRepo.getAssistantTreatmentIncentiveRates()
           : Promise.resolve([])
       ]);
 
       let filteredAccruals = aList;
-      if (isAssistant && assistantStaffId) {
+      if (isEmployeePortal && employeeStaffId) {
         filteredAccruals = aList.filter(
-          (a) => a.staffId === assistantStaffId || a.staffId === currentUser?.id || a.staffId === currentUser?.staffId
+          (a) => a.staffId === employeeStaffId || a.staffId === currentUser?.id || a.staffId === currentUser?.staffId
         );
       }
 
@@ -230,6 +250,7 @@ export const Compensation: React.FC = () => {
 
       setRules(rList);
       setReferralRates(referralRateList);
+      setAssistantTreatmentRates(assistantTreatmentRateList);
       setAccruals(filteredAccruals);
       setAccrualSourceTreatments(sourceTreatmentMap);
       setDoctors(dList);
@@ -257,11 +278,11 @@ export const Compensation: React.FC = () => {
   }, [currentUser, branches, selectedBranchId]);
 
   useEffect(() => {
-    if (isAssistant) {
+    if (isEmployeePortal) {
       setActiveTab("ACCRUALS");
     }
     loadData();
-  }, [currentUser]);
+  }, [currentUser, isEmployeePortal]);
 
   const getCompensationJournal = (accrualId: string) => {
     return journals.find(
@@ -604,6 +625,44 @@ export const Compensation: React.FC = () => {
     setShowRuleModal(true);
   };
 
+  const openAssistantRateModal = (rate?: AssistantTreatmentIncentiveRate) => {
+    setEditingAssistantRate(rate || null);
+    setAssistantRateServiceId(rate?.serviceId || "");
+    setAssistantRateAmount(rate?.amount || 0);
+    setAssistantRateIsActive(rate?.isActive ?? true);
+    setAssistantRateError("");
+    setShowAssistantRateModal(true);
+  };
+
+  const handleSaveAssistantRate = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!assistantRateServiceId || !Number.isSafeInteger(assistantRateAmount) || assistantRateAmount <= 0) {
+      setAssistantRateError("Pilih tindakan dan isi nominal insentif berupa Rupiah bulat lebih besar dari nol.");
+      return;
+    }
+    if (currentUser?.role !== UserRole.SUPER_ADMIN) {
+      setAssistantRateError("Hanya Super Admin yang dapat mengatur insentif tindakan bersama untuk asisten.");
+      return;
+    }
+    setIsSavingAssistantRate(true);
+    try {
+      await compRepo.saveAssistantTreatmentIncentiveRate({
+        id: editingAssistantRate?.id,
+        serviceId: assistantRateServiceId,
+        amount: assistantRateAmount,
+        isActive: assistantRateIsActive
+      }, currentUser.role);
+      setShowAssistantRateModal(false);
+      setEditingAssistantRate(null);
+      await loadData();
+      setFeedbackMessage("Tarif insentif tindakan bersama untuk asisten berhasil disimpan.");
+    } catch (err) {
+      setAssistantRateError(err instanceof Error ? err.message : "Gagal menyimpan tarif insentif tindakan asisten.");
+    } finally {
+      setIsSavingAssistantRate(false);
+    }
+  };
+
   return (
     <div className="space-y-6" id="compensation-page">
       {/* Header */}
@@ -611,11 +670,11 @@ export const Compensation: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <Award className="w-6 h-6 text-emerald-600" />
-            {isAssistant ? "Insentif Saya" : "Pengaturan Penggajian per Cabang"}
+            {isEmployeePortal ? "Insentif Saya" : "Pengaturan Penggajian per Cabang"}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            {isAssistant
-              ? "Daftar rincian insentif dan komisi dari pelayanan tindakan medis yang telah Anda kerjakan"
+            {isEmployeePortal
+              ? "Rincian insentif dan komisi yang tercatat untuk akun Anda."
               : "Pilih cabang untuk mengatur gaji pokok, sharing dokter, serta insentif admin cabang dan asisten. Setiap cabang menerbitkan slip payrollnya sendiri."}
           </p>
         </div>
@@ -681,7 +740,7 @@ export const Compensation: React.FC = () => {
         </div>
       )}
 
-      {!isAssistant && (
+      {!isEmployeePortal && (
         <section className="space-y-3">
           <div>
             <h2 className="text-sm font-bold text-slate-900">Kebijakan Penggajian Cabang</h2>
@@ -739,7 +798,7 @@ export const Compensation: React.FC = () => {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {!isAssistant && (
+        {!isEmployeePortal && (
           <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
               <Layers className="w-5 h-5" />
@@ -759,7 +818,7 @@ export const Compensation: React.FC = () => {
           </div>
           <div>
             <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
-              {isAssistant ? "Total Tindakan Berinsentif" : "Total Akrual Tercatat"}
+              {isEmployeePortal ? "Total Transaksi Insentif" : "Total Akrual Tercatat"}
             </div>
             <div className="text-base font-bold text-teal-700 mt-0.5">
               {accruals.length} Transaksi Tindakan
@@ -773,7 +832,7 @@ export const Compensation: React.FC = () => {
           </div>
           <div>
             <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
-              {isAssistant ? "Akumulasi Insentif Saya" : "Akumulasi Nilai Komisi"}
+              {isEmployeePortal ? "Akumulasi Insentif Saya" : "Akumulasi Nilai Komisi"}
             </div>
             <div className="text-base font-bold text-blue-700 mt-0.5">
               Rp {totalAccruedAmount.toLocaleString("id-ID")}
@@ -783,7 +842,7 @@ export const Compensation: React.FC = () => {
       </div>
 
       {/* Tab Selector */}
-      {!isAssistant && (
+      {!isEmployeePortal && (
         <div className="flex border-b border-slate-200">
           <button
             onClick={() => setActiveTab("RULES")}
@@ -1067,6 +1126,74 @@ export const Compensation: React.FC = () => {
               </div>
             </section>
           )}
+          {currentUser?.role === UserRole.SUPER_ADMIN && (
+            <section className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
+              <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900">Master Insentif Tindakan Asisten</h2>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Tarif flat per tindakan berlaku untuk semua asisten yang ditugaskan sebagai PIC. Tarif personal yang aktif akan menjadi prioritas.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openAssistantRateModal()}
+                  disabled={services.every((service) => assistantTreatmentRates.some((rate) => rate.serviceId === service.id))}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Tambah Tarif Tindakan
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                      <th className="px-4 py-3">Tindakan</th>
+                      <th className="px-4 py-3 text-right">Insentif per tindakan</th>
+                      <th className="px-4 py-3 text-center">Status</th>
+                      <th className="px-4 py-3 text-center">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                    {assistantTreatmentRates.map((rate) => (
+                      <tr key={rate.id}>
+                        <td className="px-4 py-3 font-medium">
+                          {services.find((service) => service.id === rate.serviceId)?.name || "Layanan tidak ditemukan"}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold">
+                          Rp {rate.amount.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                            rate.isActive ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+                          }`}>
+                            {rate.isActive ? "Aktif" : "Nonaktif"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => openAssistantRateModal(rate)}
+                            className="rounded-md border border-slate-200 px-2.5 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            Ubah
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {assistantTreatmentRates.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-8 text-center text-slate-400">
+                          Belum ada tarif insentif tindakan asisten.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </div>
       )}
 
@@ -1099,7 +1226,7 @@ export const Compensation: React.FC = () => {
                 <th className="py-3 px-4 text-right">Tarif Dasar</th>
                 <th className="py-3 px-4 text-right">Skema Snapshot</th>
                 <th className="py-3 px-4 text-right">Akrual Komisi</th>
-                <th className="py-3 px-4 text-center">{isAssistant ? "Status" : "Jurnal Akuntansi"}</th>
+                <th className="py-3 px-4 text-center">{isEmployeePortal ? "Status" : "Jurnal Akuntansi"}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
@@ -1112,13 +1239,20 @@ export const Compensation: React.FC = () => {
               ) : accruals.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-slate-400">
-                    Belum ada akrual kompensasi tercatat. Akrual hanya dihitung setelah tindakan selesai dan invoice LUNAS; Super Admin dapat menyinkronkan tindakan yang memenuhi syarat.
+                    {isEmployeePortal
+                      ? "Belum ada insentif tercatat. Insentif referral dibukukan setelah tindakan selesai dan invoice lunas; insentif tindakan asisten hanya berlaku jika Anda tercatat sebagai PIC."
+                      : "Belum ada akrual kompensasi tercatat. Akrual hanya dihitung setelah tindakan selesai dan invoice LUNAS; Super Admin dapat menyinkronkan tindakan yang memenuhi syarat."}
                   </td>
                 </tr>
               ) : (
                 accruals.map((a) => {
                   const jrn = getCompensationJournal(a.id);
-                  const info = getStaffInfo(a.staffId);
+                  const info = isEmployeePortal
+                    ? {
+                        name: currentUser?.name || "Pegawai",
+                        role: isAssistant ? "Asisten Dokter" : "Admin Cabang"
+                      }
+                    : getStaffInfo(a.staffId);
                   return (
                     <tr key={a.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3.5 px-4 font-mono text-slate-500">
@@ -1166,7 +1300,7 @@ export const Compensation: React.FC = () => {
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
-                          {isAssistant ? (
+                          {isEmployeePortal ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                               <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                               Tercatat
@@ -1375,23 +1509,20 @@ export const Compensation: React.FC = () => {
                                 <label htmlFor="referral-service-name" className="mb-1 block text-[10px] font-semibold text-slate-600">
                                   Tindakan (kosongkan untuk tarif dasar)
                                 </label>
-                                <input
+                                <select
                                   id="referral-service-name"
-                                  list="referral-service-options"
-                                  maxLength={120}
                                   value={referralCustomServiceName}
                                   onChange={(event) => setReferralCustomServiceName(event.target.value)}
-                                  placeholder="Tarif dasar — tindakan lain"
-                                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
-                                />
-                                <datalist id="referral-service-options">
+                                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                >
+                                  <option value="">Tarif dasar — tindakan lain</option>
                                   {[...new Set([
                                     ...services.map((service) => service.name),
                                     ...referralRates.map((rate) => rate.serviceName).filter((name): name is string => Boolean(name))
                                   ])].map((name) => (
-                                    <option key={name} value={name} />
+                                    <option key={name} value={name}>{name}</option>
                                   ))}
-                                </datalist>
+                                </select>
                               </div>
                               <div>
                                 <label htmlFor="referral-rate-amount" className="mb-1 block text-[10px] font-semibold text-slate-600">
@@ -1529,6 +1660,98 @@ export const Compensation: React.FC = () => {
                     : editingRule
                     ? "Simpan Perubahan"
                     : `Simpan ${selectedRuleTypes.length + (includeReferralRate ? 1 : 0)} Komponen`}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showAssistantRateModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                {editingAssistantRate ? "Ubah Tarif Insentif Asisten" : "Tambah Tarif Insentif Asisten"}
+              </h3>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Tarif flat ini berlaku untuk semua asisten yang menjadi PIC tindakan. Tarif individual yang aktif akan diprioritaskan.
+              </p>
+            </div>
+            {assistantRateError && (
+              <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {assistantRateError}
+              </div>
+            )}
+            <form onSubmit={handleSaveAssistantRate} className="space-y-4">
+              <div>
+                <label htmlFor="assistant-treatment-rate-service" className="mb-1 block text-[11px] font-semibold text-slate-700">
+                  Tindakan *
+                </label>
+                <select
+                  id="assistant-treatment-rate-service"
+                  required
+                  value={assistantRateServiceId}
+                  disabled={Boolean(editingAssistantRate) || isSavingAssistantRate}
+                  onChange={(event) => {
+                    setAssistantRateServiceId(event.target.value);
+                    setAssistantRateError("");
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100"
+                >
+                  <option value="">Pilih tindakan</option>
+                  {services
+                    .filter((service) => editingAssistantRate?.serviceId === service.id ||
+                      !assistantTreatmentRates.some((rate) => rate.serviceId === service.id))
+                    .map((service) => (
+                      <option key={service.id} value={service.id}>{service.name}</option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="assistant-treatment-rate-amount" className="mb-1 block text-[11px] font-semibold text-slate-700">
+                  Insentif flat per tindakan (Rp) *
+                </label>
+                <input
+                  id="assistant-treatment-rate-amount"
+                  type="number"
+                  min="1"
+                  step="1"
+                  required
+                  value={assistantRateAmount || ""}
+                  disabled={isSavingAssistantRate}
+                  onChange={(event) => {
+                    setAssistantRateAmount(Number(event.target.value));
+                    setAssistantRateError("");
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={assistantRateIsActive}
+                  disabled={isSavingAssistantRate}
+                  onChange={(event) => setAssistantRateIsActive(event.target.checked)}
+                  className="rounded border-slate-300 text-emerald-600"
+                />
+                Tarif aktif
+              </label>
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  type="button"
+                  disabled={isSavingAssistantRate}
+                  onClick={() => setShowAssistantRateModal(false)}
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingAssistantRate || !assistantRateServiceId || assistantRateAmount <= 0}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {isSavingAssistantRate ? "Menyimpan..." : "Simpan Tarif"}
                 </button>
               </div>
             </form>

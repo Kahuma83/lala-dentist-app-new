@@ -242,6 +242,17 @@ export const Login: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
+                    setEmail("superadmin@laladentist.id");
+                    setPassword("laladentist123");
+                    setLoginError(null);
+                  }}
+                  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-semibold hover:bg-emerald-100"
+                >
+                  Isi akun demo Super Admin
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     setEmail("amanda@laladentist.com");
                     setPassword("laladentist123");
                     setLoginError(null);

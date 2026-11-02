@@ -20,6 +20,7 @@ import {
   PaymentMethod,
   StaffCompensationRule,
   ReferralIncentiveRate,
+  AssistantTreatmentIncentiveRate,
   CompensationAccrual,
   MonthlyPayroll,
   PayrollItem,
@@ -883,8 +884,10 @@ export interface InvoiceRepository {
   ): Promise<Invoice>;
   cancelInvoice(
     id: string,
+    reason: string,
     currentUserRole?: UserRole,
-    userBranchId?: string | null
+    userBranchId?: string | null,
+    currentUserId?: string | null
   ): Promise<Invoice>;
   deleteInvoice(
     id: string,
@@ -905,6 +908,7 @@ export interface PaymentRepository {
       referenceNumber?: string;
       staffId: string;
       notes?: string;
+      paymentDate?: string;
       customId?: string;
       customReceiptNumber?: string;
     },
@@ -936,6 +940,11 @@ export interface CompensationRepository {
     data: Omit<ReferralIncentiveRate, "id" | "createdAt" | "updatedAt"> & { id?: string },
     currentUserRole?: UserRole
   ): Promise<ReferralIncentiveRate>;
+  getAssistantTreatmentIncentiveRates(): Promise<AssistantTreatmentIncentiveRate[]>;
+  saveAssistantTreatmentIncentiveRate(
+    data: Omit<AssistantTreatmentIncentiveRate, "id" | "createdAt" | "updatedAt"> & { id?: string },
+    currentUserRole?: UserRole
+  ): Promise<AssistantTreatmentIncentiveRate>;
   calculateAndAccrueForTreatment(treatmentJobId: string): Promise<CompensationAccrual[]>;
   deleteAccrual(id: string, currentUserRole?: UserRole): Promise<boolean>;
   deleteCompensationRule(id: string, currentUserRole?: UserRole): Promise<boolean>;

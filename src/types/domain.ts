@@ -914,6 +914,9 @@ export interface Invoice {
   paidAmount: number; // integer
   outstandingAmount: number; // integer (Invoice != Payment)
   status: InvoiceStatus;
+  cancellationReason?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
   items?: InvoiceItem[];
   itemsSnapshot?: InvoiceItem[];
   createdAt: string;
@@ -944,6 +947,7 @@ export interface PaymentTransaction {
   paymentMethod: PaymentMethod;
   referenceNumber?: string;
   notes?: string;
+  paymentDate?: string; // Document/accounting date, YYYY-MM-DD; createdAt remains the audit timestamp
   transactionDateTime: string; // ISO date-time
   staffId: string; // recorded by whom
   status: "SUCCESS" | "REFUNDED" | "FAILED";
@@ -973,6 +977,15 @@ export interface ReferralIncentiveRate {
   id: string;
   staffPosition: StaffPosition.BRANCH_ADMIN | StaffPosition.ASSISTANT;
   serviceName: string | null;
+  amount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssistantTreatmentIncentiveRate {
+  id: string;
+  serviceId: string;
   amount: number;
   isActive: boolean;
   createdAt: string;

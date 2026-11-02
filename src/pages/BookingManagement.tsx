@@ -102,7 +102,7 @@ const getMinutesOfDay = (time: string) => {
 };
 
 export const BookingManagement: React.FC = () => {
-  const { repos, currentUser, selectedBranchId, branches, patients, staff, refreshData } = useApp();
+  const { repos, currentUser, selectedBranchId, branches, patients, staff, services, refreshData, realtimeSyncStatus } = useApp();
   const canViewPatientPhoneNumber = canViewPatientPhone(currentUser?.role);
   const { navigate, path } = useRouter();
 
@@ -111,7 +111,7 @@ export const BookingManagement: React.FC = () => {
   const [visits, setVisits] = useState<PatientVisit[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string>("ACTIVE");
   const [branchFilter, setBranchFilter] = useState<string>("ALL");
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => getWeekStart(getTodayDateString()));
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
@@ -302,7 +302,12 @@ export const BookingManagement: React.FC = () => {
       ]);
 
       const [bkRes, docRes, qRes, visRes] = results;
-      if (bkRes.status === "fulfilled") setBookings(bkRes.value);
+      if (bkRes.status === "fulfilled") {
+        setBookings(bkRes.value);
+        setSelectedBooking((current) => current
+          ? bkRes.value.find((booking) => booking.id === current.id) || current
+          : null);
+      }
       if (docRes.status === "fulfilled") {
         setDoctorsList(docRes.value);
       }
@@ -318,6 +323,18 @@ export const BookingManagement: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [effectiveBranchId]);
+
+  useEffect(() => {
+    if (realtimeSyncStatus.lastEventTable === "bookings") {
+      void loadData();
+    }
+  }, [realtimeSyncStatus.lastEventAt, realtimeSyncStatus.lastEventTable]);
+
+  useEffect(() => {
+    setPlannedServices((selected) => selected.map((selectedService) =>
+      services.find((service) => service.id === selectedService.id) || selectedService
+    ));
+  }, [services]);
 
   useEffect(() => {
     let active = true;

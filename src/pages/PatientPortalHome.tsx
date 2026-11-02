@@ -1069,7 +1069,10 @@ export const PatientPortalHome: React.FC = () => {
   const renderInvoiceCard = (invoice: Invoice) => {
     const invoicePayments = patientPayments
       .filter((payment) => payment.invoiceId === invoice.id)
-      .sort((a, b) => new Date(b.transactionDateTime).getTime() - new Date(a.transactionDateTime).getTime());
+      .sort((a, b) =>
+        (b.paymentDate || getOperationalDateString(b.transactionDateTime))
+          .localeCompare(a.paymentDate || getOperationalDateString(a.transactionDateTime))
+      );
 
     return (
       <article key={invoice.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1124,7 +1127,9 @@ export const PatientPortalHome: React.FC = () => {
               {invoicePayments.map((payment: PaymentTransaction) => (
                 <li key={payment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px]">
                   <span className="font-semibold text-slate-700">{payment.receiptNumber || "Kuitansi"} · {paymentMethodLabel[payment.paymentMethod]}</span>
-                  <span className="text-slate-600">{formatCurrency(payment.amount)} · {formatAppointmentDate(payment.transactionDateTime)}</span>
+                  <span className="text-slate-600">
+                    {formatCurrency(payment.amount)} · {formatInvoiceDate(payment.paymentDate || getOperationalDateString(payment.transactionDateTime))}
+                  </span>
                 </li>
               ))}
             </ul>

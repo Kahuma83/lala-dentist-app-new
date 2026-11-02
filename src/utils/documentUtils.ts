@@ -322,7 +322,7 @@ export function createReceiptWhatsAppMessage(params: {
   if (invoiceNumber) {
     msg += `No. Faktur   : ${invoiceNumber}\n`;
   }
-  msg += `Tanggal      : ${formatIndoDateTime(dateStr)}\n`;
+  msg += `Tanggal      : ${/^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? formatIndoDate(`${dateStr}T12:00:00+07:00`) : formatIndoDateTime(dateStr)}\n`;
   msg += `Diterima Dari: ${patientName}\n`;
   if (doctorName) {
     msg += `Dokter       : ${doctorName}\n`;
