@@ -8,8 +8,10 @@ import {
 } from "../../types/domain";
 import { DocumentHeader } from "./DocumentHeader";
 import { getPatientMedicalRecordNumber } from "../../utils/rmUtils";
+import { getOperationalDateString } from "../../utils/dateUtils";
 import {
   formatRupiah,
+  formatIndoDate,
   formatIndoDateTime,
   numberToTerbilang,
   sanitizeStaffName
@@ -52,7 +54,7 @@ export const ReceiptDocument: React.FC<ReceiptDocumentProps> = ({
         branch={branch}
         documentType="KWITANSI PEMBAYARAN"
         documentNumber={receiptNumber}
-        documentDate={formatIndoDateTime(payment.transactionDateTime || payment.createdAt)}
+        documentDate={formatIndoDate(`${payment.paymentDate || getOperationalDateString(payment.transactionDateTime || payment.createdAt)}T12:00:00+07:00`)}
       />
 
       {payment.status === "REFUNDED" && (
@@ -187,7 +189,7 @@ export const ReceiptDocument: React.FC<ReceiptDocumentProps> = ({
         <div className="text-center">
           <p className="text-slate-600 font-medium text-[11px]">
             {branch ? branch.name : "Jember"},{" "}
-            {formatIndoDateTime(payment.transactionDateTime || payment.createdAt).split(",")[0]}
+            {formatIndoDate(`${payment.paymentDate || getOperationalDateString(payment.transactionDateTime || payment.createdAt)}T12:00:00+07:00`)}
           </p>
           <p className="text-slate-500 text-[10px] mt-0.5">Petugas Kasir Administrasi,</p>
           <div className="h-16 flex items-end justify-center">

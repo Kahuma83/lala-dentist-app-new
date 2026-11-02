@@ -914,6 +914,9 @@ export interface Invoice {
   paidAmount: number; // integer
   outstandingAmount: number; // integer (Invoice != Payment)
   status: InvoiceStatus;
+  cancellationReason?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
   items?: InvoiceItem[];
   itemsSnapshot?: InvoiceItem[];
   createdAt: string;
@@ -944,6 +947,7 @@ export interface PaymentTransaction {
   paymentMethod: PaymentMethod;
   referenceNumber?: string;
   notes?: string;
+  paymentDate?: string; // Document/accounting date, YYYY-MM-DD; createdAt remains the audit timestamp
   transactionDateTime: string; // ISO date-time
   staffId: string; // recorded by whom
   status: "SUCCESS" | "REFUNDED" | "FAILED";

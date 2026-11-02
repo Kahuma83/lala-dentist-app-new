@@ -883,8 +883,10 @@ export interface InvoiceRepository {
   ): Promise<Invoice>;
   cancelInvoice(
     id: string,
+    reason: string,
     currentUserRole?: UserRole,
-    userBranchId?: string | null
+    userBranchId?: string | null,
+    currentUserId?: string | null
   ): Promise<Invoice>;
   deleteInvoice(
     id: string,
@@ -905,6 +907,7 @@ export interface PaymentRepository {
       referenceNumber?: string;
       staffId: string;
       notes?: string;
+      paymentDate?: string;
       customId?: string;
       customReceiptNumber?: string;
     },

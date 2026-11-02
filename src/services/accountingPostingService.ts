@@ -457,7 +457,7 @@ export class AccountingPostingService {
       "AR_PATIENT"
     );
 
-    const journalDate = (payment.transactionDateTime || payment.createdAt || AppClock.nowISO()).slice(0, 10);
+    const journalDate = payment.paymentDate || getOperationalDateString(payment.transactionDateTime || payment.createdAt) || getTodayDateString();
     const invoiceReference = invoice.invoiceNumber || "nomor invoice belum tersedia";
     const receiptReference = payment.receiptNumber || "nomor kwitansi belum tersedia";
     const description = `Penerimaan Pembayaran ${payment.paymentMethod} - Kwitansi #${receiptReference} - Invoice #${invoiceReference} (Rp ${payment.amount.toLocaleString("id-ID")})`;

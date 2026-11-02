@@ -4631,6 +4631,9 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       paidAmount: Number(row.paid_amount || 0),
       outstandingAmount: Number(row.outstanding_amount || 0),
       status: row.status as InvoiceStatus,
+      cancellationReason: row.cancellation_reason ?? undefined,
+      cancelledAt: row.cancelled_at ?? undefined,
+      cancelledBy: row.cancelled_by ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -4981,6 +4984,9 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
 
   async updateInvoiceStatus(id: string, status: InvoiceStatus, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice> {
     ensureSupabaseConnected();
+    if (status === InvoiceStatus.CANCELLED) {
+      throw new Error("Gunakan alur cancelInvoice dengan alasan pembatalan.");
+    }
     const now = AppClock.nowISO();
     let updatedInv: Invoice | null = null;
 
@@ -5013,8 +5019,60 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
     throw new Error("Invoice tidak ditemukan");
   }
 
-  async cancelInvoice(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice> {
-    return this.updateInvoiceStatus(id, InvoiceStatus.CANCELLED, currentUserRole, userBranchId);
+  async cancelInvoice(
+    id: string,
+    reason: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<Invoice> {
+    ensureSupabaseConnected();
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 500) {
+      throw new Error("Alasan pembatalan invoice wajib diisi 5 sampai 500 karakter.");
+    }
+
+    if (useRepositoryTestFallbacks()) {
+      const fallbacks = this.getFallbackInvoices();
+      const invoiceIndex = fallbacks.findIndex((invoice) => invoice.id === id);
+      if (invoiceIndex < 0) throw new Error("Invoice tidak ditemukan");
+      const invoice = fallbacks[invoiceIndex];
+      if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && invoice.branchId !== userBranchId) {
+        throw new Error("Branch Admin tidak dapat membatalkan Invoice cabang lain");
+      }
+      if (invoice.status === InvoiceStatus.CANCELLED) {
+        if (invoice.cancellationReason === cleanReason) return { ...invoice };
+        throw new Error("Invoice ini sudah dibatalkan dengan alasan yang berbeda.");
+      }
+      if (invoice.paidAmount > 0 || this.getFallbackPayments().some(
+        (payment) => payment.invoiceId === id && payment.status === "SUCCESS"
+      )) {
+        throw new Error("Seluruh pembayaran invoice harus dibalik sebelum invoice dibatalkan.");
+      }
+      if (invoice.status !== InvoiceStatus.DRAFT && invoice.status !== InvoiceStatus.OPEN) {
+        throw new Error("Invoice harus berstatus DRAFT atau OPEN sebelum dibatalkan.");
+      }
+      const now = AppClock.nowISO();
+      fallbacks[invoiceIndex] = {
+        ...invoice,
+        status: InvoiceStatus.CANCELLED,
+        cancellationReason: cleanReason,
+        cancelledAt: now,
+        cancelledBy: currentUserId || undefined,
+        updatedAt: now
+      };
+      this.saveFallbackInvoices(fallbacks);
+      return fallbacks[invoiceIndex];
+    }
+
+    if (!isValidUUID(id)) throw new Error("Invoice tidak dapat dibatalkan: ID invoice tidak valid.");
+    const { data, error } = await supabase.rpc("cancel_invoice_with_reversal_atomic", {
+      p_invoice_id: id,
+      p_reason: cleanReason
+    });
+    if (error) throw new Error(`Gagal membatalkan invoice: ${error.message}`);
+    if (!data) throw new Error("Pembatalan invoice tidak mengembalikan data invoice.");
+    return this.mapInvoiceFromDb(data);
   }
 
   async deleteInvoice(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<boolean> {
@@ -5134,6 +5192,8 @@ export class SupabasePaymentRepository implements PaymentRepository {
       invoiceOutstandingAmountSnapshot: row.invoice_outstanding_amount_snapshot != null ? Number(row.invoice_outstanding_amount_snapshot) : undefined,
       paymentMethod: row.payment_method as PaymentMethod,
       referenceNumber: row.reference_number ?? undefined,
+      notes: row.notes ?? undefined,
+      paymentDate: row.payment_date || getOperationalDateString(row.transaction_date_time),
       transactionDateTime: row.transaction_date_time,
       staffId: row.staff_id,
       status: row.status,
@@ -5153,7 +5213,7 @@ export class SupabasePaymentRepository implements PaymentRepository {
         : fixtures;
     }
     ensureSupabaseConnected();
-    let q = supabase.from("payment_transactions").select("*").order("transaction_date_time", { ascending: false });
+    let q = supabase.from("payment_transactions").select("*").order("payment_date", { ascending: false });
     if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
       q = q.eq("branch_id", userBranchId);
     }
@@ -5171,7 +5231,7 @@ export class SupabasePaymentRepository implements PaymentRepository {
     if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
       q = q.eq("branch_id", userBranchId);
     }
-    const { data, error } = await q.order("transaction_date_time", { ascending: false });
+    const { data, error } = await q.order("payment_date", { ascending: false });
     if (error) {
       if (currentUserRole === UserRole.PATIENT) {
         throw new Error(`Gagal memuat kuitansi pasien: ${error.message}`);
@@ -5192,7 +5252,7 @@ export class SupabasePaymentRepository implements PaymentRepository {
       .from("payment_transactions")
       .select("*")
       .in("invoice_id", invoiceIds)
-      .order("transaction_date_time", { ascending: false });
+      .order("payment_date", { ascending: false });
     if (error) {
       if (currentUserRole === UserRole.PATIENT) {
         throw new Error(`Gagal memuat kuitansi pasien: ${error.message}`);
@@ -5210,6 +5270,7 @@ export class SupabasePaymentRepository implements PaymentRepository {
       referenceNumber?: string;
       staffId: string;
       notes?: string;
+      paymentDate?: string;
       customId?: string;
       customReceiptNumber?: string;
     },
@@ -5218,6 +5279,22 @@ export class SupabasePaymentRepository implements PaymentRepository {
   ): Promise<PaymentTransaction> {
     if (!Number.isSafeInteger(data.amount) || data.amount <= 0) {
       throw new Error("Nominal pembayaran harus berupa angka bulat positif");
+    }
+    const paymentDate = data.paymentDate || getTodayDateString();
+    if (!isValidCalendarDateString(paymentDate)) {
+      throw new Error("Tanggal pembayaran tidak valid.");
+    }
+    if (paymentDate > getTodayDateString()) {
+      throw new Error("Tanggal pembayaran tidak boleh melebihi tanggal hari ini.");
+    }
+    if (data.paymentDate
+      && data.paymentDate < getTodayDateString()
+      && _currentUserRole !== UserRole.SUPER_ADMIN
+      && _currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Hanya Super Admin dan Admin Cabang yang dapat memilih tanggal pembayaran mundur.");
+    }
+    if (paymentDate < getTodayDateString() && (data.notes?.trim().length || 0) < 5) {
+      throw new Error("Alasan pencatatan pembayaran mundur wajib diisi minimal 5 karakter.");
     }
     if (!useRepositoryTestFallbacks() && (!isSupabaseConfigured || !supabase)) {
       throw new Error("Koneksi ke Supabase belum terkonfigurasi. Data belum dapat disimpan ke server remote.");
@@ -5236,7 +5313,9 @@ export class SupabasePaymentRepository implements PaymentRepository {
         p_reference_number: data.referenceNumber || null,
         p_staff_id: data.staffId,
         p_payment_id: data.customId && isValidUUID(data.customId) ? data.customId : null,
-        p_receipt_number: data.customReceiptNumber || null
+        p_receipt_number: data.customReceiptNumber || null,
+        p_payment_date: paymentDate,
+        p_notes: data.notes?.trim() || null
       });
       if (error) {
         throw new Error(`Gagal menyimpan pembayaran di Supabase: ${error.message}`);
@@ -5260,6 +5339,9 @@ export class SupabasePaymentRepository implements PaymentRepository {
     if (targetInv.status === InvoiceStatus.PAID || targetInv.outstandingAmount <= 0) {
       throw new Error("Invoice sudah LUNAS (Paid). Tidak ada sisa tagihan yang perlu dibayar");
     }
+    if (paymentDate < (targetInv.invoiceDate || getOperationalDateString(targetInv.createdAt))) {
+      throw new Error("Tanggal pembayaran tidak boleh sebelum tanggal invoice.");
+    }
     if (data.amount > targetInv.outstandingAmount) {
       throw new Error(`Nominal pembayaran (Rp ${data.amount.toLocaleString("id-ID")}) melebihi sisa tagihan (Rp ${targetInv.outstandingAmount.toLocaleString("id-ID")})`);
     }
@@ -5273,7 +5355,7 @@ export class SupabasePaymentRepository implements PaymentRepository {
 
     const paymentId = data.customId || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `pmt-${Date.now()}`);
     const existingPayments = this.getFallbackPayments();
-    const receiptNumber = data.customReceiptNumber || generateReceiptNumber(invoiceBranchId, now, existingPayments, MOCK_BRANCHES);
+    const receiptNumber = data.customReceiptNumber || generateReceiptNumber(invoiceBranchId, paymentDate, existingPayments, MOCK_BRANCHES);
     const invoiceNetAmountSnapshot = Number(targetInv.netAmount || 0);
     const invoicePaidAmountSnapshot = Number(newPaid || 0);
     const invoiceOutstandingAmountSnapshot = Number(newOutstanding || 0);
@@ -5289,7 +5371,8 @@ export class SupabasePaymentRepository implements PaymentRepository {
       invoiceOutstandingAmountSnapshot,
       paymentMethod: data.paymentMethod,
       referenceNumber: data.referenceNumber,
-      notes: data.notes,
+      notes: data.notes?.trim() || undefined,
+      paymentDate,
       transactionDateTime: now,
       staffId: data.staffId,
       status: "SUCCESS",

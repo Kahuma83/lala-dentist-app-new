@@ -219,11 +219,37 @@ describe("Accounting Phase 2: Automatic Journal Posting Engine", () => {
         ]
       });
 
-      await invoiceRepo.cancelInvoice(invoice.id);
+      await invoiceRepo.cancelInvoice(invoice.id, "Invoice dibatalkan untuk pengujian");
 
       await expect(service.postInvoice(invoice.id)).rejects.toThrow(
         /belum berada pada status yang dapat diakui sebagai revenue/
       );
+    });
+
+    it("should reverse the posted revenue journal when cancelling an invoice", async () => {
+      const invoice = await invoiceRepo.createInvoice({
+        visitId: "visit-test-cancel-journal",
+        patientId: "patient-1",
+        branchId: "branch-gebang",
+        items: [
+          {
+            serviceId: "service-scaling",
+            descriptionSnapshot: "Scaling",
+            unitPriceSnapshot: 250000,
+            quantity: 1
+          }
+        ]
+      });
+      const originalJournal = await service.postInvoice(invoice.id);
+
+      await invoiceRepo.cancelInvoice(invoice.id, "Koreksi invoice salah tanggal");
+
+      const reversal = db.journals.find((journal) => journal.reversalOfJournalId === originalJournal.id);
+      expect(reversal).toBeDefined();
+      expect(reversal?.status).toBe(JournalStatus.POSTED);
+      expect(reversal?.totalDebit).toBe(originalJournal.totalCredit);
+      expect(reversal?.totalCredit).toBe(originalJournal.totalDebit);
+      expect(reversal?.reversalReason).toBe("Koreksi invoice salah tanggal");
     });
 
     it("should reject posting an invoice with 0 net amount", async () => {

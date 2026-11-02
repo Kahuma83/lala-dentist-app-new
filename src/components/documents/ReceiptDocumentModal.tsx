@@ -53,7 +53,7 @@ export const ReceiptDocumentModal: React.FC<ReceiptDocumentModalProps> = ({
     paymentMethod: payment.paymentMethod,
     referenceNumber: payment.referenceNumber,
     remainingOutstanding: receiptSnapshot?.outstandingAmount,
-    dateStr: payment.transactionDateTime || payment.createdAt,
+    dateStr: payment.paymentDate || payment.transactionDateTime || payment.createdAt,
     staffName: cashierName
   });
 
