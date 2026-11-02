@@ -13,6 +13,7 @@ import { TreatmentManagement } from "./pages/TreatmentManagement";
 import { Invoices } from "./pages/Invoices";
 import { Payments } from "./pages/Payments";
 import { Compensation } from "./pages/Compensation";
+import { StaffIncome } from "./pages/StaffIncome";
 import { Payroll } from "./pages/Payroll";
 import { Expenses } from "./pages/Expenses";
 import { Configuration } from "./pages/Configuration";
@@ -187,6 +188,8 @@ const AppContent: React.FC = () => {
       view = <Expenses />;
     } else if (path === "/super-admin/compensation") {
       view = <Compensation />;
+    } else if (path === "/super-admin/hr/income") {
+      view = <StaffIncome />;
     } else if (path === "/super-admin/payroll") {
       view = <Payroll />;
     } else if (path === "/super-admin/accounting") {

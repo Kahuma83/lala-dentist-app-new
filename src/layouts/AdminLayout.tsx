@@ -198,7 +198,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           icon: Users,
           children: [
             { name: "Jadwal Dokter", path: "/super-admin/hr?tab=schedules", icon: CalendarRange },
-            { name: "Jadwal Admin & Asisten", path: "/super-admin/hr?tab=shifts", icon: Clock3 }
+            { name: "Jadwal Admin & Asisten", path: "/super-admin/hr?tab=shifts", icon: Clock3 },
+            { name: "Pendapatan Staf", path: "/super-admin/hr/income", icon: DollarSign }
           ]
         },
         { name: "Payroll", path: "/super-admin/payroll", icon: DollarSign },

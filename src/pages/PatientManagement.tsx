@@ -344,7 +344,11 @@ export const PatientManagement: React.FC = () => {
           record.medicalRecordNumber.toLowerCase().includes(q)
         );
       const globalCodeMatch = p.internalPatientCode?.trim().toLowerCase().includes(q);
-      return branchRm.includes(q) || !!otherBranchRmMatch || !!globalCodeMatch;
+      const nameMatch = [p.name, p.fullName]
+        .some((name) => typeof name === "string" && name.toLowerCase().includes(q));
+      const phoneQuery = q.replace(/\D/g, "");
+      const phoneMatch = phoneQuery.length > 0 && Boolean(p.phone?.replace(/\D/g, "").includes(phoneQuery));
+      return branchRm.includes(q) || !!otherBranchRmMatch || !!globalCodeMatch || nameMatch || phoneMatch;
     });
   }, [patients, visits, currentUser?.role, searchQuery, selectedBranchFilter]);
 
@@ -1370,7 +1374,7 @@ export const PatientManagement: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Cari No. RM atau kode global (contoh: GEB-RM4357)..."
+              placeholder="Cari nama, No. RM, kode global, atau nomor HP..."
               className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-8 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
               id="input-search-patient"
             />
@@ -1431,7 +1435,7 @@ export const PatientManagement: React.FC = () => {
           )}
           <span className="text-xs font-medium text-slate-500">
             {searchQuery.trim()
-              ? <>{currentUser?.role === UserRole.DOCTOR ? "Hasil kode global" : "Hasil No. RM"}: <strong className="text-slate-800">{filteredPatients.length}</strong> pasien</>
+              ? <>Hasil pencarian: <strong className="text-slate-800">{filteredPatients.length}</strong> pasien</>
               : <>Menampilkan <strong className="text-slate-800">{filteredPatients.length}</strong> pasien terbaru{currentUser?.role === UserRole.DOCTOR ? " (maksimal 5)" : ""}</>}
           </span>
           <button
@@ -1466,14 +1470,12 @@ export const PatientManagement: React.FC = () => {
                     <tr>
                       <td colSpan={canViewPatientPhone ? 6 : 5} className="text-center py-12 text-slate-400">
                         <User className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="font-bold text-slate-700">{patients.length === 0 ? "Belum Ada Data Pasien" : searchQuery.trim() ? `Pasien dengan ${currentUser?.role === UserRole.DOCTOR ? "kode global" : "No. RM"} tersebut tidak ditemukan` : "Belum ada data pasien"}</p>
+                        <p className="font-bold text-slate-700">{patients.length === 0 ? "Belum Ada Data Pasien" : searchQuery.trim() ? "Pasien tersebut tidak ditemukan" : "Belum ada data pasien"}</p>
                         <p className="text-[11px] text-slate-400 mt-1">
                           {patients.length === 0
                             ? "Klik tombol \"+ Tambah Pasien Baru\" di atas untuk mendaftarkan pasien pertama."
                             : searchQuery.trim()
-                              ? currentUser?.role === UserRole.DOCTOR
-                                ? "Periksa kode global pasien, misalnya GEB-RM4357."
-                                : "Periksa kembali No. RM atau filter cabang yang dipilih."
+                              ? "Coba periksa ejaan nama, No. RM, kode global, nomor HP, atau filter cabang yang dipilih."
                               : currentUser?.role === UserRole.DOCTOR
                                 ? "Pasien lainnya dapat dicari menggunakan kode global."
                                 : "Pasien lainnya dapat dicari menggunakan No. RM."}

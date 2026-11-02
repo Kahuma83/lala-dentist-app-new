@@ -344,6 +344,49 @@ async function removeOlderPolicyPhotos(staffId: string, keepPath: string): Promi
   if (clearError) throw new Error(`Gagal memperbarui referensi foto lama: ${clearError.message}`);
 }
 
+function parseSavedAttendance(data: unknown, action: AttendanceAction, branchId: string): AttendanceRow {
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result || typeof result !== "object") {
+    throw new Error("Server tidak mengonfirmasi catatan absensi. Muat ulang riwayat sebelum mencoba lagi.");
+  }
+
+  const row = result as Record<string, unknown>;
+  const hasActionTimestamp = action === "check-in"
+    ? typeof row.actual_check_in_at === "string"
+    : typeof row.actual_check_out_at === "string";
+  if (
+    typeof row.id !== "string" ||
+    row.branch_id !== branchId ||
+    typeof row.date !== "string" ||
+    typeof row.attendance_status !== "string" ||
+    typeof row.scheduled_start_at !== "string" ||
+    typeof row.scheduled_end_at !== "string" ||
+    !hasActionTimestamp
+  ) {
+    throw new Error("Server belum mengembalikan catatan absensi yang valid. Muat ulang riwayat untuk memastikan statusnya.");
+  }
+
+  return {
+    id: row.id,
+    branch_id: row.branch_id,
+    date: row.date,
+    attendance_status: row.attendance_status,
+    scheduled_start_at: row.scheduled_start_at,
+    scheduled_end_at: row.scheduled_end_at,
+    actual_check_in_at: typeof row.actual_check_in_at === "string" ? row.actual_check_in_at : null,
+    actual_check_out_at: typeof row.actual_check_out_at === "string" ? row.actual_check_out_at : null,
+    late_minutes: typeof row.late_minutes === "number" ? row.late_minutes : 0,
+    check_out_correction_status: row.check_out_correction_status === "PENDING" ||
+      row.check_out_correction_status === "APPROVED" ||
+      row.check_out_correction_status === "RESOLVED"
+      ? row.check_out_correction_status
+      : null,
+    check_out_correction_reason: typeof row.check_out_correction_reason === "string"
+      ? row.check_out_correction_reason
+      : null
+  };
+}
+
 export function AttendancePortal() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [installScreenDismissed, setInstallScreenDismissed] = useState(false);
@@ -1220,18 +1263,29 @@ export function AttendancePortal() {
           p_photo_path: photoPath
         };
 
-      const { error: saveError } = await supabase.rpc(rpcName, rpcArgs);
+      const { data: savedData, error: saveError } = await supabase.rpc(rpcName, rpcArgs);
       if (saveError) throw new Error(saveError.message);
       uploadedPath = null;
-      let cleanupWarning: string | null = null;
+      const savedAttendance = parseSavedAttendance(savedData, action, currentBranch.id);
+      setAttendanceRows((rows) => [
+        ...rows.filter((row) => row.id !== savedAttendance.id &&
+          !(row.branch_id === savedAttendance.branch_id && row.date === savedAttendance.date)),
+        savedAttendance
+      ].sort((a, b) => b.date.localeCompare(a.date)));
+      setAttendanceSuccess(action);
+
+      const warnings: string[] = [];
       try {
         await removeOlderPolicyPhotos(staffContext.staffId, photoPath);
       } catch (cleanupError: unknown) {
-        cleanupWarning = `Absensi tersimpan, tetapi foto lama belum berhasil dibersihkan: ${friendlyError(cleanupError, "Kesalahan tidak diketahui.")}`;
+        warnings.push(`foto lama belum berhasil dibersihkan: ${friendlyError(cleanupError, "Kesalahan tidak diketahui.")}`);
       }
-      await loadPortalContext(sessionUser!);
-      setAttendanceSuccess(action);
-      if (cleanupWarning) setErrorMessage(cleanupWarning);
+      try {
+        await loadPortalContext(sessionUser!);
+      } catch (refreshError: unknown) {
+        warnings.push(`tampilan belum berhasil diperbarui: ${friendlyError(refreshError, "Kesalahan tidak diketahui.")} Muat ulang riwayat untuk menyegarkan data.`);
+      }
+      if (warnings.length > 0) setErrorMessage(`Absensi tersimpan, tetapi ${warnings.join(" ")}`);
     } catch (submitError: unknown) {
       if (uploadedPath) {
         const { error: cleanupError } = await supabase.storage.from("attendance-evidence").remove([uploadedPath]);
