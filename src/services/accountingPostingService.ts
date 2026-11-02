@@ -32,6 +32,7 @@ import {
   UserRole
 } from "../types/domain";
 import { AppClock } from "../utils/clock";
+import { getOperationalDateString, getTodayDateString } from "../utils/dateUtils";
 
 export type StandardAccountKey =
   | "AR_PATIENT"
@@ -297,7 +298,7 @@ export class AccountingPostingService {
       "TREATMENT_REVENUE"
     );
 
-    const journalDate = invoice.createdAt ? invoice.createdAt.slice(0, 10) : AppClock.nowISO().slice(0, 10);
+    const journalDate = invoice.invoiceDate || getOperationalDateString(invoice.createdAt) || getTodayDateString();
     const invoiceReference = invoice.invoiceNumber || "nomor invoice belum tersedia";
     const description = `Pengakuan Pendapatan Invoice #${invoiceReference} - Net: Rp ${netAmount.toLocaleString("id-ID")}`;
 

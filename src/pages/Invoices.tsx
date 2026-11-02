@@ -48,6 +48,7 @@ import { getTreatmentInvoiceUnitPrice } from "../utils/treatmentPricing";
 
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { getInvoiceDoctorName } from "../utils/receiptUtils";
+import { getOperationalDateString, getTodayDateString } from "../utils/dateUtils";
 
 export const Invoices: React.FC = () => {
   const {
@@ -114,6 +115,7 @@ export const Invoices: React.FC = () => {
   ]);
   const [formDiscount, setFormDiscount] = useState<number>(0);
   const [formTax, setFormTax] = useState<number>(0);
+  const [formInvoiceDate, setFormInvoiceDate] = useState(getTodayDateString());
   const [formError, setFormError] = useState("");
   const [treatmentInvoiceError, setTreatmentInvoiceError] = useState("");
 
@@ -234,6 +236,17 @@ export const Invoices: React.FC = () => {
       invoice.visitId === visitId && invoice.status !== InvoiceStatus.CANCELLED
     )
   );
+  const formInvoiceDateMax = treatments
+    .filter((treatment) =>
+      treatment.visitId === formVisitId
+      && (treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
+    )
+    .map((treatment) => getOperationalDateString(
+      treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt
+    ))
+    .filter(Boolean)
+    .sort()
+    .at(-1) || getTodayDateString();
 
   const handlePrepareTreatmentInvoice = (visitId: string, visitTreatments: TreatmentJob[]) => {
     const isReadyVisit = invoiceReadyVisits.some(([readyVisitId]) => readyVisitId === visitId);
@@ -266,6 +279,13 @@ export const Invoices: React.FC = () => {
     setFormPatientId(completedTreatments[0]?.patientId || "");
     setFormBranchId(completedTreatments[0]?.branchId || formBranchId);
     setFormVisitId(visitId);
+    const completedDates = completedTreatments
+      .map((treatment) => getOperationalDateString(
+        treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt
+      ))
+      .filter(Boolean)
+      .sort();
+    setFormInvoiceDate(completedDates.at(-1) || getTodayDateString());
     setFormItems(items.filter((item): item is NonNullable<typeof item> => item !== null));
     setFormDiscount(0);
     setFormTax(0);
@@ -388,6 +408,7 @@ export const Invoices: React.FC = () => {
           visitId: formVisitId,
           patientId: formPatientId,
           branchId: formBranchId,
+          invoiceDate: formInvoiceDate,
           items: formItems,
           discountAmount: Number(formDiscount || 0),
           taxAmount: Number(formTax || 0)
@@ -847,7 +868,7 @@ export const Invoices: React.FC = () => {
                     <td className="py-3.5 px-4 font-mono font-medium text-slate-900">
                       <div>{inv.invoiceNumber || "Nomor belum tersedia"}</div>
                       <div className="text-[10px] text-slate-400 font-sans">
-                        {new Date(inv.createdAt).toLocaleDateString("id-ID", {
+                        {new Date(`${inv.invoiceDate || getOperationalDateString(inv.createdAt)}T12:00:00`).toLocaleDateString("id-ID", {
                           day: "numeric",
                           month: "short",
                           year: "numeric"
@@ -971,6 +992,25 @@ export const Invoices: React.FC = () => {
                   <div className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-100 text-slate-700">
                     {getPatientName(formPatientId)}
                   </div>
+                </div>
+
+                <div>
+                  <label htmlFor="invoice-date" className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                    Tanggal Invoice
+                  </label>
+                  <input
+                    id="invoice-date"
+                    type="date"
+                    value={formInvoiceDate}
+                    max={formInvoiceDateMax}
+                    onChange={(event) => setFormInvoiceDate(event.target.value)}
+                    required
+                    disabled={currentUser?.role !== UserRole.SUPER_ADMIN && currentUser?.role !== UserRole.BRANCH_ADMIN}
+                    className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-white disabled:bg-slate-100"
+                  />
+                  <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                    Default mengikuti tanggal tindakan terakhir. Tanggal dokumen dapat disesuaikan sampai tanggal tindakan selesai; waktu pembuatan aktual tetap tercatat untuk audit.
+                  </p>
                 </div>
 
                 <div>
@@ -1217,7 +1257,13 @@ export const Invoices: React.FC = () => {
                   <div className="font-semibold text-slate-800">{getBranchName(selectedInvoice.branchId)}</div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-[10px]">Tanggal Terbit</div>
+                  <div className="text-slate-400 text-[10px]">Tanggal Invoice</div>
+                  <div className="font-medium text-slate-700">
+                    {new Date(`${selectedInvoice.invoiceDate || getOperationalDateString(selectedInvoice.createdAt)}T12:00:00`).toLocaleDateString("id-ID")}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-[10px]">Dibuat Sistem</div>
                   <div className="font-medium text-slate-700">
                     {new Date(selectedInvoice.createdAt).toLocaleString("id-ID")}
                   </div>

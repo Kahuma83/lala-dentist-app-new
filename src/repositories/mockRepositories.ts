@@ -48,6 +48,11 @@ import { formatInternalPatientCode, getPatientMedicalRecordNumber } from "../uti
 import { advanceStoredBranchRM, getNextStoredBranchRM } from "../utils/branchRMSettings";
 import { calculatePayrollTax } from "../utils/payrollTax";
 import {
+  getOperationalDateString,
+  isValidCalendarDateString,
+  toOperationalDateTime
+} from "../utils/dateUtils";
+import {
   PatientProfile,
   DentalBranch,
   Booking,
@@ -142,7 +147,6 @@ import { calculateQueueEstimates } from "../utils/queueScheduleUtils";
 import { getNextMedicalRecordNumber, checkRMUniqueness } from "../utils/rmUtils";
 import { isBranchMatch } from "../utils/branchUtils";
 import { allocateInvoiceNetToLines } from "../utils/invoiceLineAllocation";
-import { getOperationalDateString, toOperationalDateTime } from "../utils/dateUtils";
 import { hasMockRecordedTreatmentInventoryUsage } from "../services/inventoryService";
 import { normalizeReferralServiceName } from "../utils/referralIncentives";
 
@@ -4420,6 +4424,7 @@ export class MockInvoiceRepository implements InvoiceRepository {
       }>;
       discountAmount?: number;
       taxAmount?: number;
+      invoiceDate?: string;
       customId?: string;
       customInvoiceNumber?: string;
     },
@@ -4434,19 +4439,47 @@ export class MockInvoiceRepository implements InvoiceRepository {
       throw new Error("Branch Admin hanya dapat membuat Invoice untuk cabangnya sendiri");
     }
 
+    if (data.invoiceDate
+      && data.invoiceDate < AppClock.todayDateString()
+      && currentUserRole !== UserRole.SUPER_ADMIN
+      && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Hanya Super Admin dan Admin Cabang yang dapat memilih tanggal invoice mundur.");
+    }
+
     if (!data.items || data.items.length === 0) {
       throw new Error("Invoice harus memiliki minimal satu item tindakan/layanan");
+    }
+
+    const invoiceDate = data.invoiceDate || AppClock.todayDateString();
+    if (!isValidCalendarDateString(invoiceDate)) {
+      throw new Error("Tanggal invoice tidak valid.");
+    }
+    if (invoiceDate > AppClock.todayDateString()) {
+      throw new Error("Tanggal invoice tidak boleh melebihi tanggal hari ini.");
+    }
+
+    const visitTreatments = db.treatmentJobs.filter((treatment) => treatment.visitId === data.visitId);
+    const completedTreatments = visitTreatments.filter((treatment) =>
+      treatment.status === TreatmentJobStatus.SELESAI
+      || treatment.status === TreatmentJobStatus.DISERAHKAN
+    );
+    const lastTreatmentDate = completedTreatments
+      .map((treatment) => treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt)
+      .map(getOperationalDateString)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+    if (lastTreatmentDate && invoiceDate > lastTreatmentDate) {
+      throw new Error("Tanggal invoice tidak boleh setelah tanggal tindakan terakhir selesai.");
+    }
+    if (!lastTreatmentDate && invoiceDate < AppClock.todayDateString()) {
+      throw new Error("Tanggal invoice mundur hanya dapat dipilih untuk kunjungan dengan tanggal tindakan selesai.");
     }
 
     const linkedTreatmentIds = data.items.flatMap((item) =>
       item.treatmentJobId ? [item.treatmentJobId] : []
     );
     if (linkedTreatmentIds.length > 0) {
-      const visitTreatments = db.treatmentJobs.filter((treatment) => treatment.visitId === data.visitId);
-      const completedTreatments = visitTreatments.filter((treatment) =>
-        treatment.status === TreatmentJobStatus.SELESAI
-        || treatment.status === TreatmentJobStatus.DISERAHKAN
-      );
       const planIsClosed = visitTreatments.every((treatment) =>
         treatment.status === TreatmentJobStatus.SELESAI
         || treatment.status === TreatmentJobStatus.DISERAHKAN
@@ -4490,11 +4523,12 @@ export class MockInvoiceRepository implements InvoiceRepository {
     const discountAmount = data.discountAmount || 0;
     const taxAmount = data.taxAmount || 0;
     const netAmount = Math.max(0, totalAmount - discountAmount + taxAmount);
-    const invoiceNumber = data.customInvoiceNumber || generateInvoiceNumber(data.branchId, now, db.invoices, db.branches);
+    const invoiceNumber = data.customInvoiceNumber || generateInvoiceNumber(data.branchId, invoiceDate, db.invoices, db.branches);
 
     const newInvoice: Invoice = {
       id: invoiceId,
       invoiceNumber,
+      invoiceDate,
       visitId: data.visitId,
       patientId: data.patientId,
       branchId: data.branchId,

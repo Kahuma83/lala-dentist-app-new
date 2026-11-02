@@ -101,6 +101,17 @@ const formatAppointmentDate = (dateTime: string): string => {
   }).format(date);
 };
 
+const formatInvoiceDate = (date: string): string => {
+  const parsedDate = new Date(`${date.slice(0, 10)}T12:00:00+07:00`);
+  if (Number.isNaN(parsedDate.getTime())) return "Tanggal belum tersedia";
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta"
+  }).format(parsedDate);
+};
+
 const bookingStatusLabel: Record<BookingStatus, string> = {
   [BookingStatus.PENDING]: "Menunggu konfirmasi",
   [BookingStatus.CONFIRMED]: "Dikonfirmasi",
@@ -1066,7 +1077,9 @@ export const PatientPortalHome: React.FC = () => {
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Invoice</p>
             <h3 className="mt-1 text-sm font-bold text-slate-900">{invoice.invoiceNumber || "Tagihan perawatan"}</h3>
-            <p className="mt-1 text-[11px] text-slate-500">{formatAppointmentDate(invoice.createdAt)}</p>
+            <p className="mt-1 text-[11px] text-slate-500">
+              {formatInvoiceDate(invoice.invoiceDate || getOperationalDateString(invoice.createdAt))}
+            </p>
           </div>
           <span className={`rounded-full px-3 py-1 text-[10px] font-bold ${
             invoice.status === InvoiceStatus.PAID

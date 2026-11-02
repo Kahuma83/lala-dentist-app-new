@@ -902,6 +902,7 @@ export interface TreatmentIncentive {
 export interface Invoice {
   id: string;
   invoiceNumber?: string; // Standard format: INV/{BRANCH_CODE}/{YYYYMM}/{RUNNING_4_DIGIT}
+  invoiceDate?: string; // Document/accounting date, YYYY-MM-DD; createdAt remains the audit timestamp
   visitId: string;
   visitNumber?: string;
   patientId: string;
