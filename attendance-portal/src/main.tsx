@@ -11,8 +11,20 @@ createRoot(document.getElementById("root")!).render(
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/service-worker.js").catch((error: unknown) => {
-      console.error("Gagal mengaktifkan service worker portal absensi:", error);
-    });
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let isReloading = false;
+    if (hadController) {
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (isReloading) return;
+        isReloading = true;
+        window.location.reload();
+      });
+    }
+
+    void navigator.serviceWorker.register("/service-worker.js", { updateViaCache: "none" })
+      .then((registration) => registration.update())
+      .catch((error: unknown) => {
+        console.error("Gagal memperbarui service worker portal absensi:", error);
+      });
   });
 }

@@ -15,9 +15,7 @@ import {
   DentalBranch,
   DoctorBranchAssignment,
   TreatmentJob,
-  TreatmentJobStatus,
-  MonthlyPayroll,
-  PayrollItem
+  TreatmentJobStatus
 } from "../types/domain";
 import {
   Award,
@@ -83,7 +81,6 @@ export const Compensation: React.FC = () => {
   const {
     currentUser,
     compRepo,
-    payrollRepo,
     treatmentRepo,
     doctorRepo,
     staffRepo,
@@ -98,8 +95,6 @@ export const Compensation: React.FC = () => {
   const [referralRates, setReferralRates] = useState<ReferralIncentiveRate[]>([]);
   const [accruals, setAccruals] = useState<CompensationAccrual[]>([]);
   const [accrualSourceTreatments, setAccrualSourceTreatments] = useState<Map<string, TreatmentJob[]>>(new Map());
-  const [incomePayrolls, setIncomePayrolls] = useState<MonthlyPayroll[]>([]);
-  const [incomePayrollItems, setIncomePayrollItems] = useState<PayrollItem[]>([]);
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [services, setServices] = useState<MasterService[]>([]);
@@ -110,10 +105,7 @@ export const Compensation: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [syncingAccruals, setSyncingAccruals] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<"RULES" | "ACCRUALS" | "STAFF_INCOME">("RULES");
-  const [incomePeriod, setIncomePeriod] = useState("");
-  const [incomeBranchId, setIncomeBranchId] = useState("");
-  const [incomeSearch, setIncomeSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<"RULES" | "ACCRUALS">("RULES");
   const [showRuleModal, setShowRuleModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [ruleTypeFilter, setRuleTypeFilter] = useState<string>("ALL");
@@ -173,7 +165,7 @@ export const Compensation: React.FC = () => {
     setErrorMessage(null);
     try {
       const assistantStaffId = isAssistant ? (currentUser?.staffId || currentUser?.id) : undefined;
-      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList, referralRateList, pList] = await Promise.all([
+      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList, referralRateList] = await Promise.all([
         compRepo.getCompensationRules(),
         compRepo.getCompensationAccruals(assistantStaffId),
         doctorRepo.getDoctors(),
@@ -188,19 +180,8 @@ export const Compensation: React.FC = () => {
         doctorRepo.getDoctorBranchAssignments(),
         currentUser?.role === UserRole.SUPER_ADMIN
           ? compRepo.getReferralIncentiveRates()
-          : Promise.resolve([]),
-        currentUser?.role === UserRole.SUPER_ADMIN
-          ? payrollRepo.getPayrolls()
           : Promise.resolve([])
       ]);
-      const payrollIds = pList.map((payroll) => payroll.id);
-      const pItems = currentUser?.role === UserRole.SUPER_ADMIN
-        ? (await Promise.all(
-            Array.from({ length: Math.ceil(payrollIds.length / 100) }, (_, index) =>
-              payrollRepo.getPayrollItemsByPayrollIds(payrollIds.slice(index * 100, (index + 1) * 100))
-            )
-          )).flat()
-        : [];
 
       let filteredAccruals = aList;
       if (isAssistant && assistantStaffId) {
@@ -251,8 +232,6 @@ export const Compensation: React.FC = () => {
       setReferralRates(referralRateList);
       setAccruals(filteredAccruals);
       setAccrualSourceTreatments(sourceTreatmentMap);
-      setIncomePayrolls(pList);
-      setIncomePayrollItems(pItems);
       setDoctors(dList);
       setStaffList(sList);
       setServices(srvList);
@@ -612,63 +591,6 @@ export const Compensation: React.FC = () => {
   );
 
   const totalAccruedAmount = accruals.reduce((sum, a) => sum + a.amount, 0);
-  const staffIncomeRows = useMemo(() => {
-    const payrollById = new Map(incomePayrolls.map((payroll) => [payroll.id, payroll]));
-    const grouped = new Map<string, {
-      staffId: string;
-      branchId: string | null;
-      amount: number;
-      componentCount: number;
-      latestPeriod: string;
-    }>();
-
-    for (const item of incomePayrollItems) {
-      const payroll = payrollById.get(item.payrollId);
-      if (!payroll || item.type !== "EARNING" || item.amountSnapshot <= 0) continue;
-      const description = item.descriptionSnapshot.trim().toLocaleLowerCase("id-ID");
-      if (description.includes("gaji pokok") || item.id.endsWith("-base")) continue;
-
-      const period = `${payroll.year}-${String(payroll.month).padStart(2, "0")}`;
-      if (incomePeriod && period !== incomePeriod) continue;
-      if (incomeBranchId && payroll.branchId !== incomeBranchId) continue;
-
-      const branchId = payroll.branchId || null;
-      const key = `${payroll.staffId}:${branchId || ""}`;
-      const row = grouped.get(key);
-      if (row) {
-        row.amount += item.amountSnapshot;
-        row.componentCount += 1;
-        if (period > row.latestPeriod) row.latestPeriod = period;
-      } else {
-        grouped.set(key, {
-          staffId: payroll.staffId,
-          branchId,
-          amount: item.amountSnapshot,
-          componentCount: 1,
-          latestPeriod: period
-        });
-      }
-    }
-
-    const query = incomeSearch.trim().toLocaleLowerCase("id-ID");
-    return [...grouped.values()]
-      .map((row) => {
-        const info = getStaffInfo(row.staffId);
-        const branchName = getBranchName(row.branchId) || info.branch || "Tidak tercatat";
-        return { ...row, info, branchName };
-      })
-      .filter((row) =>
-        !query ||
-        row.info.name.toLocaleLowerCase("id-ID").includes(query) ||
-        row.info.code.toLocaleLowerCase("id-ID").includes(query) ||
-        row.info.role.toLocaleLowerCase("id-ID").includes(query) ||
-        row.branchName.toLocaleLowerCase("id-ID").includes(query)
-      )
-      .sort((a, b) => b.amount - a.amount);
-  }, [incomePayrolls, incomePayrollItems, incomePeriod, incomeBranchId, incomeSearch, staffList, doctors, branches]);
-  const totalStaffIncome = staffIncomeRows.reduce((sum, row) => sum + row.amount, 0);
-  const staffWithIncomeCount = new Set(staffIncomeRows.map((row) => row.staffId)).size;
-  const staffIncomeComponentCount = staffIncomeRows.reduce((sum, row) => sum + row.componentCount, 0);
   const openReferralRateModal = (rate?: ReferralIncentiveRate) => {
     setEditingReferralRate(rate || null);
     setSelectedRuleTypes([]);
@@ -883,18 +805,6 @@ export const Compensation: React.FC = () => {
           >
             Log Akrual Tindakan Selesai ({accruals.length})
           </button>
-          {currentUser?.role === UserRole.SUPER_ADMIN && (
-            <button
-              onClick={() => setActiveTab("STAFF_INCOME")}
-              className={`pb-3 px-4 text-xs font-bold border-b-2 transition-colors ${
-                activeTab === "STAFF_INCOME"
-                  ? "border-emerald-600 text-emerald-600"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              Pendapatan Staf Non-Gaji Pokok
-            </button>
-          )}
         </div>
       )}
 
@@ -1297,119 +1207,6 @@ export const Compensation: React.FC = () => {
           </table>
           </div>
         </div>
-      )}
-
-      {activeTab === "STAFF_INCOME" && currentUser?.role === UserRole.SUPER_ADMIN && (
-        <section className="space-y-4">
-          <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-800">
-            Ringkasan menjumlahkan komponen penghasilan pada payroll, seperti komisi, fee, pengganti, dan lembur, termasuk payroll draft. Gaji pokok serta potongan tidak dimasukkan.
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Total Pendapatan Non-Gaji Pokok</div>
-              <div className="mt-1 text-lg font-bold text-emerald-700">Rp {totalStaffIncome.toLocaleString("id-ID")}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Staf Penerima</div>
-              <div className="mt-1 text-lg font-bold text-slate-900">{staffWithIncomeCount} staf</div>
-            </div>
-            <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Komponen Penghasilan</div>
-              <div className="mt-1 text-lg font-bold text-slate-900">{staffIncomeComponentCount} komponen</div>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 rounded-xl border border-slate-200/80 bg-white p-3 shadow-sm sm:flex-row sm:items-center">
-            <div className="relative min-w-0 flex-1">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input
-                type="search"
-                value={incomeSearch}
-                onChange={(event) => setIncomeSearch(event.target.value)}
-                placeholder="Cari nama, kode staf, atau cabang..."
-                className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-            <select
-              aria-label="Filter cabang pendapatan"
-              value={incomeBranchId}
-              onChange={(event) => setIncomeBranchId(event.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
-            >
-              <option value="">Semua cabang</option>
-              {branches.map((branch) => (
-                <option key={branch.id} value={branch.id}>{branch.name}</option>
-              ))}
-            </select>
-            <input
-              aria-label="Filter periode pendapatan"
-              type="month"
-              value={incomePeriod}
-              onChange={(event) => setIncomePeriod(event.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
-            />
-            {incomePeriod && (
-              <button
-                type="button"
-                onClick={() => setIncomePeriod("")}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-              >
-                Semua periode
-              </button>
-            )}
-          </div>
-
-          <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left">
-                <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                    <th className="px-4 py-3">Staf</th>
-                    <th className="px-4 py-3">Cabang</th>
-                    <th className="px-4 py-3 text-center">Komponen</th>
-                    <th className="px-4 py-3">Periode Payroll Terakhir</th>
-                    <th className="px-4 py-3 text-right">Pendapatan Non-Gaji Pokok</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                  {loading ? (
-                    <tr><td colSpan={5} className="py-8 text-center text-slate-400">Memuat ringkasan pendapatan staf...</td></tr>
-                  ) : staffIncomeRows.length === 0 ? (
-                    <tr><td colSpan={5} className="py-8 text-center text-slate-400">Belum ada komponen penghasilan payroll yang sesuai dengan filter.</td></tr>
-                  ) : staffIncomeRows.map((row) => (
-                    <tr key={`${row.staffId}:${row.branchId || ""}`} className="hover:bg-slate-50/70">
-                      <td className="px-4 py-3.5">
-                        <div className="font-semibold text-slate-900">{row.info.name}</div>
-                        <div className="mt-0.5 text-[10px] text-slate-500">{row.info.code} · {row.info.role}</div>
-                      </td>
-                      <td className="px-4 py-3.5">{row.branchName}</td>
-                      <td className="px-4 py-3.5 text-center">{row.componentCount}</td>
-                      <td className="px-4 py-3.5 font-mono text-slate-500">
-                        {new Date(`${row.latestPeriod}-01T00:00:00`).toLocaleDateString("id-ID", {
-                          month: "long",
-                          year: "numeric"
-                        })}
-                      </td>
-                      <td className="px-4 py-3.5 text-right font-bold text-emerald-800">
-                        Rp {row.amount.toLocaleString("id-ID")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex justify-end border-t border-slate-100 px-4 py-3">
-              <button
-                type="button"
-                onClick={() => setActiveTab("ACCRUALS")}
-                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
-              >
-                Lihat log akrual komisi
-              </button>
-            </div>
-          </div>
-        </section>
       )}
 
       {/* Modal: Add or edit compensation rule */}

@@ -1,5 +1,5 @@
 const OFFLINE_PAGE = "/offline.html";
-const CACHE_NAME = "lala-attendance-shell-v4";
+const CACHE_NAME = "lala-attendance-shell-v5";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
