@@ -71,6 +71,7 @@ import {
   PaymentMethod,
   StaffCompensationRule,
   ReferralIncentiveRate,
+  AssistantTreatmentIncentiveRate,
   CompensationAccrual,
   MonthlyPayroll,
   PayrollItem,
@@ -5210,6 +5211,44 @@ export class MockCompensationRepository implements CompensationRepository {
     return { ...savedRates.find((rate) => rate.staffPosition === data.staffPosition)! };
   }
 
+  async getAssistantTreatmentIncentiveRates(): Promise<AssistantTreatmentIncentiveRate[]> {
+    return db.assistantTreatmentIncentiveRates.map((rate) => ({ ...rate }));
+  }
+
+  async saveAssistantTreatmentIncentiveRate(
+    data: Omit<AssistantTreatmentIncentiveRate, "id" | "createdAt" | "updatedAt"> & { id?: string },
+    currentUserRole?: UserRole
+  ): Promise<AssistantTreatmentIncentiveRate> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat mengatur insentif tindakan bersama untuk asisten.");
+    }
+    if (!data.serviceId || !db.services.some((service: MasterService) => service.id === data.serviceId)) {
+      throw new Error("Layanan tindakan untuk insentif asisten tidak ditemukan.");
+    }
+    if (!Number.isSafeInteger(data.amount) || data.amount <= 0) {
+      throw new Error("Nominal insentif tindakan asisten harus berupa Rupiah bulat lebih besar dari nol.");
+    }
+
+    const existing = (data.id && db.assistantTreatmentIncentiveRates.find((rate) => rate.id === data.id))
+      || db.assistantTreatmentIncentiveRates.find((rate) => rate.serviceId === data.serviceId);
+    if (existing && existing.serviceId !== data.serviceId) {
+      throw new Error("Layanan pada tarif yang sudah ada tidak dapat diubah.");
+    }
+    const now = AppClock.nowISO();
+    const saved: AssistantTreatmentIncentiveRate = {
+      id: existing?.id || `assistant-treatment-rate-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      serviceId: data.serviceId,
+      amount: data.amount,
+      isActive: data.isActive,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    if (existing) Object.assign(existing, saved);
+    else db.assistantTreatmentIncentiveRates.push(saved);
+    db.saveToStorage();
+    return { ...saved };
+  }
+
   async calculateAndAccrueForTreatment(treatmentJobId: string): Promise<CompensationAccrual[]> {
     const job = db.treatmentJobs.find((t: TreatmentJob) => t.id === treatmentJobId);
     if (!job) {
@@ -5293,6 +5332,7 @@ export class MockCompensationRepository implements CompensationRepository {
       existingRuleKeys.add(`${job.doctorId}:${rule.id}`);
     }
 
+    let hasIndividualAssistantTreatmentRule = false;
     // Find rules for assistant if assigned
     if (job.picAssistantId) {
       const assistantRules = db.rules.filter((r: StaffCompensationRule) =>
@@ -5303,7 +5343,6 @@ export class MockCompensationRepository implements CompensationRepository {
       for (const rule of assistantRules) {
         if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE" || rule.ruleTypeSnapshot === "TAX_PERCENTAGE") continue;
         if (rule.serviceId && rule.serviceId !== job.serviceId) continue;
-        if (existingRuleKeys.has(`${job.picAssistantId}:${rule.id}`)) continue;
 
         let amount = 0;
         if (rule.ruleTypeSnapshot === "PERCENTAGE") {
@@ -5311,6 +5350,9 @@ export class MockCompensationRepository implements CompensationRepository {
         } else if (rule.ruleTypeSnapshot === "FIXED_PER_TREATMENT") {
           amount = rule.valueSnapshot;
         }
+        if (amount <= 0) continue;
+        hasIndividualAssistantTreatmentRule = true;
+        if (existingRuleKeys.has(`${job.picAssistantId}:${rule.id}`)) continue;
 
         const accrual: CompensationAccrual = {
           id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
@@ -5328,6 +5370,39 @@ export class MockCompensationRepository implements CompensationRepository {
         db.accruals.push(accrual);
         createdAccruals.push(accrual);
         existingRuleKeys.add(`${job.picAssistantId}:${rule.id}`);
+      }
+
+      const assistant = db.staff.find((staff: Staff) =>
+        (staff.id === job.picAssistantId || staff.userAccountId === job.picAssistantId) &&
+        staff.position === StaffPosition.ASSISTANT &&
+        staff.active &&
+        staff.employmentStatus === EmploymentStatus.ACTIVE
+      );
+      const sharedRate = db.assistantTreatmentIncentiveRates.find((rate) =>
+        rate.serviceId === job.serviceId && rate.isActive
+      );
+      const sharedRuleId = "ASSISTANT_TREATMENT_BASE_V1";
+      if (
+        assistant &&
+        sharedRate &&
+        !hasIndividualAssistantTreatmentRule &&
+        !existingRuleKeys.has(`${job.picAssistantId}:${sharedRuleId}`)
+      ) {
+        const accrual: CompensationAccrual = {
+          id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+          staffId: job.picAssistantId,
+          branchId: job.branchId,
+          ruleIdSnapshot: sharedRuleId,
+          ruleTypeSnapshot: "FIXED_PER_TREATMENT",
+          valueSnapshot: sharedRate.amount,
+          baseAmountSnapshot: baseAmount,
+          amount: sharedRate.amount,
+          sourceId: job.id,
+          accruedAt: now
+        };
+        db.accruals.push(accrual);
+        createdAccruals.push(accrual);
+        existingRuleKeys.add(`${assistant.id}:${sharedRuleId}`);
       }
     }
 

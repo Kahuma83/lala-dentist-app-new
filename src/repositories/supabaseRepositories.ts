@@ -92,6 +92,7 @@ import {
   CompensationAccrual,
   StaffCompensationRule,
   ReferralIncentiveRate,
+  AssistantTreatmentIncentiveRate,
   MasterService,
   PrescriptionMedicine,
   BranchServiceTariff,
@@ -7107,6 +7108,16 @@ export class SupabaseCompensationRepository implements CompensationRepository {
     if (!staffError && staffData) {
       candidateIds.add(staffData.id);
       if (staffData.user_account_id) candidateIds.add(staffData.user_account_id);
+    } else {
+      const { data: linkedStaffData, error: linkedStaffError } = await supabase
+        .from("staff")
+        .select("id,user_account_id")
+        .eq("user_account_id", staffId)
+        .maybeSingle();
+      if (!linkedStaffError && linkedStaffData) {
+        candidateIds.add(linkedStaffData.id);
+        if (linkedStaffData.user_account_id) candidateIds.add(linkedStaffData.user_account_id);
+      }
     }
 
     const { data: doctorData, error: doctorError } = await supabase
@@ -7119,11 +7130,13 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       if (doctorData.staff_id) candidateIds.add(doctorData.staff_id);
     }
 
-    const { data, error } = await supabase.from("compensation_accruals").select("*").order("accrued_at", { ascending: false });
+    const { data, error } = await supabase
+      .from("compensation_accruals")
+      .select("*")
+      .in("staff_id", [...candidateIds])
+      .order("accrued_at", { ascending: false });
     if (error) return handleSupabaseReadError("compensation_accruals", error, []);
-    return (data || [])
-      .filter((row: any) => candidateIds.has(row.staff_id))
-      .map((row: any) => this.mapCompensationAccrualFromDb(row));
+    return (data || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
   }
 
   async getReferralIncentiveRates(): Promise<ReferralIncentiveRate[]> {
@@ -7193,6 +7206,50 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       normalizeReferralServiceName(rate.serviceName) === normalizeReferralServiceName(serviceName)
     );
     if (!saved) throw new Error("Tarif referral tersimpan tetapi tidak ditemukan saat memuat ulang.");
+    return saved;
+  }
+
+  async getAssistantTreatmentIncentiveRates(): Promise<AssistantTreatmentIncentiveRate[]> {
+    ensureSupabaseConnected();
+    const { data, error } = await supabase
+      .from("assistant_treatment_incentive_rates")
+      .select("*")
+      .order("service_id");
+    if (error) throw new Error(`Gagal memuat tarif insentif tindakan asisten: ${error.message}`);
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      serviceId: row.service_id,
+      amount: Number(row.amount) || 0,
+      isActive: row.is_active ?? true,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+  }
+
+  async saveAssistantTreatmentIncentiveRate(
+    data: Omit<AssistantTreatmentIncentiveRate, "id" | "createdAt" | "updatedAt"> & { id?: string },
+    currentUserRole?: UserRole
+  ): Promise<AssistantTreatmentIncentiveRate> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat mengatur insentif tindakan bersama untuk asisten.");
+    }
+    if (!isValidUUID(data.serviceId)) {
+      throw new Error("Layanan tindakan untuk insentif asisten tidak valid.");
+    }
+    if (!Number.isSafeInteger(data.amount) || data.amount <= 0) {
+      throw new Error("Nominal insentif tindakan asisten harus berupa Rupiah bulat lebih besar dari nol.");
+    }
+
+    const { error } = await supabase.rpc("save_shared_assistant_treatment_incentive_rate", {
+      p_service_id: data.serviceId,
+      p_amount: data.amount,
+      p_is_active: data.isActive
+    });
+    if (error) throw new Error(`Gagal menyimpan tarif insentif tindakan asisten: ${error.message}`);
+    const saved = (await this.getAssistantTreatmentIncentiveRates())
+      .find((rate) => rate.serviceId === data.serviceId);
+    if (!saved) throw new Error("Tarif tersimpan tetapi tidak ditemukan saat memuat ulang.");
     return saved;
   }
 
@@ -7310,6 +7367,76 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         .select("*");
       if (createError) throw new Error(`Gagal mencatat akrual kompensasi: ${createError.message}`);
       createdAccruals = (created || []).map((row: any) => this.mapCompensationAccrualFromDb(row));
+    }
+
+    const assistantHasIndividualTreatmentRule = Boolean(job.pic_assistant_id) &&
+      applicableRules.some((rule) =>
+        rule.staffId === job.pic_assistant_id &&
+        (rule.ruleTypeSnapshot === "PERCENTAGE" || rule.ruleTypeSnapshot === "FIXED_PER_TREATMENT") &&
+        (Number(rule.valueSnapshot) || 0) > 0
+      );
+    const sharedAssistantRuleId = "ASSISTANT_TREATMENT_BASE_V1";
+    if (
+      job.pic_assistant_id &&
+      !assistantHasIndividualTreatmentRule &&
+      !existingKeys.has(`${job.pic_assistant_id}:${sharedAssistantRuleId}`)
+    ) {
+      const { data: assistant, error: assistantError } = await supabase
+        .from("staff")
+        .select("id")
+        .eq("id", job.pic_assistant_id)
+        .eq("position", StaffPosition.ASSISTANT)
+        .eq("active", true)
+        .eq("employment_status", EmploymentStatus.ACTIVE)
+        .maybeSingle();
+      if (assistantError) throw new Error(`Gagal memeriksa status asisten PIC: ${assistantError.message}`);
+      if (assistant) {
+        const { data: sharedRate, error: sharedRateError } = await supabase
+          .from("assistant_treatment_incentive_rates")
+          .select("amount")
+          .eq("service_id", job.service_id)
+          .eq("is_active", true)
+          .maybeSingle();
+        if (sharedRateError) {
+          throw new Error(`Gagal memuat tarif bersama insentif tindakan asisten: ${sharedRateError.message}`);
+        }
+        const sharedAmount = Number(sharedRate?.amount) || 0;
+        if (sharedAmount > 0) {
+          const { data: sharedAccrual, error: sharedAccrualError } = await supabase
+            .from("compensation_accruals")
+            .insert({
+              staff_id: assistant.id,
+              branch_id: job.branch_id,
+              rule_id_snapshot: sharedAssistantRuleId,
+              rule_type_snapshot: "FIXED_PER_TREATMENT",
+              value_snapshot: sharedAmount,
+              base_amount_snapshot: baseAmount,
+              amount: sharedAmount,
+              source_id: job.id,
+              accrued_at: accruedAt
+            })
+            .select("*")
+            .maybeSingle();
+          if (sharedAccrualError?.code === "23505") {
+            const { data: existingSharedAccrual, error: existingSharedAccrualError } = await supabase
+              .from("compensation_accruals")
+              .select("id")
+              .eq("source_id", job.id)
+              .eq("staff_id", assistant.id)
+              .eq("rule_id_snapshot", sharedAssistantRuleId)
+              .maybeSingle();
+            if (existingSharedAccrualError) {
+              throw new Error(`Gagal memverifikasi akrual tindakan asisten: ${existingSharedAccrualError.message}`);
+            }
+            if (!existingSharedAccrual) {
+              throw new Error(`Gagal mencatat insentif tindakan asisten: ${sharedAccrualError.message}`);
+            }
+          } else if (sharedAccrualError) {
+            throw new Error(`Gagal mencatat insentif tindakan asisten: ${sharedAccrualError.message}`);
+          }
+          if (sharedAccrual) createdAccruals.push(this.mapCompensationAccrualFromDb(sharedAccrual));
+        }
+      }
     }
 
     {

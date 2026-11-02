@@ -118,6 +118,49 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     expect(assistantAccrual?.amount).toBe(15000);
   });
 
+  it("uses the shared per-service assistant rate for the assigned PIC when no personal rule applies", async () => {
+    const db = MockDatabase.getInstance();
+    const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
+    db.rules = db.rules.filter((rule) => rule.staffId !== "assistant-clary");
+    db.accruals = db.accruals.filter((accrual) => accrual.sourceId !== treatment.id);
+    await compRepo.saveAssistantTreatmentIncentiveRate({
+      serviceId: treatment.serviceId,
+      amount: 42000,
+      isActive: true
+    }, UserRole.SUPER_ADMIN);
+    await treatmentRepo.completeTreatmentJob(treatment.id);
+    await createPaidInvoiceForTreatment(treatment.id);
+
+    const accruals = await compRepo.calculateAndAccrueForTreatment(treatment.id);
+    const assistantAccrual = accruals.find((accrual) => accrual.staffId === "assistant-clary");
+
+    expect(assistantAccrual).toMatchObject({
+      staffId: "assistant-clary",
+      ruleIdSnapshot: "ASSISTANT_TREATMENT_BASE_V1",
+      ruleTypeSnapshot: "FIXED_PER_TREATMENT",
+      amount: 42000
+    });
+  });
+
+  it("keeps an active personal assistant rule as an override of the shared rate", async () => {
+    const db = MockDatabase.getInstance();
+    const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
+    await compRepo.saveAssistantTreatmentIncentiveRate({
+      serviceId: treatment.serviceId,
+      amount: 42000,
+      isActive: true
+    }, UserRole.SUPER_ADMIN);
+    await treatmentRepo.completeTreatmentJob(treatment.id);
+    await createPaidInvoiceForTreatment(treatment.id);
+
+    const accruals = await compRepo.calculateAndAccrueForTreatment(treatment.id);
+    const assistantAccruals = accruals.filter((accrual) => accrual.staffId === "assistant-clary");
+
+    expect(assistantAccruals).toHaveLength(1);
+    expect(assistantAccruals[0].ruleIdSnapshot).not.toBe("ASSISTANT_TREATMENT_BASE_V1");
+    expect(assistantAccruals[0].amount).toBe(15000);
+  });
+
   it("calculates sharing from service revenue after discount without including tax", async () => {
     const db = MockDatabase.getInstance();
     const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;

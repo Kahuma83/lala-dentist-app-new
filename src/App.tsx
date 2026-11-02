@@ -222,7 +222,9 @@ const AppContent: React.FC = () => {
 
     let view = <Dashboard />;
 
-    if (path === "/branch-admin/patients") {
+    if (path === "/branch-admin/incentives") {
+      view = <Compensation employeePortal />;
+    } else if (path === "/branch-admin/patients") {
       view = <PatientManagement />;
     } else if (path === "/branch-admin/bookings") {
       view = <BookingManagement />;
@@ -283,11 +285,10 @@ const AppContent: React.FC = () => {
     if (currentUser.role !== UserRole.DOCTOR_ASSISTANT) {
       return <UnauthorizedPage />;
     }
-    if (path.includes("/incentives")) {
-      return <UnauthorizedPage />;
-    }
     let view = <LiveQueueManagement />;
-    if (path.startsWith("/assistant/inventory")) {
+    if (path === "/assistant/incentives") {
+      view = <Compensation employeePortal />;
+    } else if (path.startsWith("/assistant/inventory")) {
       view = <InventoryManagement />;
     } else if (path.includes("/treatments")) {
       view = <TreatmentManagement />;

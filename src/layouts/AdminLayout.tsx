@@ -282,7 +282,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     {
       title: "LAPORAN",
       items: [
-        { name: "Laporan Keuangan", path: "/branch-admin/accounting", icon: BookOpen }
+        { name: "Laporan Keuangan", path: "/branch-admin/accounting", icon: BookOpen },
+        { name: "Insentif Saya", path: "/branch-admin/incentives", icon: DollarSign }
       ]
     },
     {
@@ -326,6 +327,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         { name: "Antrean Klinik", path: "/assistant/queue", icon: ListOrdered },
         { name: "Pasien", path: "/assistant/patients", icon: Users },
         { name: "Treatment", path: "/assistant/treatments", icon: Activity },
+        { name: "Insentif Saya", path: "/assistant/incentives", icon: DollarSign },
         {
           name: "Inventori Stok",
           path: "/assistant/inventory",

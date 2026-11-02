@@ -983,6 +983,15 @@ export interface ReferralIncentiveRate {
   updatedAt: string;
 }
 
+export interface AssistantTreatmentIncentiveRate {
+  id: string;
+  serviceId: string;
+  amount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CompensationAccrual {
   id: string;
   staffId: string;
