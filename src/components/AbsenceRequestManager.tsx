@@ -14,6 +14,10 @@ type AbsenceRequest = {
   status: "PENDING" | "APPROVED" | "REJECTED";
   reviewer_note: string | null;
   created_at: string;
+  proposed_replacement_staff_id: string | null;
+  replacement_response_status: "NOT_REQUIRED" | "PENDING" | "ACCEPTED" | "DECLINED";
+  replacement_responded_at: string | null;
+  replacement_selection_finalized: boolean;
 };
 
 type ReplacementAssignment = {
@@ -56,6 +60,11 @@ type ExternalDoctorPayrollEntry = {
 };
 
 const money = (amount: number) => `Rp${Math.round(amount).toLocaleString("id-ID")}`;
+const consentTime = (value: string) => new Intl.DateTimeFormat("id-ID", {
+  timeZone: "Asia/Jakarta",
+  dateStyle: "medium",
+  timeStyle: "short"
+}).format(new Date(value));
 
 export const AbsenceRequestManager: React.FC = () => {
   const { currentUser, staff, doctors, doctorSchedules, branches } = useApp();
@@ -80,7 +89,7 @@ export const AbsenceRequestManager: React.FC = () => {
     try {
       const [requestsResult, assignmentsResult, externalDoctorsResult, externalPayrollResult] = await Promise.all([
         supabase.from("staff_absence_requests")
-          .select("id,staff_id,request_type,start_date,end_date,reason,status,reviewer_note,created_at")
+          .select("id,staff_id,request_type,start_date,end_date,reason,status,reviewer_note,created_at,proposed_replacement_staff_id,replacement_response_status,replacement_responded_at,replacement_selection_finalized")
           .order("created_at", { ascending: false }).limit(100),
         supabase.from("staff_replacement_assignments")
           .select("id,absence_request_id,covered_date,branch_id,absent_staff_id,replacement_staff_id,absent_base_salary_snapshot,amount_snapshot,work_confirmed_at")
@@ -199,32 +208,53 @@ export const AbsenceRequestManager: React.FC = () => {
       setErrorMessage("Alasan penolakan wajib diisi (minimal 3 karakter).");
       return;
     }
+    if (
+      approve &&
+      request.replacement_selection_finalized &&
+      request.proposed_replacement_staff_id &&
+      request.replacement_response_status !== "ACCEPTED"
+    ) {
+      setErrorMessage("Pengganti yang dipilih pemohon harus menyetujui sebelum pengajuan dapat disetujui.");
+      return;
+    }
     setBusyId(request.id);
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
       const isDoctorRequest = staffById.get(request.staff_id)?.position === StaffPosition.DOCTOR;
       const doctorReplacement = doctorReplacementByRequest[request.id] || "";
-      const [replacementType, replacementId] = doctorReplacement.split("|");
+      const selectedReplacement = request.replacement_selection_finalized
+        ? request.proposed_replacement_staff_id || ""
+        : "";
+      const [replacementType, replacementId] = selectedReplacement
+        ? ["INTERNAL", doctors.find((doctor) => doctor.staffId === selectedReplacement)?.id || ""]
+        : doctorReplacement.split("|");
+      if (approve && isDoctorRequest && request.replacement_selection_finalized && selectedReplacement && !replacementId) {
+        throw new Error("Data dokter yang dipilih sebagai pengganti tidak ditemukan.");
+      }
       const { error } = isDoctorRequest
         ? await supabase.rpc("review_doctor_absence_request", {
           p_request_id: request.id,
           p_approve: approve,
           p_reviewer_note: reviewerNote || null,
           p_replacement_doctor_id: approve && replacementType === "INTERNAL" ? replacementId : null,
-          p_external_doctor_id: approve && replacementType === "EXTERNAL" ? replacementId : null
+          p_external_doctor_id: approve && !request.replacement_selection_finalized && replacementType === "EXTERNAL" ? replacementId : null
         })
         : await supabase.rpc("review_staff_absence_request", {
           p_request_id: request.id,
           p_approve: approve,
           p_reviewer_note: reviewerNote || null,
-          p_replacement_staff_id: approve ? replacementByRequest[request.id] || null : null
+          p_replacement_staff_id: approve
+            ? request.replacement_selection_finalized
+              ? request.proposed_replacement_staff_id
+              : replacementByRequest[request.id] || null
+            : null
         });
       if (error) throw new Error(`Gagal memproses pengajuan: ${error.message}`);
       setSuccessMessage(approve
         ? isDoctorRequest
-          ? "Pengajuan dokter disetujui; potongan ketidakhadiran dan penugasan pengganti dicatat sesuai jadwal."
-          : "Pengajuan disetujui; absensi terjadwal dan penugasan yang dipilih telah dicatat."
+            ? "Pengajuan dokter disetujui; persetujuan pengganti dan penugasan dicatat sesuai jadwal."
+            : "Pengajuan disetujui; absensi dan persetujuan pengganti dicatat sesuai jadwal."
         : "Pengajuan ditolak.");
       await loadData();
     } catch (reviewError: unknown) {
@@ -306,6 +336,15 @@ export const AbsenceRequestManager: React.FC = () => {
             const replacements = eligibleReplacements(request);
             const doctorReplacements = eligibleDoctorReplacements(request);
             const currentReplacement = replacementByRequest[request.id] || "";
+            const nominatedStaff = request.proposed_replacement_staff_id
+              ? staffById.get(request.proposed_replacement_staff_id)
+              : null;
+            const nominatedDoctor = request.proposed_replacement_staff_id
+              ? doctors.find((doctor) => doctor.staffId === request.proposed_replacement_staff_id)
+              : null;
+            const canApprove = !request.replacement_selection_finalized ||
+              !request.proposed_replacement_staff_id ||
+              request.replacement_response_status === "ACCEPTED";
             return (
               <article key={request.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -317,44 +356,66 @@ export const AbsenceRequestManager: React.FC = () => {
                   <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Menunggu</span>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                  <label className="grid gap-1 text-xs font-semibold text-slate-700">
-                    {person?.position === StaffPosition.DOCTOR ? "Dokter pengganti (opsional)" : "Pengganti (opsional)"}
-                    {person?.position === StaffPosition.DOCTOR ? (
-                      <select
-                        value={doctorReplacementByRequest[request.id] || ""}
-                        onChange={(event) => setDoctorReplacementByRequest((current) => ({ ...current, [request.id]: event.target.value }))}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal"
-                      >
-                        <option value="">Tanpa pengganti</option>
-                        <optgroup label="Dokter internal">
-                          {eligibleDoctorReplacements(request).map((candidate) => (
-                            <option key={candidate.id} value={`INTERNAL|${candidate.id}`}>{candidate.name}</option>
-                          ))}
-                        </optgroup>
-                        <optgroup disabled={doctorReplacements.length > 0} label={doctorReplacements.length > 0 ? "Dokter eksternal (internal tersedia)" : "Dokter eksternal"}>
-                          {externalDoctors.filter((candidate) => candidate.active).map((candidate) => (
-                            <option key={candidate.id} value={`EXTERNAL|${candidate.id}`}>{candidate.full_name} · {candidate.phone}</option>
-                          ))}
-                        </optgroup>
-                      </select>
-                    ) : (
-                      <select
-                        value={currentReplacement}
-                        onChange={(event) => setReplacementByRequest((current) => ({ ...current, [request.id]: event.target.value }))}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal"
-                      >
-                        <option value="">Tanpa pengganti</option>
-                        {replacements.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.fullName} · {branchById.get(candidate.branchId || "") || "Cabang"}</option>)}
-                      </select>
-                    )}
-                    <span className="font-normal text-slate-500">
-                      {person?.position === StaffPosition.DOCTOR
-                        ? "Internal: tambahan Rp60.000 per hari praktik yang digantikan. Eksternal: Rp100.000 per hari; jumlah tindakan dicatat saat penyiapan payroll."
-                        : replacements.length
-                          ? "Upah per hari = gaji pokok pegawai yang digantikan ÷ 25; Super Admin perlu mengonfirmasi hari kerja untuk membayarkannya."
-                          : "Pengganti hanya dapat dipilih untuk Admin Cabang/Asisten dengan jabatan dan cabang yang sama."}
-                    </span>
-                  </label>
+                  {request.replacement_selection_finalized ? (
+                    <div className="grid content-start gap-1 text-xs text-slate-700">
+                      <strong>Pengganti pilihan pemohon</strong>
+                      {request.proposed_replacement_staff_id ? (
+                        <>
+                          <span>{person?.position === StaffPosition.DOCTOR
+                            ? nominatedDoctor?.name || nominatedStaff?.fullName || "Dokter tidak ditemukan"
+                            : nominatedStaff?.fullName || "Pegawai tidak ditemukan"}</span>
+                          <span className="text-slate-500">
+                            {request.replacement_response_status === "ACCEPTED"
+                              ? `Sudah menyetujui${request.replacement_responded_at ? ` pada ${consentTime(request.replacement_responded_at)}` : ""}.`
+                              : request.replacement_response_status === "DECLINED"
+                                ? "Menolak menjadi pengganti."
+                                : "Menunggu persetujuan calon pengganti."}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-slate-500">Pemohon tidak memilih pengganti.</span>
+                      )}
+                    </div>
+                  ) : (
+                    <label className="grid gap-1 text-xs font-semibold text-slate-700">
+                      {person?.position === StaffPosition.DOCTOR ? "Dokter pengganti (opsional)" : "Pengganti (opsional)"}
+                      {person?.position === StaffPosition.DOCTOR ? (
+                        <select
+                          value={doctorReplacementByRequest[request.id] || ""}
+                          onChange={(event) => setDoctorReplacementByRequest((current) => ({ ...current, [request.id]: event.target.value }))}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal"
+                        >
+                          <option value="">Tanpa pengganti</option>
+                          <optgroup label="Dokter internal">
+                            {doctorReplacements.map((candidate) => (
+                              <option key={candidate.id} value={`INTERNAL|${candidate.id}`}>{candidate.name}</option>
+                            ))}
+                          </optgroup>
+                          <optgroup disabled={doctorReplacements.length > 0} label={doctorReplacements.length > 0 ? "Dokter eksternal (internal tersedia)" : "Dokter eksternal"}>
+                            {externalDoctors.filter((candidate) => candidate.active).map((candidate) => (
+                              <option key={candidate.id} value={`EXTERNAL|${candidate.id}`}>{candidate.full_name} · {candidate.phone}</option>
+                            ))}
+                          </optgroup>
+                        </select>
+                      ) : (
+                        <select
+                          value={currentReplacement}
+                          onChange={(event) => setReplacementByRequest((current) => ({ ...current, [request.id]: event.target.value }))}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal"
+                        >
+                          <option value="">Tanpa pengganti</option>
+                          {replacements.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.fullName} · {branchById.get(candidate.branchId || "") || "Cabang"}</option>)}
+                        </select>
+                      )}
+                      <span className="font-normal text-slate-500">
+                        {person?.position === StaffPosition.DOCTOR
+                          ? "Internal: tambahan Rp60.000 per hari praktik yang digantikan. Eksternal: Rp100.000 per hari; jumlah tindakan dicatat saat penyiapan payroll."
+                          : replacements.length
+                            ? "Upah per hari = gaji pokok pegawai yang digantikan ÷ 25; Super Admin perlu mengonfirmasi hari kerja untuk membayarkannya."
+                            : "Pengganti hanya dapat dipilih untuk Admin Cabang/Asisten dengan jabatan dan cabang yang sama."}
+                      </span>
+                    </label>
+                  )}
                   <label className="grid gap-1 text-xs font-semibold text-slate-700">
                     Catatan keputusan
                     <textarea
@@ -368,7 +429,7 @@ export const AbsenceRequestManager: React.FC = () => {
                 </div>
                 <div className="mt-3 flex justify-end gap-2">
                   <button type="button" disabled={busyId === request.id} onClick={() => void reviewRequest(request, false)} className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-50"><XCircle className="h-4 w-4" />Tolak</button>
-                  <button type="button" disabled={busyId === request.id} onClick={() => void reviewRequest(request, true)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><ShieldCheck className="h-4 w-4" />Setujui</button>
+                  <button type="button" disabled={busyId === request.id || !canApprove} onClick={() => void reviewRequest(request, true)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><ShieldCheck className="h-4 w-4" />Setujui</button>
                 </div>
               </article>
             );

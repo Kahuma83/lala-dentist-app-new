@@ -87,6 +87,23 @@ type PortalAbsenceRequest = {
   status: "PENDING" | "APPROVED" | "REJECTED";
   reviewerNote: string | null;
   createdAt: string;
+  proposedReplacementStaffId: string | null;
+  replacementResponseStatus: "NOT_REQUIRED" | "PENDING" | "ACCEPTED" | "DECLINED";
+};
+type AbsenceReplacementCandidate = {
+  staffId: string;
+  fullName: string;
+  position: string;
+};
+type PortalReplacementInboxItem = {
+  requestId: string;
+  requesterName: string;
+  requestType: AbsenceRequestType;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  responseStatus: "PENDING" | "ACCEPTED" | "DECLINED";
+  respondedAt: string | null;
 };
 type PortalReplacementAssignment = {
   id: string;
@@ -232,6 +249,14 @@ function formatDate(value: string): string {
     month: "long",
     year: "numeric"
   }).format(new Date(`${value}T12:00:00+07:00`));
+}
+
+function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(value));
 }
 
 function formatRupiah(value: number): string {
@@ -419,12 +444,16 @@ export function AttendancePortal() {
   const [doctorBookingRows, setDoctorBookingRows] = useState<DoctorPortalBooking[]>([]);
   const [scheduleWeekStart, setScheduleWeekStart] = useState(() => startOfWeek(todayWib()));
   const [absenceRows, setAbsenceRows] = useState<PortalAbsenceRequest[]>([]);
+  const [replacementInbox, setReplacementInbox] = useState<PortalReplacementInboxItem[]>([]);
   const [replacementRows, setReplacementRows] = useState<PortalReplacementAssignment[]>([]);
+  const [replacementCandidates, setReplacementCandidates] = useState<AbsenceReplacementCandidate[]>([]);
+  const [isLoadingReplacementCandidates, setIsLoadingReplacementCandidates] = useState(false);
   const [absenceForm, setAbsenceForm] = useState({
     requestType: "LEAVE" as AbsenceRequestType,
     startDate: todayWib(),
     endDate: todayWib(),
-    reason: ""
+    reason: "",
+    replacementStaffId: ""
   });
   const [overtimeRows, setOvertimeRows] = useState<PortalOvertime[]>([]);
   const [medicalServiceMonth, setMedicalServiceMonth] = useState(() => todayWib().slice(0, 7));
@@ -509,6 +538,53 @@ export function AttendancePortal() {
       if (profilePhotoUrl) URL.revokeObjectURL(profilePhotoUrl);
     };
   }, [profilePhotoUrl]);
+
+  useEffect(() => {
+    const role = staffContext?.role;
+    if (
+      activeTab !== "absence" ||
+      !role ||
+      !["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT"].includes(role)
+    ) {
+      setReplacementCandidates([]);
+      return;
+    }
+    if (absenceForm.endDate < absenceForm.startDate) {
+      setReplacementCandidates([]);
+      return;
+    }
+
+    let active = true;
+    setIsLoadingReplacementCandidates(true);
+    const loadCandidates = async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_absence_replacement_candidates", {
+          p_start_date: absenceForm.startDate,
+          p_end_date: absenceForm.endDate
+        });
+        if (error) throw new Error(`Gagal memuat calon pengganti: ${error.message}`);
+        if (active) {
+          setReplacementCandidates((data || []).map((candidate) => ({
+            staffId: candidate.staff_id,
+            fullName: candidate.full_name,
+            position: candidate.staff_position
+          })));
+        }
+      } catch (candidateError: unknown) {
+        if (active) {
+          setReplacementCandidates([]);
+          setPanelError(friendlyError(candidateError, "Gagal memuat calon pengganti."));
+        }
+      } finally {
+        if (active) setIsLoadingReplacementCandidates(false);
+      }
+    };
+    void loadCandidates();
+
+    return () => {
+      active = false;
+    };
+  }, [absenceForm.endDate, absenceForm.startDate, activeTab, staffContext?.role]);
 
   const loadPortalContext = useCallback(async (user: User) => {
     const { data: account, error: accountError } = await supabase
@@ -950,10 +1026,14 @@ export function AttendancePortal() {
         });
         setDoctorBookingRows(rows);
       } else if (tab === "absence") {
-        const [{ data, error }, { data: assignmentData, error: assignmentError }] = await Promise.all([
+        const [
+          { data, error },
+          { data: assignmentData, error: assignmentError },
+          { data: inboxData, error: inboxError }
+        ] = await Promise.all([
           supabase
             .from("staff_absence_requests")
-            .select("id,request_type,start_date,end_date,reason,status,reviewer_note,created_at")
+            .select("id,request_type,start_date,end_date,reason,status,reviewer_note,created_at,proposed_replacement_staff_id,replacement_response_status")
             .eq("staff_id", staffContext!.staffId)
             .order("created_at", { ascending: false })
             .limit(50),
@@ -962,10 +1042,12 @@ export function AttendancePortal() {
             .select("id,covered_date,branch_id,amount_snapshot,work_confirmed_at")
             .eq("replacement_staff_id", staffContext!.staffId)
             .order("covered_date", { ascending: false })
-            .limit(50)
+            .limit(50),
+          supabase.rpc("get_staff_absence_replacement_inbox")
         ]);
         if (error) throw new Error(`Gagal memuat pengajuan cuti/izin: ${error.message}`);
         if (assignmentError) throw new Error(`Gagal memuat penugasan pengganti: ${assignmentError.message}`);
+        if (inboxError) throw new Error(`Gagal memuat permintaan persetujuan pengganti: ${inboxError.message}`);
         setAbsenceRows((data || []).map((row) => ({
           id: row.id,
           requestType: row.request_type,
@@ -974,7 +1056,19 @@ export function AttendancePortal() {
           reason: row.reason,
           status: row.status,
           reviewerNote: row.reviewer_note,
-          createdAt: row.created_at
+          createdAt: row.created_at,
+          proposedReplacementStaffId: row.proposed_replacement_staff_id,
+          replacementResponseStatus: row.replacement_response_status
+        })));
+        setReplacementInbox((inboxData || []).map((row) => ({
+          requestId: row.request_id,
+          requesterName: row.requester_name,
+          requestType: row.request_type,
+          startDate: row.start_date,
+          endDate: row.end_date,
+          reason: row.reason,
+          responseStatus: row.replacement_response_status,
+          respondedAt: row.replacement_responded_at
         })));
         const branchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
         setReplacementRows((assignmentData || []).map((row) => ({
@@ -1197,18 +1291,45 @@ export function AttendancePortal() {
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const { error } = await supabase.rpc("submit_staff_absence_request", {
+      const { error } = await supabase.rpc("submit_staff_absence_request_with_replacement", {
         p_request_type: absenceForm.requestType,
         p_start_date: absenceForm.startDate,
         p_end_date: absenceForm.endDate,
-        p_reason: absenceForm.reason.trim()
+        p_reason: absenceForm.reason.trim(),
+        p_replacement_staff_id: absenceForm.replacementStaffId || null
       });
       if (error) throw new Error(`Pengajuan tidak dapat dikirim: ${error.message}`);
-      setAbsenceForm((form) => ({ ...form, reason: "" }));
-      setSuccessMessage("Pengajuan berhasil dikirim dan menunggu persetujuan Super Admin.");
+      setAbsenceForm((form) => ({ ...form, reason: "", replacementStaffId: "" }));
+      setSuccessMessage(absenceForm.replacementStaffId
+        ? "Pengajuan berhasil dikirim. Calon pengganti perlu menyetujui sebelum Super Admin memprosesnya."
+        : "Pengajuan berhasil dikirim dan menunggu persetujuan Super Admin.");
       await handleTabChange("absence");
     } catch (requestError: unknown) {
       setErrorMessage(friendlyError(requestError, "Gagal mengirim pengajuan."));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const respondToReplacementRequest = async (
+    request: PortalReplacementInboxItem,
+    accept: boolean
+  ) => {
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const { error } = await supabase.rpc("respond_to_staff_absence_replacement", {
+        p_request_id: request.requestId,
+        p_accept: accept
+      });
+      if (error) throw new Error(`Gagal menyimpan tanggapan: ${error.message}`);
+      setSuccessMessage(accept
+        ? "Persetujuan Anda tercatat dan akan ditinjau Super Admin."
+        : "Anda menolak menjadi pengganti. Pengajuan akan ditinjau Super Admin.");
+      await handleTabChange("absence");
+    } catch (responseError: unknown) {
+      setErrorMessage(friendlyError(responseError, "Gagal menyimpan tanggapan."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1955,7 +2076,7 @@ export function AttendancePortal() {
             <div>
               <p className="eyebrow">PENGAJUAN KETIDAKHADIRAN</p>
               <h2>Cuti, Izin & Sakit</h2>
-              <p className="muted">Pengajuan ditinjau Super Admin. Absensi dan payroll baru diperbarui setelah disetujui.</p>
+              <p className="muted">Pengajuan ditinjau Super Admin. Jika memilih pengganti, ia perlu menyetujui lebih dulu. Absensi dan payroll diperbarui setelah pengajuan disetujui.</p>
             </div>
           </div>
           <form className="absence-request-form" onSubmit={submitAbsenceRequest}>
@@ -1977,7 +2098,12 @@ export function AttendancePortal() {
                 type="date"
                 required
                 value={absenceForm.startDate}
-                onChange={(event) => setAbsenceForm({ ...absenceForm, startDate: event.target.value })}
+                onChange={(event) => setAbsenceForm({
+                  ...absenceForm,
+                  startDate: event.target.value,
+                  endDate: absenceForm.endDate < event.target.value ? event.target.value : absenceForm.endDate,
+                  replacementStaffId: ""
+                })}
                 disabled={isSubmitting}
               />
             </label>
@@ -1988,10 +2114,35 @@ export function AttendancePortal() {
                 required
                 min={absenceForm.startDate}
                 value={absenceForm.endDate}
-                onChange={(event) => setAbsenceForm({ ...absenceForm, endDate: event.target.value })}
+                onChange={(event) => setAbsenceForm({
+                  ...absenceForm,
+                  endDate: event.target.value,
+                  replacementStaffId: ""
+                })}
                 disabled={isSubmitting}
               />
             </label>
+            {staffContext && ["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT"].includes(staffContext.role) && (
+              <label>
+                Pengganti (opsional)
+                <select
+                  value={absenceForm.replacementStaffId}
+                  onChange={(event) => setAbsenceForm({ ...absenceForm, replacementStaffId: event.target.value })}
+                  disabled={isSubmitting || isLoadingReplacementCandidates}
+                >
+                  <option value="">
+                    {isLoadingReplacementCandidates ? "Memuat calon pengganti..." : "Tanpa pengganti"}
+                  </option>
+                  {replacementCandidates.map((candidate) => (
+                    <option key={candidate.staffId} value={candidate.staffId}>{candidate.fullName}</option>
+                  ))}
+                </select>
+                <small>
+                  Calon pengganti harus satu jabatan dan tersedia pada tanggal yang diajukan. Jika dipilih, ia perlu menyetujui sebelum pengajuan diproses.
+                  {!isLoadingReplacementCandidates && replacementCandidates.length === 0 && " Tidak ada calon yang tersedia untuk rentang tanggal ini."}
+                </small>
+              </label>
+            )}
             <label className="absence-request-reason">
               Alasan / keterangan
               <textarea
@@ -2011,6 +2162,50 @@ export function AttendancePortal() {
             </button>
           </form>
           <div className="panel-heading absence-history-heading">
+            <div><p className="eyebrow">PERMINTAAN MASUK</p><h2>Persetujuan Pengganti</h2></div>
+          </div>
+          {replacementInbox.length === 0 ? <p className="empty-state">Tidak ada permintaan persetujuan pengganti untuk Anda.</p> : (
+            <div className="portal-list">
+              {replacementInbox.map((request) => (
+                <article className="portal-list-row" key={request.requestId}>
+                  <div>
+                    <strong>{request.requesterName} · {({ SICK: "Sakit", LEAVE: "Cuti", PERMISSION: "Izin" } as const)[request.requestType]}</strong>
+                    <span>{formatDate(request.startDate)}{request.endDate !== request.startDate ? ` – ${formatDate(request.endDate)}` : ""}</span>
+                    <small>{request.reason}</small>
+                    {request.responseStatus === "ACCEPTED" && <small>Anda menyetujui menjadi pengganti{request.respondedAt ? ` pada ${formatDateTime(request.respondedAt)}` : ""}. Menunggu keputusan Super Admin.</small>}
+                    {request.responseStatus === "DECLINED" && <small>Anda menolak menjadi pengganti. Menunggu keputusan Super Admin.</small>}
+                  </div>
+                  {request.responseStatus === "PENDING" ? (
+                    <div className="portal-list-end">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        disabled={isSubmitting}
+                        onClick={() => void respondToReplacementRequest(request, true)}
+                      >
+                        <CheckCircle2 />Setuju
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={isSubmitting}
+                        onClick={() => void respondToReplacementRequest(request, false)}
+                      >
+                        Tidak dapat menggantikan
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="portal-list-end">
+                      <span className={`status-badge status-${request.responseStatus.toLowerCase()}`}>
+                        {request.responseStatus === "ACCEPTED" ? "Disetujui" : "Ditolak"}
+                      </span>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+          <div className="panel-heading absence-history-heading">
             <div><p className="eyebrow">RIWAYAT</p><h2>Pengajuan Saya</h2></div>
           </div>
           {isPanelLoading ? <p className="empty-state"><RefreshCw className="spin" /> Memuat pengajuan...</p> : panelError ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div> : absenceRows.length === 0 ? <p className="empty-state">Belum ada pengajuan ketidakhadiran.</p> : (
@@ -2021,6 +2216,14 @@ export function AttendancePortal() {
                     <strong>{({ SICK: "Sakit", LEAVE: "Cuti", PERMISSION: "Izin" } as const)[row.requestType]} · {formatDate(row.startDate)}{row.endDate !== row.startDate ? ` – ${formatDate(row.endDate)}` : ""}</strong>
                     <span>{row.reason}</span>
                     {row.reviewerNote && <small>Catatan Super Admin: {row.reviewerNote}</small>}
+                    {row.proposedReplacementStaffId && <small>
+                      Persetujuan pengganti: {({
+                        PENDING: "menunggu",
+                        ACCEPTED: "disetujui calon pengganti",
+                        DECLINED: "ditolak calon pengganti",
+                        NOT_REQUIRED: "tidak diperlukan"
+                      } as const)[row.replacementResponseStatus]}
+                    </small>}
                   </div>
                   <div className="portal-list-end">
                     <span className={`status-badge status-${row.status.toLowerCase()}`}>
