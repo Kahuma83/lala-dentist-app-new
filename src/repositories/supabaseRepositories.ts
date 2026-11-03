@@ -8634,6 +8634,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
 
     entries.sort((a, b) =>
       a.journalDate.localeCompare(b.journalDate)
+      || a.postedAt.localeCompare(b.postedAt)
       || a.journalNumber.localeCompare(b.journalNumber)
       || a.lineId.localeCompare(b.lineId)
     );

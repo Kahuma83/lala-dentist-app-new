@@ -48,6 +48,7 @@ import {
   DollarSign
 } from "lucide-react";
 import { formatShortAccountingReference } from "../utils/accountingDisplay";
+import { getOperationalTimeString } from "../utils/dateUtils";
 
 export const Accounting: React.FC = () => {
   const {
@@ -196,6 +197,16 @@ export const Accounting: React.FC = () => {
   const [ledgerDateTo, setLedgerDateTo] = useState<string>("");
   const [ledgerEntries, setLedgerEntries] = useState<GeneralLedgerEntry[]>([]);
   const [ledgerBalance, setLedgerBalance] = useState<AccountBalanceResult | null>(null);
+  const ledgerPeriodTotals = useMemo(
+    () => ledgerEntries.reduce(
+      (totals, entry) => ({
+        debit: totals.debit + entry.debit,
+        credit: totals.credit + entry.credit
+      }),
+      { debit: 0, credit: 0 }
+    ),
+    [ledgerEntries]
+  );
 
   // Profit & Loss Filter States
   const [plBranchFilter, setPlBranchFilter] = useState<string>(userBranchId || "ALL");
@@ -1210,7 +1221,7 @@ export const Accounting: React.FC = () => {
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
                     <th className="py-3 px-4">Nomor Jurnal</th>
-                    <th className="py-3 px-4">Tanggal</th>
+                    <th className="py-3 px-4">Tanggal Jurnal / Waktu Posting</th>
                     <th className="py-3 px-4">Cabang</th>
                     <th className="py-3 px-4">Deskripsi / Sumber</th>
                     <th className="py-3 px-4">Tipe Sumber</th>
@@ -1569,15 +1580,15 @@ export const Accounting: React.FC = () => {
 
               <div className="flex items-center gap-6 divide-x divide-slate-700">
                 <div className="pr-2">
-                  <span className="text-[11px] text-slate-400 block uppercase">Total Debit</span>
+                  <span className="text-[11px] text-slate-400 block uppercase">Total Debit Periode</span>
                   <span className="text-sm font-semibold font-mono text-emerald-400">
-                    {formatRupiah(ledgerBalance.totalDebit)}
+                    {formatRupiah(ledgerPeriodTotals.debit)}
                   </span>
                 </div>
                 <div className="pl-6 pr-2">
-                  <span className="text-[11px] text-slate-400 block uppercase">Total Kredit</span>
+                  <span className="text-[11px] text-slate-400 block uppercase">Total Kredit Periode</span>
                   <span className="text-sm font-semibold font-mono text-rose-400">
-                    {formatRupiah(ledgerBalance.totalCredit)}
+                    {formatRupiah(ledgerPeriodTotals.credit)}
                   </span>
                 </div>
                 {ledgerAccountId !== "ALL" && (
@@ -1620,7 +1631,10 @@ export const Accounting: React.FC = () => {
                     ledgerEntries.map((e) => (
                       <tr key={e.lineId} className="hover:bg-slate-50/80 transition-colors">
                         <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
-                          {e.journalDate}
+                          <div>{e.journalDate}</div>
+                          <div className="mt-0.5 text-[10px] text-slate-400">
+                            Posting {getOperationalTimeString(e.postedAt)} WIB
+                          </div>
                         </td>
                         <td className="py-3 px-4 font-mono font-semibold text-emerald-700 whitespace-nowrap">
                           <span title={e.journalNumber}>{formatShortAccountingReference(e.journalNumber)}</span>

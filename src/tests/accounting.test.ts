@@ -711,6 +711,29 @@ describe("Accounting Phase 1: Chart of Accounts, Journal Engine & General Ledger
     }
   });
 
+  it("orders same-day ledger entries by posting time before journal number", async () => {
+    const db = MockDatabase.getInstance();
+    const postedJournals = db.journals.filter((journal) => journal.status === JournalStatus.POSTED);
+    expect(postedJournals.length).toBeGreaterThanOrEqual(2);
+
+    postedJournals.forEach((journal, index) => {
+      journal.journalDate = "2026-11-03";
+      journal.postedAt = `2026-11-03T${String(postedJournals.length - index).padStart(2, "0")}:00:00.000Z`;
+    });
+
+    const expectedJournalIds = [...postedJournals]
+      .sort((left, right) =>
+        left.postedAt.localeCompare(right.postedAt)
+        || left.journalNumber.localeCompare(right.journalNumber)
+      )
+      .map((journal) => journal.id);
+    const entries = await accountingRepo.getLedgerEntries({ accountId: "ALL" });
+    const actualJournalIds = [...new Set(entries.map((entry) => entry.journalId))];
+
+    expect(actualJournalIds).toEqual(expectedJournalIds);
+    expect(entries.every((entry) => entry.journalDate === "2026-11-03")).toBe(true);
+  });
+
   it("Test 33: Ledger query supports date filtering (dateFrom & dateTo)", async () => {
     const all = await accountingRepo.getLedgerEntries({ accountId: "coa-1000" });
     expect(all.length).toBeGreaterThan(0);

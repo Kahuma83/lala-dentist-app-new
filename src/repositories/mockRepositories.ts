@@ -7009,10 +7009,11 @@ export class MockAccountingRepository implements AccountingRepository {
       return true;
     });
 
-    // Sort journals chronologically
+    // Keep same-day journal order aligned with the actual posting sequence.
     validJournals.sort((a: JournalEntry, b: JournalEntry) => {
       if (a.journalDate !== b.journalDate) return a.journalDate.localeCompare(b.journalDate);
-      return a.journalNumber.localeCompare(b.journalNumber);
+      const postedAtOrder = (a.postedAt || a.createdAt).localeCompare(b.postedAt || b.createdAt);
+      return postedAtOrder || a.journalNumber.localeCompare(b.journalNumber);
     });
 
     const accountMap = new Map<string, ChartOfAccount>();
