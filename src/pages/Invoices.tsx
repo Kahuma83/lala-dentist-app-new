@@ -50,6 +50,24 @@ import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { getInvoiceDoctorName } from "../utils/receiptUtils";
 import { getOperationalDateString, getTodayDateString } from "../utils/dateUtils";
 
+const formatTreatmentCompletionDateTime = (treatment: TreatmentJob): string => {
+  const timestamp = treatment.completedAt || treatment.handedOverAt;
+  if (!timestamp) return "Waktu selesai tidak tercatat";
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Waktu selesai tidak valid";
+
+  return `${new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(date)} WIB`;
+};
+
 export const Invoices: React.FC = () => {
   const {
     currentUser,
@@ -664,7 +682,12 @@ export const Invoices: React.FC = () => {
                         .filter((treatment) => treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
                         .map((treatment) => (
                         <div key={treatment.id} className="mt-1 flex flex-wrap items-center gap-2">
-                          <span>{treatment.serviceNameSnapshot}</span>
+                          <span>
+                            {treatment.serviceNameSnapshot}
+                            <span className="ml-1 text-[10px] text-slate-500">
+                              · Selesai {formatTreatmentCompletionDateTime(treatment)}
+                            </span>
+                          </span>
                           {(treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
                             && (currentUser?.role === UserRole.BRANCH_ADMIN || currentUser?.role === UserRole.SUPER_ADMIN)
                             && (
