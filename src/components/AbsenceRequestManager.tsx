@@ -67,7 +67,7 @@ const consentTime = (value: string) => new Intl.DateTimeFormat("id-ID", {
 }).format(new Date(value));
 
 export const AbsenceRequestManager: React.FC = () => {
-  const { currentUser, staff, doctors, doctorSchedules, branches } = useApp();
+  const { currentUser, staff, doctors, branches } = useApp();
   const [requests, setRequests] = useState<AbsenceRequest[]>([]);
   const [assignments, setAssignments] = useState<ReplacementAssignment[]>([]);
   const [externalDoctors, setExternalDoctors] = useState<ExternalDoctorRecipient[]>([]);
@@ -146,13 +146,7 @@ export const AbsenceRequestManager: React.FC = () => {
       candidate.staffId !== absent.id &&
       candidate.staffId &&
       staffById.get(candidate.staffId)?.active &&
-      staffById.get(candidate.staffId)?.employmentStatus === EmploymentStatus.ACTIVE &&
-      doctorSchedules.every((schedule) =>
-        schedule.doctorId !== candidate.id ||
-        schedule.date < request.start_date ||
-        schedule.date > request.end_date ||
-        schedule.status !== "ACTIVE"
-      )
+      staffById.get(candidate.staffId)?.employmentStatus === EmploymentStatus.ACTIVE
     );
   };
 
@@ -391,7 +385,7 @@ export const AbsenceRequestManager: React.FC = () => {
                               <option key={candidate.id} value={`INTERNAL|${candidate.id}`}>{candidate.name}</option>
                             ))}
                           </optgroup>
-                          <optgroup disabled={doctorReplacements.length > 0} label={doctorReplacements.length > 0 ? "Dokter eksternal (internal tersedia)" : "Dokter eksternal"}>
+                          <optgroup disabled={doctorReplacements.length > 0} label={doctorReplacements.length > 0 ? "Dokter eksternal (pilih dokter internal)" : "Dokter eksternal"}>
                             {externalDoctors.filter((candidate) => candidate.active).map((candidate) => (
                               <option key={candidate.id} value={`EXTERNAL|${candidate.id}`}>{candidate.full_name} · {candidate.phone}</option>
                             ))}

@@ -2138,8 +2138,15 @@ export function AttendancePortal() {
                   ))}
                 </select>
                 <small>
-                  Calon pengganti harus satu jabatan dan tersedia pada tanggal yang diajukan. Jika dipilih, ia perlu menyetujui sebelum pengajuan diproses.
-                  {!isLoadingReplacementCandidates && replacementCandidates.length === 0 && " Tidak ada calon yang tersedia untuk rentang tanggal ini."}
+                  {staffContext.role === "DOCTOR"
+                    ? "Semua dokter internal aktif dengan akun portal dapat dipilih meskipun memiliki jadwal. Super Admin akan mengatur jadwal pengganti."
+                    : "Calon pengganti harus satu jabatan dan cabang serta tersedia pada tanggal yang diajukan."}
+                  {" "}Jika dipilih, ia perlu menyetujui sebelum pengajuan diproses.
+                  {!isLoadingReplacementCandidates && replacementCandidates.length === 0 && (
+                    staffContext.role === "DOCTOR"
+                      ? " Tidak ada dokter internal aktif dengan akun portal yang dapat dipilih."
+                      : " Tidak ada calon yang tersedia untuk rentang tanggal ini."
+                  )}
                 </small>
               </label>
             )}
