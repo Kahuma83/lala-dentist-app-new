@@ -95,6 +95,7 @@ export const Invoices: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [branchFilter, setBranchFilter] = useState<string>("ALL");
+  const [showPreviousMonthReadyVisits, setShowPreviousMonthReadyVisits] = useState(false);
 
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -236,7 +237,7 @@ export const Invoices: React.FC = () => {
     return matchesSearch && matchesStatus && matchesBranch;
   });
 
-  const invoiceReadyVisits = Array.from(
+  const allInvoiceReadyVisits = Array.from(
     treatments.reduce((grouped, treatment) => {
       const current = grouped.get(treatment.visitId) || [];
       current.push(treatment);
@@ -258,6 +259,26 @@ export const Invoices: React.FC = () => {
       invoice.visitId === visitId && invoice.status !== InvoiceStatus.CANCELLED
     )
   );
+  const currentMonthStart = `${getTodayDateString().slice(0, 7)}-01`;
+  const previousMonthReadyVisits = allInvoiceReadyVisits.filter(([, visitTreatments]) =>
+    visitTreatments.some((treatment) =>
+      (treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
+      && getOperationalDateString(
+        treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt
+      ) < currentMonthStart
+    )
+  );
+  const invoiceReadyVisits = showPreviousMonthReadyVisits
+    ? allInvoiceReadyVisits
+    : allInvoiceReadyVisits.filter(([, visitTreatments]) =>
+      visitTreatments.every((treatment) =>
+        treatment.status !== TreatmentJobStatus.SELESAI
+        && treatment.status !== TreatmentJobStatus.DISERAHKAN
+        || getOperationalDateString(
+          treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt
+        ) >= currentMonthStart
+      )
+    );
   const formInvoiceDateMax = treatments
     .filter((treatment) =>
       treatment.visitId === formVisitId
@@ -658,15 +679,35 @@ export const Invoices: React.FC = () => {
       )}
 
       <section className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
-          <div>
-            <h2 className="text-sm font-bold text-amber-900">Tindakan Selesai — Siap Ditagihkan</h2>
-            <p className="text-xs text-amber-800 mt-1">
-              Admin dapat membuat satu invoice untuk tindakan yang selesai. Rencana yang dibatalkan tidak ditagihkan.
-            </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-amber-900">Tindakan Selesai — Siap Ditagihkan</h2>
+              <p className="text-xs text-amber-800 mt-1">
+                Admin dapat membuat invoice untuk tindakan selesai yang menunggu tagihan. Rencana yang dibatalkan tidak ditagihkan.
+              </p>
+            </div>
+            {previousMonthReadyVisits.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowPreviousMonthReadyVisits((shown) => !shown)}
+                className="self-start rounded-md border border-amber-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+              >
+                {showPreviousMonthReadyVisits
+                  ? "Sembunyikan tindakan bulan sebelumnya"
+                  : `Tampilkan tindakan bulan sebelumnya (${previousMonthReadyVisits.length})`}
+              </button>
+            )}
           </div>
+          {!showPreviousMonthReadyVisits && previousMonthReadyVisits.length > 0 && (
+            <p className="text-[11px] text-amber-800">
+              {previousMonthReadyVisits.length} kunjungan lama disembunyikan dari daftar ini. Riwayatnya tetap tersimpan dan tidak dibuatkan invoice.
+            </p>
+          )}
           {invoiceReadyVisits.length === 0 ? (
             <div className="bg-white border border-amber-100 rounded-lg px-3 py-3 text-xs text-slate-500">
-              Belum ada tindakan selesai yang menunggu invoice.
+              {allInvoiceReadyVisits.length > 0
+                ? "Tidak ada tindakan bulan ini yang menunggu invoice."
+                : "Belum ada tindakan selesai yang menunggu invoice."}
             </div>
           ) : (
             <div className="space-y-2">
