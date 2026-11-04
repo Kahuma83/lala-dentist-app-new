@@ -180,6 +180,7 @@ type PortalIncentive = {
   branchName: string;
   accruedAt: string;
   amount: number;
+  treatmentName: string | null;
 };
 type InstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -326,6 +327,15 @@ function getMedicalServiceDateRange(month: string): { startDate: string; endDate
   };
 }
 
+function getWibDateKey(value: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(value));
+}
+
 async function compressPhoto(file: File): Promise<Blob> {
   let bitmap: ImageBitmap;
   try {
@@ -468,6 +478,8 @@ export function AttendancePortal() {
   const [medicalServiceActionCount, setMedicalServiceActionCount] = useState(0);
   const [medicalServiceHasMore, setMedicalServiceHasMore] = useState(false);
   const [incentiveRows, setIncentiveRows] = useState<PortalIncentive[]>([]);
+  const [incentiveMonth, setIncentiveMonth] = useState(() => todayWib().slice(0, 7));
+  const [incentiveTotalAmount, setIncentiveTotalAmount] = useState(0);
   const [payrollRows, setPayrollRows] = useState<PortalPayroll[]>([]);
   const [payrollItems, setPayrollItems] = useState<PortalPayrollItem[]>([]);
   const [username, setUsername] = useState("");
@@ -1026,7 +1038,7 @@ export function AttendancePortal() {
   const handleTabChange = async (
     tab: PortalTab,
     requestedWeekStart = scheduleWeekStart,
-    requestedMedicalServiceMonth = medicalServiceMonth
+    requestedMonth = tab === "incentives" ? incentiveMonth : medicalServiceMonth
   ) => {
     if ((tab === "bookings" && staffContext?.role !== "DOCTOR") ||
       (tab === "overtime" && staffContext?.role === "DOCTOR") ||
@@ -1222,7 +1234,7 @@ export function AttendancePortal() {
           .map((row) => ({ ...row, branchName: branchNames.get(row.branchId) || "Cabang" }))
           .sort((left, right) => left.date.localeCompare(right.date) || left.startTime.localeCompare(right.startTime)));
       } else if (tab === "medical-services") {
-        const { startDate, endDate } = getMedicalServiceDateRange(requestedMedicalServiceMonth);
+        const { startDate, endDate } = getMedicalServiceDateRange(requestedMonth);
         const { data, error } = await supabase.rpc("get_own_doctor_medical_services", {
           p_start_date: startDate,
           p_end_date: endDate,
@@ -1237,22 +1249,65 @@ export function AttendancePortal() {
         setMedicalServiceActionCount(page.actionCount);
         setMedicalServiceHasMore(page.hasMore);
       } else if (tab === "incentives") {
-        const { data, error } = await supabase
-          .from("compensation_accruals")
-          .select("id,rule_id_snapshot,branch_id,amount,accrued_at")
-          .eq("staff_id", staffContext!.staffId)
-          .in("rule_id_snapshot", ["STAFF_VISIT_REFERRAL_RP3000_V1", "ASSISTANT_TREATMENT_BASE_V1"])
-          .order("accrued_at", { ascending: false })
-          .limit(100);
-        if (error) throw new Error(`Gagal memuat riwayat insentif: ${error.message}`);
-        const branchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
-        setIncentiveRows((data || []).map((row): PortalIncentive => ({
-          id: row.id,
-          type: row.rule_id_snapshot === "ASSISTANT_TREATMENT_BASE_V1" ? "ASSISTANT_TREATMENT" : "REFERRAL",
-          branchName: row.branch_id ? branchNames.get(row.branch_id) || "Cabang" : "Cabang",
-          accruedAt: row.accrued_at,
-          amount: Number(row.amount) || 0
+        const { startDate, endDate } = getMedicalServiceDateRange(requestedMonth);
+        const startsAt = new Date(`${startDate}T00:00:00+07:00`).toISOString();
+        const endsAt = new Date(`${addDays(endDate, 1)}T00:00:00+07:00`).toISOString();
+        const accrualRows: Array<{
+          id: string;
+          rule_id_snapshot: string;
+          source_id: string;
+          branch_id: string | null;
+          amount: number;
+          accrued_at: string;
+        }> = [];
+        const pageSize = 500;
+        for (let offset = 0; ; offset += pageSize) {
+          const { data, error } = await supabase
+            .from("compensation_accruals")
+            .select("id,rule_id_snapshot,source_id,branch_id,amount,accrued_at")
+            .eq("staff_id", staffContext!.staffId)
+            .in("rule_id_snapshot", ["STAFF_VISIT_REFERRAL_RP3000_V1", "ASSISTANT_TREATMENT_BASE_V1"])
+            .gte("accrued_at", startsAt)
+            .lt("accrued_at", endsAt)
+            .order("accrued_at", { ascending: false })
+            .order("id", { ascending: false })
+            .range(offset, offset + pageSize - 1);
+          if (error) throw new Error(`Gagal memuat riwayat insentif: ${error.message}`);
+          const page = data || [];
+          accrualRows.push(...page);
+          if (page.length < pageSize) break;
+        }
+
+        const treatmentIds = Array.from(new Set(accrualRows.flatMap((row) => {
+          const match = row.source_id.match(/(?:^|:treatment:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+          return match ? [match[1]] : [];
         })));
+        const treatmentNames = new Map<string, string>();
+        for (let offset = 0; offset < treatmentIds.length; offset += pageSize) {
+          const { data, error } = await supabase
+            .from("treatment_jobs")
+            .select("id,service_name_snapshot")
+            .in("id", treatmentIds.slice(offset, offset + pageSize));
+          if (error) throw new Error(`Gagal memuat nama tindakan insentif: ${error.message}`);
+          for (const treatment of data || []) {
+            treatmentNames.set(treatment.id, treatment.service_name_snapshot);
+          }
+        }
+
+        const branchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
+        const rows = accrualRows.map((row): PortalIncentive => {
+          const treatmentId = row.source_id.match(/(?:^|:treatment:)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
+          return {
+            id: row.id,
+            type: row.rule_id_snapshot === "ASSISTANT_TREATMENT_BASE_V1" ? "ASSISTANT_TREATMENT" : "REFERRAL",
+            branchName: row.branch_id ? branchNames.get(row.branch_id) || "Cabang" : "Cabang",
+            accruedAt: row.accrued_at,
+            amount: Number(row.amount) || 0,
+            treatmentName: treatmentId ? treatmentNames.get(treatmentId) || null : null
+          };
+        });
+        setIncentiveRows(rows);
+        setIncentiveTotalAmount(rows.reduce((total, row) => total + row.amount, 0));
       } else if (tab === "overtime") {
         const { data, error } = await supabase
           .from("overtime_records")
@@ -1316,6 +1371,18 @@ export function AttendancePortal() {
       setIsPanelLoading(false);
     }
   };
+
+  const incentiveGroups = useMemo(() => {
+    const groups = new Map<string, { date: string; amount: number; rows: PortalIncentive[] }>();
+    for (const row of incentiveRows) {
+      const date = getWibDateKey(row.accruedAt);
+      const group = groups.get(date) || { date, amount: 0, rows: [] };
+      group.amount += row.amount;
+      group.rows.push(row);
+      groups.set(date, group);
+    }
+    return Array.from(groups.values()).sort((left, right) => right.date.localeCompare(left.date));
+  }, [incentiveRows]);
 
   const loadMoreMedicalServices = async () => {
     if (staffContext?.role !== "DOCTOR" || !medicalServiceHasMore || isPanelLoading) return;
@@ -2376,30 +2443,58 @@ export function AttendancePortal() {
 
       {activeTab === "incentives" && (staffContext.role === "BRANCH_ADMIN" || staffContext.role === "DOCTOR_ASSISTANT") && (
         <section className="portal-panel">
-          <div className="panel-heading">
-            <div><p className="eyebrow">PENDAPATAN TAMBAHAN</p><h2>Insentif Saya</h2><p className="muted">Menampilkan maksimal 100 insentif terbaru yang tercatat untuk akun Anda.</p></div>
+          <div className="panel-heading medical-services-heading">
+            <div><p className="eyebrow">PENDAPATAN TAMBAHAN</p><h2>Insentif Saya</h2><p className="muted">Ringkasan insentif berdasarkan tanggal pencatatan.</p></div>
+            <label className="medical-service-month">
+              <span>Bulan</span>
+              <input
+                aria-label="Pilih bulan insentif"
+                type="month"
+                value={incentiveMonth}
+                onChange={(event) => {
+                  const nextMonth = event.target.value;
+                  if (nextMonth) {
+                    setIncentiveMonth(nextMonth);
+                    setIncentiveRows([]);
+                    setIncentiveTotalAmount(0);
+                    void handleTabChange("incentives", scheduleWeekStart, nextMonth);
+                  }
+                }}
+              />
+            </label>
           </div>
+          {!isPanelLoading && !panelError && (
+            <div className="summary-grid medical-service-summary">
+              <div className="summary-card"><span>Total insentif bulan ini</span><strong>{formatRupiah(incentiveTotalAmount)}</strong></div>
+              <div className="summary-card"><span>Jumlah insentif</span><strong>{incentiveRows.length}</strong></div>
+            </div>
+          )}
           {isPanelLoading
             ? <p className="empty-state"><RefreshCw className="spin" /> Memuat riwayat insentif...</p>
             : panelError
             ? <div className="notice error" role="alert"><AlertCircle />{panelError}</div>
             : incentiveRows.length === 0
-            ? <p className="empty-state">Belum ada insentif yang tercatat.</p>
+            ? <p className="empty-state">Belum ada insentif yang tercatat pada bulan ini.</p>
             : (
-              <div className="portal-list">
-                {incentiveRows.map((row) => (
-                  <article className="portal-list-row" key={row.id}>
-                    <div>
-                      <strong>{row.type === "ASSISTANT_TREATMENT" ? "Insentif tindakan asisten" : "Insentif referral pasien"}</strong>
-                      <span>{new Intl.DateTimeFormat("id-ID", {
-                        timeZone: "Asia/Jakarta",
-                        day: "numeric",
-                        month: "long",
-                        year: "numeric"
-                      }).format(new Date(row.accruedAt))} · {row.branchName}</span>
+              <div className="incentive-day-list">
+                {incentiveGroups.map((group) => (
+                  <section className="incentive-day-group" key={group.date}>
+                    <div className="incentive-day-heading">
+                      <strong>{formatDate(group.date)}</strong>
+                      <strong>{formatRupiah(group.amount)}</strong>
                     </div>
-                    <div className="portal-list-end"><strong className="portal-list-value">{formatRupiah(row.amount)}</strong></div>
-                  </article>
+                    <div className="portal-list">
+                      {group.rows.map((row) => (
+                        <article className="portal-list-row" key={row.id}>
+                          <div>
+                            <strong>{row.treatmentName || (row.type === "ASSISTANT_TREATMENT" ? "Insentif tindakan asisten" : "Insentif referral pasien")}</strong>
+                            <span>{row.type === "ASSISTANT_TREATMENT" ? "Insentif tindakan asisten" : "Insentif referral pasien"} · {row.branchName}</span>
+                          </div>
+                          <div className="portal-list-end"><strong className="portal-list-value">{formatRupiah(row.amount)}</strong></div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
             )}
