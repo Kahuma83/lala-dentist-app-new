@@ -3257,6 +3257,70 @@ export class MockQueueRepository implements QueueRepository {
     return { ...item };
   }
 
+  async claimQueueVisitAsAssistant(
+    queueId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<QueueItem> {
+    if (currentUserRole !== UserRole.DOCTOR_ASSISTANT || !currentUserId) {
+      throw new Error("Hanya asisten yang dapat mencatat diri sebagai pendamping kunjungan.");
+    }
+    const item = db.queueItems.find((queue) => queue.id === queueId);
+    if (!item) throw new Error("Antrean tidak ditemukan");
+    if (userBranchId && item.branchId !== userBranchId) {
+      throw new Error("Asisten tidak dapat mencatat pendampingan untuk cabang lain.");
+    }
+    if (![QueueStatus.WAITING, QueueStatus.CALLING, QueueStatus.IN_PREPARATION, QueueStatus.IN_CONSULTATION].includes(item.status as QueueStatus)) {
+      throw new Error("Pendamping hanya dapat dicatat selama kunjungan masih berlangsung.");
+    }
+
+    const assistant = db.staff.find((staff: Staff) =>
+      (staff.id === currentUserId || staff.userAccountId === currentUserId) &&
+      staff.position === StaffPosition.ASSISTANT &&
+      staff.active &&
+      staff.employmentStatus === EmploymentStatus.ACTIVE &&
+      (!staff.branchId || staff.branchId === item.branchId)
+    );
+    if (!assistant) throw new Error("Akun ini tidak terhubung dengan asisten aktif di cabang kunjungan.");
+    if (item.assistantStaffId && item.assistantStaffId !== assistant.id) {
+      throw new Error("Asisten pendamping kunjungan sudah tercatat.");
+    }
+
+    const visitTreatments = db.treatmentJobs.filter((job: TreatmentJob) =>
+      job.visitId === item.visitId && job.status !== TreatmentJobStatus.DIBATALKAN
+    );
+    if (visitTreatments.some((job: TreatmentJob) =>
+      job.picAssistantId && job.picAssistantId !== assistant.id
+    )) {
+      throw new Error("Kunjungan memiliki tindakan dengan PIC asisten berbeda; hubungi Admin Cabang.");
+    }
+    if (visitTreatments.some((job: TreatmentJob) =>
+      db.accruals.some((accrual: CompensationAccrual) =>
+        accrual.sourceId === job.id && accrual.ruleTypeSnapshot !== "TAX_PERCENTAGE"
+      )
+    )) {
+      throw new Error("Insentif tindakan sudah tercatat; PIC tidak dapat ditetapkan setelah pencatatan insentif.");
+    }
+
+    const now = AppClock.nowISO();
+    item.assistantStaffId = assistant.id;
+    item.assistantClaimedAt = item.assistantClaimedAt || now;
+    if (item.status === QueueStatus.WAITING || item.status === QueueStatus.CALLING) {
+      this.assertTreatmentRoomAvailable(item);
+      item.status = QueueStatus.IN_PREPARATION;
+    }
+    item.updatedAt = now;
+    for (const job of visitTreatments) {
+      job.picAssistantId = assistant.id;
+      job.updatedAt = now;
+    }
+    await this.syncVisitStatus(item, currentUserRole, userBranchId);
+    const opDate = (item.arrivalAt || item.checkInTime || "").split("T")[0];
+    await this.recalculateQueue(item.branchId, item.doctorId, opDate);
+    return { ...item };
+  }
+
   async startService(
     queueId: string,
     currentUserRole?: UserRole,
@@ -3750,6 +3814,9 @@ export class MockTreatmentRepository implements TreatmentRepository {
     );
 
     const now = AppClock.nowISO();
+    const visitAssistant = db.queueItems
+      .filter((queue) => queue.visitId === visit.id && queue.assistantStaffId)
+      .sort((left, right) => (right.assistantClaimedAt || "").localeCompare(left.assistantClaimedAt || ""))[0];
     const newItem: TreatmentJob = {
       id: data.customId || `treatment-job-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       visitId: visit.id,
@@ -3757,6 +3824,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
       branchId: visit.branchId,
       doctorId: doctor.id,
       assignedDoctorId: doctor.id,
+      picAssistantId: visitAssistant?.assistantStaffId || undefined,
       serviceId: service.id,
       status: TreatmentJobStatus.BELUM_DIMULAI,
       serviceNameSnapshot: service.name,

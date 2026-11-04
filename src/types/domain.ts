@@ -628,6 +628,8 @@ export interface QueueItem {
   visitId: string;
   bookingId?: string | null;
   patientId?: string;
+  assistantStaffId?: string | null;
+  assistantClaimedAt?: string | null;
   queueNumber: string; // e.g. "A-01", "B-04"
   status: QueueStatus | "WAITING" | "IN_PREPARATION" | "IN_CONSULTATION" | "COMPLETED" | "SKIPPED" | "CALLING" | "CANCELLED";
   sequenceOrder?: number;

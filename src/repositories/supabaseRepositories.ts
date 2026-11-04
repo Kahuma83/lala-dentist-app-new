@@ -1506,7 +1506,7 @@ export class SupabaseQueueRepository implements QueueRepository {
       try {
         const { data, error } = await supabase
           .from("queue_items")
-          .select("id, branch_id, doctor_id, visit_id, booking_id, patient_id, queue_number, status, sequence_order, arrival_at, estimated_service_at, estimated_duration_minutes, created_at, updated_at")
+          .select("id, branch_id, doctor_id, visit_id, booking_id, patient_id, assistant_staff_id, assistant_claimed_at, queue_number, status, sequence_order, arrival_at, estimated_service_at, estimated_duration_minutes, created_at, updated_at")
           .eq("patient_id", patientId)
           .order("sequence_order", { ascending: true });
         if (!error && data) {
@@ -1798,6 +1798,33 @@ export class SupabaseQueueRepository implements QueueRepository {
     return this.updateStatus(queueId, QueueStatus.IN_PREPARATION);
   }
 
+  async claimQueueVisitAsAssistant(
+    queueId: string,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null,
+    _currentUserId?: string | null
+  ): Promise<QueueItem> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.DOCTOR_ASSISTANT) {
+      throw new Error("Hanya asisten yang dapat mencatat diri sebagai pendamping kunjungan.");
+    }
+    if (!isValidUUID(queueId)) {
+      throw new Error("ID antrean tidak valid untuk mencatat asisten pendamping.");
+    }
+
+    const { data, error } = await supabase.rpc("claim_queue_visit_as_assistant", {
+      p_queue_id: queueId
+    });
+    if (error) throw new Error(`Gagal mencatat asisten pendamping kunjungan: ${error.message}`);
+    const queueRow = Array.isArray(data) ? data[0] : data;
+    if (!queueRow) throw new Error("Server tidak mengembalikan antrean setelah asisten dicatat.");
+
+    const mapped = this.mapQueueFromDb(queueRow);
+    const operationalDate = getOperationalDateString(mapped.arrivalAt || mapped.checkInTime || mapped.createdAt);
+    const recalculated = await this.recalculateQueue(mapped.branchId, mapped.doctorId, operationalDate);
+    return recalculated.find((item) => item.id === mapped.id) || mapped;
+  }
+
   async startService(queueId: string): Promise<QueueItem> {
     return this.updateStatus(queueId, QueueStatus.IN_CONSULTATION);
   }
@@ -2027,6 +2054,8 @@ export class SupabaseQueueRepository implements QueueRepository {
       externalDoctorId: row.external_doctor_id ?? null,
       visitId: row.visit_id,
       patientId: row.patient_id,
+      assistantStaffId: row.assistant_staff_id ?? null,
+      assistantClaimedAt: row.assistant_claimed_at ?? null,
       queueNumber: row.queue_number || "A-01",
       status: row.status || QueueStatus.WAITING,
       sequenceOrder: row.sequence_order || 1,
