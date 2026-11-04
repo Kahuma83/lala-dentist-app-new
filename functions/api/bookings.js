@@ -1,4 +1,5 @@
 import { getBookingConflictMessage } from "../_shared/booking-conflicts.js";
+import { getBookingPlannedDurationMinutes } from "../_shared/booking-duration.js";
 
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -260,39 +261,28 @@ export const onRequestPost = async ({ request, env }) => {
     requestedSlotStart.setUTCSeconds(0, 0);
     const nextDayStart = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
-    if (isPatient) {
-      const activeBookings = await requestSupabase({
-        url: supabaseUrl,
-        apiKey: serviceKey,
-        path: `/rest/v1/bookings?${toQueryString({
-          select: "id",
-          patient_id: `eq.${payload.patient_id}`,
-          status: "in.(PENDING,CONFIRMED)",
-          limit: "1"
-        })}`
-      });
-      if (Array.isArray(activeBookings) && activeBookings.length) {
-        return jsonResponse({
-          message: "Anda masih memiliki janji temu yang belum selesai. Selesaikan atau batalkan melalui klinik sebelum membuat janji temu baru."
-        }, 409);
-      }
-    } else {
-      const activeBookings = await requestSupabase({
-        url: supabaseUrl,
-        apiKey: serviceKey,
-        path: `/rest/v1/bookings?${toQueryString({
-          select: "id",
-          patient_id: `eq.${payload.patient_id}`,
-          branch_id: `eq.${payload.branch_id}`,
-          status: "in.(PENDING,CONFIRMED)",
-          booking_date_time: `gte.${dayStart.toISOString()}`,
-          and: `(booking_date_time.lt.${nextDayStart.toISOString()})`,
-          limit: "1"
-        })}`
-      });
-      if (Array.isArray(activeBookings) && activeBookings.length) {
-        return jsonResponse({ message: "Pasien sudah memiliki booking aktif di cabang ini pada tanggal tersebut." }, 409);
-      }
+    const requestedDuration = getBookingPlannedDurationMinutes(payload.planned_treatments);
+    const requestedEnd = requestedSlotStart.getTime() + requestedDuration * 60_000;
+    const activePatientBookings = await requestSupabase({
+      url: supabaseUrl,
+      apiKey: serviceKey,
+      path: `/rest/v1/bookings?${toQueryString({
+        select: "booking_date_time,planned_treatments",
+        patient_id: `eq.${payload.patient_id}`,
+        status: "in.(PENDING,CONFIRMED)",
+        booking_date_time: `gte.${dayStart.toISOString()}`,
+        and: `(booking_date_time.lt.${nextDayStart.toISOString()})`
+      })}`
+    });
+    const hasPatientConflict = (Array.isArray(activePatientBookings) ? activePatientBookings : []).some((booking) => {
+      const bookedStart = new Date(booking.booking_date_time).getTime();
+      const bookedEnd = bookedStart + getBookingPlannedDurationMinutes(booking.planned_treatments) * 60_000;
+      return requestedSlotStart.getTime() < bookedEnd && bookedStart < requestedEnd;
+    });
+    if (hasPatientConflict) {
+      return jsonResponse({
+        message: "Pasien sudah memiliki booking aktif yang bertabrakan dengan waktu ini."
+      }, 409);
     }
 
     const doctorBookings = await requestSupabase({
@@ -307,13 +297,9 @@ export const onRequestPost = async ({ request, env }) => {
         status: "in.(PENDING,CONFIRMED)",
       })}`
     });
-    const requestedDuration = (Array.isArray(payload.planned_treatments) ? payload.planned_treatments : [])
-      .reduce((total, treatment) => total + Math.max(0, Number(treatment?.estimatedDurationMinutes) || 0), 0) || 30;
-    const requestedEnd = requestedSlotStart.getTime() + requestedDuration * 60_000;
     const hasDoctorConflict = (Array.isArray(doctorBookings) ? doctorBookings : []).some((booking) => {
       const bookedStart = new Date(booking.booking_date_time).getTime();
-      const bookedDuration = (Array.isArray(booking.planned_treatments) ? booking.planned_treatments : [])
-        .reduce((total, treatment) => total + Math.max(0, Number(treatment?.estimatedDurationMinutes) || 0), 0) || 30;
+      const bookedDuration = getBookingPlannedDurationMinutes(booking.planned_treatments);
       return requestedSlotStart.getTime() < bookedStart + bookedDuration * 60_000 &&
         bookedStart < requestedEnd;
     });

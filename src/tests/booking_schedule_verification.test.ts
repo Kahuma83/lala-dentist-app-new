@@ -86,11 +86,12 @@ describe("Booking Schedule Verification Tests", () => {
     expect(retrieved?.scheduleVerified).toBe(false);
   });
 
-  it("blocks a second active booking for the same patient, branch, and day but allows another day", async () => {
+  it("allows same-day non-overlapping appointments and rejects a patient's overlapping appointment", async () => {
     MockDatabase.getInstance().bookings = [];
     const patientId = "patient-1";
     const branchId = "branch-gebang";
     const doctorId = "doc-syafira";
+    const secondDoctorId = "doc-yuni";
 
     await bookingRepo.createBooking({
       patientId,
@@ -101,14 +102,32 @@ describe("Booking Schedule Verification Tests", () => {
       status: BookingStatus.PENDING
     });
 
-    await expect(bookingRepo.createBooking({
+    const laterBooking = await bookingRepo.createBooking({
       patientId,
       branchId,
       doctorId,
       bookingDateTime: "2026-10-25T10:00:00Z",
       timeSlot: "10:00",
       status: BookingStatus.PENDING
-    })).rejects.toThrow("Pasien sudah memiliki booking aktif");
+    });
+    expect(laterBooking.id).toBeDefined();
+
+    await scheduleRepo.createSchedule({
+      doctorId: secondDoctorId,
+      branchId,
+      date: "2026-10-25",
+      startTime: "09:00",
+      endTime: "14:00",
+      status: ScheduleStatus.ACTIVE
+    });
+    await expect(bookingRepo.createBooking({
+      patientId,
+      branchId,
+      doctorId: secondDoctorId,
+      bookingDateTime: "2026-10-25T09:15:00Z",
+      timeSlot: "09:15",
+      status: BookingStatus.PENDING
+    })).rejects.toThrow("Pasien sudah memiliki booking aktif yang bertabrakan");
 
     const nextDayBooking = await bookingRepo.createBooking({
       patientId,
@@ -118,7 +137,6 @@ describe("Booking Schedule Verification Tests", () => {
       timeSlot: "09:00",
       status: BookingStatus.PENDING
     });
-
     expect(nextDayBooking.id).toBeDefined();
   });
 

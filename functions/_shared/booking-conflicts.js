@@ -10,6 +10,9 @@ export const getBookingConflictMessage = (error, timeSlot) => {
   if (/Pasien sudah memiliki booking aktif di cabang ini pada tanggal tersebut/i.test(databaseMessage)) {
     return "Pasien sudah memiliki booking aktif di cabang ini pada tanggal tersebut.";
   }
+  if (/Pasien sudah memiliki booking aktif yang bertabrakan dengan waktu ini/i.test(databaseMessage)) {
+    return "Waktu booking bertabrakan dengan janji temu aktif pasien. Pilih slot lain yang tidak bertumpuk.";
+  }
   if (/Pasien masih memiliki janji temu aktif yang belum selesai/i.test(databaseMessage)) {
     return "Pasien masih memiliki janji temu aktif yang belum selesai.";
   }
