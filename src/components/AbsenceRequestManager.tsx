@@ -7,6 +7,7 @@ import { EmploymentStatus, StaffPosition, UserRole } from "../types/domain";
 type AbsenceRequest = {
   id: string;
   staff_id: string;
+  branch_id: string | null;
   request_type: "SICK" | "LEAVE" | "PERMISSION";
   start_date: string;
   end_date: string;
@@ -67,13 +68,14 @@ const consentTime = (value: string) => new Intl.DateTimeFormat("id-ID", {
 }).format(new Date(value));
 
 export const AbsenceRequestManager: React.FC = () => {
-  const { currentUser, staff, doctors, branches } = useApp();
+  const { currentUser, staff, doctors, branches, doctorBranchAssignments, doctorSchedules } = useApp();
   const [requests, setRequests] = useState<AbsenceRequest[]>([]);
   const [assignments, setAssignments] = useState<ReplacementAssignment[]>([]);
   const [externalDoctors, setExternalDoctors] = useState<ExternalDoctorRecipient[]>([]);
   const [externalPayrollEntries, setExternalPayrollEntries] = useState<ExternalDoctorPayrollEntry[]>([]);
   const [replacementByRequest, setReplacementByRequest] = useState<Record<string, string>>({});
   const [doctorReplacementByRequest, setDoctorReplacementByRequest] = useState<Record<string, string>>({});
+  const [legacyBranchByRequest, setLegacyBranchByRequest] = useState<Record<string, string>>({});
   const [reviewNoteByRequest, setReviewNoteByRequest] = useState<Record<string, string>>({});
   const [actionCountByEntry, setActionCountByEntry] = useState<Record<string, string>>({});
   const [newExternalDoctorName, setNewExternalDoctorName] = useState("");
@@ -89,7 +91,7 @@ export const AbsenceRequestManager: React.FC = () => {
     try {
       const [requestsResult, assignmentsResult, externalDoctorsResult, externalPayrollResult] = await Promise.all([
         supabase.from("staff_absence_requests")
-          .select("id,staff_id,request_type,start_date,end_date,reason,status,reviewer_note,created_at,proposed_replacement_staff_id,replacement_response_status,replacement_responded_at,replacement_selection_finalized")
+          .select("id,staff_id,branch_id,request_type,start_date,end_date,reason,status,reviewer_note,created_at,proposed_replacement_staff_id,replacement_response_status,replacement_responded_at,replacement_selection_finalized")
           .order("created_at", { ascending: false }).limit(100),
         supabase.from("staff_replacement_assignments")
           .select("id,absence_request_id,covered_date,branch_id,absent_staff_id,replacement_staff_id,absent_base_salary_snapshot,amount_snapshot,work_confirmed_at")
@@ -133,7 +135,7 @@ export const AbsenceRequestManager: React.FC = () => {
     return staff.filter((candidate) =>
       candidate.active &&
       candidate.id !== absent.id &&
-      candidate.branchId === absent.branchId &&
+      candidate.branchId === (request.branch_id || absent.branchId) &&
       candidate.position === absent.position
     );
   };
@@ -146,7 +148,23 @@ export const AbsenceRequestManager: React.FC = () => {
       candidate.staffId !== absent.id &&
       candidate.staffId &&
       staffById.get(candidate.staffId)?.active &&
-      staffById.get(candidate.staffId)?.employmentStatus === EmploymentStatus.ACTIVE
+      staffById.get(candidate.staffId)?.employmentStatus === EmploymentStatus.ACTIVE &&
+      (!request.branch_id ||
+        candidate.assignedBranchId === request.branch_id ||
+        doctorBranchAssignments.some((assignment) =>
+          assignment.doctorId === candidate.id &&
+          assignment.branchId === request.branch_id &&
+          assignment.active &&
+          assignment.startDate <= request.end_date &&
+          (!assignment.endDate || assignment.endDate >= request.start_date)
+        ) ||
+        doctorSchedules.some((schedule) =>
+          schedule.doctorId === candidate.id &&
+          schedule.branchId === request.branch_id &&
+          schedule.status === "ACTIVE" &&
+          schedule.date >= request.start_date &&
+          schedule.date <= request.end_date
+        ))
     );
   };
 
@@ -258,6 +276,30 @@ export const AbsenceRequestManager: React.FC = () => {
     }
   };
 
+  const assignLegacyRequestBranch = async (request: AbsenceRequest) => {
+    const branchId = legacyBranchByRequest[request.id];
+    if (!branchId) {
+      setErrorMessage("Pilih cabang untuk pengajuan lama ini.");
+      return;
+    }
+    setBusyId(request.id);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const { error } = await supabase.rpc("assign_staff_absence_request_branch", {
+        p_request_id: request.id,
+        p_branch_id: branchId
+      });
+      if (error) throw new Error(`Gagal menetapkan cabang pengajuan: ${error.message}`);
+      setSuccessMessage("Cabang pengajuan lama berhasil ditetapkan.");
+      await loadData();
+    } catch (assignError: unknown) {
+      setErrorMessage(assignError instanceof Error ? assignError.message : "Gagal menetapkan cabang pengajuan.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const confirmExternalActionCount = async (entry: ExternalDoctorPayrollEntry) => {
     const rawCount = actionCountByEntry[entry.id] ?? "";
     if (!/^\d+$/.test(rawCount)) {
@@ -336,19 +378,46 @@ export const AbsenceRequestManager: React.FC = () => {
             const nominatedDoctor = request.proposed_replacement_staff_id
               ? doctors.find((doctor) => doctor.staffId === request.proposed_replacement_staff_id)
               : null;
-            const canApprove = !request.replacement_selection_finalized ||
+            const canApprove = Boolean(request.branch_id) && (
+              !request.replacement_selection_finalized ||
               !request.proposed_replacement_staff_id ||
-              request.replacement_response_status === "ACCEPTED";
+              request.replacement_response_status === "ACCEPTED"
+            );
             return (
               <article key={request.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="flex items-center gap-2 text-sm font-bold text-slate-900"><UserRound className="h-4 w-4 text-slate-400" />{person?.fullName || request.staff_id}</p>
                     <p className="mt-1 text-xs text-slate-600">{requestTypeLabel[request.request_type]} · {request.start_date}{request.end_date !== request.start_date ? ` – ${request.end_date}` : ""}</p>
+                    <p className="mt-1 text-xs font-semibold text-blue-700">{request.branch_id ? branchById.get(request.branch_id) || "Cabang" : "Cabang belum ditentukan (pengajuan lama)"}</p>
                     <p className="mt-2 whitespace-pre-wrap text-xs text-slate-700">{request.reason}</p>
                   </div>
                   <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Menunggu</span>
                 </div>
+                {!request.branch_id && (
+                  <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <label className="grid min-w-48 flex-1 gap-1 text-xs font-semibold text-slate-700">
+                      Cabang pengajuan lama
+                      <select
+                        value={legacyBranchByRequest[request.id] || ""}
+                        onChange={(event) => setLegacyBranchByRequest((current) => ({ ...current, [request.id]: event.target.value }))}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-normal"
+                      >
+                        <option value="">Pilih cabang dari jadwal pemohon</option>
+                        {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={busyId === request.id || !legacyBranchByRequest[request.id]}
+                      onClick={() => void assignLegacyRequestBranch(request)}
+                      className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      Tetapkan cabang
+                    </button>
+                    <span className="basis-full text-xs text-amber-800">Pengajuan dibuat sebelum pilihan cabang tersedia. Cabang wajib ditetapkan sebelum dapat disetujui.</span>
+                  </div>
+                )}
                 <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                   {request.replacement_selection_finalized ? (
                     <div className="grid content-start gap-1 text-xs text-slate-700">

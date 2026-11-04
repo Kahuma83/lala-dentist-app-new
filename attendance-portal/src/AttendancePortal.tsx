@@ -80,6 +80,8 @@ type PortalTab = "home" | "attendance" | "schedule" | "bookings" | "absence" | "
 type AbsenceRequestType = "SICK" | "LEAVE" | "PERMISSION";
 type PortalAbsenceRequest = {
   id: string;
+  branchId: string | null;
+  branchName: string;
   requestType: AbsenceRequestType;
   startDate: string;
   endDate: string;
@@ -98,6 +100,7 @@ type AbsenceReplacementCandidate = {
 type PortalReplacementInboxItem = {
   requestId: string;
   requesterName: string;
+  branchName: string;
   requestType: AbsenceRequestType;
   startDate: string;
   endDate: string;
@@ -444,12 +447,15 @@ export function AttendancePortal() {
   const [doctorBookingRows, setDoctorBookingRows] = useState<DoctorPortalBooking[]>([]);
   const [scheduleWeekStart, setScheduleWeekStart] = useState(() => startOfWeek(todayWib()));
   const [absenceRows, setAbsenceRows] = useState<PortalAbsenceRequest[]>([]);
+  const [absenceBranches, setAbsenceBranches] = useState<Array<{ id: string; name: string }>>([]);
+  const [isLoadingAbsenceBranches, setIsLoadingAbsenceBranches] = useState(false);
   const [replacementInbox, setReplacementInbox] = useState<PortalReplacementInboxItem[]>([]);
   const [replacementRows, setReplacementRows] = useState<PortalReplacementAssignment[]>([]);
   const [replacementCandidates, setReplacementCandidates] = useState<AbsenceReplacementCandidate[]>([]);
   const [isLoadingReplacementCandidates, setIsLoadingReplacementCandidates] = useState(false);
   const [absenceForm, setAbsenceForm] = useState({
     requestType: "LEAVE" as AbsenceRequestType,
+    branchId: "",
     startDate: todayWib(),
     endDate: todayWib(),
     reason: "",
@@ -540,6 +546,49 @@ export function AttendancePortal() {
   }, [profilePhotoUrl]);
 
   useEffect(() => {
+    if (activeTab !== "absence" || !staffContext) {
+      setAbsenceBranches([]);
+      return;
+    }
+
+    let active = true;
+    setIsLoadingAbsenceBranches(true);
+    const loadAbsenceBranches = async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_absence_request_branches", {
+          p_start_date: absenceForm.startDate,
+          p_end_date: absenceForm.endDate
+        });
+        if (error) throw new Error(`Gagal memuat cabang untuk pengajuan: ${error.message}`);
+        const nextBranches = (data || []).map((branch) => ({
+          id: branch.branch_id,
+          name: branch.branch_name
+        }));
+        if (!active) return;
+        setAbsenceBranches(nextBranches);
+        setAbsenceForm((form) => ({
+          ...form,
+          branchId: nextBranches.some((branch) => branch.id === form.branchId) ? form.branchId : "",
+          replacementStaffId: nextBranches.some((branch) => branch.id === form.branchId)
+            ? form.replacementStaffId
+            : ""
+        }));
+      } catch (branchError: unknown) {
+        if (active) {
+          setAbsenceBranches([]);
+          setPanelError(friendlyError(branchError, "Gagal memuat cabang untuk pengajuan."));
+        }
+      } finally {
+        if (active) setIsLoadingAbsenceBranches(false);
+      }
+    };
+    void loadAbsenceBranches();
+    return () => {
+      active = false;
+    };
+  }, [absenceForm.endDate, absenceForm.startDate, activeTab, staffContext]);
+
+  useEffect(() => {
     const role = staffContext?.role;
     if (
       activeTab !== "absence" ||
@@ -547,10 +596,12 @@ export function AttendancePortal() {
       !["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT"].includes(role)
     ) {
       setReplacementCandidates([]);
+      setIsLoadingReplacementCandidates(false);
       return;
     }
-    if (absenceForm.endDate < absenceForm.startDate) {
+    if (!absenceForm.branchId || absenceForm.endDate < absenceForm.startDate) {
       setReplacementCandidates([]);
+      setIsLoadingReplacementCandidates(false);
       return;
     }
 
@@ -559,6 +610,7 @@ export function AttendancePortal() {
     const loadCandidates = async () => {
       try {
         const { data, error } = await supabase.rpc("get_absence_replacement_candidates", {
+          p_branch_id: absenceForm.branchId,
           p_start_date: absenceForm.startDate,
           p_end_date: absenceForm.endDate
         });
@@ -584,7 +636,7 @@ export function AttendancePortal() {
     return () => {
       active = false;
     };
-  }, [absenceForm.endDate, absenceForm.startDate, activeTab, staffContext?.role]);
+  }, [absenceForm.branchId, absenceForm.endDate, absenceForm.startDate, activeTab, staffContext?.role]);
 
   const loadPortalContext = useCallback(async (user: User) => {
     const { data: account, error: accountError } = await supabase
@@ -1033,7 +1085,7 @@ export function AttendancePortal() {
         ] = await Promise.all([
           supabase
             .from("staff_absence_requests")
-            .select("id,request_type,start_date,end_date,reason,status,reviewer_note,created_at,proposed_replacement_staff_id,replacement_response_status")
+            .select("id,branch_id,request_type,start_date,end_date,reason,status,reviewer_note,created_at,proposed_replacement_staff_id,replacement_response_status")
             .eq("staff_id", staffContext!.staffId)
             .order("created_at", { ascending: false })
             .limit(50),
@@ -1048,8 +1100,22 @@ export function AttendancePortal() {
         if (error) throw new Error(`Gagal memuat pengajuan cuti/izin: ${error.message}`);
         if (assignmentError) throw new Error(`Gagal memuat penugasan pengganti: ${assignmentError.message}`);
         if (inboxError) throw new Error(`Gagal memuat permintaan persetujuan pengganti: ${inboxError.message}`);
+        const absenceBranchIds = Array.from(new Set([
+          ...(data || []).map((row) => row.branch_id).filter((branchId): branchId is string => Boolean(branchId)),
+          ...(inboxData || []).map((row) => row.branch_id).filter((branchId): branchId is string => Boolean(branchId)),
+          ...(assignmentData || []).map((row) => row.branch_id)
+        ]));
+        const absenceBranchResult = absenceBranchIds.length
+          ? await supabase.from("dental_branches").select("id,name").in("id", absenceBranchIds)
+          : { data: [], error: null };
+        if (absenceBranchResult.error) throw new Error(`Gagal membaca nama cabang pengajuan: ${absenceBranchResult.error.message}`);
+        const absenceBranchNames = new Map<string, string>(
+          (absenceBranchResult.data || []).map((branch): [string, string] => [branch.id, branch.name])
+        );
         setAbsenceRows((data || []).map((row) => ({
           id: row.id,
+          branchId: row.branch_id,
+          branchName: row.branch_id ? absenceBranchNames.get(row.branch_id) || "Cabang" : "Cabang belum ditentukan (pengajuan lama)",
           requestType: row.request_type,
           startDate: row.start_date,
           endDate: row.end_date,
@@ -1063,6 +1129,7 @@ export function AttendancePortal() {
         setReplacementInbox((inboxData || []).map((row) => ({
           requestId: row.request_id,
           requesterName: row.requester_name,
+          branchName: row.branch_id ? absenceBranchNames.get(row.branch_id) || "Cabang" : "Cabang belum ditentukan",
           requestType: row.request_type,
           startDate: row.start_date,
           endDate: row.end_date,
@@ -1070,11 +1137,10 @@ export function AttendancePortal() {
           responseStatus: row.replacement_response_status,
           respondedAt: row.replacement_responded_at
         })));
-        const branchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
         setReplacementRows((assignmentData || []).map((row) => ({
           id: row.id,
           coveredDate: row.covered_date,
-          branchName: branchNames.get(row.branch_id) || "Cabang",
+          branchName: absenceBranchNames.get(row.branch_id) || "Cabang",
           amountSnapshot: Number(row.amount_snapshot),
           workConfirmedAt: row.work_confirmed_at
         })));
@@ -1283,6 +1349,10 @@ export function AttendancePortal() {
   const submitAbsenceRequest = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!staffContext) return;
+    if (!absenceForm.branchId) {
+      setErrorMessage("Pilih cabang untuk pengajuan cuti/izin ini.");
+      return;
+    }
     if (absenceForm.endDate < absenceForm.startDate) {
       setErrorMessage("Tanggal akhir tidak boleh lebih awal dari tanggal mulai.");
       return;
@@ -1293,6 +1363,7 @@ export function AttendancePortal() {
     try {
       const { error } = await supabase.rpc("submit_staff_absence_request_with_replacement", {
         p_request_type: absenceForm.requestType,
+        p_branch_id: absenceForm.branchId,
         p_start_date: absenceForm.startDate,
         p_end_date: absenceForm.endDate,
         p_reason: absenceForm.reason.trim(),
@@ -2093,6 +2164,27 @@ export function AttendancePortal() {
               </select>
             </label>
             <label>
+              Cabang pengajuan
+              <select
+                required
+                value={absenceForm.branchId}
+                onChange={(event) => setAbsenceForm({
+                  ...absenceForm,
+                  branchId: event.target.value,
+                  replacementStaffId: ""
+                })}
+                disabled={isSubmitting || isLoadingAbsenceBranches}
+              >
+                <option value="">
+                  {isLoadingAbsenceBranches ? "Memuat cabang..." : "Pilih cabang"}
+                </option>
+                {absenceBranches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>{branch.name}</option>
+                ))}
+              </select>
+              <small>Satu pengajuan berlaku untuk satu cabang. Jika jadwal Anda ada di beberapa cabang, ajukan masing-masing secara terpisah.</small>
+            </label>
+            <label>
               Dari tanggal
               <input
                 type="date"
@@ -2102,6 +2194,7 @@ export function AttendancePortal() {
                   ...absenceForm,
                   startDate: event.target.value,
                   endDate: absenceForm.endDate < event.target.value ? event.target.value : absenceForm.endDate,
+                  branchId: "",
                   replacementStaffId: ""
                 })}
                 disabled={isSubmitting}
@@ -2117,6 +2210,7 @@ export function AttendancePortal() {
                 onChange={(event) => setAbsenceForm({
                   ...absenceForm,
                   endDate: event.target.value,
+                  branchId: "",
                   replacementStaffId: ""
                 })}
                 disabled={isSubmitting}
@@ -2177,6 +2271,7 @@ export function AttendancePortal() {
                 <article className="portal-list-row" key={request.requestId}>
                   <div>
                     <strong>{request.requesterName} · {({ SICK: "Sakit", LEAVE: "Cuti", PERMISSION: "Izin" } as const)[request.requestType]}</strong>
+                    <span>{request.branchName}</span>
                     <span>{formatDate(request.startDate)}{request.endDate !== request.startDate ? ` – ${formatDate(request.endDate)}` : ""}</span>
                     <small>{request.reason}</small>
                     {request.responseStatus === "ACCEPTED" && <small>Anda menyetujui menjadi pengganti{request.respondedAt ? ` pada ${formatDateTime(request.respondedAt)}` : ""}. Menunggu keputusan Super Admin.</small>}
@@ -2220,7 +2315,8 @@ export function AttendancePortal() {
               {absenceRows.map((row) => (
                 <article className="portal-list-row" key={row.id}>
                   <div>
-                    <strong>{({ SICK: "Sakit", LEAVE: "Cuti", PERMISSION: "Izin" } as const)[row.requestType]} · {formatDate(row.startDate)}{row.endDate !== row.startDate ? ` – ${formatDate(row.endDate)}` : ""}</strong>
+                    <strong>{({ SICK: "Sakit", LEAVE: "Cuti", PERMISSION: "Izin" } as const)[row.requestType]} · {row.branchName}</strong>
+                    <span>{formatDate(row.startDate)}{row.endDate !== row.startDate ? ` – ${formatDate(row.endDate)}` : ""}</span>
                     <span>{row.reason}</span>
                     {row.reviewerNote && <small>Catatan Super Admin: {row.reviewerNote}</small>}
                     {row.proposedReplacementStaffId && <small>
