@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DoctorSchedule, ScheduleStatus } from "../types/domain";
-import { getScheduledBookingTimeSlots } from "../utils/bookingScheduleUtils";
+import {
+  getScheduledBookingTimeSlots,
+  getScheduledBookingTimeSlotsForSchedules
+} from "../utils/bookingScheduleUtils";
 
 const schedule: DoctorSchedule = {
   id: "schedule-1",
@@ -32,6 +35,25 @@ describe("patient portal booking time slots", () => {
   it("normalizes database time values that include seconds", () => {
     expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "09:00:00", endTime: "11:00:00" })).toEqual([
       "09:00", "09:30", "10:00", "10:30"
+    ]);
+  });
+
+  it("combines original and replacement shifts without allowing a booking to cross a shift boundary", () => {
+    const replacementShift = {
+      ...schedule,
+      id: "replacement-schedule-1",
+      startTime: "17:00",
+      endTime: "21:30"
+    };
+
+    expect(getScheduledBookingTimeSlotsForSchedules([
+      { ...schedule, endTime: "17:30" },
+      replacementShift
+    ], 60)).toEqual([
+      "09:30", "10:00", "10:30", "11:00", "11:30", "12:00",
+      "12:30", "13:00", "13:30", "14:00", "14:30", "15:00",
+      "15:30", "16:00", "16:30", "17:00", "17:30", "18:00",
+      "18:30", "19:00", "19:30", "20:00", "20:30"
     ]);
   });
 

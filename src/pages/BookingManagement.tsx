@@ -53,6 +53,7 @@ import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary, snapsho
 import {
   DEFAULT_BOOKING_TIME_SLOTS,
   getScheduledBookingTimeSlots,
+  getScheduledBookingTimeSlotsForSchedules,
   syncBookingTimeSlot
 } from "../utils/bookingScheduleUtils";
 import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate, isActiveQueueStatus } from "../utils/bookingQueueGuards";
@@ -346,14 +347,48 @@ export const BookingManagement: React.FC = () => {
     }
 
     setSchedulesList([]);
-    repos.doctorSchedule.getSchedules(
-      { branchId: formBranchId, date: formDate, status: ScheduleStatus.ACTIVE },
-      currentUser?.role,
-      currentUser?.assignedBranchId,
-      currentUser?.doctorId
-    ).then((schedules) => {
-      if (active) setSchedulesList(schedules);
-    }).catch((error: unknown) => {
+    const loadBookingSchedules = async () => {
+      const schedules = await repos.doctorSchedule.getSchedules(
+        { branchId: formBranchId, date: formDate, status: ScheduleStatus.ACTIVE },
+        currentUser?.role,
+        currentUser?.assignedBranchId,
+        currentUser?.doctorId
+      );
+      if (!isSupabaseConfigured || !supabase || schedules.length === 0) {
+        if (active) setSchedulesList(schedules);
+        return;
+      }
+
+      const { data: assignments, error } = await supabase
+        .from("staff_replacement_assignments")
+        .select("id, absent_staff_id, replacement_staff_id, covered_date, branch_id")
+        .eq("covered_date", formDate)
+        .eq("branch_id", formBranchId);
+      if (error) throw new Error(`Gagal memuat jadwal pengganti dokter: ${error.message}`);
+
+      const replacementSchedules = (assignments || []).flatMap((assignment) => {
+        const absentDoctor = doctorsList.find((doctor) => doctor.staffId === assignment.absent_staff_id);
+        const replacementDoctor = doctorsList.find((doctor) => doctor.staffId === assignment.replacement_staff_id);
+        if (!absentDoctor || !replacementDoctor || !replacementDoctor.active) return [];
+
+        return schedules
+          .filter((schedule) =>
+            schedule.doctorId === absentDoctor.id &&
+            schedule.branchId === assignment.branch_id &&
+            schedule.date === assignment.covered_date &&
+            schedule.status === ScheduleStatus.ACTIVE
+          )
+          .map((schedule) => ({
+            ...schedule,
+            id: `replacement-${assignment.id}`,
+            doctorId: replacementDoctor.id
+          }));
+      });
+
+      if (active) setSchedulesList([...schedules, ...replacementSchedules]);
+    };
+
+    loadBookingSchedules().catch((error: unknown) => {
       if (!active) return;
       console.error("Gagal memuat jadwal dokter untuk booking:", error);
       setFormError(error instanceof Error ? error.message : "Gagal memuat jadwal dokter.");
@@ -369,7 +404,8 @@ export const BookingManagement: React.FC = () => {
     repos.doctorSchedule,
     currentUser?.role,
     currentUser?.assignedBranchId,
-    currentUser?.doctorId
+    currentUser?.doctorId,
+    doctorsList
   ]);
 
   useEffect(() => {
@@ -487,30 +523,35 @@ export const BookingManagement: React.FC = () => {
   // Calculate available time slots based on selected doctor's schedule or default clinic slots
   const availableTimeSlots = useMemo(() => {
     if (hasScheduleForBranchAndDate && formDoctorId) {
-      const docSchedule = activeSchedulesForBranchAndDate.find((s) => s.doctorId === formDoctorId);
-      if (docSchedule) {
-        const requestedDuration = getPlannedTreatmentDurationMinutes(snapshotPlannedTreatments(plannedServices), 30);
-        const scheduleEnd = getMinutesOfDay(docSchedule.endTime);
-        return getScheduledBookingTimeSlots(docSchedule).filter((slot) => {
-          const candidateStart = getMinutesOfDay(slot);
-          if (candidateStart === null || (scheduleEnd !== null && candidateStart + requestedDuration > scheduleEnd)) return false;
-          return !bookings.some((booking) => {
-            if (
-              (booking.status !== BookingStatus.PENDING && booking.status !== BookingStatus.CONFIRMED) ||
-              booking.doctorId !== formDoctorId ||
-              !isBranchMatch(booking.branchId, formBranchId, branches) ||
-              getOperationalDateString(booking.bookingDateTime) !== formDate
-            ) return false;
-            const bookedStart = getMinutesOfDay(booking.timeSlot || getOperationalTimeString(booking.bookingDateTime));
-            if (bookedStart === null) return false;
-            const bookedDuration = getPlannedTreatmentDurationMinutes(booking.plannedTreatments || [], 30);
-            return candidateStart < bookedStart + bookedDuration && bookedStart < candidateStart + requestedDuration;
-          });
+      const selectedDoctor = doctorsList.find((doctor) => doctor.id === formDoctorId);
+      const normalizedDoctorId = formDoctorId.toLowerCase().replace(/^doc-/, "");
+      const doctorSchedules = activeSchedulesForBranchAndDate.filter((schedule) =>
+        schedule.doctorId === formDoctorId ||
+        schedule.doctorId.toLowerCase().replace(/^doc-/, "") === normalizedDoctorId ||
+        (!!selectedDoctor?.doctorCode && selectedDoctor.doctorCode.toLowerCase() === schedule.doctorId.toLowerCase())
+      );
+      if (doctorSchedules.length === 0) return [];
+
+      const requestedDuration = getPlannedTreatmentDurationMinutes(snapshotPlannedTreatments(plannedServices), 30);
+      return getScheduledBookingTimeSlotsForSchedules(doctorSchedules, requestedDuration).filter((slot) => {
+        const candidateStart = getMinutesOfDay(slot);
+        if (candidateStart === null) return false;
+        return !bookings.some((booking) => {
+          if (
+            (booking.status !== BookingStatus.PENDING && booking.status !== BookingStatus.CONFIRMED) ||
+            booking.doctorId !== formDoctorId ||
+            !isBranchMatch(booking.branchId, formBranchId, branches) ||
+            getOperationalDateString(booking.bookingDateTime) !== formDate
+          ) return false;
+          const bookedStart = getMinutesOfDay(booking.timeSlot || getOperationalTimeString(booking.bookingDateTime));
+          if (bookedStart === null) return false;
+          const bookedDuration = getPlannedTreatmentDurationMinutes(booking.plannedTreatments || [], 30);
+          return candidateStart < bookedStart + bookedDuration && bookedStart < candidateStart + requestedDuration;
         });
-      }
+      });
     }
     return DEFAULT_BOOKING_TIME_SLOTS;
-  }, [hasScheduleForBranchAndDate, formDoctorId, activeSchedulesForBranchAndDate, bookings, formBranchId, formDate, branches, plannedServices]);
+  }, [hasScheduleForBranchAndDate, formDoctorId, activeSchedulesForBranchAndDate, bookings, formBranchId, formDate, branches, plannedServices, doctorsList]);
 
   const rescheduleDoctors = useMemo(() => {
     return doctorsList.filter((doctor) => doctor.active && rescheduleSchedules.some((schedule) => {
