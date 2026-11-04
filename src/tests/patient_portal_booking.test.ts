@@ -91,23 +91,26 @@ describe("patient portal booking time slots", () => {
     expect(pagesFunction).toContain('prefer: "return=representation"');
   });
 
-  it("allows only one unfinished patient-portal booking across dates and branches", () => {
+  it("allows multiple active bookings when their planned appointment times do not overlap", () => {
     const migration = fs.readFileSync(path.resolve(
       process.cwd(),
-      "supabase/migrations/20261020000003_enforce_one_active_patient_booking.sql"
+      "supabase/migrations/20270210000000_allow_non_overlapping_same_day_patient_bookings.sql"
     ), "utf8");
     const portal = fs.readFileSync(path.resolve(process.cwd(), "src/pages/PatientPortalHome.tsx"), "utf8");
     const server = fs.readFileSync(path.resolve(process.cwd(), "server.js"), "utf8");
 
-    expect(migration).toContain("COALESCE(NEW.source, '') NOT IN ('PATIENT_PORTAL', 'ANDROID')");
     expect(migration).toContain("hashtextextended(NEW.patient_id::TEXT, 0)");
     expect(migration).toContain("existing.status IN ('PENDING', 'CONFIRMED')");
     expect(migration).toContain("existing.id IS DISTINCT FROM NEW.id");
-    expect(migration).not.toContain("existing.branch_id = NEW.branch_id");
-    expect(portal).toContain("const activePatientBooking = currentUser?.patientId");
-    expect(portal).toContain("|| !!activePatientBooking");
+    expect(migration).toContain("public.booking_planned_duration_minutes(existing.planned_treatments)");
+    expect(migration).toContain("bookings_prevent_patient_booking_overlap");
+    expect(migration).toContain("booking.patient_id = public.get_user_patient_id()");
+    expect(portal).toContain("const activePatientBookings = useMemo(");
+    expect(portal).not.toContain("|| !!activePatientBooking");
+    expect(portal).not.toContain("if (activePatientBooking) {");
     expect(server).toContain(".in('status', ['PENDING', 'CONFIRMED'])");
-    expect(server).toContain("Anda masih memiliki janji temu yang belum selesai.");
+    expect(server).toContain("getBookingPlannedDurationMinutes");
+    expect(server).toContain("Pasien sudah memiliki booking aktif yang bertabrakan dengan waktu ini.");
   });
 
   it("allows completed bookings and marks bookings completed when their queue visit is completed", () => {

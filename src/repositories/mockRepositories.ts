@@ -2442,22 +2442,23 @@ export class MockBookingRepository implements BookingRepository {
       }
     }
 
-    const bookingDate = bookingData.bookingDateTime.slice(0, 10);
-    const existingPatientBooking = db.bookings.find((booking) =>
-      booking.patientId === bookingData.patientId &&
-      booking.branchId === bookingData.branchId &&
-      booking.bookingDateTime.slice(0, 10) === bookingDate &&
-      (booking.status === BookingStatus.PENDING || booking.status === BookingStatus.CONFIRMED)
-    );
-
-    if (existingPatientBooking) {
-      throw new Error("Pasien sudah memiliki booking aktif di cabang ini pada tanggal tersebut");
-    }
-
-    // 6. Slot conflict validation (Section 22)
     const requestedStart = new Date(bookingData.bookingDateTime).getTime();
     const requestedDuration = getPlannedTreatmentDurationMinutes(bookingData.plannedTreatments || [], 30);
     const requestedEnd = requestedStart + requestedDuration * 60_000;
+    const patientConflict = db.bookings.find((booking) => {
+      if (booking.patientId !== bookingData.patientId) return false;
+      if (booking.status !== BookingStatus.PENDING && booking.status !== BookingStatus.CONFIRMED) return false;
+      const bookedStart = new Date(booking.bookingDateTime).getTime();
+      if (!Number.isFinite(bookedStart) || !Number.isFinite(requestedStart)) return false;
+      const bookedDuration = getPlannedTreatmentDurationMinutes(booking.plannedTreatments || [], 30);
+      return requestedStart < bookedStart + bookedDuration * 60_000 && bookedStart < requestedEnd;
+    });
+
+    if (patientConflict) {
+      throw new Error("Pasien sudah memiliki booking aktif yang bertabrakan dengan waktu ini");
+    }
+
+    // 6. Slot conflict validation (Section 22)
     const existingConflict = db.bookings.find((b) => {
       if (b.status !== BookingStatus.PENDING && b.status !== BookingStatus.CONFIRMED) return false;
       if (b.doctorId !== bookingData.doctorId || b.branchId !== bookingData.branchId) return false;

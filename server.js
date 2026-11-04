@@ -15,6 +15,7 @@ import {
 } from './functions/_shared/doctor-chat.js';
 import { handlePatientCardError } from './functions/_shared/patient-card.js';
 import { getBookingConflictMessage } from './functions/_shared/booking-conflicts.js';
+import { getBookingPlannedDurationMinutes } from './functions/_shared/booking-duration.js';
 import { onRequestPost as issuePatientCardToken } from './functions/api/patient-card/token.js';
 import { onRequestPost as verifyPatientCardToken } from './functions/api/patient-card/verify.js';
 
@@ -731,70 +732,56 @@ app.post('/api/bookings', async (req, res) => {
     const dayStart = new Date(`${operationalDate}T00:00:00.000+07:00`);
     const requestedSlotStart = new Date(canonicalBookingDateTime);
     requestedSlotStart.setUTCSeconds(0, 0);
-    const requestedSlotEnd = new Date(requestedSlotStart.getTime() + 60_000);
     const nextDayStart = new Date(dayStart);
     nextDayStart.setTime(nextDayStart.getTime() + 24 * 60 * 60 * 1000);
 
-    if (isPatient) {
-      const { data: activePatientBookings, error: activePatientBookingError } = await supabaseAdmin
-        .from('bookings')
-        .select('id')
-        .eq('patient_id', payload.patient_id)
-        .in('status', ['PENDING', 'CONFIRMED'])
-        .limit(1);
+    const requestedDuration = getBookingPlannedDurationMinutes(payload.planned_treatments);
+    const requestedEnd = requestedSlotStart.getTime() + requestedDuration * 60_000;
+    const { data: activePatientBookings, error: activePatientBookingError } = await supabaseAdmin
+      .from('bookings')
+      .select('booking_date_time, planned_treatments')
+      .eq('patient_id', payload.patient_id)
+      .in('status', ['PENDING', 'CONFIRMED'])
+      .gte('booking_date_time', dayStart.toISOString())
+      .lt('booking_date_time', nextDayStart.toISOString());
 
-      if (activePatientBookingError) {
-        console.error('[server] patient active booking lookup failed:', activePatientBookingError);
-        return res.status(500).json({ message: 'Gagal memeriksa janji temu aktif pasien.' });
-      }
-      if (activePatientBookings && activePatientBookings.length > 0) {
-        return res.status(409).json({
-          message: 'Anda masih memiliki janji temu yang belum selesai. Selesaikan atau batalkan melalui klinik sebelum membuat janji temu baru.'
-        });
-      }
+    if (activePatientBookingError) {
+      console.error('[server] patient active booking lookup failed:', activePatientBookingError);
+      return res.status(500).json({ message: 'Gagal memeriksa janji temu aktif pasien.' });
     }
-
-    if (!isPatient) {
-      const { data: activeBookings, error: duplicateCheckError } = await supabaseAdmin
-        .from('bookings')
-        .select('id')
-        .eq('patient_id', payload.patient_id)
-        .eq('branch_id', payload.branch_id)
-        .in('status', ['PENDING', 'CONFIRMED'])
-        .gte('booking_date_time', dayStart.toISOString())
-        .lt('booking_date_time', nextDayStart.toISOString())
-        .limit(1);
-
-      if (duplicateCheckError) {
-        return res.status(500).json({
-          message: `Gagal memeriksa booking aktif pasien: ${duplicateCheckError.message}`
-        });
-      }
-      if (activeBookings && activeBookings.length > 0) {
-        return res.status(409).json({
-          message: 'Pasien sudah memiliki booking aktif di cabang ini pada tanggal tersebut.'
-        });
-      }
+    const hasPatientConflict = (activePatientBookings || []).some((booking) => {
+      const bookedStart = new Date(booking.booking_date_time).getTime();
+      const bookedEnd = bookedStart + getBookingPlannedDurationMinutes(booking.planned_treatments) * 60_000;
+      return requestedSlotStart.getTime() < bookedEnd && bookedStart < requestedEnd;
+    });
+    if (hasPatientConflict) {
+      return res.status(409).json({
+        message: 'Pasien sudah memiliki booking aktif yang bertabrakan dengan waktu ini.'
+      });
     }
 
     const { data: doctorSlotBookings, error: doctorSlotError } = await supabaseAdmin
       .from('bookings')
-      .select('id')
+      .select('booking_date_time, planned_treatments')
       .eq('doctor_id', payload.doctor_id)
       .eq('branch_id', payload.branch_id)
-      .gte('booking_date_time', requestedSlotStart.toISOString())
-      .lt('booking_date_time', requestedSlotEnd.toISOString())
-      .in('status', ['PENDING', 'CONFIRMED'])
-      .limit(1);
+      .gte('booking_date_time', dayStart.toISOString())
+      .lt('booking_date_time', nextDayStart.toISOString())
+      .in('status', ['PENDING', 'CONFIRMED']);
 
     if (doctorSlotError) {
       return res.status(500).json({
         message: `Gagal memeriksa slot dokter: ${doctorSlotError.message}`
       });
     }
-    if (doctorSlotBookings && doctorSlotBookings.length > 0) {
+    const hasDoctorConflict = (doctorSlotBookings || []).some((booking) => {
+      const bookedStart = new Date(booking.booking_date_time).getTime();
+      const bookedEnd = bookedStart + getBookingPlannedDurationMinutes(booking.planned_treatments) * 60_000;
+      return requestedSlotStart.getTime() < bookedEnd && bookedStart < requestedEnd;
+    });
+    if (hasDoctorConflict) {
       return res.status(409).json({
-        message: 'Dokter sudah memiliki booking aktif pada slot waktu tersebut di cabang ini.'
+        message: 'Dokter sudah memiliki booking aktif yang bertabrakan dengan durasi tindakan ini di cabang tersebut.'
       });
     }
 
