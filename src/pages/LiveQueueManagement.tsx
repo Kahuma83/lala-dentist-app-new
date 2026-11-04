@@ -396,17 +396,49 @@ export const LiveQueueManagement: React.FC = () => {
       setActionError(null);
       setActionSuccess(null);
       setQueueActionLoadingId(queueId);
-      await repos.queue.prepareQueuePatient(
+      if (isAssistant) {
+        await repos.queue.claimQueueVisitAsAssistant(
+          queueId,
+          currentUser?.role,
+          currentUser?.assignedBranchId,
+          currentUser?.id
+        );
+        setActionSuccess("Pasien dipanggil; Anda tercatat sebagai pendamping untuk semua tindakan kunjungan ini.");
+      } else {
+        await repos.queue.prepareQueuePatient(
+          queueId,
+          currentUser?.role,
+          currentUser?.assignedBranchId,
+          currentUser?.id
+        );
+        setActionSuccess("Pasien berhasil dipanggil / dipersiapkan");
+      }
+      await loadQueueData();
+      await refreshData();
+    } catch (err: any) {
+      setActionError(err.message || "Gagal memanggil pasien");
+    } finally {
+      setQueueActionLoadingId(null);
+    }
+  };
+
+  const handleClaimAssistantVisit = async (queueId: string) => {
+    if (!isAssistant || queueActionLoadingId) return;
+    try {
+      setActionError(null);
+      setActionSuccess(null);
+      setQueueActionLoadingId(queueId);
+      await repos.queue.claimQueueVisitAsAssistant(
         queueId,
         currentUser?.role,
         currentUser?.assignedBranchId,
         currentUser?.id
       );
-      setActionSuccess("Pasien berhasil dipanggil / dipersiapkan");
+      setActionSuccess("Anda tercatat sebagai pendamping untuk semua tindakan kunjungan ini.");
       await loadQueueData();
       await refreshData();
     } catch (err: any) {
-      setActionError(err.message || "Gagal memanggil pasien");
+      setActionError(err.message || "Gagal mencatat asisten pendamping");
     } finally {
       setQueueActionLoadingId(null);
     }
@@ -1029,6 +1061,20 @@ export const LiveQueueManagement: React.FC = () => {
                                 className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-semibold transition-colors shadow-sm"
                               >
                                 Panggil
+                              </button>
+                            )}
+
+                          {isAssistant &&
+                            !q.assistantStaffId &&
+                            (q.status === QueueStatus.CALLING ||
+                              q.status === QueueStatus.IN_PREPARATION ||
+                              q.status === QueueStatus.IN_CONSULTATION) && (
+                              <button
+                                onClick={() => handleClaimAssistantVisit(q.id)}
+                                disabled={queueActionLoadingId === q.id}
+                                className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 rounded text-[11px] font-semibold transition-colors border border-blue-200"
+                              >
+                                Saya mendampingi
                               </button>
                             )}
 

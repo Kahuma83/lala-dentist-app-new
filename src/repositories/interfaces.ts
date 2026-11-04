@@ -550,6 +550,12 @@ export interface QueueRepository {
     userBranchId?: string | null,
     currentUserId?: string | null
   ): Promise<QueueItem>;
+  claimQueueVisitAsAssistant(
+    queueId: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<QueueItem>;
   startService(
     queueId: string,
     currentUserRole?: UserRole,

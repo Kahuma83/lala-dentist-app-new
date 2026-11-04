@@ -13,7 +13,8 @@ import {
   VisitStatus,
   QueueStatus,
   BookingStatus,
-  TreatmentJobStatus
+  TreatmentJobStatus,
+  TreatmentJob
 } from "../types/domain";
 import { AppClock } from "../utils/clock";
 
@@ -932,6 +933,75 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
     );
 
     expect(preparedItem.status).toBe(QueueStatus.IN_PREPARATION);
+  });
+
+  it("30b. records the assistant who calls a patient as PIC for all active visit treatments", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const queue = await queueRepo.checkInVisitToQueue(visit.id);
+    const treatment: TreatmentJob = {
+      id: "assistant-incentive-test-job",
+      visitId: visit.id,
+      patientId: visit.patientId,
+      branchId: visit.branchId,
+      doctorId: "doc-syafira",
+      serviceId: "service-scaling",
+      status: TreatmentJobStatus.DALAM_PROSES,
+      serviceNameSnapshot: "Scaling",
+      doctorNameSnapshot: "drg. Syafira",
+      createdAt: AppClock.nowISO(),
+      updatedAt: AppClock.nowISO()
+    };
+    MockDatabase.getInstance().treatmentJobs.push(treatment);
+
+    await queueRepo.prepareQueuePatient(
+      queue.id,
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "user-drg-syafira"
+    );
+    const claimed = await queueRepo.claimQueueVisitAsAssistant(
+      queue.id,
+      UserRole.DOCTOR_ASSISTANT,
+      "branch-gebang",
+      "assistant-clary"
+    );
+
+    expect(claimed.status).toBe(QueueStatus.IN_PREPARATION);
+    expect(claimed.assistantStaffId).toBe("staff-ast-clary");
+    expect(treatment.picAssistantId).toBe("staff-ast-clary");
+  });
+
+  it("30c. prevents a second assistant from claiming the same visit", async () => {
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const queue = await queueRepo.checkInVisitToQueue(visit.id);
+
+    await queueRepo.claimQueueVisitAsAssistant(
+      queue.id,
+      UserRole.DOCTOR_ASSISTANT,
+      "branch-gebang",
+      "assistant-clary"
+    );
+
+    await expect(
+      queueRepo.claimQueueVisitAsAssistant(
+        queue.id,
+        UserRole.DOCTOR_ASSISTANT,
+        "branch-gebang",
+        "user-novi-gebang"
+      )
+    ).rejects.toThrow("Asisten pendamping kunjungan sudah tercatat");
   });
 
   it("31. should allow starting next patient after current patient is finished", async () => {
