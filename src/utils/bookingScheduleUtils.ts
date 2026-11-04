@@ -35,6 +35,27 @@ export const getScheduledBookingTimeSlots = (schedule?: DoctorSchedule): string[
   return createSlots(startMinutes, endMinutes);
 };
 
+export const getScheduledBookingTimeSlotsForSchedules = (
+  schedules: DoctorSchedule[],
+  durationMinutes: number
+): string[] => {
+  const slots = new Set<string>();
+
+  schedules.forEach((schedule) => {
+    const endMinutes = toMinutes(schedule.endTime);
+    if (endMinutes === null) return;
+
+    getScheduledBookingTimeSlots(schedule).forEach((slot) => {
+      const startMinutes = toMinutes(slot);
+      if (startMinutes !== null && startMinutes + durationMinutes <= endMinutes) {
+        slots.add(slot);
+      }
+    });
+  });
+
+  return [...slots].sort();
+};
+
 export const syncBookingTimeSlot = (
   currentSlot: string,
   availableSlots: string[],
