@@ -1693,7 +1693,6 @@ export const PatientManagement: React.FC = () => {
                   Dokter dapat mengisi catatan kunjungan di sini atau tetap menggunakan pencatatan manual. Pilihan ini tidak memblokir treatment maupun alur kunjungan.
                 </div>
               )}
-
               {loadingHistory ? (
                 <div className="text-center py-6 text-slate-400 text-xs">
                   <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-1 text-emerald-600" />
@@ -1707,6 +1706,20 @@ export const PatientManagement: React.FC = () => {
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1" id="list-visit-history">
                   {patientVisits.map((v) => {
                     const bName = branches.find((b) => b.id === v.branchId)?.name || v.branchId;
+                    const completedTreatmentNotes = treatmentJobs
+                      .filter((treatment) =>
+                        treatment.visitId === v.id
+                        && treatment.status === "SELESAI"
+                      )
+                      .flatMap((treatment) => {
+                        const note = treatment.notes?.trim();
+                        return note
+                          ? [{ serviceName: treatment.serviceNameSnapshot, note }]
+                          : [];
+                      });
+                    const hasCompletedTreatment = treatmentJobs.some((treatment) =>
+                      treatment.visitId === v.id && treatment.status === "SELESAI"
+                    );
 
                     return (
                       <div key={v.id} className="p-3 bg-slate-50 rounded-lg border border-slate-100 text-xs space-y-1">
@@ -1734,9 +1747,22 @@ export const PatientManagement: React.FC = () => {
                           <span className="font-semibold text-slate-600">{v.visitStatus}</span>
                         </div>
 
-                        {v.complaint && (
+                        {hasCompletedTreatment ? (
+                          <div className="space-y-1 text-[10px] text-slate-600 bg-white p-1.5 rounded border border-slate-100 whitespace-pre-line">
+                            {completedTreatmentNotes.length > 0 ? completedTreatmentNotes.map((item, index) => (
+                              <p key={`${v.id}-${index}`}>
+                                <span className="font-bold text-slate-700">
+                                  Catatan klinis{item.serviceName ? ` (${item.serviceName})` : ""}:{" "}
+                                </span>
+                                {item.note}
+                              </p>
+                            )) : (
+                              <p><span className="font-bold text-slate-700">Catatan klinis: </span>Belum dicatat untuk tindakan ini.</p>
+                            )}
+                          </div>
+                        ) : v.complaint && (
                           <p className="text-[10px] text-slate-500 bg-white p-1.5 rounded border border-slate-100 italic whitespace-pre-line">
-                            "{v.complaint}"
+                            <span className="font-bold not-italic">Keluhan awal: </span>"{v.complaint}"
                           </p>
                         )}
 

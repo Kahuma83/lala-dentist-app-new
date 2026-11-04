@@ -189,8 +189,8 @@ export const PatientPortalHome: React.FC = () => {
   const [lateCheckInRequestingBookingId, setLateCheckInRequestingBookingId] = useState<string | null>(null);
   const [arrivalConfirmationError, setArrivalConfirmationError] = useState<string | null>(null);
   const [arrivalConfirmationSuccess, setArrivalConfirmationSuccess] = useState<string | null>(null);
-  const [bookingQueueEstimate, setBookingQueueEstimate] = useState<PatientBookingQueueEstimate | null>(null);
-  const [bookingQueueEstimateError, setBookingQueueEstimateError] = useState<string | null>(null);
+  const [bookingQueueEstimates, setBookingQueueEstimates] = useState<Record<string, PatientBookingQueueEstimate>>({});
+  const [bookingQueueEstimateErrors, setBookingQueueEstimateErrors] = useState<Record<string, string>>({});
   const [portalClock, setPortalClock] = useState(Date.now());
   const [invoiceItemsById, setInvoiceItemsById] = useState<Record<string, Awaited<ReturnType<typeof repos.invoice.getInvoiceItems>>>>({});
   const [invoiceItemsError, setInvoiceItemsError] = useState<string | null>(null);
@@ -562,14 +562,24 @@ export const PatientPortalHome: React.FC = () => {
   }, [visiblePromotions.length, activePromotionIndex]);
 
   const activePromotion = visiblePromotions[activePromotionIndex];
-  const activePatientBooking = currentUser?.patientId
-    ? bookings
-      .filter((booking) =>
-        booking.patientId === currentUser.patientId
-        && activeBookingStatuses.has(booking.status)
-      )
-      .sort((a, b) => new Date(a.bookingDateTime).getTime() - new Date(b.bookingDateTime).getTime())[0]
-    : undefined;
+  const activePatientBookings = useMemo(
+    () => currentUser?.patientId
+      ? bookings
+        .filter((booking) =>
+          booking.patientId === currentUser.patientId
+          && activeBookingStatuses.has(booking.status)
+        )
+        .sort((a, b) => new Date(a.bookingDateTime).getTime() - new Date(b.bookingDateTime).getTime())
+      : [],
+    [bookings, currentUser?.patientId]
+  );
+  const activePatientBooking = activePatientBookings[0];
+  const activePatientBookingEstimate = activePatientBooking
+    ? bookingQueueEstimates[activePatientBooking.id] || null
+    : null;
+  const activePatientBookingEstimateError = activePatientBooking
+    ? bookingQueueEstimateErrors[activePatientBooking.id] || null
+    : null;
 
   useEffect(() => {
     const timer = window.setInterval(() => setPortalClock(Date.now()), 30_000);
@@ -578,34 +588,43 @@ export const PatientPortalHome: React.FC = () => {
 
   useEffect(() => {
     let active = true;
-    const isOnlineBooking = activePatientBooking?.source === BookingSource.PATIENT_PORTAL
-      || activePatientBooking?.source === BookingSource.ANDROID;
-    const shouldLoadEstimate = Boolean(
-      activePatientBooking
-      && isOnlineBooking
-      && !activePatientQueue
-      && ["home", "appointments", "queue"].includes(section)
-      && getOperationalDateString(activePatientBooking.bookingDateTime) === getTodayDateString()
-    );
-    if (!activePatientBooking || !shouldLoadEstimate) {
-      setBookingQueueEstimate(null);
-      setBookingQueueEstimateError(null);
+    const bookingsNeedingEstimates = !activePatientQueue && ["home", "appointments", "queue"].includes(section)
+      ? activePatientBookings.filter((booking) =>
+        (booking.source === BookingSource.PATIENT_PORTAL || booking.source === BookingSource.ANDROID)
+        && getOperationalDateString(booking.bookingDateTime) === getTodayDateString()
+      )
+      : [];
+    if (!bookingsNeedingEstimates.length) {
+      setBookingQueueEstimates({});
+      setBookingQueueEstimateErrors({});
       return () => {
         active = false;
       };
     }
 
     const loadEstimate = async () => {
-      try {
-        const estimate = await bookingRepo.getPatientQueueEstimate(activePatientBooking.id);
-        if (active) {
-          setBookingQueueEstimate(estimate);
-          setBookingQueueEstimateError(null);
+      const results = await Promise.all(bookingsNeedingEstimates.map(async (booking) => {
+        try {
+          return {
+            bookingId: booking.id,
+            estimate: await bookingRepo.getPatientQueueEstimate(booking.id),
+            error: null
+          };
+        } catch (estimateError) {
+          return {
+            bookingId: booking.id,
+            estimate: null,
+            error: estimateError instanceof Error ? estimateError.message : "Gagal memuat estimasi antrean."
+          };
         }
-      } catch (estimateError) {
-        if (active) {
-          setBookingQueueEstimateError(estimateError instanceof Error ? estimateError.message : "Gagal memuat estimasi antrean.");
-        }
+      }));
+      if (active) {
+        setBookingQueueEstimates(Object.fromEntries(results.flatMap((result) =>
+          result.estimate ? [[result.bookingId, result.estimate]] : []
+        )));
+        setBookingQueueEstimateErrors(Object.fromEntries(results.flatMap((result) =>
+          result.error ? [[result.bookingId, result.error]] : []
+        )));
       }
     };
 
@@ -622,7 +641,7 @@ export const PatientPortalHome: React.FC = () => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [activePatientBooking?.id, activePatientBooking?.bookingDateTime, activePatientBooking?.source, activePatientQueue?.id, bookingRepo, section]);
+  }, [activePatientBookings, activePatientQueue?.id, bookingRepo, section]);
 
   const handleConfirmArrival = async (booking: Booking) => {
     setArrivalConfirmationError(null);
@@ -709,11 +728,6 @@ export const PatientPortalHome: React.FC = () => {
       return;
     }
 
-    if (activePatientBooking) {
-      setBookingSubmitError("Anda masih memiliki janji temu yang belum selesai. Selesaikan atau batalkan melalui klinik sebelum membuat janji temu baru.");
-      return;
-    }
-
     const selectedBranch = activeBranches.find((branch) => branch.id === formBranchId);
     if (!selectedBranch) {
       setBookingSubmitError("Pilih cabang klinik yang masih aktif.");
@@ -784,7 +798,8 @@ export const PatientPortalHome: React.FC = () => {
   const renderBookingCard = (booking: Booking, featured = false) => (
     (() => {
       const isOnlineBooking = booking.source === BookingSource.PATIENT_PORTAL || booking.source === BookingSource.ANDROID;
-      const estimate = activePatientBooking?.id === booking.id ? bookingQueueEstimate : null;
+      const estimate = bookingQueueEstimates[booking.id] || null;
+      const estimateError = bookingQueueEstimateErrors[booking.id];
       const scheduledAt = new Date(booking.bookingDateTime).getTime();
       const estimateAt = estimate ? new Date(estimate.estimatedServiceAt).getTime() : scheduledAt;
       const checkInDeadline = Math.max(scheduledAt + 15 * 60 * 1000, estimateAt + 15 * 60 * 1000);
@@ -906,8 +921,8 @@ export const PatientPortalHome: React.FC = () => {
                 {!estimate && getOperationalDateString(booking.bookingDateTime) !== getTodayDateString() && (
                   <p className="mt-1 text-[11px] text-slate-500">Estimasi antrean diperbarui pada hari kunjungan.</p>
                 )}
-                {bookingQueueEstimateError && activePatientBooking?.id === booking.id && (
-                  <p role="alert" className="mt-1 text-[11px] text-rose-700">{bookingQueueEstimateError}</p>
+                {estimateError && (
+                  <p role="alert" className="mt-1 text-[11px] text-rose-700">{estimateError}</p>
                 )}
               </div>
             </div>
@@ -1505,20 +1520,20 @@ export const PatientPortalHome: React.FC = () => {
                       </div>
                       <p className="mt-1 text-4xl font-extrabold tracking-tight text-[var(--patient-gold-ink)]">—</p>
                       <p className="mt-2 text-xs font-semibold text-[var(--patient-gold-ink)]">
-                        {bookingQueueEstimate
-                          ? `Estimasi ${bookingQueueEstimate.patientsAhead} pasien sebelum Anda`
+                        {activePatientBookingEstimate
+                          ? `Estimasi ${activePatientBookingEstimate.patientsAhead} pasien sebelum Anda`
                           : "Nomor resmi diberikan petugas setelah check-in"}
                       </p>
-                      {bookingQueueEstimate?.estimatedServiceAt && (
-                        <p className="mt-1 text-[11px] text-[var(--patient-gold-ink)]">Perkiraan dilayani {formatAppointmentDate(bookingQueueEstimate.estimatedServiceAt)}</p>
+                      {activePatientBookingEstimate?.estimatedServiceAt && (
+                        <p className="mt-1 text-[11px] text-[var(--patient-gold-ink)]">Perkiraan dilayani {formatAppointmentDate(activePatientBookingEstimate.estimatedServiceAt)}</p>
                       )}
                       <p className="mt-3 border-t border-[var(--patient-gold-edge)]/20 pt-3 text-[10px] leading-5 text-[var(--patient-gold-ink)]">
-                        {bookingQueueEstimate
+                        {activePatientBookingEstimate
                           ? "Estimasi diperbarui berkala dan dapat berubah mengikuti kondisi klinik."
                           : "Setelah tiba, minta petugas klinik melakukan check-in resmi."}
                       </p>
-                      {bookingQueueEstimateError && (
-                        <p role="alert" className="mt-2 text-[11px] text-rose-700">{bookingQueueEstimateError}</p>
+                      {activePatientBookingEstimateError && (
+                        <p role="alert" className="mt-2 text-[11px] text-rose-700">{activePatientBookingEstimateError}</p>
                       )}
                     </div>
                   ) : currentUser?.patientId ? (
@@ -1644,9 +1659,9 @@ export const PatientPortalHome: React.FC = () => {
                   Belum ada cabang aktif yang dapat dipilih. Silakan hubungi klinik.
                 </p>
               )}
-              {!isLoadingBookings && activePatientBooking && (
-                <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-                  Anda masih memiliki janji temu aktif berstatus <strong>{bookingStatusLabel[activePatientBooking.status]}</strong> pada {formatAppointmentDate(activePatientBooking.bookingDateTime)}. Hubungi klinik untuk menyelesaikan atau membatalkannya sebelum membuat janji temu baru.
+              {!isLoadingBookings && activePatientBookings.length > 0 && (
+                <p role="status" className="mb-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                  Anda memiliki {activePatientBookings.length} janji temu aktif. Anda tetap dapat membuat janji lain pada waktu yang tidak bertabrakan.
                 </p>
               )}
               <form onSubmit={handleCreatePatientBooking} className="patient-portal-card mb-4 rounded-2xl border border-[var(--patient-gold-edge)] bg-white p-3 sm:mb-6 sm:rounded-3xl sm:p-6">
@@ -1767,7 +1782,7 @@ export const PatientPortalHome: React.FC = () => {
                   <p className="text-[10px] leading-4 text-slate-400 sm:text-[11px] sm:leading-5">Slot dikonfirmasi oleh sistem saat permintaan dikirim. Janji temu Anda berstatus menunggu konfirmasi klinik.</p>
                   <button
                     type="submit"
-                    disabled={isSubmittingBooking || isLoadingBookings || isLoadingSchedules || !currentUser.patientId || activeBranches.length === 0 || !!activePatientBooking}
+                    disabled={isSubmittingBooking || isLoadingBookings || isLoadingSchedules || !currentUser.patientId || activeBranches.length === 0}
                     className="patient-portal-primary inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-50 sm:px-5 sm:py-3"
                   >
                     <Send className="h-4 w-4" /> {isSubmittingBooking ? "Mengirim..." : isLoadingBookings ? "Memeriksa janji..." : "Ajukan janji temu"}
