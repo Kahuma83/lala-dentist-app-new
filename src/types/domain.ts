@@ -1007,6 +1007,20 @@ export interface CompensationAccrual {
   accruedAt: string; // ISO date-time
 }
 
+export interface CompensationIncentiveAdjustment {
+  id: string;
+  visitId: string;
+  staffId: string;
+  branchId: string;
+  incentiveType: "REFERRAL" | "ASSISTANT_TREATMENT";
+  previousAmount: number;
+  expectedAmount: number;
+  deltaAmount: number;
+  status: "REVIEW" | "RESOLVED";
+  notes: string;
+  createdAt: string;
+}
+
 export interface MonthlyPayroll {
   id: string;
   staffId: string;

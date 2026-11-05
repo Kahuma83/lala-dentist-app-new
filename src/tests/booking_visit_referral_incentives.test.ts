@@ -334,8 +334,31 @@ describe("Booking visit referral incentives", () => {
     expect(migration).toContain("job.service_name_snapshot");
     expect(migration).toContain("job.status IN ('SELESAI', 'DISERAHKAN')");
     expect(repository).toContain('rpc("save_shared_staff_referral_incentive_rate"');
-    expect(repository).toContain('rpc("get_treatment_booking_referral_staff"');
+    expect(repository).toContain('rpc("accrue_visit_staff_incentives"');
+    expect(repository).not.toContain('rpc("get_treatment_booking_referral_staff"');
     expect(repository).not.toContain('.from("staff_referral_incentive_rates")\n          .select("id,service_name,amount")');
+  });
+
+  it("uses configured maximum incentive tariffs per fully settled visit, not patient payment amounts", () => {
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20270212000000_visit_level_staff_incentives.sql"),
+      "utf8"
+    );
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.accrue_visit_staff_incentives");
+    expect(migration).toContain("invoice.status <> 'PAID'");
+    expect(migration).toContain("job.status NOT IN ('SELESAI', 'DISERAHKAN')");
+    expect(migration).toContain("ROW_NUMBER() OVER (ORDER BY rate.amount DESC");
+    expect(migration).toContain("public.staff_referral_incentive_rates");
+    expect(migration).toContain("public.assistant_treatment_incentive_rates");
+    expect(migration).toContain("'STAFF_VISIT_REFERRAL_RP3000_V1'");
+    expect(migration).toContain("'ASSISTANT_TREATMENT_BASE_V1'");
+    expect(migration).toContain("value_snapshot, base_amount_snapshot, amount, source_id, accrued_at");
+    expect(migration).toContain("'STAFF_VISIT_REFERRAL', v_referral_amount, 0, v_referral_amount");
+    expect(migration).toContain("'FIXED_PER_TREATMENT', v_assistant_amount, 0, v_assistant_amount");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS public.compensation_incentive_adjustments");
+    expect(migration).toContain("kelebihan bayar tidak dipotong otomatis");
+    expect(migration).toContain("FROM public.payroll_items item");
+    expect(migration).toContain("journal.source_type = 'COMPENSATION'");
   });
 
   it("validates clinician referral accrual rates through a narrowly scoped definer function", () => {

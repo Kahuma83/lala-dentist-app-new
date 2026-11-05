@@ -5,6 +5,7 @@ import {
   StaffCompensationRule,
   ReferralIncentiveRate,
   CompensationAccrual,
+  CompensationIncentiveAdjustment,
   AssistantTreatmentIncentiveRate,
   UserRole,
   JournalEntry,
@@ -81,6 +82,8 @@ const compensationRuleOptions: Array<{
 export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeePortal = false }) => {
   const {
     currentUser,
+    patientRepo,
+    patients,
     compRepo,
     treatmentRepo,
     doctorRepo,
@@ -96,7 +99,9 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
   const [referralRates, setReferralRates] = useState<ReferralIncentiveRate[]>([]);
   const [assistantTreatmentRates, setAssistantTreatmentRates] = useState<AssistantTreatmentIncentiveRate[]>([]);
   const [accruals, setAccruals] = useState<CompensationAccrual[]>([]);
+  const [incentiveAdjustments, setIncentiveAdjustments] = useState<CompensationIncentiveAdjustment[]>([]);
   const [accrualSourceTreatments, setAccrualSourceTreatments] = useState<Map<string, TreatmentJob[]>>(new Map());
+  const [accrualPatientNames, setAccrualPatientNames] = useState<Map<string, string>>(new Map());
   const [doctors, setDoctors] = useState<DentalDoctor[]>([]);
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [services, setServices] = useState<MasterService[]>([]);
@@ -180,7 +185,7 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
       if (isEmployeePortal && !employeeStaffId) {
         throw new Error("Akun pegawai belum terhubung dengan data staf.");
       }
-      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList, referralRateList, assistantTreatmentRateList] = await Promise.all([
+      const [rList, aList, dList, sList, srvList, bList, jList, assignmentList, referralRateList, assistantTreatmentRateList, adjustmentList] = await Promise.all([
         isEmployeePortal ? Promise.resolve([]) : compRepo.getCompensationRules(),
         compRepo.getCompensationAccruals(employeeStaffId),
         isEmployeePortal ? Promise.resolve([]) : doctorRepo.getDoctors(),
@@ -200,6 +205,9 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
           : Promise.resolve([]),
         currentUser?.role === UserRole.SUPER_ADMIN
           ? compRepo.getAssistantTreatmentIncentiveRates()
+          : Promise.resolve([]),
+        currentUser?.role === UserRole.SUPER_ADMIN
+          ? compRepo.getIncentiveAdjustments()
           : Promise.resolve([])
       ]);
 
@@ -247,12 +255,24 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
           sourceTreatmentMap.set(accrual.sourceId, treatment ? [treatment] : []);
         }
       }
+      const patientIds = new Set(
+        [...sourceTreatmentMap.values()].flatMap((treatments) => treatments.map((treatment) => treatment.patientId))
+      );
+      let patientProfiles = patients;
+      if ([...patientIds].some((patientId) => !patientProfiles.some((patient) => patient.id === patientId))) {
+        patientProfiles = await patientRepo.getPatients(currentUser?.role, currentUser?.branchId);
+      }
+      const patientNameMap = new Map(
+        patientProfiles.map((patient) => [patient.id, patient.fullName || patient.name])
+      );
 
       setRules(rList);
       setReferralRates(referralRateList);
       setAssistantTreatmentRates(assistantTreatmentRateList);
       setAccruals(filteredAccruals);
+      setIncentiveAdjustments(adjustmentList);
       setAccrualSourceTreatments(sourceTreatmentMap);
+      setAccrualPatientNames(patientNameMap);
       setDoctors(dList);
       setStaffList(sList);
       setServices(srvList);
@@ -1065,11 +1085,21 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
           </div>
           {currentUser?.role === UserRole.SUPER_ADMIN && (
             <section className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
-              <div className="border-b border-slate-100 p-4">
-                <h2 className="text-sm font-bold text-slate-900">Tarif Referral Admin & Asisten</h2>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Satu tarif berlaku untuk Admin maupun Asisten yang dipilih pada Referral di booking.
-                </p>
+              <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900">Tarif Referral Admin & Asisten</h2>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Admin atau asisten yang dipilih sebagai referral menerima satu tarif insentif tertinggi dari semua tindakan pada kunjungan setelah seluruh tindakan selesai dan invoice lunas. Nilai ini mengikuti tarif di bawah, bukan nominal tagihan pasien.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openReferralRateModal()}
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-emerald-700"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Tambah Tarif Referral
+                </button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left">
@@ -1077,7 +1107,7 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
                     <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                       <th className="px-4 py-3">Jenis penerima</th>
                       <th className="px-4 py-3">Tindakan</th>
-                      <th className="px-4 py-3 text-right">Tarif per tindakan</th>
+                      <th className="px-4 py-3 text-right">Tarif insentif tindakan</th>
                       <th className="px-4 py-3 text-center">Status</th>
                       <th className="px-4 py-3 text-center">Aksi</th>
                     </tr>
@@ -1132,7 +1162,7 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
                 <div>
                   <h2 className="text-sm font-bold text-slate-900">Master Insentif Tindakan Asisten</h2>
                   <p className="mt-1 text-[11px] text-slate-500">
-                    Tarif flat per tindakan berlaku untuk semua asisten yang ditugaskan sebagai PIC. Tarif personal yang aktif akan menjadi prioritas.
+                    Asisten PIC menerima satu tarif flat tertinggi dari semua tindakan pada kunjungan setelah seluruh tindakan selesai dan invoice lunas. Nilai mengikuti tarif di bawah, bukan nominal tagihan pasien; aturan personal yang aktif tetap menjadi prioritas.
                   </p>
                 </div>
                 <button
@@ -1150,7 +1180,7 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                       <th className="px-4 py-3">Tindakan</th>
-                      <th className="px-4 py-3 text-right">Insentif per tindakan</th>
+                      <th className="px-4 py-3 text-right">Tarif insentif tindakan</th>
                       <th className="px-4 py-3 text-center">Status</th>
                       <th className="px-4 py-3 text-center">Aksi</th>
                     </tr>
@@ -1199,6 +1229,7 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
 
       {/* Tab: ACCRUALS */}
       {activeTab === "ACCRUALS" && (
+        <>
         <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
           {currentUser?.role === UserRole.SUPER_ADMIN && (
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 border-b border-slate-100">
@@ -1240,13 +1271,16 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-slate-400">
                     {isEmployeePortal
-                      ? "Belum ada insentif tercatat. Insentif referral dibukukan setelah tindakan selesai dan invoice lunas; insentif tindakan asisten hanya berlaku jika Anda tercatat sebagai PIC."
+                      ? "Belum ada insentif tercatat. Insentif referral dan flat tindakan asisten dibukukan setelah semua tindakan kunjungan selesai dan seluruh invoice aktif lunas."
                       : "Belum ada akrual kompensasi tercatat. Akrual hanya dihitung setelah tindakan selesai dan invoice LUNAS; Super Admin dapat menyinkronkan tindakan yang memenuhi syarat."}
                   </td>
                 </tr>
               ) : (
                 accruals.map((a) => {
                   const jrn = getCompensationJournal(a.id);
+                  const sourceTreatments = accrualSourceTreatments.get(a.sourceId) || [];
+                  const patientId = sourceTreatments[0]?.patientId;
+                  const patientName = patientId ? accrualPatientNames.get(patientId) : undefined;
                   const info = isEmployeePortal
                     ? {
                         name: currentUser?.name || "Pegawai",
@@ -1267,9 +1301,14 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
                         <div className="text-[10px] text-slate-400 font-normal">{info.role}</div>
                       </td>
                       <td className="py-3.5 px-4 font-medium text-slate-700" title={a.sourceId}>
-                        {accrualSourceTreatments.get(a.sourceId)?.length ? (
+                        {patientName && (
+                          <div className="mb-1 font-semibold text-slate-900">
+                            Pasien: {patientName}
+                          </div>
+                        )}
+                        {sourceTreatments.length ? (
                           <div className="space-y-1">
-                            {accrualSourceTreatments.get(a.sourceId)?.map((treatment) => (
+                            {sourceTreatments.map((treatment) => (
                               <div key={treatment.id}>
                                 <div className="font-semibold text-emerald-800">{treatment.serviceNameSnapshot || "Tindakan"}</div>
                                 <div className="text-[10px] font-normal text-slate-500">
@@ -1290,10 +1329,18 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-right font-medium text-slate-600">
-                        Rp {(a.baseAmountSnapshot ?? a.amount).toLocaleString("id-ID")}
+                        {a.ruleIdSnapshot === "STAFF_VISIT_REFERRAL_RP3000_V1" ||
+                        a.ruleIdSnapshot === "ASSISTANT_TREATMENT_BASE_V1"
+                          ? "—"
+                          : `Rp ${(a.baseAmountSnapshot ?? a.amount).toLocaleString("id-ID")}`}
                       </td>
                       <td className="py-3.5 px-4 text-right font-medium text-slate-700">
-                        {a.ruleTypeSnapshot === "PERCENTAGE" ? `${a.valueSnapshot ?? 0}%` : `Flat Rp ${(a.valueSnapshot ?? a.amount).toLocaleString("id-ID")}`}
+                        {a.ruleIdSnapshot === "STAFF_VISIT_REFERRAL_RP3000_V1" ||
+                        a.ruleIdSnapshot === "ASSISTANT_TREATMENT_BASE_V1"
+                          ? `Tarif tertinggi: Rp ${(a.valueSnapshot ?? a.amount).toLocaleString("id-ID")}`
+                          : a.ruleTypeSnapshot === "PERCENTAGE"
+                            ? `${a.valueSnapshot ?? 0}%`
+                            : `Flat Rp ${(a.valueSnapshot ?? a.amount).toLocaleString("id-ID")}`}
                       </td>
                       <td className="py-3.5 px-4 text-right font-bold text-emerald-800">
                         Rp {a.amount.toLocaleString("id-ID")}
@@ -1341,6 +1388,65 @@ export const Compensation: React.FC<{ employeePortal?: boolean }> = ({ employeeP
           </table>
           </div>
         </div>
+        {currentUser?.role === UserRole.SUPER_ADMIN && incentiveAdjustments.length > 0 && (
+          <section className="overflow-hidden rounded-xl border border-amber-200 bg-white shadow-sm">
+            <div className="border-b border-amber-100 bg-amber-50/70 p-4">
+              <h2 className="text-sm font-bold text-amber-900">Peninjauan Selisih Insentif Historis</h2>
+              <p className="mt-1 text-[11px] text-amber-800">
+                Payroll dan jurnal yang sudah terposting tidak diubah. Selisih positif maupun kelebihan bayar dicatat untuk ditinjau; tidak ada pemotongan otomatis.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    <th className="px-4 py-3">Kunjungan</th>
+                    <th className="px-4 py-3">Pegawai</th>
+                    <th className="px-4 py-3">Jenis insentif</th>
+                    <th className="px-4 py-3 text-right">Tercatat</th>
+                    <th className="px-4 py-3 text-right">Tarif saat ini</th>
+                    <th className="px-4 py-3 text-right">Selisih</th>
+                    <th className="px-4 py-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                  {incentiveAdjustments
+                    .filter((adjustment) => !selectedBranchId || adjustment.branchId === selectedBranchId)
+                    .map((adjustment) => (
+                      <tr key={adjustment.id}>
+                        <td className="px-4 py-3 font-mono text-[10px]" title={adjustment.visitId}>
+                          {adjustment.visitId.slice(0, 8)}
+                        </td>
+                        <td className="px-4 py-3 font-semibold">{getStaffInfo(adjustment.staffId).name}</td>
+                        <td className="px-4 py-3">
+                          {adjustment.incentiveType === "REFERRAL" ? "Insentif referral" : "Insentif flat tindakan"}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">
+                          Rp {adjustment.previousAmount.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">
+                          Rp {adjustment.expectedAmount.toLocaleString("id-ID")}
+                        </td>
+                        <td className={`px-4 py-3 text-right font-mono font-bold ${
+                          adjustment.deltaAmount < 0 ? "text-rose-700" : "text-emerald-700"
+                        }`}>
+                          {adjustment.deltaAmount > 0 ? "+" : ""}
+                          Rp {adjustment.deltaAmount.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-semibold text-amber-800">
+                            {adjustment.status === "REVIEW" ? "Perlu ditinjau" : "Selesai"}
+                          </span>
+                          <p className="mt-1 max-w-xs text-[10px] text-slate-500">{adjustment.notes}</p>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+        </>
       )}
 
       {/* Modal: Add or edit compensation rule */}

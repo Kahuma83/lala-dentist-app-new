@@ -88,6 +88,7 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     });
 
     // treatment-job-3 is SELESAI, service-root-canal base price is 400,000
+    AppClock.setFixedTime("2026-09-18T12:00:00Z");
     await createPaidInvoiceForTreatment("treatment-job-3");
     const testDb = MockDatabase.getInstance();
     expect(testDb.invoiceItems.some((item) => item.treatmentJobId === "treatment-job-3")).toBe(true);
@@ -130,6 +131,9 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     }, UserRole.SUPER_ADMIN);
     await treatmentRepo.completeTreatmentJob(treatment.id);
     await createPaidInvoiceForTreatment(treatment.id);
+    await treatmentRepo.startTreatmentJob("treatment-job-2");
+    await treatmentRepo.completeTreatmentJob("treatment-job-2");
+    await createPaidInvoiceForTreatment("treatment-job-2");
 
     const accruals = await compRepo.calculateAndAccrueForTreatment(treatment.id);
     const assistantAccrual = accruals.find((accrual) => accrual.staffId === "assistant-clary");
@@ -231,7 +235,7 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     expect(items.some((item) => item.descriptionSnapshot.includes("Lembur Disetujui"))).toBe(false);
   });
 
-  it("records the configured referral rate per completed paid treatment for the booking's selected staff member", async () => {
+  it("records only the highest configured visit referral and assistant flat rates after every treatment is complete and paid", async () => {
     const db = MockDatabase.getInstance();
     const treatment = db.treatmentJobs.find((job) => job.id === "treatment-job-1")!;
     const patient = db.patients.find((candidate) => candidate.id === treatment.patientId)!;
@@ -251,6 +255,23 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
       staffPosition: StaffPosition.BRANCH_ADMIN,
       serviceName: treatment.serviceNameSnapshot || "Scaling",
       amount: 17000,
+      isActive: true
+    }, UserRole.SUPER_ADMIN);
+    const higherRateService = db.services.find((service) => service.id !== treatment.serviceId)!;
+    await compRepo.saveReferralIncentiveRate({
+      staffPosition: StaffPosition.ASSISTANT,
+      serviceName: higherRateService.name,
+      amount: 23000,
+      isActive: true
+    }, UserRole.SUPER_ADMIN);
+    await compRepo.saveAssistantTreatmentIncentiveRate({
+      serviceId: treatment.serviceId,
+      amount: 5000,
+      isActive: true
+    }, UserRole.SUPER_ADMIN);
+    await compRepo.saveAssistantTreatmentIncentiveRate({
+      serviceId: higherRateService.id,
+      amount: 11000,
       isActive: true
     }, UserRole.SUPER_ADMIN);
     const masterService = db.services.find((service) => service.id === treatment.serviceId);
@@ -281,6 +302,9 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     const sameVisitTreatment = {
       ...treatment,
       id: "treatment-referral-same-visit",
+      serviceId: higherRateService.id,
+      serviceNameSnapshot: higherRateService.name,
+      picAssistantId: "staff-ast-nanda",
       completedAt: undefined
     };
     db.bookings.push(secondBooking);
@@ -294,9 +318,21 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     await createPaidInvoiceForTreatment(treatment.id);
     await compRepo.calculateAndAccrueForTreatment(treatment.id);
     await compRepo.calculateAndAccrueForTreatment(treatment.id);
+    expect(db.accruals.filter((accrual) =>
+      accrual.ruleIdSnapshot === "STAFF_VISIT_REFERRAL_RP3000_V1" ||
+      accrual.ruleIdSnapshot === "ASSISTANT_TREATMENT_BASE_V1"
+    )).toHaveLength(0);
     await treatmentRepo.completeTreatmentJob(sameVisitTreatment.id);
     await createPaidInvoiceForTreatment(sameVisitTreatment.id);
     await compRepo.calculateAndAccrueForTreatment(sameVisitTreatment.id);
+    expect(db.accruals.filter((accrual) =>
+      accrual.ruleIdSnapshot === "STAFF_VISIT_REFERRAL_RP3000_V1" ||
+      accrual.ruleIdSnapshot === "ASSISTANT_TREATMENT_BASE_V1"
+    )).toHaveLength(0);
+    await treatmentRepo.startTreatmentJob("treatment-job-2");
+    await treatmentRepo.completeTreatmentJob("treatment-job-2");
+    await createPaidInvoiceForTreatment("treatment-job-2");
+    await compRepo.calculateAndAccrueForTreatment("treatment-job-2");
     await treatmentRepo.completeTreatmentJob(secondTreatment.id);
     await createPaidInvoiceForTreatment(secondTreatment.id);
     await compRepo.calculateAndAccrueForTreatment(secondTreatment.id);
@@ -304,17 +340,12 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
     const referralAccruals = db.accruals.filter((accrual) =>
       accrual.ruleTypeSnapshot === "STAFF_VISIT_REFERRAL"
     );
-    expect(referralAccruals).toHaveLength(3);
+    expect(referralAccruals).toHaveLength(2);
     expect(referralAccruals).toEqual(expect.arrayContaining([
       expect.objectContaining({
         staffId: referringAssistant.id,
         branchId: referringAssistant.branchId,
-        amount: 17000,
-        sourceId: "referral:visit:visit-1:treatment:treatment-job-1"
-      }),
-      expect.objectContaining({
-        staffId: referringAssistant.id,
-        amount: 17000,
+        amount: 23000,
         sourceId: "referral:visit:visit-1:treatment:treatment-referral-same-visit"
       }),
       expect.objectContaining({
@@ -323,6 +354,16 @@ describe("Phase 6: Compensation, Payroll & Master Configuration Test Suite", () 
         sourceId: "referral:visit:visit-referral-second:treatment:treatment-referral-second"
       })
     ]));
+    expect(db.accruals.filter((accrual) => accrual.ruleIdSnapshot === "ASSISTANT_TREATMENT_BASE_V1"))
+      .toEqual([
+        expect.objectContaining({
+          staffId: "staff-ast-nanda",
+          amount: 11000,
+          valueSnapshot: 11000,
+          baseAmountSnapshot: 0,
+          sourceId: "treatment-referral-same-visit"
+        })
+      ]);
   });
 
   it("does not create another visit referral accrual when a legacy visit accrual already exists", async () => {

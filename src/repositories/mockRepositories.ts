@@ -73,6 +73,7 @@ import {
   ReferralIncentiveRate,
   AssistantTreatmentIncentiveRate,
   CompensationAccrual,
+  CompensationIncentiveAdjustment,
   MonthlyPayroll,
   PayrollItem,
   PayrollStatus,
@@ -5215,6 +5216,10 @@ export class MockCompensationRepository implements CompensationRepository {
     return db.accruals.map((a: CompensationAccrual) => ({ ...a }));
   }
 
+  async getIncentiveAdjustments(): Promise<CompensationIncentiveAdjustment[]> {
+    return [];
+  }
+
   async getReferralIncentiveRates(): Promise<ReferralIncentiveRate[]> {
     return db.referralIncentiveRates.map((rate) => ({ ...rate }));
   }
@@ -5331,15 +5336,15 @@ export class MockCompensationRepository implements CompensationRepository {
     const paidInvoices = db.invoices.filter((invoice: Invoice) =>
       invoice.visitId === job.visitId && invoice.status === InvoiceStatus.PAID
     );
-    if (paidInvoices.length > 1) {
-      throw new Error("Tindakan terhubung ke lebih dari satu invoice lunas. Periksa data tagihan sebelum menghitung kompensasi.");
-    }
-    const invoice = paidInvoices[0];
-    if (!invoice) return [];
-    const invoiceItems = db.invoiceItems.filter((item: InvoiceItem) => item.invoiceId === invoice.id);
-    const linkedItems = invoiceItems.filter((item: InvoiceItem) => item.treatmentJobId === job.id);
+    if (!paidInvoices.length) return [];
+    const paidInvoiceIds = new Set(paidInvoices.map((invoice) => invoice.id));
+    const paidInvoiceItems = db.invoiceItems.filter((item: InvoiceItem) => paidInvoiceIds.has(item.invoiceId));
+    const linkedItems = paidInvoiceItems.filter((item: InvoiceItem) => item.treatmentJobId === job.id);
     if (linkedItems.length === 0) return [];
     if (linkedItems.length > 1) throw new Error("Tindakan tertaut ke lebih dari satu baris invoice.");
+    const invoice = paidInvoices.find((candidate) => candidate.id === linkedItems[0].invoiceId);
+    if (!invoice) return [];
+    const invoiceItems = paidInvoiceItems.filter((item: InvoiceItem) => item.invoiceId === invoice.id);
     const allocations = allocateInvoiceNetToLines(
       invoiceItems.map((item: InvoiceItem) => ({ id: item.id, amount: item.amount })),
       Math.max(0, invoice.totalAmount - invoice.discountAmount)
@@ -5401,7 +5406,6 @@ export class MockCompensationRepository implements CompensationRepository {
       existingRuleKeys.add(`${job.doctorId}:${rule.id}`);
     }
 
-    let hasIndividualAssistantTreatmentRule = false;
     // Find rules for assistant if assigned
     if (job.picAssistantId) {
       const assistantRules = db.rules.filter((r: StaffCompensationRule) =>
@@ -5420,7 +5424,6 @@ export class MockCompensationRepository implements CompensationRepository {
           amount = rule.valueSnapshot;
         }
         if (amount <= 0) continue;
-        hasIndividualAssistantTreatmentRule = true;
         if (existingRuleKeys.has(`${job.picAssistantId}:${rule.id}`)) continue;
 
         const accrual: CompensationAccrual = {
@@ -5440,90 +5443,140 @@ export class MockCompensationRepository implements CompensationRepository {
         createdAccruals.push(accrual);
         existingRuleKeys.add(`${job.picAssistantId}:${rule.id}`);
       }
-
-      const assistant = db.staff.find((staff: Staff) =>
-        (staff.id === job.picAssistantId || staff.userAccountId === job.picAssistantId) &&
-        staff.position === StaffPosition.ASSISTANT &&
-        staff.active &&
-        staff.employmentStatus === EmploymentStatus.ACTIVE
-      );
-      const sharedRate = db.assistantTreatmentIncentiveRates.find((rate) =>
-        rate.serviceId === job.serviceId && rate.isActive
-      );
-      const sharedRuleId = "ASSISTANT_TREATMENT_BASE_V1";
-      if (
-        assistant &&
-        sharedRate &&
-        !hasIndividualAssistantTreatmentRule &&
-        !existingRuleKeys.has(`${job.picAssistantId}:${sharedRuleId}`)
-      ) {
-        const accrual: CompensationAccrual = {
-          id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-          staffId: job.picAssistantId,
-          branchId: job.branchId,
-          ruleIdSnapshot: sharedRuleId,
-          ruleTypeSnapshot: "FIXED_PER_TREATMENT",
-          valueSnapshot: sharedRate.amount,
-          baseAmountSnapshot: baseAmount,
-          amount: sharedRate.amount,
-          sourceId: job.id,
-          accruedAt: now
-        };
-        db.accruals.push(accrual);
-        createdAccruals.push(accrual);
-        existingRuleKeys.add(`${assistant.id}:${sharedRuleId}`);
-      }
     }
 
     const visit = db.visits.find((item) => item.id === job.visitId);
-    const booking = visit?.bookingId
-      ? db.bookings.find((item) => item.id === visit.bookingId)
-      : undefined;
-    if (visit && booking?.referringStaffId) {
+    const visitJobs = db.treatmentJobs.filter((candidate) =>
+      candidate.visitId === job.visitId && candidate.status !== TreatmentJobStatus.DIBATALKAN
+    );
+    const visitInvoices = db.invoices.filter((candidate) =>
+      candidate.visitId === job.visitId && candidate.status !== InvoiceStatus.CANCELLED
+    );
+    const visitReady = visitJobs.length > 0 &&
+      visitJobs.every((candidate) =>
+        candidate.status === TreatmentJobStatus.SELESAI || candidate.status === TreatmentJobStatus.DISERAHKAN
+      ) &&
+      visitInvoices.length > 0 &&
+      visitInvoices.every((candidate) => candidate.status === InvoiceStatus.PAID) &&
+      visitJobs.every((candidate) => db.invoiceItems.filter((item) =>
+        visitInvoices.some((invoice) => invoice.id === item.invoiceId) &&
+        item.treatmentJobId === candidate.id
+      ).length === 1);
+
+    if (visit && visitReady) {
+      const booking = visit.bookingId
+        ? db.bookings.find((item) => item.id === visit.bookingId)
+        : undefined;
+      const referringStaff = booking?.referringStaffId
+        ? db.staff.find((staff: Staff) => staff.id === booking.referringStaffId)
+        : undefined;
       const referralRuleId = "STAFF_VISIT_REFERRAL_RP3000_V1";
-      const legacyReferralSourceId = `referral:visit:${visit.id}`;
-      const referralSourceId = `${legacyReferralSourceId}:treatment:${job.id}`;
-      const legacyReferral = db.accruals.find((accrual: CompensationAccrual) =>
-        accrual.sourceId === legacyReferralSourceId && accrual.ruleIdSnapshot === referralRuleId
-      );
+      const referralSourcePrefix = `referral:visit:${visit.id}`;
       const referralExists = db.accruals.some((accrual: CompensationAccrual) =>
-        accrual.sourceId === referralSourceId && accrual.ruleIdSnapshot === referralRuleId
+        accrual.ruleIdSnapshot === referralRuleId && accrual.sourceId.startsWith(referralSourcePrefix)
       );
-      const referringStaff = db.staff.find((staff: Staff) => staff.id === booking.referringStaffId);
-      if (!legacyReferral && !referralExists && referringStaff?.active &&
-        (referringStaff.position === StaffPosition.BRANCH_ADMIN || referringStaff.position === StaffPosition.ASSISTANT)) {
-        const serviceName = job.serviceNameSnapshot
-          || db.services.find((service: MasterService) => service.id === job.serviceId)?.name;
-        const serviceKey = normalizeReferralServiceName(serviceName);
-        const referralRate = db.referralIncentiveRates.find((rate) =>
-          rate.isActive &&
-          rate.staffPosition === referringStaff.position &&
-          rate.serviceName !== null &&
-          normalizeReferralServiceName(rate.serviceName) === serviceKey
-        ) || db.referralIncentiveRates.find((rate) =>
-          rate.isActive &&
-          rate.staffPosition === referringStaff.position &&
-          rate.serviceName === null
-        );
-        if (!referralRate) {
-          throw new Error(`Tarif referral untuk ${referringStaff.position} belum diatur. Atur tarif dasar di menu Kompensasi.`);
+      if (
+        referringStaff?.active &&
+        (referringStaff.position === StaffPosition.BRANCH_ADMIN || referringStaff.position === StaffPosition.ASSISTANT) &&
+        !referralExists
+      ) {
+        const referralCandidate = visitJobs
+          .map((candidate) => {
+            const serviceName = candidate.serviceNameSnapshot
+              || db.services.find((service: MasterService) => service.id === candidate.serviceId)?.name;
+            const serviceKey = normalizeReferralServiceName(serviceName);
+            const rate = db.referralIncentiveRates.find((candidateRate) =>
+              candidateRate.isActive &&
+              candidateRate.staffPosition === referringStaff.position &&
+              candidateRate.serviceName !== null &&
+              normalizeReferralServiceName(candidateRate.serviceName) === serviceKey
+            ) || db.referralIncentiveRates.find((candidateRate) =>
+              candidateRate.isActive &&
+              candidateRate.staffPosition === referringStaff.position &&
+              candidateRate.serviceName === null
+            );
+            return rate ? { job: candidate, amount: rate.amount } : null;
+          })
+          .filter((candidate): candidate is { job: TreatmentJob; amount: number } => candidate !== null)
+          .sort((left, right) => right.amount - left.amount || left.job.id.localeCompare(right.job.id))[0];
+
+        if (referralCandidate && referralCandidate.amount > 0) {
+          const referralAccrual: CompensationAccrual = {
+            id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+            staffId: referringStaff.id,
+            branchId: referringStaff.branchId || null,
+            ruleIdSnapshot: referralRuleId,
+            ruleTypeSnapshot: "STAFF_VISIT_REFERRAL",
+            valueSnapshot: referralCandidate.amount,
+            baseAmountSnapshot: 0,
+            amount: referralCandidate.amount,
+            sourceId: `${referralSourcePrefix}:treatment:${referralCandidate.job.id}`,
+            accruedAt: now
+          };
+          db.accruals.push(referralAccrual);
+          createdAccruals.push(referralAccrual);
         }
-        const referralAccrual: CompensationAccrual = {
-          id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-          staffId: referringStaff.id,
-          branchId: referringStaff.branchId || null,
-          ruleIdSnapshot: referralRuleId,
-          ruleTypeSnapshot: "STAFF_VISIT_REFERRAL",
-          valueSnapshot: referralRate.amount,
-          baseAmountSnapshot: baseAmount,
-          amount: referralRate.amount,
-          sourceId: referralSourceId,
-          accruedAt: now
-        };
-        db.accruals.push(referralAccrual);
-        createdAccruals.push(referralAccrual);
-        db.saveToStorage();
       }
+
+      const sharedAssistantRuleId = "ASSISTANT_TREATMENT_BASE_V1";
+      const assistantExists = db.accruals.some((accrual: CompensationAccrual) =>
+        accrual.ruleIdSnapshot === sharedAssistantRuleId &&
+        visitJobs.some((candidate) => candidate.id === accrual.sourceId)
+      );
+      if (!assistantExists) {
+        const assistantCandidate = visitJobs
+          .map((candidate) => {
+            const assistant = db.staff.find((staff: Staff) =>
+              (staff.id === candidate.picAssistantId || staff.userAccountId === candidate.picAssistantId) &&
+              staff.position === StaffPosition.ASSISTANT &&
+              staff.active &&
+              staff.employmentStatus === EmploymentStatus.ACTIVE
+            );
+            if (!assistant) return null;
+            const hasIndividualRule = db.rules.some((rule: StaffCompensationRule) =>
+              (rule.staffId === assistant.id || rule.staffId === candidate.picAssistantId) &&
+              rule.isActive &&
+              (rule.ruleTypeSnapshot === "PERCENTAGE" || rule.ruleTypeSnapshot === "FIXED_PER_TREATMENT") &&
+              (!rule.serviceId || rule.serviceId === candidate.serviceId) &&
+              (!rule.branchId || rule.branchId === candidate.branchId) &&
+              (!rule.effectiveStartDate || rule.effectiveStartDate <= treatmentDate) &&
+              (!rule.effectiveEndDate || rule.effectiveEndDate >= treatmentDate)
+            );
+            if (hasIndividualRule) return null;
+            const rate = db.assistantTreatmentIncentiveRates.find((candidateRate) =>
+              candidateRate.serviceId === candidate.serviceId && candidateRate.isActive
+            );
+            return rate ? {
+              job: candidate,
+              assistantId: candidate.picAssistantId || assistant.id,
+              amount: rate.amount
+            } : null;
+          })
+          .filter((candidate): candidate is { job: TreatmentJob; assistantId: string; amount: number } => candidate !== null)
+          .sort((left, right) =>
+            right.amount - left.amount ||
+            left.job.id.localeCompare(right.job.id) ||
+            left.assistantId.localeCompare(right.assistantId)
+          )[0];
+
+        if (assistantCandidate && assistantCandidate.amount > 0) {
+          const assistantAccrual: CompensationAccrual = {
+            id: `accrual-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+            staffId: assistantCandidate.assistantId,
+            branchId: assistantCandidate.job.branchId,
+            ruleIdSnapshot: sharedAssistantRuleId,
+            ruleTypeSnapshot: "FIXED_PER_TREATMENT",
+            valueSnapshot: assistantCandidate.amount,
+            baseAmountSnapshot: 0,
+            amount: assistantCandidate.amount,
+            sourceId: assistantCandidate.job.id,
+            accruedAt: now
+          };
+          db.accruals.push(assistantAccrual);
+          createdAccruals.push(assistantAccrual);
+        }
+      }
+      if (createdAccruals.length > 0) db.saveToStorage();
     }
 
     return createdAccruals;

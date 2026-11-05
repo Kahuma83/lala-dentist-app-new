@@ -22,6 +22,7 @@ import {
   ReferralIncentiveRate,
   AssistantTreatmentIncentiveRate,
   CompensationAccrual,
+  CompensationIncentiveAdjustment,
   MonthlyPayroll,
   PayrollItem,
   PayrollStatus,
@@ -941,6 +942,7 @@ export interface CompensationRepository {
     updates: Partial<Omit<StaffCompensationRule, "id" | "createdAt" | "updatedAt">>
   ): Promise<StaffCompensationRule>;
   getCompensationAccruals(staffId?: string): Promise<CompensationAccrual[]>;
+  getIncentiveAdjustments(): Promise<CompensationIncentiveAdjustment[]>;
   getReferralIncentiveRates(): Promise<ReferralIncentiveRate[]>;
   saveReferralIncentiveRate(
     data: Omit<ReferralIncentiveRate, "id" | "createdAt" | "updatedAt"> & { id?: string },

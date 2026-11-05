@@ -59,6 +59,7 @@ type StaffIncomeViewRow = {
   category: "TREATMENT" | "REFERRAL" | "OTHER";
   code: string;
   description: string;
+  patientName?: string;
   name: string;
   payroll: { status: PayrollIncomeStatus; period: string | null };
   role: string;
@@ -199,6 +200,7 @@ export const StaffIncome: React.FC = () => {
     period: string | null;
   }>>(new Map());
   const [treatmentNameById, setTreatmentNameById] = useState<Map<string, string>>(new Map());
+  const [patientNameBySourceId, setPatientNameBySourceId] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const requestId = useRef(0);
@@ -393,22 +395,71 @@ export const StaffIncome: React.FC = () => {
         })
         .filter((income): income is PayrollOnlyIncome => income !== null);
 
-      const sourceTreatmentIds = Array.from(new Set(loadedAccruals
-        .filter((accrual) => getIncomeCategory(accrual.ruleTypeSnapshot) === "TREATMENT" &&
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(accrual.sourceId))
-        .map((accrual) => accrual.sourceId)));
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const sourceTreatmentIds = new Set<string>();
+      const legacyReferralVisitIds = new Set<string>();
+      for (const accrual of loadedAccruals) {
+        const referralSource = accrual.sourceId.match(/^referral:visit:([^:]+)(?::treatment:([^:]+))?$/);
+        if (referralSource?.[2] && uuidPattern.test(referralSource[2])) {
+          sourceTreatmentIds.add(referralSource[2]);
+        } else if (referralSource?.[1] && uuidPattern.test(referralSource[1])) {
+          legacyReferralVisitIds.add(referralSource[1]);
+        } else if (uuidPattern.test(accrual.sourceId)) {
+          sourceTreatmentIds.add(accrual.sourceId);
+        }
+      }
       const treatmentNames = new Map<string, string>();
-      for (const ids of chunkValues(sourceTreatmentIds, QUERY_BATCH_SIZE)) {
-        const { data, error } = await supabase
-          .from("treatment_jobs")
-          .select("id,service_name_snapshot")
-          .in("id", ids);
-        if (error) throw new Error(`Gagal membaca nama tindakan untuk akrual: ${error.message}`);
+      const treatmentRows = new Map<string, { visitId: string; patientId: string }>();
+      const treatmentsByVisit = new Map<string, { patientId: string }[]>();
+      const treatmentQueries = [
+        ...chunkValues([...sourceTreatmentIds], QUERY_BATCH_SIZE).map((ids) =>
+          supabase.from("treatment_jobs").select("id,visit_id,patient_id,service_name_snapshot").in("id", ids)
+        ),
+        ...chunkValues([...legacyReferralVisitIds], QUERY_BATCH_SIZE).map((ids) =>
+          supabase.from("treatment_jobs").select("id,visit_id,patient_id,service_name_snapshot").in("visit_id", ids)
+        )
+      ];
+      const treatmentResults = await Promise.all(treatmentQueries);
+      for (const { data, error } of treatmentResults) {
+        if (error) throw new Error(`Gagal membaca detail tindakan dan pasien untuk pendapatan: ${error.message}`);
         for (const row of data || []) {
+          if (typeof row.id === "string" && typeof row.visit_id === "string" && typeof row.patient_id === "string") {
+            treatmentRows.set(row.id, { visitId: row.visit_id, patientId: row.patient_id });
+            treatmentsByVisit.set(row.visit_id, [
+              ...(treatmentsByVisit.get(row.visit_id) || []),
+              { patientId: row.patient_id }
+            ]);
+          }
           if (typeof row.service_name_snapshot === "string") {
             treatmentNames.set(row.id, row.service_name_snapshot);
           }
         }
+      }
+      const patientIds = Array.from(new Set([...treatmentRows.values()].map((treatment) => treatment.patientId)));
+      const patientNames = new Map<string, string>();
+      for (const ids of chunkValues(patientIds, QUERY_BATCH_SIZE)) {
+        const { data, error } = await supabase
+          .from("patient_profiles")
+          .select("id,name,full_name")
+          .in("id", ids);
+        if (error) throw new Error(`Gagal membaca nama pasien untuk pendapatan staf: ${error.message}`);
+        for (const patient of data || []) {
+          const name = typeof patient.full_name === "string" && patient.full_name.trim()
+            ? patient.full_name
+            : patient.name;
+          if (typeof patient.id === "string" && typeof name === "string") patientNames.set(patient.id, name);
+        }
+      }
+      const patientNamesBySource = new Map<string, string>();
+      for (const accrual of loadedAccruals) {
+        const referralSource = accrual.sourceId.match(/^referral:visit:([^:]+)(?::treatment:([^:]+))?$/);
+        const patientId = referralSource
+          ? referralSource[2]
+            ? treatmentRows.get(referralSource[2])?.patientId
+            : treatmentsByVisit.get(referralSource[1])?.[0]?.patientId
+          : treatmentRows.get(accrual.sourceId)?.patientId;
+        const patientName = patientId ? patientNames.get(patientId) : undefined;
+        if (patientName) patientNamesBySource.set(accrual.sourceId, patientName);
       }
 
       if (request !== requestId.current) return;
@@ -417,6 +468,7 @@ export const StaffIncome: React.FC = () => {
       setUndatedPayrollIncomeCount(periodMode === "DAILY" ? undatedIncomeCount : 0);
       setPayrollStatusByAccrual(statusMap);
       setTreatmentNameById(treatmentNames);
+      setPatientNameBySourceId(patientNamesBySource);
       const directoryPayrollStatuses = new Map<string, { status: PayrollIncomeStatus; period: string | null }>();
       for (const payroll of reportPayrollRows) {
         if (payroll.staff_id && !directoryPayrollStatuses.has(payroll.staff_id)) {
@@ -463,6 +515,7 @@ export const StaffIncome: React.FC = () => {
         category: getIncomeCategory(accrual.ruleTypeSnapshot),
         sourceId: accrual.sourceId,
         ruleType: accrual.ruleTypeSnapshot,
+        patientName: patientNameBySourceId.get(accrual.sourceId),
         incomeDescription: undefined,
         sourceDateUnavailable: false,
         payroll: payrollStatusByAccrual.get(accrual.id) || { status: "NOT_IN_PAYROLL" as const, period: null }
@@ -511,10 +564,11 @@ export const StaffIncome: React.FC = () => {
         row.role,
         row.branchName,
         row.description,
+        row.patientName || "",
         getIncomeCategoryLabel(row.category)
       ].some((value) => value.toLocaleLowerCase("id-ID").includes(query)))
     ).sort((first, second) => (second.occurredAt || "").localeCompare(first.occurredAt || ""));
-  }, [accruals, branchNames, categoryFilter, doctors, payrollOnlyIncome, payrollStatusByAccrual, roleFilter, searchQuery, selectedBranchId, staff, statusFilter, treatmentNameById]);
+  }, [accruals, branchNames, categoryFilter, doctors, payrollOnlyIncome, payrollStatusByAccrual, patientNameBySourceId, roleFilter, searchQuery, selectedBranchId, staff, statusFilter, treatmentNameById]);
 
   const staffIncomeGroups = useMemo<StaffIncomeGroup[]>(() => {
     const groups = new Map<string, StaffIncomeGroup>();
@@ -859,6 +913,9 @@ export const StaffIncome: React.FC = () => {
                               : "Tanggal sumber tidak tersedia"}
                           </div>
                           <div className="mt-0.5 text-slate-500">{getIncomeCategoryLabel(row.category)} · {row.description}</div>
+                          {row.patientName && (
+                            <div className="mt-0.5 font-semibold text-slate-700">Pasien: {row.patientName}</div>
+                          )}
                         </td>
                         <td className="px-4 py-2 text-slate-500">{row.branchName}</td>
                         <td className="px-4 py-2 text-slate-500">{row.payroll.period ? `Payroll ${row.payroll.period}` : "Belum terkait payroll"}</td>
