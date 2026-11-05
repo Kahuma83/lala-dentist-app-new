@@ -4853,6 +4853,32 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       throw new Error("Tanggal invoice tidak boleh melebihi tanggal hari ini.");
     }
 
+    const visitIdIsUUID = isValidUUID(data.visitId);
+    if (isSupabaseConfigured && supabase && visitIdIsUUID) {
+      const { data: existingRemote, error: existingRemoteError } = await supabase
+        .from("invoices")
+        .select("id")
+        .eq("visit_id", data.visitId)
+        .neq("status", InvoiceStatus.CANCELLED)
+        .limit(1);
+      if (existingRemoteError) {
+        if (!useRepositoryTestFallbacks()) {
+          throw new Error(`Gagal memeriksa invoice kunjungan: ${existingRemoteError.message}`);
+        }
+      } else if (existingRemote?.length) {
+        throw new Error("Kunjungan ini sudah memiliki invoice aktif. Muat ulang data sebelum membuat invoice baru.");
+      }
+    } else {
+      const existingFallback = this.getFallbackInvoices().find(
+        (invoice) =>
+          invoice.visitId === data.visitId &&
+          invoice.status !== InvoiceStatus.CANCELLED
+      );
+      if (existingFallback) {
+        throw new Error("Kunjungan ini sudah memiliki invoice aktif. Muat ulang data sebelum membuat invoice baru.");
+      }
+    }
+
     const linkedTreatmentIds = data.items.flatMap((item) =>
       item.treatmentJobId ? [item.treatmentJobId] : []
     );
@@ -4969,15 +4995,11 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       updatedAt: now
     };
 
-    // Save locally first to guarantee persistence even if Supabase rejects or RLS restricts
     const updatedInvoices = [fallbackInvoice, ...existingInvoices.filter((i) => i.id !== fallbackInvoice.id)];
-    this.saveFallbackInvoices(updatedInvoices);
-
     const existingItems = this.getFallbackInvoiceItems();
-    this.saveFallbackInvoiceItems([...fallbackItems, ...existingItems.filter((i) => i.invoiceId !== invoiceId)]);
 
     // Attempt remote save to Supabase if foreign keys are valid UUIDs
-    const isVisitUUID = isValidUUID(data.visitId);
+    const isVisitUUID = visitIdIsUUID;
     const isPatientUUID = isValidUUID(data.patientId);
     const isBranchUUID = isValidUUID(data.branchId);
 
@@ -5003,6 +5025,9 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
         if (isValidUUID(invoiceId)) payload.id = invoiceId;
 
         const { data: inv, error } = await supabase.from("invoices").insert(payload).select().single();
+        if (error?.code === "23505" && error.message.includes("uq_invoices_one_active_per_visit")) {
+          throw new Error("Kunjungan ini baru saja memiliki invoice aktif. Muat ulang data sebelum mencoba lagi.");
+        }
         if (!error && inv) {
           const savedInvId = inv.id;
           if (fallbackItems.length > 0) {
@@ -5025,8 +5050,12 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
           const idx = updatedInvoices.findIndex((x) => x.id === fallbackInvoice.id);
           if (idx >= 0) {
             updatedInvoices[idx] = { ...updatedInvoices[idx], id: savedInvId };
-            this.saveFallbackInvoices(updatedInvoices);
           }
+          this.saveFallbackInvoices(updatedInvoices);
+          this.saveFallbackInvoiceItems([
+            ...fallbackItems,
+            ...existingItems.filter((item) => item.invoiceId !== invoiceId)
+          ]);
           return remoteMapped;
         } else if (error) {
           if (!useRepositoryTestFallbacks()) {
@@ -5042,7 +5071,14 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       }
     }
 
-    if (useRepositoryTestFallbacks()) return fallbackInvoice;
+    if (useRepositoryTestFallbacks()) {
+      this.saveFallbackInvoices(updatedInvoices);
+      this.saveFallbackInvoiceItems([
+        ...fallbackItems,
+        ...existingItems.filter((item) => item.invoiceId !== invoiceId)
+      ]);
+      return fallbackInvoice;
+    }
     throw new Error("Invoice tidak tersimpan ke Supabase.");
   }
 
