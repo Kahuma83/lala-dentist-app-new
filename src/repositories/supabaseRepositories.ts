@@ -8032,6 +8032,8 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       id: row.id,
       branchId: row.branch_id,
       expenseType: row.expense_type as RecurringExpenseType,
+      expenseName: row.expense_name || null,
+      expenseAccountId: row.expense_account_id || null,
       amount: Number(row.amount),
       startsOn: row.starts_on,
       isActive: row.is_active,
@@ -8044,6 +8046,8 @@ export class SupabaseAccountingRepository implements AccountingRepository {
     data: {
       branchId: string;
       expenseType: RecurringExpenseType;
+      expenseName?: string;
+      expenseAccountId?: string;
       amount: number;
       startsOn: string;
       isActive: boolean;
@@ -8056,6 +8060,18 @@ export class SupabaseAccountingRepository implements AccountingRepository {
     if (data.amount <= 0 || !Number.isInteger(data.amount)) {
       throw new Error("Nominal rencana harus berupa bilangan rupiah positif");
     }
+    const isCustomExpense = data.expenseType !== "RENT" && data.expenseType !== "THR";
+    if (isCustomExpense) {
+      const expenseName = data.expenseName?.trim();
+      const expenseAccountId = data.expenseAccountId;
+      if (!expenseName || !expenseAccountId) {
+        throw new Error("Nama pengeluaran dan akun beban wajib diisi untuk rencana rutin lainnya");
+      }
+      const expenseAccount = await this.getAccountById(expenseAccountId);
+      if (!expenseAccount?.isActive || expenseAccount.accountType !== AccountType.EXPENSE) {
+        throw new Error("Akun rencana harus berupa akun beban aktif");
+      }
+    }
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && data.branchId !== userBranchId) {
       throw new Error("Branch Admin hanya dapat mengatur akrual untuk cabangnya sendiri");
     }
@@ -8067,6 +8083,8 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       .upsert({
         branch_id: data.branchId,
         expense_type: data.expenseType,
+        expense_name: data.expenseName?.trim() || null,
+        expense_account_id: data.expenseAccountId || null,
         amount: data.amount,
         starts_on: data.startsOn,
         is_active: data.isActive,
@@ -8080,6 +8098,8 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       id: row.id,
       branchId: row.branch_id,
       expenseType: row.expense_type,
+      expenseName: row.expense_name || null,
+      expenseAccountId: row.expense_account_id || null,
       amount: Number(row.amount),
       startsOn: row.starts_on,
       isActive: row.is_active,

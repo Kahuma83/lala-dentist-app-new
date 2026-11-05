@@ -1247,7 +1247,12 @@ export class AccountingPostingService {
       throw new Error("Rencana akrual tidak ditemukan untuk cabang dan jenis kewajiban ini");
     }
 
-    const liabilityCode = input.expenseType === "RENT" ? "2050" : "2060";
+    const isCustomExpense = plan.expenseType !== "RENT" && plan.expenseType !== "THR";
+    const liabilityCode = plan.expenseType === "RENT"
+      ? "2050"
+      : plan.expenseType === "THR"
+        ? "2060"
+        : "2070";
     const liabilityAccount = await this.accountingRepo.getAccountByCode(liabilityCode);
     if (!liabilityAccount?.isActive || liabilityAccount.accountType !== AccountType.LIABILITY) {
       throw new Error(`Akun kewajiban ${liabilityCode} tidak ditemukan atau tidak aktif`);
@@ -1261,18 +1266,49 @@ export class AccountingPostingService {
       throw new Error("Akun pembayaran harus berupa akun kas/bank aktif");
     }
 
-    const balance = await this.accountingRepo.getAccountBalance(
-      liabilityAccount.id,
-      input.branchId,
-      undefined,
-      currentUserRole,
-      userBranchId
-    );
-    if (input.amount > Math.max(0, balance.balance)) {
-      throw new Error(`Pembayaran melebihi akrual yang tersedia (Rp ${Math.max(0, balance.balance).toLocaleString("id-ID")})`);
+    let availableBalance: number;
+    if (isCustomExpense) {
+      const journals = await this.accountingRepo.getJournals(
+        { branchId: input.branchId },
+        currentUserRole,
+        userBranchId
+      );
+      const accrualPrefix = `RECURRING_ACCRUAL:${plan.id}:`;
+      const settlementPrefix = `RECURRING_SETTLEMENT:${plan.id}:`;
+      const accrued = journals
+        .filter((journal) =>
+          journal.branchId === input.branchId
+          && journal.status === JournalStatus.POSTED
+          && journal.sourceId?.startsWith(accrualPrefix)
+        )
+        .reduce((total, journal) => total + journal.totalCredit, 0);
+      const settled = journals
+        .filter((journal) =>
+          journal.branchId === input.branchId
+          && journal.status === JournalStatus.POSTED
+          && journal.sourceId?.startsWith(settlementPrefix)
+        )
+        .reduce((total, journal) => total + journal.totalDebit, 0);
+      availableBalance = Math.max(0, accrued - settled);
+    } else {
+      const balance = await this.accountingRepo.getAccountBalance(
+        liabilityAccount.id,
+        input.branchId,
+        undefined,
+        currentUserRole,
+        userBranchId
+      );
+      availableBalance = Math.max(0, balance.balance);
+    }
+    if (input.amount > availableBalance) {
+      throw new Error(`Pembayaran melebihi akrual yang tersedia (Rp ${availableBalance.toLocaleString("id-ID")})`);
     }
 
-    const expenseLabel = input.expenseType === "RENT" ? "sewa gedung" : "THR";
+    const expenseLabel = plan.expenseType === "RENT"
+      ? "sewa gedung"
+      : plan.expenseType === "THR"
+        ? "THR"
+        : plan.expenseName || "pengeluaran rutin";
     const sourceId = `RECURRING_SETTLEMENT:${input.planId}:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const draft = await this.accountingRepo.createDraftJournal(
       {

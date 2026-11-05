@@ -1100,12 +1100,14 @@ export interface JournalEntry {
   event?: "ACCRUAL" | "PAYMENT";
 }
 
-export type RecurringExpenseType = "RENT" | "THR";
+export type RecurringExpenseType = "RENT" | "THR" | `CUSTOM_${string}`;
 
 export interface RecurringExpensePlan {
   id: string;
   branchId: string;
   expenseType: RecurringExpenseType;
+  expenseName?: string | null;
+  expenseAccountId?: string | null;
   amount: number;
   startsOn: string;
   isActive: boolean;

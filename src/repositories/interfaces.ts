@@ -1132,6 +1132,8 @@ export interface AccountingRepository {
     data: {
       branchId: string;
       expenseType: RecurringExpenseType;
+      expenseName?: string;
+      expenseAccountId?: string;
       amount: number;
       startsOn: string;
       isActive: boolean;

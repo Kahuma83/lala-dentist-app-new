@@ -1473,6 +1473,18 @@ export const MOCK_CHART_OF_ACCOUNTS: ChartOfAccount[] = [
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z"
   },
+  {
+    id: "coa-2070",
+    code: "2070",
+    name: "Utang Pengeluaran Rutin",
+    accountType: AccountType.LIABILITY,
+    accountCategory: AccountCategory.OTHER_LIABILITY,
+    normalBalance: NormalBalance.CREDIT,
+    isActive: true,
+    description: "Kewajiban dari akrual pengeluaran rutin selain sewa dan THR",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z"
+  },
 
   // EQUITY (3000 - 3999) - Normal: CREDIT
   {

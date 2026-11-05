@@ -119,6 +119,95 @@ describe("daily rent and THR accruals", () => {
     )).rejects.toThrow("melebihi akrual");
   });
 
+  it("supports multiple named routine expenses with plan-specific settlement balances", async () => {
+    const repository = new MockAccountingRepository();
+    const plan = await repository.saveRecurringExpensePlan(
+      {
+        branchId: "branch-gebang",
+        expenseType: "CUSTOM_internet",
+        expenseName: "Internet",
+        expenseAccountId: "coa-5040",
+        amount: 500000,
+        startsOn: "2026-10-01",
+        isActive: true
+      },
+      "Admin Gebang",
+      UserRole.BRANCH_ADMIN,
+      "branch-gebang"
+    );
+    const otherPlan = await repository.saveRecurringExpensePlan(
+      {
+        branchId: "branch-gebang",
+        expenseType: "CUSTOM_security",
+        expenseName: "Keamanan",
+        expenseAccountId: "coa-5090",
+        amount: 1000000,
+        startsOn: "2026-10-01",
+        isActive: true
+      },
+      "Admin Gebang",
+      UserRole.BRANCH_ADMIN,
+      "branch-gebang"
+    );
+    const liability = await repository.getAccountByCode("2070");
+    const expense = await repository.getAccountByCode("5040");
+    if (!liability || !expense) throw new Error("Mock recurring expense accounts are missing");
+
+    const accrual = await repository.createDraftJournal(
+      {
+        journalDate: "2026-10-31",
+        branchId: "branch-gebang",
+        description: "Akrual Internet bulan Oktober",
+        sourceType: JournalSourceType.EXPENSE,
+        sourceId: `RECURRING_ACCRUAL:${plan.id}:202610`,
+        lines: [
+          { accountId: expense.id, debit: 1000, credit: 0, branchId: "branch-gebang" },
+          { accountId: liability.id, debit: 0, credit: 1000, branchId: "branch-gebang" }
+        ]
+      },
+      "System"
+    );
+    await repository.postJournal(accrual.id, "System");
+
+    const service = new AccountingPostingService({ accountingRepo: repository });
+    await expect(service.postRecurringExpenseSettlement(
+      {
+        planId: otherPlan.id,
+        expenseType: otherPlan.expenseType,
+        branchId: "branch-gebang",
+        paymentAccountId: "coa-1000",
+        amount: 1,
+        date: "2026-11-01"
+      },
+      UserRole.SUPER_ADMIN
+    )).rejects.toThrow("melebihi akrual");
+
+    const settlement = await service.postRecurringExpenseSettlement(
+      {
+        planId: plan.id,
+        expenseType: plan.expenseType,
+        branchId: "branch-gebang",
+        paymentAccountId: "coa-1000",
+        amount: 800,
+        date: "2026-11-01"
+      },
+      UserRole.SUPER_ADMIN
+    );
+    expect(settlement.status).toBe(JournalStatus.POSTED);
+    expect(settlement.description).toContain("Internet");
+    await expect(service.postRecurringExpenseSettlement(
+      {
+        planId: plan.id,
+        expenseType: plan.expenseType,
+        branchId: "branch-gebang",
+        paymentAccountId: "coa-1000",
+        amount: 300,
+        date: "2026-11-01"
+      },
+      UserRole.SUPER_ADMIN
+    )).rejects.toThrow("melebihi akrual");
+  });
+
   it("schedules idempotent daily accruals and monthly balanced journals in Supabase", () => {
     const migration = fs.readFileSync(
       path.resolve(process.cwd(), "supabase/migrations/20261029000000_daily_rent_thr_accruals.sql"),
@@ -133,5 +222,14 @@ describe("daily rent and THR accruals", () => {
     expect(migration).toContain("CREATE EXTENSION IF NOT EXISTS pg_cron");
     expect(migration).toContain("'2050'");
     expect(migration).toContain("'2060'");
+
+    const customMigration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20261113000000_custom_recurring_expense_plans.sql"),
+      "utf-8"
+    );
+    expect(customMigration).toContain("expense_name");
+    expect(customMigration).toContain("expense_account_id");
+    expect(customMigration).toContain("'2070'");
+    expect(customMigration).toContain("RECURRING_ACCRUAL:");
   });
 });
