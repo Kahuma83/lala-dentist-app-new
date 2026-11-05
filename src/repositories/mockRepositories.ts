@@ -545,10 +545,12 @@ export class MockPatientRepository implements PatientRepository {
       return false;
     }
 
+    const deletedVisitIds = new Set(db.visits.filter((visit) => visit.patientId === id).map((visit) => visit.id));
     // Remove patient
     db.patients.splice(index, 1);
     // Cascade clean related records
     db.visits = db.visits.filter((v) => v.patientId !== id);
+    db.visitAssistantAssignments = db.visitAssistantAssignments.filter((item) => !deletedVisitIds.has(item.visitId));
     db.bookings = db.bookings.filter((b) => b.patientId !== id);
     db.queueItems = db.queueItems.filter((q) => q.patientId !== id);
     db.treatmentJobs = db.treatmentJobs.filter((t) => t.patientId !== id);
@@ -563,6 +565,7 @@ export class MockPatientRepository implements PatientRepository {
     }
     db.patients = [];
     db.visits = [];
+    db.visitAssistantAssignments = [];
     db.bookings = [];
     db.confirmations = [];
     db.queueItems = [];
@@ -3699,6 +3702,77 @@ export class MockTreatmentRepository implements TreatmentRepository {
     return list.map((t) => ({ ...t }));
   }
 
+  async getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, string | null>> {
+    const visitIdSet = new Set(visitIds);
+    return Object.fromEntries(
+      db.visitAssistantAssignments
+        .filter((item) => visitIdSet.has(item.visitId))
+        .map((item) => [item.visitId, item.assistantStaffId])
+    );
+  }
+
+  async assignAssistantToVisit(
+    visitId: string,
+    assistantStaffId: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<void> {
+    if (currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat menetapkan Asisten untuk kunjungan.");
+    }
+    const visit = db.visits.find((item) => item.id === visitId);
+    if (!visit) throw new Error("Kunjungan tidak ditemukan.");
+    if (userBranchId && !isBranchMatch(visit.branchId, userBranchId, db.branches)) {
+      throw new Error("Dokter tidak memiliki akses ke cabang kunjungan ini.");
+    }
+    if (assistantStaffId) {
+      const assistant = db.staff.find((item) =>
+        item.id === assistantStaffId
+        && item.position === StaffPosition.ASSISTANT
+        && item.active
+        && item.employmentStatus === EmploymentStatus.ACTIVE
+        && (
+          isBranchMatch(item.branchId, visit.branchId, db.branches)
+          || db.staffShiftAssignments.some((assignment) =>
+            assignment.staffId === item.id
+            && isBranchMatch(assignment.branchId, visit.branchId, db.branches)
+            && assignment.date === getOperationalDateString(visit.visitDateTime)
+            && assignment.active
+          )
+        )
+      );
+      if (!assistant) throw new Error("Asisten yang dipilih tidak aktif, bukan Asisten, atau tidak ditugaskan di cabang kunjungan.");
+    }
+
+    const visitTreatments = db.treatmentJobs.filter((item) => item.visitId === visitId);
+    const startedTreatments = visitTreatments.filter((item) =>
+      Boolean(item.startedAt)
+      || (item.status !== TreatmentJobStatus.BELUM_DIMULAI && item.status !== TreatmentJobStatus.DIBATALKAN)
+    );
+    const existing = db.visitAssistantAssignments.find((item) => item.visitId === visitId);
+    if (startedTreatments.some((item) => item.picAssistantId !== (assistantStaffId || undefined))) {
+      throw new Error("Asisten kunjungan sudah terkunci saat tindakan dimulai.");
+    }
+
+    if (existing) {
+      existing.assistantStaffId = assistantStaffId;
+      existing.confirmedBy = currentUserId || null;
+      existing.confirmedAt = AppClock.nowISO();
+    } else {
+      db.visitAssistantAssignments.push({
+        visitId,
+        assistantStaffId,
+        confirmedBy: currentUserId || null,
+        confirmedAt: AppClock.nowISO()
+      });
+    }
+    visitTreatments
+      .filter((item) => item.status !== TreatmentJobStatus.DIBATALKAN)
+      .forEach((item) => { item.picAssistantId = assistantStaffId || undefined; });
+    db.saveToStorage();
+  }
+
   async listTreatmentsByBranch(
     branchId: string,
     currentUserRole?: UserRole,
@@ -3815,6 +3889,13 @@ export class MockTreatmentRepository implements TreatmentRepository {
     );
 
     const now = AppClock.nowISO();
+    const visitAssistantAssignment = db.visitAssistantAssignments.find((item) => item.visitId === visit.id);
+    const startedVisitTreatment = db.treatmentJobs.find((item) =>
+      item.visitId === visit.id
+      && (item.startedAt
+        || (item.status !== TreatmentJobStatus.BELUM_DIMULAI
+          && item.status !== TreatmentJobStatus.DIBATALKAN))
+    );
     const visitAssistant = db.queueItems
       .filter((queue) => queue.visitId === visit.id && queue.assistantStaffId)
       .sort((left, right) => (right.assistantClaimedAt || "").localeCompare(left.assistantClaimedAt || ""))[0];
@@ -3825,7 +3906,11 @@ export class MockTreatmentRepository implements TreatmentRepository {
       branchId: visit.branchId,
       doctorId: doctor.id,
       assignedDoctorId: doctor.id,
-      picAssistantId: visitAssistant?.assistantStaffId || undefined,
+      picAssistantId: visitAssistantAssignment
+        ? visitAssistantAssignment.assistantStaffId || undefined
+        : startedVisitTreatment
+          ? startedVisitTreatment.picAssistantId
+          : visitAssistant?.assistantStaffId || undefined,
       serviceId: service.id,
       status: TreatmentJobStatus.BELUM_DIMULAI,
       serviceNameSnapshot: service.name,
