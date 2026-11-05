@@ -82,7 +82,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 4: Creating invoice snapshots item prices and calculates net amount correctly", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-4",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [
@@ -128,6 +128,32 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
     ).rejects.toThrow("Invoice harus memiliki minimal satu item tindakan/layanan");
   });
 
+  it("allows only one active invoice per visit and allows replacement after cancellation", async () => {
+    const invoiceData = {
+      visitId: "visit-unique-invoice-test",
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      items: [
+        {
+          serviceId: "service-scaling",
+          descriptionSnapshot: "Scaling & Polishing",
+          unitPriceSnapshot: 150000,
+          quantity: 1
+        }
+      ]
+    };
+    const firstInvoice = await invoiceRepo.createInvoice(invoiceData);
+
+    await expect(invoiceRepo.createInvoice(invoiceData))
+      .rejects.toThrow("sudah memiliki invoice aktif");
+
+    await invoiceRepo.cancelInvoice(firstInvoice.id, "Koreksi invoice", UserRole.SUPER_ADMIN);
+    const replacementInvoice = await invoiceRepo.createInvoice(invoiceData);
+
+    expect(replacementInvoice.id).not.toBe(firstInvoice.id);
+    expect(replacementInvoice.status).toBe(InvoiceStatus.OPEN);
+  });
+
   it("Test 6: Branch Admin cannot create invoice for another branch", async () => {
     await expect(
       invoiceRepo.createInvoice(
@@ -151,7 +177,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 7: Partial payment updates paidAmount, outstandingAmount, and sets status to PARTIALLY_PAID", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-7",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [
@@ -240,7 +266,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 8: Full settlement payment sets status to PAID and outstandingAmount to 0", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-8",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [
@@ -269,7 +295,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 9: Multiple partial payments aggregate properly until full settlement", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-9",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [
@@ -315,7 +341,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 10: Overpayment beyond outstandingAmount is rejected with clear validation error", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-10",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [
@@ -339,7 +365,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 11: Payment on already fully paid invoice is rejected", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-11",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [
@@ -370,7 +396,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 12: Zero or negative payment amounts are rejected", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-12",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [
@@ -422,7 +448,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 14: Cancelling an unpaid invoice changes its status to CANCELLED", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-14",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [
@@ -450,7 +476,7 @@ describe("Phase 5: Billing, Invoices & Payments Test Suite", () => {
 
   it("Test 15: Invoice with paid amount cannot be cancelled without refund", async () => {
     const invoice = await invoiceRepo.createInvoice({
-      visitId: "visit-1",
+      visitId: "phase5-test-15",
       patientId: "patient-1",
       branchId: "branch-gebang",
       items: [

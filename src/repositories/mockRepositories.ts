@@ -4632,6 +4632,13 @@ export class MockInvoiceRepository implements InvoiceRepository {
       throw new Error("Tanggal invoice mundur hanya dapat dipilih untuk kunjungan dengan tanggal tindakan selesai.");
     }
 
+    if (db.invoices.some((invoice: Invoice) =>
+      invoice.visitId === data.visitId &&
+      invoice.status !== InvoiceStatus.CANCELLED
+    )) {
+      throw new Error("Kunjungan ini sudah memiliki invoice aktif. Muat ulang data sebelum membuat invoice baru.");
+    }
+
     const linkedTreatmentIds = data.items.flatMap((item) =>
       item.treatmentJobId ? [item.treatmentJobId] : []
     );
