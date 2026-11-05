@@ -40,6 +40,10 @@ import { getOperationalDateString } from "../utils/dateUtils";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { isActiveQueueStatus } from "../utils/bookingQueueGuards";
 import {
+  getVisitAssistantCandidates,
+  VisitAssistantCandidate
+} from "../utils/treatmentAssistantAssignment";
+import {
   InventoryItem,
   InventoryTreatmentStockShortage,
   listInventoryItems,
@@ -57,7 +61,19 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   embeddedVisitId,
   onVisitFinished
 }) => {
-  const { currentUser, repos, branches, services, patients, bookings, doctorSchedules } = useApp();
+  const {
+    currentUser,
+    repos,
+    branches,
+    services,
+    patients,
+    bookings,
+    doctorSchedules,
+    staff,
+    staffShiftAssignments,
+    workShifts,
+    attendances
+  } = useApp();
   const { navigate } = useRouter();
   const processedVisitQuery = useRef<string | null>(null);
   const plannedTariffRequestId = useRef(0);
@@ -92,6 +108,12 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [startingTreatmentId, setStartingTreatmentId] = useState<string | null>(null);
   const [processingVisitId, setProcessingVisitId] = useState<string | null>(null);
+  const [visitAssistantAssignments, setVisitAssistantAssignments] = useState<Record<string, string | null>>({});
+  const [assistantEdit, setAssistantEdit] = useState<{
+    visitId: string;
+    selectedAssistantId: string;
+    candidates: VisitAssistantCandidate[];
+  } | null>(null);
   const [isFinishVisitConfirmOpen, setIsFinishVisitConfirmOpen] = useState(false);
   const [planAwaitingCompletion, setPlanAwaitingCompletion] = useState<{
     visitId: string;
@@ -122,8 +144,9 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     || currentUser?.role === UserRole.DOCTOR_ASSISTANT;
   const canCreateTreatment = canManageTreatment || currentUser?.role === UserRole.SUPER_ADMIN;
   const canStartTreatment = (treatment: TreatmentJob) =>
-    canManageTreatment
-    || (Boolean(treatment.externalDoctorId) && currentUser?.role === UserRole.SUPER_ADMIN);
+    currentUser?.role === UserRole.DOCTOR
+    || (Boolean(treatment.externalDoctorId)
+      && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
   const canCancelTreatment = (treatment: TreatmentJob) =>
     (treatment.status === TreatmentJobStatus.BELUM_DIMULAI
       || treatment.status === TreatmentJobStatus.DALAM_PROSES)
@@ -152,6 +175,67 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const treatmentRepo = repos.treatment;
   const visitRepo = repos.visit;
   const activityRepo = repos.treatmentActivity;
+
+  const getAssistantCandidatesForVisit = (visitId: string, visitTreatments: TreatmentJob[]) => {
+    const visit = visits.find((item) => item.id === visitId);
+    const booking = bookings.find((item) => item.id === visit?.bookingId);
+    return getVisitAssistantCandidates({
+      branchId: visit?.branchId || visitTreatments[0]?.branchId || "",
+      scheduledAt: booking?.bookingDateTime || visit?.visitDateTime || visitTreatments[0]?.createdAt || "",
+      actionStartedAt: new Date().toISOString(),
+      staff,
+      assignments: staffShiftAssignments,
+      shifts: workShifts,
+      attendances
+    });
+  };
+
+  const getDefaultAssistantId = (visitId: string, visitTreatments: TreatmentJob[]): string | null => {
+    if (Object.prototype.hasOwnProperty.call(visitAssistantAssignments, visitId)) {
+      return visitAssistantAssignments[visitId];
+    }
+    return getAssistantCandidatesForVisit(visitId, visitTreatments).defaultStaffId;
+  };
+
+  const handleEditVisitAssistant = (visitId: string, visitTreatments: TreatmentJob[]) => {
+    const { candidates } = getAssistantCandidatesForVisit(visitId, visitTreatments);
+    setAssistantEdit({
+      visitId,
+      selectedAssistantId: getDefaultAssistantId(visitId, visitTreatments) || "",
+      candidates
+    });
+  };
+
+  const handleSaveVisitAssistant = async () => {
+    if (!assistantEdit || currentUser?.role !== UserRole.DOCTOR || startingTreatmentId || processingVisitId) return;
+    setProcessingVisitId(assistantEdit.visitId);
+    setError(null);
+    try {
+      const selectedAssistantId = assistantEdit.selectedAssistantId || null;
+      await treatmentRepo.assignAssistantToVisit(
+        assistantEdit.visitId,
+        selectedAssistantId,
+        currentUser.role,
+        currentUser.assignedBranchId,
+        currentUser.doctorId
+      );
+      setVisitAssistantAssignments((current) => ({
+        ...current,
+        [assistantEdit.visitId]: selectedAssistantId
+      }));
+      setTreatments((current) => current.map((item) =>
+        item.visitId === assistantEdit.visitId && item.status !== TreatmentJobStatus.DIBATALKAN
+          ? { ...item, picAssistantId: selectedAssistantId || undefined }
+          : item
+      ));
+      setAssistantEdit(null);
+      setSuccessMsg("PIC Asisten kunjungan berhasil diperbarui.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal mengubah PIC Asisten kunjungan.");
+    } finally {
+      setProcessingVisitId(null);
+    }
+  };
 
   const loadActivities = async (treatmentId: string) => {
     try {
@@ -212,12 +296,16 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             currentUser.role,
             currentUser.assignedBranchId
           );
+      const assistantAssignments = await treatmentRepo.getAssistantAssignmentsForVisits(
+        [...new Set(trList.map((item) => item.visitId))]
+      );
 
       setDoctorsList(docList);
       setExternalDoctors(externalDoctorResult.data || []);
       setTreatments(trList);
       setVisits(vList);
       setQueueItems(queueList);
+      setVisitAssistantAssignments(assistantAssignments);
 
       if (selectedTreatment) {
         await loadActivities(selectedTreatment.id);
@@ -403,6 +491,11 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   };
 
   const handleStartVisitPlan = async (visitId: string, visitTreatments: TreatmentJob[]) => {
+    const startedTreatment = visitTreatments.find((treatment) =>
+      Boolean(treatment.startedAt)
+      || (treatment.status !== TreatmentJobStatus.BELUM_DIMULAI
+        && treatment.status !== TreatmentJobStatus.DIBATALKAN)
+    );
     if (processingVisitId) return;
     const pending = visitTreatments.filter((treatment) =>
       treatment.status === TreatmentJobStatus.BELUM_DIMULAI
@@ -412,6 +505,20 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     setError(null);
     let startedCount = 0;
     try {
+      if (currentUser?.role === UserRole.DOCTOR && !startedTreatment) {
+        const assistantStaffId = getDefaultAssistantId(visitId, visitTreatments);
+        await treatmentRepo.assignAssistantToVisit(
+          visitId,
+          assistantStaffId,
+          currentUser.role,
+          currentUser.assignedBranchId,
+          currentUser.doctorId
+        );
+        setVisitAssistantAssignments((current) => ({
+          ...current,
+          [visitId]: assistantStaffId
+        }));
+      }
       for (const treatment of pending) {
         const started = await handleStartTreatment(treatment.id);
         if (!started) {
@@ -422,6 +529,8 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       }
       setSuccessMsg(`${startedCount} tindakan dalam rencana kunjungan mulai diproses bersama.`);
       await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menetapkan Asisten dan memulai rencana tindakan.");
     } finally {
       setProcessingVisitId(null);
     }
@@ -1481,6 +1590,16 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                     treatment.status === TreatmentJobStatus.DIBATALKAN
                   ).length;
                   const groupBusy = processingVisitId === visitId;
+                  const visitHasStarted = visitTreatments.some((treatment) =>
+                    Boolean(treatment.startedAt)
+                    || (treatment.status !== TreatmentJobStatus.BELUM_DIMULAI
+                      && treatment.status !== TreatmentJobStatus.DIBATALKAN)
+                  );
+                  const assistantId = visitHasStarted
+                    ? visitTreatments.find((treatment) => treatment.startedAt)?.picAssistantId
+                      || visitTreatments.find((treatment) => treatment.picAssistantId)?.picAssistantId
+                    : getDefaultAssistantId(visitId, visitTreatments);
+                  const assistantName = staff.find((item) => item.id === assistantId)?.fullName;
 
                   return (
                     <tr key={visitId}>
@@ -1501,6 +1620,67 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                                 <span>{firstTreatment.doctorNameSnapshot}</span>
                                 <span>{completedCount} selesai{cancelledCount ? ` · ${cancelledCount} batal` : ""}</span>
                               </div>
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                                <span className="font-semibold text-slate-600">PIC Asisten:</span>
+                                {assistantEdit?.visitId === visitId ? (
+                                  <>
+                                    <select
+                                      value={assistantEdit.selectedAssistantId}
+                                      onChange={(event) => setAssistantEdit((current) => current
+                                        ? { ...current, selectedAssistantId: event.target.value }
+                                        : current)}
+                                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-800"
+                                    >
+                                      <option value="">Tidak ada Asisten</option>
+                                      {assistantEdit.candidates.map((candidate) => (
+                                        <option key={candidate.staffId} value={candidate.staffId}>
+                                          {candidate.fullName}
+                                          {candidate.isScheduledForBooking
+                                            ? " · shift booking"
+                                            : candidate.attendanceState === "PRESENT"
+                                              ? " · hadir"
+                                              : " · Asisten cabang"}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      disabled={Boolean(processingVisitId || startingTreatmentId)}
+                                      onClick={() => void handleSaveVisitAssistant()}
+                                      className="rounded-md bg-teal-700 px-2 py-1 font-semibold text-white disabled:opacity-50"
+                                    >
+                                      Simpan
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setAssistantEdit(null)}
+                                      className="rounded-md px-2 py-1 font-medium text-slate-500 hover:bg-slate-100"
+                                    >
+                                      Batal
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className={assistantName ? "font-semibold text-teal-800" : "text-slate-500"}>
+                                      {assistantName || "Tidak ada default dari jadwal"}
+                                    </span>
+                                    {currentUser?.role === UserRole.DOCTOR && !visitHasStarted && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleEditVisitAssistant(visitId, visitTreatments)}
+                                        className="rounded-md px-2 py-1 font-semibold text-teal-700 hover:bg-teal-50"
+                                      >
+                                        Ubah PIC
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                              {currentUser?.role === UserRole.DOCTOR && !visitHasStarted && (
+                                <p className="mt-1 text-[10px] text-slate-400">
+                                  Default tersimpan otomatis saat tindakan dimulai.
+                                </p>
+                              )}
                             </div>
                             <div className="flex flex-wrap gap-2">
                               {canStartTogether && (

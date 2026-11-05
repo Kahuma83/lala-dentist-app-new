@@ -636,6 +636,14 @@ export interface TreatmentRepository {
     userBranchId?: string | null,
     currentUserId?: string | null
   ): Promise<TreatmentJob[]>;
+  getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, string | null>>;
+  assignAssistantToVisit(
+    visitId: string,
+    assistantStaffId: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null
+  ): Promise<void>;
   listTreatmentsByBranch(
     branchId: string,
     currentUserRole?: UserRole,

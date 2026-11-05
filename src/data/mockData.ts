@@ -3626,6 +3626,7 @@ export class MockDatabase {
   visits: PatientVisit[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_VISITS)) : [];
   queueItems: QueueItem[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_QUEUE_ITEMS)) : [];
   treatmentJobs: TreatmentJob[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_TREATMENT_JOBS)) : [];
+  visitAssistantAssignments: { visitId: string; assistantStaffId: string | null; confirmedBy: string | null; confirmedAt: string }[] = [];
   treatmentActivities: TreatmentActivity[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_TREATMENT_ACTIVITIES)) : [];
   invoices: Invoice[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_INVOICES)) : [];
   invoiceItems: InvoiceItem[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_INVOICE_ITEMS)) : [];
@@ -3772,6 +3773,7 @@ export class MockDatabase {
         if (Array.isArray(stored.visits)) this.visits = stored.visits;
         if (Array.isArray(stored.queueItems)) this.queueItems = stored.queueItems;
         if (Array.isArray(stored.treatmentJobs)) this.treatmentJobs = stored.treatmentJobs;
+        if (Array.isArray(stored.visitAssistantAssignments)) this.visitAssistantAssignments = stored.visitAssistantAssignments;
         if (Array.isArray(stored.treatmentActivities)) this.treatmentActivities = stored.treatmentActivities;
         if (Array.isArray(stored.invoices)) this.invoices = stored.invoices;
         if (Array.isArray(stored.invoiceItems)) this.invoiceItems = stored.invoiceItems;
@@ -3839,6 +3841,7 @@ export class MockDatabase {
         visits: this.visits,
         queueItems: this.queueItems,
         treatmentJobs: this.treatmentJobs,
+        visitAssistantAssignments: this.visitAssistantAssignments,
         treatmentActivities: this.treatmentActivities,
         invoices: this.invoices,
         invoiceItems: this.invoiceItems,
@@ -3895,6 +3898,7 @@ export class MockDatabase {
     this.instance.visits = JSON.parse(JSON.stringify(MOCK_VISITS));
     this.instance.queueItems = JSON.parse(JSON.stringify(MOCK_QUEUE_ITEMS));
     this.instance.treatmentJobs = JSON.parse(JSON.stringify(MOCK_TREATMENT_JOBS));
+    this.instance.visitAssistantAssignments = [];
     this.instance.treatmentActivities = JSON.parse(JSON.stringify(MOCK_TREATMENT_ACTIVITIES));
     this.instance.invoices = JSON.parse(JSON.stringify(MOCK_INVOICES));
     this.instance.invoiceItems = JSON.parse(JSON.stringify(MOCK_INVOICE_ITEMS));
@@ -3932,6 +3936,7 @@ export class MockDatabase {
     db.visits = [];
     db.queueItems = [];
     db.treatmentJobs = [];
+    db.visitAssistantAssignments = [];
     db.treatmentActivities = [];
     db.invoices = [];
     db.invoiceItems = [];

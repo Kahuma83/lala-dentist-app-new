@@ -4163,6 +4163,39 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     return this.getTreatmentsByVisit(visitId);
   }
 
+  async getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, string | null>> {
+    ensureSupabaseConnected();
+    const validVisitIds = [...new Set(visitIds.filter(isValidUUID))];
+    if (!validVisitIds.length) return {};
+    const { data, error } = await supabase
+      .from("treatment_visit_assistant_assignments")
+      .select("visit_id, assistant_staff_id")
+      .in("visit_id", validVisitIds);
+    if (error) throw new Error(`Gagal memuat PIC Asisten kunjungan: ${error.message}`);
+    return Object.fromEntries((data || []).map((row) => [row.visit_id, row.assistant_staff_id]));
+  }
+
+  async assignAssistantToVisit(
+    visitId: string,
+    assistantStaffId: string | null,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null,
+    _currentUserId?: string | null
+  ): Promise<void> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.DOCTOR) {
+      throw new Error("Hanya dokter yang dapat menetapkan Asisten untuk kunjungan.");
+    }
+    if (!isValidUUID(visitId) || (assistantStaffId && !isValidUUID(assistantStaffId))) {
+      throw new Error("Data kunjungan atau Asisten tidak valid.");
+    }
+    const { error } = await supabase.rpc("assign_treatment_visit_assistant", {
+      p_visit_id: visitId,
+      p_assistant_staff_id: assistantStaffId
+    });
+    if (error) throw new Error(`Gagal menetapkan Asisten kunjungan: ${error.message}`);
+  }
+
   async listTreatmentsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null, currentUserId?: string | null): Promise<TreatmentJob[]> {
     ensureSupabaseConnected();
     const effBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
