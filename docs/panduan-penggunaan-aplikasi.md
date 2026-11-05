@@ -176,7 +176,7 @@ OB menggunakan **Portal Pegawai** untuk melihat ringkasan kerja, melakukan absen
 1. Pilih **Jadwal Baru**, lalu cari pasien yang benar.
 2. Pilih Dokter, tanggal, jam yang tersedia, dan sumber kedatangan yang sesuai: Online, WhatsApp, Front Desk, atau Walk-In.
 3. Jika admin atau asisten berhasil mengajak pasien untuk kunjungan ini, cari dan pilih namanya pada **Referral**. Daftar memuat admin dan asisten aktif dari semua cabang; kosongkan jika tidak ada referral.
-4. Insentif referral Rp3.000 dicatat satu kali per kunjungan setelah tindakan selesai dan invoice lunas. Kunjungan berikutnya dapat memilih staf yang berbeda. Jadwal ulang membawa pilihan staf referral ke booking pengganti.
+4. Insentif referral untuk staf yang dipilih dicatat satu kali per kunjungan setelah semua tindakan selesai dan seluruh invoice aktif lunas. Jika ada beberapa tindakan, yang dipakai adalah tarif insentif tindakan tertinggi yang diatur Super Admin, bukan jumlah tagihan pasien. Kunjungan berikutnya dapat memilih staf yang berbeda. Jadwal ulang membawa pilihan staf referral ke booking pengganti.
 5. Isi catatan yang membantu petugas, lalu simpan.
 6. Untuk pasien yang datang tanpa janji, pilih sumber **Walk-In** dan tetap pilih slot Dokter yang kosong. Jangan menimpa jadwal pasien lain.
 7. Sehari sebelum jadwal, buka **Konfirmasi Booking H-1** pada bagian **Follow Up & Tindak Lanjut**. Hubungi pasien dan catat hasilnya: dihubungi, dikonfirmasi, perlu jadwal ulang, tidak merespons, atau batal.
@@ -296,6 +296,8 @@ Gunakan **Kontrol & Perawatan Lanjutan** untuk menghubungi pasien yang perlu dii
 8. Periksa **Portal Pegawai → Jadwal Saya**, **Absensi**, dan **Cuti & Izin** untuk kebutuhan kepegawaian.
 
 Asisten tidak melakukan check-in pasien, menentukan diagnosis, menandatangani penyelesaian klinis biasa, membuat invoice, atau menerima pembayaran.
+
+Insentif flat tindakan asisten hanya diberikan satu kali per kunjungan kepada Asisten PIC, setelah semua tindakan selesai dan seluruh invoice aktif lunas. Jika ada beberapa tindakan, gunakan tarif insentif tertinggi yang diatur Super Admin; nominal yang dibayar pasien tidak menjadi dasar perhitungan. Insentif ini terpisah dari insentif referral.
 
 ## Alur kerja Super Admin
 
