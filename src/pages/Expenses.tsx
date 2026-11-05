@@ -94,7 +94,9 @@ export const Expenses: React.FC = () => {
   const [isRecurringLoading, setIsRecurringLoading] = useState(false);
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState<RecurringExpensePlan | null>(null);
-  const [planType, setPlanType] = useState<RecurringExpenseType>("RENT");
+  const [planType, setPlanType] = useState<RecurringExpenseType | "CUSTOM">("RENT");
+  const [planExpenseName, setPlanExpenseName] = useState("");
+  const [planExpenseAccountId, setPlanExpenseAccountId] = useState("");
   const [planBranchId, setPlanBranchId] = useState("");
   const [planAmount, setPlanAmount] = useState(0);
   const [planStartsOn, setPlanStartsOn] = useState(new Date().toISOString().slice(0, 10));
@@ -149,6 +151,22 @@ export const Expenses: React.FC = () => {
       setRecurringPlans(plans);
       const balances: Record<string, number> = {};
       for (const plan of plans) {
+        const isCustom = plan.expenseType !== "RENT" && plan.expenseType !== "THR";
+        if (isCustom) {
+          const accrualPrefix = `RECURRING_ACCRUAL:${plan.id}:`;
+          const settlementPrefix = `RECURRING_SETTLEMENT:${plan.id}:`;
+          const planJournals = journals.filter(
+            (journal) => journal.branchId === plan.branchId && journal.status === JournalStatus.POSTED
+          );
+          const accrued = planJournals
+            .filter((journal) => journal.sourceId?.startsWith(accrualPrefix))
+            .reduce((total, journal) => total + journal.totalCredit, 0);
+          const settled = planJournals
+            .filter((journal) => journal.sourceId?.startsWith(settlementPrefix))
+            .reduce((total, journal) => total + journal.totalDebit, 0);
+          balances[plan.id] = Math.max(0, accrued - settled);
+          continue;
+        }
         const liabilityCode = plan.expenseType === "RENT" ? "2050" : "2060";
         const liabilityAccount = accounts.find((account) => account.code === liabilityCode);
         if (!liabilityAccount) continue;
@@ -173,7 +191,7 @@ export const Expenses: React.FC = () => {
 
   useEffect(() => {
     void loadRecurringPlans();
-  }, [accountingRepo, branchFilter, currentUser, accounts]);
+  }, [accountingRepo, branchFilter, currentUser, accounts, journals]);
 
   // Set default accounts when form opens
   useEffect(() => {
@@ -289,6 +307,13 @@ export const Expenses: React.FC = () => {
     setActionError(null);
     setEditingPlan(plan || null);
     setPlanType(plan?.expenseType || "RENT");
+    setPlanExpenseName(plan?.expenseName || "");
+    setPlanExpenseAccountId(
+      plan?.expenseAccountId ||
+      expenseAccounts.find((account) => account.code === "5040")?.id ||
+      expenseAccounts[0]?.id ||
+      ""
+    );
     setPlanBranchId(plan?.branchId || (branchFilter !== "ALL" ? branchFilter : branches[0]?.id || ""));
     setPlanAmount(plan?.amount || 0);
     setPlanStartsOn(plan?.startsOn || new Date().toISOString().slice(0, 10));
@@ -306,12 +331,25 @@ export const Expenses: React.FC = () => {
       setActionError("Pilih cabang untuk rencana akrual.");
       return;
     }
+    const isCustom = planType !== "RENT" && planType !== "THR";
+    if (isCustom && !planExpenseName.trim()) {
+      setActionError("Nama pengeluaran rutin wajib diisi.");
+      return;
+    }
+    if (isCustom && !planExpenseAccountId) {
+      setActionError("Pilih akun beban untuk pengeluaran rutin.");
+      return;
+    }
     setIsSubmitting(true);
     try {
       await accountingRepo.saveRecurringExpensePlan(
         {
           branchId,
-          expenseType: planType,
+          expenseType: planType === "CUSTOM"
+            ? `CUSTOM_${crypto.randomUUID()}`
+            : planType,
+          expenseName: isCustom ? planExpenseName.trim() : undefined,
+          expenseAccountId: isCustom ? planExpenseAccountId : undefined,
           amount: Number(planAmount),
           startsOn: planStartsOn,
           isActive: planIsActive
@@ -608,30 +646,36 @@ export const Expenses: React.FC = () => {
             className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-lg text-xs font-semibold"
           >
             <Plus className="w-4 h-4" />
-            Atur Rencana
+            Tambah Rencana
           </button>
         </div>
         {isRecurringLoading ? (
           <div className="p-6 text-center text-xs text-slate-500">Memuat rencana akrual...</div>
         ) : recurringPlans.length === 0 ? (
           <div className="p-6 text-center text-xs text-slate-500">
-            Belum ada rencana sewa atau THR. Atur nominal dan tanggal mulai agar sistem mulai menyisihkan otomatis.
+            Belum ada penyisihan rutin. Tambahkan rencana Sewa, THR, atau pengeluaran rutin lainnya.
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-4">
             {recurringPlans.map((plan) => {
               const isRent = plan.expenseType === "RENT";
+              const isThr = plan.expenseType === "THR";
+              const expenseName = isRent
+                ? "Sewa Gedung"
+                : isThr
+                  ? "THR"
+                  : plan.expenseName || "Pengeluaran Rutin";
               const today = new Date();
-              const divisor = isRent
-                ? new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
-                : ((today.getFullYear() % 4 === 0 && today.getFullYear() % 100 !== 0) || today.getFullYear() % 400 === 0 ? 366 : 365);
+              const divisor = isThr
+                ? ((today.getFullYear() % 4 === 0 && today.getFullYear() % 100 !== 0) || today.getFullYear() % 400 === 0 ? 366 : 365)
+                : new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
               const dailyAmount = Math.round(plan.amount / divisor);
               const postedLiability = recurringBalances[plan.id] || 0;
               return (
                 <article key={plan.id} className="border border-slate-200 rounded-xl p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-bold text-slate-900">{isRent ? "Sewa Gedung" : "THR"}</div>
+                      <div className="text-sm font-bold text-slate-900">{expenseName}</div>
                       <div className="text-[11px] text-slate-500">{getBranchName(plan.branchId)} · mulai {plan.startsOn}</div>
                     </div>
                     <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${plan.isActive ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
@@ -640,7 +684,7 @@ export const Expenses: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-2 gap-3 mt-4">
                     <div className="bg-slate-50 rounded-lg p-3">
-                      <div className="text-[10px] text-slate-500 uppercase">{isRent ? "Sewa per bulan" : "Target THR per tahun"}</div>
+                      <div className="text-[10px] text-slate-500 uppercase">{isThr ? "Target THR per tahun" : "Nominal per bulan"}</div>
                       <div className="font-mono font-bold text-slate-900 mt-1">Rp {plan.amount.toLocaleString("id-ID")}</div>
                     </div>
                     <div className="bg-slate-50 rounded-lg p-3">
@@ -1091,9 +1135,9 @@ export const Expenses: React.FC = () => {
       {isPlanModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-md w-full p-6">
-            <h3 className="text-base font-bold text-slate-900">{editingPlan ? "Ubah Rencana Akrual" : "Atur Penyisihan Otomatis"}</h3>
+            <h3 className="text-base font-bold text-slate-900">{editingPlan ? "Ubah Rencana Akrual" : "Tambah Penyisihan Otomatis"}</h3>
             <p className="text-[11px] text-slate-500 mt-1 mb-4">
-              Sewa menggunakan nominal bulanan. THR menggunakan target total setahun, bukan nominal pembayaran harian.
+              Sewa dan pengeluaran rutin lainnya menggunakan nominal bulanan. THR menggunakan target total setahun.
             </p>
             <form onSubmit={handleSavePlan} className="space-y-3 text-xs">
               {actionError && <div className="p-2 rounded bg-rose-50 text-rose-700">{actionError}</div>}
@@ -1108,13 +1152,55 @@ export const Expenses: React.FC = () => {
               {!isSuper && <div className="p-2 bg-slate-50 rounded-lg font-semibold">{getBranchName(planBranchId)}</div>}
               <label className="block">
                 <span className="block font-semibold mb-1">Jenis penyisihan *</span>
-                <select required disabled={Boolean(editingPlan)} value={planType} onChange={(event) => setPlanType(event.target.value as RecurringExpenseType)} className="w-full border border-slate-200 rounded-lg p-2 bg-white disabled:bg-slate-100">
+                <select
+                  required
+                  disabled={Boolean(editingPlan)}
+                  value={planType === "RENT" || planType === "THR" ? planType : "CUSTOM"}
+                  onChange={(event) => setPlanType(
+                    event.target.value === "CUSTOM"
+                      ? `CUSTOM_${crypto.randomUUID()}`
+                      : event.target.value as RecurringExpenseType
+                  )}
+                  className="w-full border border-slate-200 rounded-lg p-2 bg-white disabled:bg-slate-100"
+                >
                   <option value="RENT">Sewa Gedung (nominal per bulan)</option>
                   <option value="THR">THR (target tahunan)</option>
+                  <option value="CUSTOM">Pengeluaran Rutin Lainnya (nominal per bulan)</option>
                 </select>
               </label>
+              {planType !== "RENT" && planType !== "THR" && (
+                <>
+                  <label className="block">
+                    <span className="block font-semibold mb-1">Nama pengeluaran rutin *</span>
+                    <input
+                      required
+                      maxLength={100}
+                      value={planExpenseName}
+                      onChange={(event) => setPlanExpenseName(event.target.value)}
+                      placeholder="Contoh: Internet, air, atau keamanan"
+                      className="w-full border border-slate-200 rounded-lg p-2"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="block font-semibold mb-1">Akun beban *</span>
+                    <select
+                      required
+                      value={planExpenseAccountId}
+                      onChange={(event) => setPlanExpenseAccountId(event.target.value)}
+                      className="w-full border border-slate-200 rounded-lg p-2 bg-white"
+                    >
+                      <option value="" disabled>Pilih akun beban</option>
+                      {expenseAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>{account.code} - {account.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
               <label className="block">
-                <span className="block font-semibold mb-1">{planType === "RENT" ? "Nominal sewa per bulan (Rp) *" : "Target THR setahun (Rp) *"}</span>
+                <span className="block font-semibold mb-1">
+                  {planType === "THR" ? "Target THR setahun (Rp) *" : planType === "RENT" ? "Nominal sewa per bulan (Rp) *" : "Nominal per bulan (Rp) *"}
+                </span>
                 <input required type="number" min="1" step="1" value={planAmount || ""} onChange={(event) => setPlanAmount(Number(event.target.value) || 0)} className="w-full border border-slate-200 rounded-lg p-2 font-mono" />
               </label>
               <label className="block">
@@ -1140,7 +1226,13 @@ export const Expenses: React.FC = () => {
       {selectedPlanForPayment && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-md w-full p-6">
-            <h3 className="text-base font-bold text-slate-900">Catat Pembayaran {selectedPlanForPayment.expenseType === "RENT" ? "Sewa" : "THR"}</h3>
+            <h3 className="text-base font-bold text-slate-900">
+              Catat Pembayaran {selectedPlanForPayment.expenseType === "RENT"
+                ? "Sewa"
+                : selectedPlanForPayment.expenseType === "THR"
+                  ? "THR"
+                  : selectedPlanForPayment.expenseName || "Pengeluaran Rutin"}
+            </h3>
             <p className="text-[11px] text-slate-500 mt-1 mb-4">
               Dicatat sebagai pengurangan utang dan kas/bank, bukan beban baru.
               Kewajiban yang sudah dijurnal: Rp {(recurringBalances[selectedPlanForPayment.id] || 0).toLocaleString("id-ID")}.

@@ -6636,6 +6636,8 @@ export class MockAccountingRepository implements AccountingRepository {
     data: {
       branchId: string;
       expenseType: RecurringExpenseType;
+      expenseName?: string;
+      expenseAccountId?: string;
       amount: number;
       startsOn: string;
       isActive: boolean;
@@ -6646,6 +6648,18 @@ export class MockAccountingRepository implements AccountingRepository {
   ): Promise<RecurringExpensePlan> {
     if (data.amount <= 0 || !Number.isInteger(data.amount)) {
       throw new Error("Nominal rencana harus berupa bilangan rupiah positif");
+    }
+    const isCustomExpense = data.expenseType !== "RENT" && data.expenseType !== "THR";
+    if (isCustomExpense) {
+      const expenseName = data.expenseName?.trim();
+      const expenseAccountId = data.expenseAccountId;
+      if (!expenseName || !expenseAccountId) {
+        throw new Error("Nama pengeluaran dan akun beban wajib diisi untuk rencana rutin lainnya");
+      }
+      const expenseAccount = await this.getAccountById(expenseAccountId);
+      if (!expenseAccount?.isActive || expenseAccount.accountType !== AccountType.EXPENSE) {
+        throw new Error("Akun rencana harus berupa akun beban aktif");
+      }
     }
     if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId && data.branchId !== userBranchId) {
       throw new Error("Branch Admin hanya dapat mengatur akrual untuk cabangnya sendiri");
@@ -6658,6 +6672,8 @@ export class MockAccountingRepository implements AccountingRepository {
       id: existing?.id || `recurring-${data.branchId}-${data.expenseType}`,
       branchId: data.branchId,
       expenseType: data.expenseType,
+      expenseName: data.expenseName?.trim() || null,
+      expenseAccountId: data.expenseAccountId || null,
       amount: data.amount,
       startsOn: data.startsOn,
       isActive: data.isActive,
