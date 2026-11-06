@@ -318,6 +318,8 @@ Super Admin memiliki menu lintas cabang. Sebelum menyimpan atau memproses transa
 - Pastikan pegawai ditempatkan di cabang dan jabatan yang benar sebelum membuat akun masuk.
 - Saat mengubah jadwal atau shift, periksa tanggal, cabang, jam, serta pegawai yang ditugaskan.
 - Tinjau permohonan cuti/izin dan lembur yang memerlukan keputusan Super Admin sebelum disetujui atau ditolak.
+- Untuk penggantian Dokter di beberapa cabang, proses pengajuan tiap cabang secara terpisah. Pada pengajuan Dokter, Super Admin dapat memilih Dokter eksternal untuk cabang terkait, termasuk mengganti pilihan internal pemohon bila Dokter tersebut tidak dapat bertugas. Pilihan eksternal berlaku untuk semua tanggal dalam rentang pengajuan; ajukan rentang terpisah jika dokter pengganti berbeda per hari. Pilihan internal yang tetap digunakan harus disetujui Dokter tersebut.
+- Koreksi nama atau nomor telepon Dokter eksternal melalui tombol **Edit** di bagian **Dokter Eksternal** pada tab **Cuti, Izin & Sakit**.
 - Jangan membagikan kata sandi atau akun Super Admin. Buat akses pribadi sesuai tugas pengguna.
 
 ### Penggajian
