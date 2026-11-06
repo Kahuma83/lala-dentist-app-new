@@ -177,6 +177,56 @@ export const onRequestPost = async ({ request, env }) => {
       return jsonResponse({ message: "Dokter tidak ditemukan atau sedang tidak aktif." }, 400);
     }
 
+    if (payload.external_doctor_id) {
+      if (
+        payload.source !== "WALK_IN" ||
+        !["SUPER_ADMIN", "BRANCH_ADMIN"].includes(actorAccount.role)
+      ) {
+        return jsonResponse({
+          message: "Dokter eksternal hanya dapat dipilih untuk Walk-In oleh Admin Cabang atau Super Admin."
+        }, 403);
+      }
+
+      const assignedExternalDoctors = await requestSupabase({
+        url: supabaseUrl,
+        apiKey: publicApiKey,
+        accessToken,
+        path: "/rest/v1/rpc/get_walkin_external_doctors",
+        method: "POST",
+        body: {
+          p_branch_id: payload.branch_id,
+          p_covered_date: operationalDate
+        }
+      });
+      const externalAssignment = (Array.isArray(assignedExternalDoctors) ? assignedExternalDoctors : [])
+        .find((assignment) =>
+          assignment.external_doctor_id === payload.external_doctor_id &&
+          assignment.doctor_id === payload.doctor_id
+        );
+      if (!externalAssignment) {
+        return jsonResponse({
+          message: "Dokter eksternal tidak ditugaskan untuk cabang dan tanggal Walk-In ini."
+        }, 403);
+      }
+      const startMinute = Number(String(externalAssignment.start_time || "").slice(0, 2)) * 60
+        + Number(String(externalAssignment.start_time || "").slice(3, 5));
+      const endMinute = Number(String(externalAssignment.end_time || "").slice(0, 2)) * 60
+        + Number(String(externalAssignment.end_time || "").slice(3, 5));
+      const requestedStartMinute = Number(timeSlot.slice(0, 2)) * 60 + Number(timeSlot.slice(3, 5));
+      const requestedDuration = getBookingPlannedDurationMinutes(payload.planned_treatments);
+      if (
+        !Number.isFinite(startMinute) ||
+        !Number.isFinite(endMinute) ||
+        requestedStartMinute < startMinute ||
+        requestedStartMinute + requestedDuration > endMinute
+      ) {
+        return jsonResponse({
+          message: "Jam dan durasi Walk-In berada di luar jam penugasan dokter eksternal."
+        }, 400);
+      }
+      payload.doctor_name_snapshot = externalAssignment.full_name;
+    }
+
     if (payload.referring_staff_id) {
       if (isPatient) {
         return jsonResponse({ message: "Pasien tidak dapat menetapkan staf referral pada booking." }, 403);

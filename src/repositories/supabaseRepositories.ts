@@ -3364,6 +3364,7 @@ export class SupabaseBookingRepository implements BookingRepository {
       patientId: bookingData.patientId,
       branchId: bookingData.branchId,
       doctorId: bookingData.doctorId,
+      externalDoctorId: bookingData.externalDoctorId ?? null,
       serviceId: bookingData.serviceId,
       bookingDateTime: canonicalBookingDateTime,
       timeSlot,
@@ -3405,6 +3406,9 @@ export class SupabaseBookingRepository implements BookingRepository {
         ...(bookingData.rescheduleReason ? { reschedule_reason: bookingData.rescheduleReason } : {})
       };
       if (isValidUUID(bookingData.doctorId)) payload.doctor_id = bookingData.doctorId;
+      if (bookingData.externalDoctorId && isValidUUID(bookingData.externalDoctorId)) {
+        payload.external_doctor_id = bookingData.externalDoctorId;
+      }
       if (bookingData.serviceId && isValidUUID(bookingData.serviceId)) payload.service_id = bookingData.serviceId;
       if (isValidUUID(bookingId)) payload.id = bookingId;
 
