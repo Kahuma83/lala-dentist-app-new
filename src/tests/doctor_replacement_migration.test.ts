@@ -15,6 +15,18 @@ describe("Doctor replacement compensation migration", () => {
     path.resolve(process.cwd(), "supabase/migrations/20270104000000_split_external_doctor_expenses_by_branch.sql"),
     "utf-8"
   );
+  const adminSelectionMigration = fs.readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/20270213000000_allow_admin_external_doctor_replacement_selection.sql"),
+    "utf-8"
+  );
+  const externalOverrideMigration = fs.readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/20270214000000_enable_admin_external_doctor_override.sql"),
+    "utf-8"
+  );
+  const absenceManager = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/AbsenceRequestManager.tsx"),
+    "utf-8"
+  );
 
   it("keeps external doctors in a Super Admin-managed non-staff roster", () => {
     expect(migration).toMatch(/CREATE TABLE IF NOT EXISTS public\.external_doctor_recipients/i);
@@ -45,6 +57,29 @@ describe("Doctor replacement compensation migration", () => {
   it("keeps action-count confirmation and honor review restricted to Super Admin", () => {
     expect(migration).toMatch(/confirm_external_doctor_action_count[\s\S]*?public\.is_super_admin\(\)/i);
     expect(migration).toMatch(/review_external_doctor_payroll_entry[\s\S]*?public\.is_super_admin\(\)/i);
+  });
+
+  it("allows Super Admin to override an applicant's internal doctor with an external replacement", () => {
+    expect(adminSelectionMigration).toMatch(/CREATE OR REPLACE FUNCTION public\.guard_absence_external_replacement_consent/i);
+    expect(adminSelectionMigration).toMatch(/NEW\.branch_id IS DISTINCT FROM v_request\.branch_id/i);
+    expect(adminSelectionMigration).toMatch(/admin_external_doctor_id UUID/i);
+    expect(adminSelectionMigration).toMatch(/review_doctor_absence_request_with_external_override/i);
+    expect(adminSelectionMigration).toMatch(/NEW\.external_doctor_id IS DISTINCT FROM v_request\.admin_external_doctor_id/i);
+    expect(adminSelectionMigration).toMatch(/admin_external_doctor_id IS NOT NULL[\s\S]*?external_doctor_replacement_assignments/i);
+    expect(adminSelectionMigration).toMatch(/NOT public\.is_super_admin\(\)/i);
+    expect(absenceManager).toMatch(/Pilihan penugasan Super Admin/);
+    expect(absenceManager).toMatch(/replacementType === "EXTERNAL"/);
+    expect(externalOverrideMigration).toMatch(/admin_external_doctor_id IS DISTINCT FROM p_external_doctor_id/i);
+    expect(externalOverrideMigration).toMatch(/Tidak menemukan validasi ketersediaan dokter internal/i);
+    expect(absenceManager).not.toMatch(/optgroup disabled=\{doctorReplacements\.length > 0\}/);
+  });
+
+  it("allows Super Admin to correct external doctor roster details", () => {
+    expect(absenceManager).toMatch(/const saveExternalDoctor = async/);
+    expect(absenceManager).toMatch(/full_name: fullName, phone, updated_at/);
+    expect(absenceManager).toMatch(/externalDoctorEditName/);
+    expect(absenceManager).toMatch(/externalDoctorEditPhone/);
+    expect(absenceManager).toMatch(/>Edit<\/button>/);
   });
 
   it("adds a dedicated chart-of-accounts category for direct replacement expenses", () => {
