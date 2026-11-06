@@ -16,6 +16,7 @@ import {
   StaffShiftScheduleGrid
 } from "../components/StaffShiftScheduleGrid";
 import { AuthService, AuthenticatedUserContext } from "../services/authService";
+import { OwnerAccountManagement } from "../components/OwnerAccountManagement";
 import { uploadStaffProfilePhoto } from "../utils/staffProfilePhoto";
 import {
   UserRole,
@@ -112,7 +113,7 @@ export const HRManagement: React.FC = () => {
   // URL Query Sync for Active Tab via App's lightweight Router
   const { path: currentPath, navigationVersion, navigate: routerNavigate } = useRouter();
   
-  type HRTab = "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "absence" | "overtime";
+  type HRTab = "doctors" | "staff" | "schedules" | "shifts" | "attendance" | "absence" | "overtime" | "owners";
   const getTabFromUrl = (): HRTab => {
     try {
       const search = currentPath.includes("?")
@@ -120,7 +121,8 @@ export const HRManagement: React.FC = () => {
         : (typeof window !== "undefined" ? window.location.search.replace(/^\?/, "") : "");
       const params = new URLSearchParams(search);
       const tab = params.get("tab");
-      if (tab && ["doctors", "staff", "schedules", "shifts", "attendance", "absence", "overtime"].includes(tab)) {
+      if (tab === "owners" && !isSuper) return "doctors";
+      if (tab && ["doctors", "staff", "schedules", "shifts", "attendance", "absence", "overtime", "owners"].includes(tab)) {
         return tab as HRTab;
       }
     } catch {
@@ -1308,6 +1310,21 @@ export const HRManagement: React.FC = () => {
           <Clock className="w-4 h-4" />
           Overtime Engine & Approval (HR-3)
         </button>
+
+        {isSuper && (
+          <button
+            onClick={() => handleTabChange("owners")}
+            className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === "owners"
+                ? "border-emerald-600 text-emerald-700 bg-emerald-50/40"
+                : "border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300"
+            }`}
+            id="tab-owners-button"
+          >
+            <Shield className="w-4 h-4" />
+            Akun Owner
+          </button>
+        )}
       </div>
 
       {/* =========================================================================
@@ -2289,6 +2306,15 @@ export const HRManagement: React.FC = () => {
       ========================================================================= */}
       {activeTab === "overtime" && (
         <OvertimeManager />
+      )}
+
+      {activeTab === "owners" && isSuper && currentUser && (
+        <OwnerAccountManagement actor={{
+          authUserId: currentUser.authUserId || "",
+          userAccountId: currentUser.userAccountId || currentUser.id || "",
+          role: currentUser.role,
+          assignedBranchId: currentUser.assignedBranchId || null
+        }} />
       )}
 
       {/* =========================================================================

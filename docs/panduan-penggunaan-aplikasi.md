@@ -11,6 +11,7 @@ Panduan ini menjelaskan pekerjaan setiap pengguna, dari pasien membuat janji sam
 | **Dokter** | Memeriksa pasien, mengisi rekam medis, mengatur dan menyelesaikan tindakan, serta mengawasi penggunaan bahan tindakan. | Menangani keputusan klinis. Tidak melakukan check-in atau menerima pembayaran pasien. |
 | **Asisten Dokter** | Membantu persiapan pasien dan pelaksanaan tindakan, melihat antrean serta stok, dan mengusulkan perubahan resep bahan. | Tidak menggantikan Dokter untuk keputusan klinis atau penyelesaian tindakan biasa. Tidak menangani pembayaran pasien. |
 | **Super Admin** | Mengawasi dan mengelola seluruh cabang, membantu operasional, mengatur data utama, jadwal, pegawai, penggajian, dan laporan. | Periksa pilihan cabang sebelum menyimpan data atau melakukan transaksi. Tetap serahkan keputusan klinis kepada Dokter. |
+| **Owner** | Melihat ringkasan operasional seluruh cabang melalui dashboard Owner yang dapat dipasang sebagai PWA. | Hanya melihat ringkasan; tidak dapat mengelola data, melihat identitas pasien, atau membuka detail transaksi. |
 | **OB** | Menggunakan Portal Pegawai untuk absensi, melihat jadwal, mengajukan cuti/izin, serta memeriksa informasi pribadi yang tersedia. | Tidak menangani data pasien, antrean, tindakan, tagihan, atau pembayaran. |
 
 **Tidak ada pengguna khusus bernama Kasir.** Penerimaan pembayaran dilakukan Admin Cabang atau Super Admin yang sedang menjalankan tugas kasir. Dokter, Asisten Dokter, dan OB tidak menerima pembayaran pasien.
@@ -336,6 +337,20 @@ Super Admin memiliki menu lintas cabang. Sebelum menyimpan atau memproses transa
 - Gunakan **Laporan Keuangan** untuk meninjau pemasukan, pengeluaran, dan saldo sesuai cabang serta periode yang dipilih.
 - Gunakan **Analisa Kunjungan** untuk meninjau aktivitas kunjungan pasien.
 - Untuk salah catat atau transaksi yang perlu dibatalkan, ikuti proses koreksi resmi yang tersedia. Jangan menghapus jejak transaksi atau mencoba memperbaiki dengan transaksi tambahan tanpa pemeriksaan.
+
+### Owner — Dashboard lintas cabang
+
+Owner masuk memakai username dan kata sandi khusus melalui alamat aplikasi yang sama dengan tambahan `/owner` (contoh: `https://klinik.laladentist.id/owner`). Super Admin membuat, menonaktifkan, atau memperbarui kredensial akun melalui **Manajemen SDM → Akun Owner**. Jangan memakai atau membagikan akun Super Admin untuk keperluan pemantauan.
+
+Dashboard Owner menampilkan ringkasan gabungan dan perbandingan cabang untuk **hari ini**, **7 hari terakhir**, atau **bulan ini**. Booking, kunjungan, pembayaran, dan invoice mengikuti periode tersebut:
+
+- Booking dan kunjungan.
+- Pembayaran yang berhasil diterima selama periode pilihan dan saldo tersisa pada invoice yang dibuat selama periode tersebut. Nilai sisa invoice adalah saldo saat ini, bukan jumlah pembayaran periode.
+
+Antrean aktif dan treatment yang belum selesai merupakan status saat ini, tidak dibatasi oleh periode pilihan. Jumlah barang aktif yang stoknya sudah mencapai atau berada di bawah batas minimum juga merupakan snapshot saat dashboard dimuat.
+
+Dashboard hanya menampilkan angka agregat dan nama cabang, tanpa identitas pasien atau rincian transaksi. Dashboard memerlukan koneksi internet untuk memuat data; saat offline, aplikasi hanya menampilkan pemberitahuan offline dan tidak menyimpan ringkasan sensitif untuk dibuka kembali.
+Untuk memasang sebagai aplikasi, buka halaman tersebut di browser pada ponsel atau komputer lalu pilih **Tambahkan ke layar utama** atau **Install app** dari menu browser.
 
 ## Alur kerja OB dan pegawai lain di Portal Pegawai
 

@@ -13,6 +13,7 @@ export enum UserRole {
   DOCTOR = "DOCTOR",
   DOCTOR_ASSISTANT = "DOCTOR_ASSISTANT",
   OB = "OB",
+  OWNER = "OWNER",
   PATIENT = "PATIENT"
 }
 

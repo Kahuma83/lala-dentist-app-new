@@ -161,11 +161,11 @@ export const onRequestPut = async ({ request, env }) => {
       return jsonResponse({ message: "Akun staf tidak ditemukan." }, 404, origin);
     }
     const target = targetRows[0];
-    if (!["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB"].includes(target.role)) {
-      return jsonResponse({ message: "Akun ini bukan akun staf yang dapat dikelola melalui menu HR." }, 400, origin);
+    if (!["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB", "OWNER"].includes(target.role)) {
+      return jsonResponse({ message: "Akun ini bukan akun staf atau Owner yang dapat dikelola melalui menu HR." }, 400, origin);
     }
     if (target.active !== true) {
-      return jsonResponse({ message: "Akun staf nonaktif tidak dapat diperbarui." }, 400, origin);
+      return jsonResponse({ message: "Akun nonaktif tidak dapat diperbarui." }, 400, origin);
     }
     if (!target.auth_user_id) {
       return jsonResponse({ message: "Akun staf belum terhubung ke Supabase Auth." }, 409, origin);
@@ -312,7 +312,7 @@ export const onRequestPost = async ({ request, env }) => {
     return jsonResponse({ message: "Password minimal harus 6 karakter." }, 400, origin);
   }
 
-  const allowedRoles = ["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB"];
+  const allowedRoles = ["BRANCH_ADMIN", "DOCTOR", "DOCTOR_ASSISTANT", "OB", "OWNER"];
   if (!allowedRoles.includes(role)) {
     return jsonResponse({ message: `Role ${role} tidak diizinkan untuk pembuatan akun staf.` }, 400, origin);
   }
@@ -321,6 +321,9 @@ export const onRequestPost = async ({ request, env }) => {
   }
   if (role === "DOCTOR" && (!doctorId || !staffId)) {
     return jsonResponse({ message: "Akun dokter harus ditautkan ke data dokter dan data pegawai sebelum dibuat." }, 400, origin);
+  }
+  if (role === "OWNER" && (branchId || staffId || doctorId)) {
+    return jsonResponse({ message: "Akun Owner tidak boleh ditautkan ke cabang, staf, atau dokter." }, 400, origin);
   }
 
   const supabase = { url: supabaseUrl, serviceKey, publicApiKey, accessToken };

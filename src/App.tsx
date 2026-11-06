@@ -29,6 +29,7 @@ import { InventoryManagement } from "./pages/InventoryManagement";
 import { DoctorSchedules } from "./pages/DoctorSchedules";
 import { AdminLayout } from "./layouts/AdminLayout";
 import { PrescriptionMedicineCatalog } from "./components/PrescriptionMedicineCatalog";
+import { OwnerDashboard } from "./pages/OwnerDashboard";
 import { UserRole } from "./types/domain";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { isLocalPatientDemoEnabled } from "./utils/localPatientDemo";
@@ -61,6 +62,8 @@ const UnauthorizedPage: React.FC = () => {
               navigate("/assistant/queue");
             } else if (currentUser?.role === UserRole.PATIENT) {
               navigate("/patient/queue");
+            } else if (currentUser?.role === UserRole.OWNER) {
+              navigate("/owner/dashboard");
             } else {
               navigate("/login");
             }
@@ -152,6 +155,13 @@ const AppContent: React.FC = () => {
   // 2. Login route direct access
   if (path === "/login") {
     return <Login />;
+  }
+
+  if (path === "/owner" || path.startsWith("/owner/")) {
+    if (currentUser.role !== UserRole.OWNER) {
+      return <UnauthorizedPage />;
+    }
+    return <OwnerDashboard />;
   }
 
   // ==========================================

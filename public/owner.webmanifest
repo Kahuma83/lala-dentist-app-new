@@ -1,0 +1,21 @@
+{
+  "id": "/owner/dashboard",
+  "name": "Lala Dentist Owner",
+  "short_name": "Lala Owner",
+  "description": "Ringkasan operasional multi-cabang Lala Dentist untuk Owner.",
+  "lang": "id-ID",
+  "start_url": "/owner/dashboard",
+  "scope": "/owner/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f7f6",
+  "theme_color": "#173d35",
+  "icons": [
+    {
+      "src": "/logo-lala.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

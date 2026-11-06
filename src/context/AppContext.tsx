@@ -447,6 +447,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const refreshData = async (changedTable?: string) => {
     const userRole = currentUser?.role;
+    if (userRole === UserRole.OWNER) {
+      if (!changedTable) {
+        clearData();
+        setError(null);
+        setLoading(false);
+      }
+      return;
+    }
     const currentPatientId = currentUser?.patientId;
     const today = getOperationalDateString(new Date().toISOString());
     const attendanceMonthStart = `${today.slice(0, 7)}-01`;
@@ -998,7 +1006,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ? (currentUser.assignedBranchId ?? currentUser.branchId ?? null)
     : selectedBranchId;
   const realtimeSyncStatus = useRealtimeSync({
-    enabled: isSupabaseConfigured && !isLocalPatientDemoEnabled && authStatus === "authenticated",
+    enabled: isSupabaseConfigured && !isLocalPatientDemoEnabled && authStatus === "authenticated" && currentUser?.role !== UserRole.OWNER,
     branchId: realtimeBranchId,
     tables: currentUser?.role === UserRole.PATIENT
       ? PATIENT_REALTIME_TABLES
