@@ -171,6 +171,31 @@ describe("Real Staff Account Provisioning & RBAC", () => {
     ).rejects.toThrow(/Permission denied/i);
   });
 
+  it("Super Admin can create a standalone Owner account without branch or staff links", async () => {
+    const account = await AuthService.createStaffAccount(superAdminContext, {
+      username: "clinic_owner",
+      name: "Clinic Owner",
+      role: UserRole.OWNER,
+      password: "owner-password"
+    });
+
+    expect(account.role).toBe(UserRole.OWNER);
+    expect(account.branchId).toBeNull();
+    expect(account.staffId).toBeNull();
+    const login = await AuthService.signIn("clinic_owner", "owner-password");
+    expect(login.context.role).toBe(UserRole.OWNER);
+  });
+
+  it("rejects Owner accounts linked to a branch", async () => {
+    await expect(AuthService.createStaffAccount(superAdminContext, {
+      username: "owner_with_branch",
+      name: "Invalid Owner",
+      role: UserRole.OWNER,
+      branchId: "branch-gebang",
+      password: "owner-password"
+    })).rejects.toThrow(/tidak boleh ditautkan/i);
+  });
+
   it("6 & 7. New account recorded in database with correct role and branch relations", async () => {
     const acc = await AuthService.createStaffAccount(superAdminContext, {
       username: "rel_test",

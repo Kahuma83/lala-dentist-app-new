@@ -239,13 +239,16 @@ app.post('/api/staff', async (req, res) => {
       return res.status(400).json({ message: 'Password minimal harus 6 karakter.' });
     }
 
-    const allowedRoles = ['BRANCH_ADMIN', 'DOCTOR', 'DOCTOR_ASSISTANT', 'OB'];
+    const allowedRoles = ['BRANCH_ADMIN', 'DOCTOR', 'DOCTOR_ASSISTANT', 'OB', 'OWNER'];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: `Role ${role} tidak diizinkan untuk pembuatan akun staf.` });
     }
 
     if ((role === 'BRANCH_ADMIN' || role === 'DOCTOR_ASSISTANT' || role === 'OB') && !branchId) {
       return res.status(400).json({ message: `Cabang penempatan wajib dipilih untuk role ${role}.` });
+    }
+    if (role === 'OWNER' && (branchId || staffId || doctorId)) {
+      return res.status(400).json({ message: 'Akun Owner tidak boleh ditautkan ke cabang, staf, atau dokter.' });
     }
 
     if (role === 'DOCTOR') {
@@ -451,8 +454,8 @@ app.put('/api/staff', async (req, res) => {
       .eq('id', accountId)
       .maybeSingle();
     if (targetError || !target) return res.status(404).json({ message: 'Akun staf tidak ditemukan.' });
-    if (!['BRANCH_ADMIN', 'DOCTOR', 'DOCTOR_ASSISTANT', 'OB'].includes(target.role)) {
-      return res.status(400).json({ message: 'Akun ini bukan akun staf yang dapat dikelola melalui menu HR.' });
+    if (!['BRANCH_ADMIN', 'DOCTOR', 'DOCTOR_ASSISTANT', 'OB', 'OWNER'].includes(target.role)) {
+      return res.status(400).json({ message: 'Akun ini bukan akun staf atau Owner yang dapat dikelola melalui menu HR.' });
     }
     if (target.active !== true) return res.status(400).json({ message: 'Akun staf nonaktif tidak dapat diperbarui.' });
     if (!target.auth_user_id) return res.status(409).json({ message: 'Akun staf belum terhubung ke Supabase Auth.' });

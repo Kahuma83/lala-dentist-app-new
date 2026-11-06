@@ -76,6 +76,9 @@ export const Login: React.FC = () => {
       case UserRole.SUPER_ADMIN:
         navigate("/super-admin/dashboard");
         break;
+      case UserRole.OWNER:
+        navigate("/owner/dashboard");
+        break;
       case UserRole.BRANCH_ADMIN:
         navigate("/branch-admin/dashboard");
         break;

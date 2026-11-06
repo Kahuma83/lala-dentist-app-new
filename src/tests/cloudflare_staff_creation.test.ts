@@ -146,6 +146,61 @@ describe("Cloudflare Pages staff account endpoint", () => {
     expect(fetchMock.mock.calls[4][1].headers.Authorization).toMatch(new RegExp(["Bear", "er"].join("") + " "));
   });
 
+  it("allows an active Super Admin to create an unlinked Owner account", async () => {
+    const ownerPayload = {
+      username: "clinic_owner",
+      name: "Clinic Owner",
+      role: "OWNER",
+      password: "owner-password"
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "super-admin-auth-id" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { role: "SUPER_ADMIN", active: true }
+      ]), { status: 200 }))
+      .mockResolvedValueOnce(new Response("[]", { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-auth-id" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        id: "owner-account-id",
+        auth_user_id: "owner-auth-id",
+        username: "clinic_owner",
+        email: "clinic_owner@laladentist.id",
+        name: "Clinic Owner",
+        role: "OWNER",
+        branch_id: null,
+        staff_id: null,
+        doctor_id: null,
+        active: true
+      }]), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestPost({
+      request: createRequest("POST", ownerPayload, { Authorization: "Bearer valid-session-token" }),
+      env
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      account: { role: "OWNER", branchId: null, staffId: null, doctorId: null }
+    });
+    expect(fetchMock.mock.calls[4][1].body).toContain('"branch_id":null');
+    expect(fetchMock.mock.calls[4][1].body).toContain('"staff_id":null');
+  });
+
+  it("rejects Owner accounts associated with a branch", async () => {
+    const response = await onRequestPost({
+      request: createRequest("POST", {
+        ...createAccountPayload,
+        role: "OWNER"
+      }, { Authorization: "Bearer valid-session-token" }),
+      env
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      message: "Akun Owner tidak boleh ditautkan ke cabang, staf, atau dokter."
+    });
+  });
+
   it("returns a CORS error response from POST for a disallowed origin", async () => {
     const request = new Request("https://klinik.laladentist.id/api/staff", {
       method: "POST",
@@ -226,6 +281,49 @@ describe("Cloudflare Pages staff account endpoint", () => {
     expect(fetchMock.mock.calls[5][1].body).toContain("new-secret-password");
     expect(fetchMock.mock.calls[5][1].body).toContain("ani.baru@laladentist.id");
     expect(fetchMock.mock.calls[5][1].body).not.toContain("Admin");
+  });
+
+  it("allows an active Super Admin to update Owner login credentials", async () => {
+    const updatedOwner = {
+      id: "owner-account-id",
+      auth_user_id: "owner-auth-id",
+      username: "owner.new",
+      email: "owner.new@laladentist.id",
+      name: "Clinic Owner",
+      role: "OWNER",
+      branch_id: null,
+      staff_id: null,
+      doctor_id: null,
+      active: true,
+      created_at: "2026-10-22T00:00:00.000Z",
+      updated_at: "2026-10-23T00:00:00.000Z"
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "super-admin-auth-id" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ role: "SUPER_ADMIN", active: true }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        ...updatedOwner,
+        username: "owner",
+        email: "owner@laladentist.id"
+      }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response("[]", { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([updatedOwner]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { id: "owner-auth-id" } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onRequestPut({
+      request: createRequest("PUT", {
+        accountId: "owner-account-id",
+        username: "owner.new",
+        password: "new-owner-password"
+      }, { Authorization: "Bearer valid-session-token" }),
+      env
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      account: { id: "owner-account-id", role: "OWNER", username: "owner.new" }
+    });
   });
 
   it("rejects staff credential changes from non-Super Admin accounts", async () => {

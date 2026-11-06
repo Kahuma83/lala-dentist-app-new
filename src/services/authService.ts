@@ -886,8 +886,8 @@ export class AuthService {
   }
 
   /**
-  * Creates a new staff/doctor login account securely in Supabase Auth & user_accounts.
-  * Enforces Super Admin authorization, username uniqueness, password strength, and branch binding.
+  * Creates a new staff, doctor, or Owner login account securely in Supabase Auth & user_accounts.
+  * Enforces Super Admin authorization, username uniqueness, password strength, and role binding.
   */
   /**
    * Compatibility alias used by the admin UI and newer secure flows.
@@ -943,7 +943,7 @@ export class AuthService {
     }
 
     // Role validation: Staff roles allowed
-    const allowedRoles = [UserRole.BRANCH_ADMIN, UserRole.DOCTOR, UserRole.DOCTOR_ASSISTANT, UserRole.OB];
+    const allowedRoles = [UserRole.BRANCH_ADMIN, UserRole.DOCTOR, UserRole.DOCTOR_ASSISTANT, UserRole.OB, UserRole.OWNER];
     if (!allowedRoles.includes(params.role)) {
       throw new Error(`Role ${params.role} tidak diizinkan untuk pembuatan akun staf`);
     }
@@ -954,6 +954,9 @@ export class AuthService {
       !params.branchId
     ) {
       throw new Error(`Cabang penempatan wajib dipilih untuk role ${params.role}`);
+    }
+    if (params.role === UserRole.OWNER && (params.branchId || params.staffId || params.doctorId)) {
+      throw new Error("Akun Owner tidak boleh ditautkan ke cabang, staf, atau dokter.");
     }
 
     const syntheticEmail = this.usernameToInternalEmail(username);
@@ -1041,7 +1044,7 @@ export class AuthService {
     params: { accountId: string; username: string; password?: string }
   ): Promise<UserAccount> {
     if (actorContext.role !== UserRole.SUPER_ADMIN) {
-      throw new Error("Permission denied: Only SUPER_ADMIN can update staff login credentials.");
+      throw new Error("Permission denied: Only SUPER_ADMIN can update staff or Owner login credentials.");
     }
     if (!params.accountId) throw new Error("Akun staf yang akan diubah wajib dipilih.");
     const username = this.normalizeUsername(params.username);
