@@ -79,6 +79,13 @@ const formatCalendarDate = (date: string, options: Intl.DateTimeFormatOptions) =
   new Intl.DateTimeFormat("id-ID", { ...options, timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
 
 type BookingReferralStaffOption = Pick<Staff, "id" | "fullName" | "position" | "branchId">;
+type WalkInExternalDoctorOption = {
+  external_doctor_id: string;
+  full_name: string;
+  doctor_id: string;
+  start_time: string;
+  end_time: string;
+};
 
 const isBookingReferralStaffOption = (value: unknown): value is {
   id: string;
@@ -138,7 +145,11 @@ export const BookingManagement: React.FC = () => {
   const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(null);
   const [formBranchId, setFormBranchId] = useState<string>("");
   const [formDoctorId, setFormDoctorId] = useState<string>("");
+  const [formExternalDoctorId, setFormExternalDoctorId] = useState<string>("");
   const [formDate, setFormDate] = useState<string>(getTomorrowDateString());
+  const [walkInExternalDoctors, setWalkInExternalDoctors] = useState<WalkInExternalDoctorOption[]>([]);
+  const [isLoadingWalkInExternalDoctors, setIsLoadingWalkInExternalDoctors] = useState(false);
+  const [walkInExternalDoctorError, setWalkInExternalDoctorError] = useState<string | null>(null);
   const [formTimeSlot, setFormTimeSlot] = useState<string>("");
   const [requireExplicitTimeSelection, setRequireExplicitTimeSelection] = useState(false);
   const [formReferringStaffId, setFormReferringStaffId] = useState("");
@@ -471,6 +482,7 @@ export const BookingManagement: React.FC = () => {
     );
     setFormDate(getTodayDateString());
     setFormDoctorId("");
+    setFormExternalDoctorId("");
     setFormTimeSlot("");
     setRequireExplicitTimeSelection(false);
     setFormReferringStaffId("");
@@ -485,6 +497,49 @@ export const BookingManagement: React.FC = () => {
     setIsModalOpen(true);
     navigate(path);
   }, [branches, currentUser, navigate, path, patients, selectedBranchId]);
+
+  useEffect(() => {
+    if (
+      !isModalOpen ||
+      bookingSource !== BookingSource.WALK_IN ||
+      !formBranchId ||
+      formDate !== getTodayDateString()
+    ) {
+      setWalkInExternalDoctors([]);
+      setWalkInExternalDoctorError(null);
+      setIsLoadingWalkInExternalDoctors(false);
+      return;
+    }
+
+    let active = true;
+    setIsLoadingWalkInExternalDoctors(true);
+    setWalkInExternalDoctors([]);
+    setWalkInExternalDoctorError(null);
+    void Promise.resolve(supabase.rpc("get_walkin_external_doctors", {
+      p_branch_id: formBranchId,
+      p_covered_date: formDate
+    })).then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        setWalkInExternalDoctors([]);
+        setWalkInExternalDoctorError(`Gagal memuat dokter pengganti eksternal: ${error.message}`);
+        return;
+      }
+      setWalkInExternalDoctors((data || []) as WalkInExternalDoctorOption[]);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setWalkInExternalDoctors([]);
+      setWalkInExternalDoctorError(
+        error instanceof Error ? error.message : "Gagal memuat dokter pengganti eksternal."
+      );
+    }).finally(() => {
+      if (active) setIsLoadingWalkInExternalDoctors(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [bookingSource, formBranchId, formDate, isModalOpen]);
 
   // Active schedules flexibly filtered by selected branch, date, and status ACTIVE
   const activeSchedulesForBranchAndDate = useMemo(() => {
@@ -504,6 +559,12 @@ export const BookingManagement: React.FC = () => {
     const scheduledDocIds = new Set(activeSchedulesForBranchAndDate.map((s) => s.doctorId));
     const activeDocs = doctorsList.filter((d) => d.active ?? d.isActive ?? true);
     return activeDocs.filter((d) => {
+      if (
+        bookingSource === BookingSource.WALK_IN &&
+        walkInExternalDoctors.some((externalDoctor) => externalDoctor.doctor_id === d.id)
+      ) {
+        return false;
+      }
       if (scheduledDocIds.has(d.id)) return true;
       return activeSchedulesForBranchAndDate.some((s) => {
         const cleanD = d.id.toLowerCase().replace(/^doc-/, "");
@@ -511,17 +572,65 @@ export const BookingManagement: React.FC = () => {
         return cleanD === cleanS || (d.doctorCode && d.doctorCode.toLowerCase() === s.doctorId.toLowerCase());
       });
     });
-  }, [doctorsList, formBranchId, formDate, activeSchedulesForBranchAndDate]);
+  }, [bookingSource, doctorsList, formBranchId, formDate, activeSchedulesForBranchAndDate, walkInExternalDoctors]);
 
   // Sync formDoctorId when availableDoctors changes
   useEffect(() => {
+    if (formExternalDoctorId) {
+      const selectedExternalDoctor = walkInExternalDoctors.find(
+        (doctor) => doctor.external_doctor_id === formExternalDoctorId
+      );
+      if (!selectedExternalDoctor) {
+        if (!isLoadingWalkInExternalDoctors) {
+          setFormExternalDoctorId("");
+          setFormDoctorId("");
+        }
+      } else if (formDoctorId !== selectedExternalDoctor.doctor_id) {
+        setFormDoctorId(selectedExternalDoctor.doctor_id);
+      }
+      return;
+    }
     if (formDoctorId && !availableDoctors.some((d) => d.id === formDoctorId)) {
       setFormDoctorId("");
     }
-  }, [availableDoctors, formDoctorId]);
+  }, [availableDoctors, formDoctorId, formExternalDoctorId, walkInExternalDoctors, isLoadingWalkInExternalDoctors]);
 
   // Calculate available time slots based on selected doctor's schedule or default clinic slots
   const availableTimeSlots = useMemo(() => {
+    const selectedExternalDoctor = walkInExternalDoctors.find(
+      (doctor) => doctor.external_doctor_id === formExternalDoctorId
+    );
+    if (formExternalDoctorId && selectedExternalDoctor && formDoctorId) {
+      const requestedDuration = getPlannedTreatmentDurationMinutes(snapshotPlannedTreatments(plannedServices), 30);
+      const externalSchedule: DoctorSchedule = {
+        id: `external-${selectedExternalDoctor.external_doctor_id}`,
+        doctorId: selectedExternalDoctor.doctor_id,
+        branchId: formBranchId,
+        date: formDate,
+        startTime: selectedExternalDoctor.start_time,
+        endTime: selectedExternalDoctor.end_time,
+        status: ScheduleStatus.ACTIVE,
+        createdAt: "",
+        updatedAt: ""
+      };
+      return getScheduledBookingTimeSlotsForSchedules([externalSchedule], requestedDuration).filter((slot) => {
+        const candidateStart = getMinutesOfDay(slot);
+        if (candidateStart === null) return false;
+        return !bookings.some((booking) => {
+          if (
+            (booking.status !== BookingStatus.PENDING && booking.status !== BookingStatus.CONFIRMED) ||
+            booking.doctorId !== formDoctorId ||
+            !isBranchMatch(booking.branchId, formBranchId, branches) ||
+            getOperationalDateString(booking.bookingDateTime) !== formDate
+          ) return false;
+          const bookedStart = getMinutesOfDay(booking.timeSlot || getOperationalTimeString(booking.bookingDateTime));
+          if (bookedStart === null) return false;
+          const bookedDuration = getPlannedTreatmentDurationMinutes(booking.plannedTreatments || [], 30);
+          return candidateStart < bookedStart + bookedDuration && bookedStart < candidateStart + requestedDuration;
+        });
+      });
+    }
+
     if (hasScheduleForBranchAndDate && formDoctorId) {
       const selectedDoctor = doctorsList.find((doctor) => doctor.id === formDoctorId);
       const normalizedDoctorId = formDoctorId.toLowerCase().replace(/^doc-/, "");
@@ -551,7 +660,7 @@ export const BookingManagement: React.FC = () => {
       });
     }
     return DEFAULT_BOOKING_TIME_SLOTS;
-  }, [hasScheduleForBranchAndDate, formDoctorId, activeSchedulesForBranchAndDate, bookings, formBranchId, formDate, branches, plannedServices, doctorsList]);
+  }, [hasScheduleForBranchAndDate, formDoctorId, formExternalDoctorId, walkInExternalDoctors, activeSchedulesForBranchAndDate, bookings, formBranchId, formDate, branches, plannedServices, doctorsList]);
 
   const rescheduleDoctors = useMemo(() => {
     return doctorsList.filter((doctor) => doctor.active && rescheduleSchedules.some((schedule) => {
@@ -985,11 +1094,26 @@ export const BookingManagement: React.FC = () => {
     }
 
     if (!formDoctorId) {
-      if (availableDoctors.length === 0) {
+      if (availableDoctors.length === 0 && walkInExternalDoctors.length === 0) {
         setFormError("Tidak ada dokter yang bertugas di tanggal dan cabang ini. Silakan pilih tanggal atau cabang lain.");
       } else {
         setFormError("Pilih dokter pemeriksa");
       }
+      return;
+    }
+    const selectedExternalDoctor = walkInExternalDoctors.find(
+      (doctor) => doctor.external_doctor_id === formExternalDoctorId
+    );
+    if (formExternalDoctorId && (
+      bookingSource !== BookingSource.WALK_IN ||
+      !selectedExternalDoctor ||
+      formDate !== getTodayDateString()
+    )) {
+      setFormError("Dokter eksternal hanya dapat dipilih untuk Walk-In pada cabang dan tanggal penugasan yang disetujui.");
+      return;
+    }
+    if (!formExternalDoctorId && !availableDoctors.some((doctor) => doctor.id === formDoctorId)) {
+      setFormError("Pilih dokter dengan jadwal aktif di cabang dan tanggal ini.");
       return;
     }
 
@@ -1023,6 +1147,7 @@ export const BookingManagement: React.FC = () => {
           patientId: selectedPatient.id,
           branchId: formBranchId,
           doctorId: formDoctorId,
+          externalDoctorId: selectedExternalDoctor?.external_doctor_id ?? null,
           bookingDateTime: fullISOString,
           timeSlot: formTimeSlot,
           notes: formNotes,
@@ -1031,10 +1156,10 @@ export const BookingManagement: React.FC = () => {
           channel: bookingSource,
           status: BookingStatus.PENDING,
           patientNameSnapshot: selectedPatient.fullName || selectedPatient.name || "Pasien",
-          doctorNameSnapshot: selectedDoc?.name || "Dokter",
+          doctorNameSnapshot: selectedExternalDoctor?.full_name || selectedDoc?.name || "Dokter",
           branchNameSnapshot: selectedBr?.name || "Cabang",
           referringStaffId: formReferringStaffId || null,
-          scheduleVerified: hasScheduleForBranchAndDate
+          scheduleVerified: selectedExternalDoctor ? true : hasScheduleForBranchAndDate
         },
         currentUser?.role,
         currentUser?.assignedBranchId
@@ -1048,6 +1173,8 @@ export const BookingManagement: React.FC = () => {
         setSelectedPatient(null);
         setPatientSearch("");
         setFormNotes("");
+        setFormDoctorId("");
+        setFormExternalDoctorId("");
         setFormReferringStaffId("");
         setReferringStaffSearch("");
         setPlannedServices([]);
@@ -2529,7 +2656,12 @@ export const BookingManagement: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-700 mb-1">Sumber Jadwal</label>
                 <select
                   value={bookingSource}
-                  onChange={(event) => setBookingSource(event.target.value as BookingSource)}
+                  onChange={(event) => {
+                    setBookingSource(event.target.value as BookingSource);
+                    setFormExternalDoctorId("");
+                    setFormDoctorId("");
+                    setWalkInExternalDoctors([]);
+                  }}
                   className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium"
                 >
                   <option value={BookingSource.PATIENT_PORTAL}>Online</option>
@@ -2538,7 +2670,9 @@ export const BookingManagement: React.FC = () => {
                   <option value={BookingSource.WALK_IN}>Walk-In</option>
                 </select>
                 {bookingSource === BookingSource.WALK_IN && (
-                  <p className="mt-1 text-[10px] text-slate-500">Walk-In tetap dijadwalkan pada slot dokter yang tersedia. Check-In dilakukan saat pasien siap atau waktunya mendekat.</p>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Walk-In tetap dijadwalkan pada slot yang tersedia. Dokter eksternal hanya tersedia bila ada penugasan pengganti yang disetujui untuk cabang dan hari ini.
+                  </p>
                 )}
               </div>
 
@@ -2625,6 +2759,9 @@ export const BookingManagement: React.FC = () => {
                     })()}
                     onChange={(e) => {
                       setFormBranchId(e.target.value);
+                      setFormExternalDoctorId("");
+                      setFormDoctorId("");
+                      setWalkInExternalDoctors([]);
                     }}
                     disabled={currentUser?.role === UserRole.BRANCH_ADMIN}
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium disabled:opacity-75"
@@ -2643,34 +2780,77 @@ export const BookingManagement: React.FC = () => {
                     3. Dokter Pemeriksa:
                   </label>
                   <select
-                    value={formDoctorId}
-                    onChange={(e) => setFormDoctorId(e.target.value)}
+                    value={formExternalDoctorId ? `EXTERNAL:${formExternalDoctorId}` : formDoctorId ? `INTERNAL:${formDoctorId}` : ""}
+                    onChange={(e) => {
+                      const [providerType, providerId] = e.target.value.split(":", 2);
+                      if (providerType === "EXTERNAL") {
+                        const selectedExternal = walkInExternalDoctors.find(
+                          (doctor) => doctor.external_doctor_id === providerId
+                        );
+                        setFormExternalDoctorId(providerId);
+                        setFormDoctorId(selectedExternal?.doctor_id || "");
+                      } else {
+                        setFormExternalDoctorId("");
+                        setFormDoctorId(providerType === "INTERNAL" ? providerId : "");
+                      }
+                    }}
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium"
                     id="select-modal-doctor"
                   >
-                    {availableDoctors.length === 0 ? (
+                    {availableDoctors.length === 0 && walkInExternalDoctors.length === 0 ? (
                       <option value="" disabled>
-                        Tidak ada dokter yang bertugas di tanggal/cabang ini
+                        {isLoadingWalkInExternalDoctors
+                          ? "Memuat dokter pengganti yang ditugaskan..."
+                          : "Tidak ada dokter yang bertugas di tanggal/cabang ini"}
                       </option>
                     ) : (
                       <>
                         <option value="">-- Pilih Dokter --</option>
                         {availableDoctors.map((d) => (
-                          <option key={d.id} value={d.id}>
+                          <option key={d.id} value={`INTERNAL:${d.id}`}>
                             {d.name} ({d.specialization})
                           </option>
                         ))}
+                        {bookingSource === BookingSource.WALK_IN && walkInExternalDoctors.length > 0 && (
+                          <optgroup label="Dokter eksternal yang ditugaskan">
+                            {walkInExternalDoctors.map((doctor) => (
+                              <option
+                                key={doctor.external_doctor_id}
+                                value={`EXTERNAL:${doctor.external_doctor_id}`}
+                              >
+                                {doctor.full_name} (Eksternal)
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
                       </>
                     )}
                   </select>
-                  {availableDoctors.length === 0 && (
+                  {availableDoctors.length === 0 && walkInExternalDoctors.length === 0 && !isLoadingWalkInExternalDoctors && (
                     <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 flex items-center gap-1.5" id="alert-schedule-unconfirmed">
                       <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>Tidak ada dokter yang bertugas di tanggal/cabang ini</span>
+                      <span>{walkInExternalDoctorError || "Tidak ada dokter yang bertugas di tanggal/cabang ini"}</span>
                     </div>
                   )}
+                  {bookingSource === BookingSource.WALK_IN && isLoadingWalkInExternalDoctors && (
+                    <p className="mt-1 text-[10px] text-slate-500">Memeriksa penugasan dokter eksternal yang disetujui...</p>
+                  )}
+                  {bookingSource === BookingSource.WALK_IN && walkInExternalDoctorError && (
+                    <p role="alert" className="mt-1 text-[10px] text-rose-700">{walkInExternalDoctorError}</p>
+                  )}
                   {(() => {
+                    const selectedExternal = walkInExternalDoctors.find(
+                      (doctor) => doctor.external_doctor_id === formExternalDoctorId
+                    );
                     const selDoc = doctorsList.find((d) => d.id === formDoctorId);
+                    if (selectedExternal) {
+                      return (
+                        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs">
+                          <span className="font-semibold text-amber-900">{selectedExternal.full_name}</span>
+                          <span className="ml-1 text-[10px] text-amber-800">Dokter eksternal · ditugaskan untuk cabang/tanggal ini</span>
+                        </div>
+                      );
+                    }
                     if (!selDoc) return null;
                     const photo = selDoc.photoUrl || selDoc.avatarUrl || selDoc.profileImage;
                     return (
@@ -2708,7 +2888,12 @@ export const BookingManagement: React.FC = () => {
                   <input
                     type="date"
                     value={formDate}
-                    onChange={(e) => setFormDate(e.target.value)}
+                    onChange={(e) => {
+                      setFormDate(e.target.value);
+                      setFormExternalDoctorId("");
+                      setFormDoctorId("");
+                      setWalkInExternalDoctors([]);
+                    }}
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-medium"
                     id="input-modal-date"
                   />
