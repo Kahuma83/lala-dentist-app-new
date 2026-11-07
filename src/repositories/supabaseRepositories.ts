@@ -147,6 +147,11 @@ import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentU
 import { checkRMUniqueness, getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { normalizeReferralServiceName } from "../utils/referralIncentives";
 import { selectMostSpecificTreatmentRules } from "../utils/compensationRules";
+import {
+  DEFAULT_OPERATIONAL_DATA_LOOKBACK_DAYS,
+  getOperationalDataCutoff,
+  isWithinOperationalDataWindow
+} from "../utils/operationalDataWindow";
 
 const attendanceSelectColumns = [
   "id", "staff_id", "branch_id", "date", "attendance_status",
@@ -648,12 +653,17 @@ function isMissingPatientProfilesTable(error: { code?: string; message?: string 
 export class SupabasePatientRepository implements PatientRepository {
   private patientLoadPromises = new Map<string, Promise<PatientProfile[]>>();
 
-  async getPatients(currentUserRole?: UserRole, _userBranchId?: string | null): Promise<PatientProfile[]> {
-    const requestKey = currentUserRole || "default";
+  async getPatients(
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null,
+    options: { includeMedicalEnrichment?: boolean } = {}
+  ): Promise<PatientProfile[]> {
+    const includeMedicalEnrichment = options.includeMedicalEnrichment !== false;
+    const requestKey = `${currentUserRole || "default"}:${includeMedicalEnrichment ? "enriched" : "summary"}`;
     const pendingRequest = this.patientLoadPromises.get(requestKey);
     if (pendingRequest) return pendingRequest;
 
-    const request = this.loadPatients(currentUserRole);
+    const request = this.loadPatients(currentUserRole, includeMedicalEnrichment);
     this.patientLoadPromises.set(requestKey, request);
     try {
       return await request;
@@ -664,7 +674,10 @@ export class SupabasePatientRepository implements PatientRepository {
     }
   }
 
-  private async loadPatients(currentUserRole?: UserRole): Promise<PatientProfile[]> {
+  private async loadPatients(
+    currentUserRole: UserRole | undefined,
+    includeMedicalEnrichment: boolean
+  ): Promise<PatientProfile[]> {
     ensureSupabaseConnected();
     const selectColumns = patientSelectColumns(currentUserRole);
 
@@ -674,11 +687,12 @@ export class SupabasePatientRepository implements PatientRepository {
         if (error) {
           throw new Error(`Gagal membaca pasien yang ditugaskan kepada dokter: ${error.message}`);
         }
-        const patients = await this.attachMedicalHistoryNotes(
-          (data || []).map(this.mapPatientFromDb.bind(this)),
-          currentUserRole
-        );
-        const withBranchRms = await this.attachBranchMedicalRecordNumbers(patients);
+        const patients = (data || []).map(this.mapPatientFromDb.bind(this));
+        if (!includeMedicalEnrichment) {
+          return patients.map((patient) => redactPatientPhone(patient, currentUserRole));
+        }
+        const withNotes = await this.attachMedicalHistoryNotes(patients, currentUserRole);
+        const withBranchRms = await this.attachBranchMedicalRecordNumbers(withNotes);
         return withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole));
       }
 
@@ -689,11 +703,12 @@ export class SupabasePatientRepository implements PatientRepository {
         throw new Error(`Gagal membaca pasien dari patient_profiles: ${error.message}`);
       }
       if (!error && Array.isArray(data)) {
-        const patients = await this.attachMedicalHistoryNotes(
-          data.map(this.mapPatientFromDb.bind(this)),
-          currentUserRole
-        );
-        const withBranchRms = await this.attachBranchMedicalRecordNumbers(patients);
+        const patients = data.map(this.mapPatientFromDb.bind(this));
+        if (!includeMedicalEnrichment) {
+          return patients.map((patient) => redactPatientPhone(patient, currentUserRole));
+        }
+        const withNotes = await this.attachMedicalHistoryNotes(patients, currentUserRole);
+        const withBranchRms = await this.attachBranchMedicalRecordNumbers(withNotes);
         return withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole));
       }
 
@@ -701,8 +716,12 @@ export class SupabasePatientRepository implements PatientRepository {
       try {
         const { data, error } = await supabase.from("patients").select(selectColumns);
         if (!error && Array.isArray(data)) {
-          const patients = await this.attachMedicalHistoryNotes(data.map(this.mapPatientFromDb.bind(this)), currentUserRole);
-          const withBranchRms = await this.attachBranchMedicalRecordNumbers(patients);
+          const patients = data.map(this.mapPatientFromDb.bind(this));
+          if (!includeMedicalEnrichment) {
+            return patients.map((patient) => redactPatientPhone(patient, currentUserRole));
+          }
+          const withNotes = await this.attachMedicalHistoryNotes(patients, currentUserRole);
+          const withBranchRms = await this.attachBranchMedicalRecordNumbers(withNotes);
           return withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole));
         }
       } catch (e) {
@@ -1562,6 +1581,80 @@ export class SupabaseQueueRepository implements QueueRepository {
     const remoteIds = new Set(remoteItems.map((q) => q.id));
     const localOnly = fallback.filter((q) => !remoteIds.has(q.id));
     return [...remoteItems, ...localOnly];
+  }
+
+  async getAllQueueItemsPaged(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<QueueItem[]> {
+    ensureSupabaseConnected();
+    const isBranchScopedRole =
+      currentUserRole === UserRole.BRANCH_ADMIN ||
+      currentUserRole === UserRole.DOCTOR_ASSISTANT ||
+      currentUserRole === UserRole.DOCTOR;
+    const effectiveBranchId = isBranchScopedRole ? userBranchId || null : null;
+    if (effectiveBranchId && !isValidUUID(effectiveBranchId) && !useRepositoryTestFallbacks()) {
+      throw new Error("ID cabang tidak valid untuk memuat riwayat antrean.");
+    }
+    const pageSize = 1000;
+    const remoteItems: QueueItem[] = [];
+    for (let offset = 0; ; offset += pageSize) {
+      let query = supabase
+        .from("queue_items")
+        .select("*")
+        .order("arrival_at", { ascending: false })
+        .order("id", { ascending: true });
+      if (effectiveBranchId && isValidUUID(effectiveBranchId)) {
+        query = query.eq("branch_id", effectiveBranchId);
+      }
+      const { data, error } = await query.range(offset, offset + pageSize - 1);
+      if (error) throw new Error(`Gagal memuat seluruh riwayat antrean: ${error.message}`);
+      const page = data || [];
+      remoteItems.push(...page.map(this.mapQueueFromDb));
+      if (page.length < pageSize) break;
+    }
+
+    const remoteIds = new Set(remoteItems.map((item) => item.id));
+    return [
+      ...remoteItems,
+      ...this.getFallbackQueue().filter((item) =>
+        !remoteIds.has(item.id) &&
+        (!effectiveBranchId || isBranchMatch(item.branchId, effectiveBranchId))
+      )
+    ];
+  }
+
+  async getOperationalQueueItems(
+    lookbackDays = DEFAULT_OPERATIONAL_DATA_LOOKBACK_DAYS
+  ): Promise<QueueItem[]> {
+    ensureSupabaseConnected();
+    const cutoff = getOperationalDataCutoff(lookbackDays, AppClock.nowISO());
+    let remoteItems: QueueItem[] = [];
+    try {
+      const { data, error } = await supabase
+        .from("queue_items")
+        .select("*")
+        .or(`arrival_at.gte.${cutoff},status.in.(WAITING,CALLING,IN_PREPARATION,IN_CONSULTATION)`)
+        .order("sequence_order", { ascending: true });
+      if (error) {
+        console.warn("[Supabase] getOperationalQueueItems failed, using local fallback:", error.message);
+      } else {
+        remoteItems = (data || []).map(this.mapQueueFromDb);
+      }
+    } catch (error) {
+      console.warn("[Supabase] getOperationalQueueItems query failed:", error);
+    }
+
+    const remoteIds = new Set(remoteItems.map((item) => item.id));
+    const fallbackItems = this.getFallbackQueue().filter((item) =>
+      isWithinOperationalDataWindow(
+        item.arrivalAt || item.checkInTime || item.createdAt,
+        item.status,
+        [QueueStatus.WAITING, QueueStatus.CALLING, QueueStatus.IN_PREPARATION, QueueStatus.IN_CONSULTATION],
+        cutoff
+      ) && !remoteIds.has(item.id)
+    );
+    return [...remoteItems, ...fallbackItems];
   }
 
   async getQueueByBranch(
@@ -3280,6 +3373,97 @@ export class SupabaseBookingRepository implements BookingRepository {
     return merged;
   }
 
+  async getAllBookingsPaged(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<Booking[]> {
+    ensureSupabaseConnected();
+    const pageSize = 1000;
+    const remoteBookings: Booking[] = [];
+    for (let offset = 0; ; offset += pageSize) {
+      let query = supabase
+        .from("bookings")
+        .select("*")
+        .order("booking_date_time", { ascending: false })
+        .order("id", { ascending: true });
+      if (
+        (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) &&
+        userBranchId &&
+        isValidUUID(userBranchId)
+      ) {
+        query = query.eq("branch_id", userBranchId);
+      }
+      const { data, error } = await query.range(offset, offset + pageSize - 1);
+      if (error) throw new Error(`Gagal memuat seluruh riwayat booking: ${error.message}`);
+      const page = data || [];
+      remoteBookings.push(...page.map(this.mapBookingFromDb));
+      if (page.length < pageSize) break;
+    }
+
+    const remoteIds = new Set(remoteBookings.map((booking) => booking.id));
+    const branchScoped = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) &&
+      userBranchId;
+    return [
+      ...remoteBookings,
+      ...this.getFallbackBookings().filter((booking) =>
+        !remoteIds.has(booking.id) && (!branchScoped || booking.branchId === userBranchId)
+      )
+    ];
+  }
+
+  async getOperationalBookings(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    lookbackDays = DEFAULT_OPERATIONAL_DATA_LOOKBACK_DAYS
+  ): Promise<Booking[]> {
+    ensureSupabaseConnected();
+    const cutoff = getOperationalDataCutoff(lookbackDays, AppClock.nowISO());
+    let query = supabase
+      .from("bookings")
+      .select("*")
+      .or(`booking_date_time.gte.${cutoff},status.in.(PENDING,CONFIRMED)`)
+      .order("booking_date_time", { ascending: false });
+    if (
+      (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) &&
+      userBranchId &&
+      isValidUUID(userBranchId)
+    ) {
+      query = query.eq("branch_id", userBranchId);
+    }
+
+    let remoteBookings: Booking[] = [];
+    try {
+      const { data, error } = await query;
+      if (error) {
+        console.warn("[Supabase] getOperationalBookings failed, using local fallback:", error.message);
+      } else {
+        remoteBookings = (data || []).map(this.mapBookingFromDb);
+      }
+    } catch (error) {
+      console.warn("[Supabase] getOperationalBookings query failed:", error);
+    }
+    if (
+      (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) &&
+      userBranchId
+    ) {
+      remoteBookings = remoteBookings.filter((booking) => booking.branchId === userBranchId);
+    }
+    const remoteIds = new Set(remoteBookings.map((booking) => booking.id));
+    const fallbackBookings = this.getFallbackBookings().filter((booking) =>
+      isWithinOperationalDataWindow(
+        booking.bookingDateTime,
+        booking.status,
+        [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+        cutoff
+      ) &&
+      !remoteIds.has(booking.id) &&
+      !((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) &&
+        userBranchId &&
+        booking.branchId !== userBranchId)
+    );
+    return [...remoteBookings, ...fallbackBookings];
+  }
+
   async getBookingById(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking | null> {
     ensureSupabaseConnected();
     if (isValidUUID(id)) {
@@ -4016,6 +4200,111 @@ export class SupabaseVisitRepository implements VisitRepository {
     });
   }
 
+  async getAllVisitsPaged(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientVisit[]> {
+    ensureSupabaseConnected();
+    const isBranchScopedRole =
+      currentUserRole === UserRole.BRANCH_ADMIN ||
+      currentUserRole === UserRole.DOCTOR_ASSISTANT ||
+      currentUserRole === UserRole.DOCTOR;
+    const effectiveBranchId = isBranchScopedRole && userBranchId ? userBranchId : branchId || null;
+    if (
+      isBranchScopedRole &&
+      userBranchId &&
+      branchId &&
+      !isBranchMatch(branchId, userBranchId)
+    ) {
+      throw new Error("Akses ditolak: pengguna tidak dapat membaca kunjungan cabang lain.");
+    }
+    if (effectiveBranchId && !isValidUUID(effectiveBranchId) && !useRepositoryTestFallbacks()) {
+      throw new Error("ID cabang tidak valid untuk memuat riwayat kunjungan.");
+    }
+
+    const pageSize = 1000;
+    const remoteVisits: PatientVisit[] = [];
+    for (let offset = 0; ; offset += pageSize) {
+      let query = supabase
+        .from("patient_visits")
+        .select("*")
+        .order("visit_date_time", { ascending: false })
+        .order("id", { ascending: true });
+      if (effectiveBranchId && isValidUUID(effectiveBranchId)) {
+        query = query.eq("branch_id", effectiveBranchId);
+      }
+      const { data, error } = await query.range(offset, offset + pageSize - 1);
+      if (error) throw new Error(`Gagal memuat seluruh riwayat kunjungan: ${error.message}`);
+      const page = data || [];
+      remoteVisits.push(...page.map(this.mapVisitFromDb));
+      if (page.length < pageSize) break;
+    }
+
+    const remoteIds = new Set(remoteVisits.map((visit) => visit.id));
+    return [
+      ...remoteVisits,
+      ...this.getFallbackVisits().filter((visit) =>
+        !remoteIds.has(visit.id) &&
+        (!effectiveBranchId || isBranchMatch(visit.branchId, effectiveBranchId))
+      )
+    ];
+  }
+
+  async getOperationalVisits(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    lookbackDays = DEFAULT_OPERATIONAL_DATA_LOOKBACK_DAYS
+  ): Promise<PatientVisit[]> {
+    ensureSupabaseConnected();
+    const isBranchScopedRole =
+      currentUserRole === UserRole.BRANCH_ADMIN ||
+      currentUserRole === UserRole.DOCTOR_ASSISTANT ||
+      currentUserRole === UserRole.DOCTOR;
+    const effectiveBranchId = isBranchScopedRole && userBranchId ? userBranchId : branchId || null;
+    if (
+      isBranchScopedRole &&
+      userBranchId &&
+      branchId &&
+      !isBranchMatch(branchId, userBranchId)
+    ) {
+      throw new Error("Akses ditolak: pengguna tidak dapat membaca kunjungan cabang lain.");
+    }
+    if (effectiveBranchId && !isValidUUID(effectiveBranchId) && !useRepositoryTestFallbacks()) {
+      throw new Error("ID cabang tidak valid untuk memuat kunjungan operasional.");
+    }
+
+    const cutoff = getOperationalDataCutoff(lookbackDays, AppClock.nowISO());
+    const requestKey = `operational:${effectiveBranchId || "all"}:${cutoff}`;
+    return this.loadVisits(requestKey, async () => {
+      let query = supabase
+        .from("patient_visits")
+        .select("*")
+        .or(`visit_date_time.gte.${cutoff},visit_status.in.(WAITING,IN_TRIAGE,IN_TREATMENT)`)
+        .order("visit_date_time", { ascending: false });
+      if (effectiveBranchId && isValidUUID(effectiveBranchId)) {
+        query = query.eq("branch_id", effectiveBranchId);
+      }
+      const { data, error } = await query;
+      if (error) throw new Error(`Gagal memuat kunjungan operasional: ${error.message}`);
+
+      const remoteVisits = (data || []).map(this.mapVisitFromDb);
+      const remoteIds = new Set(remoteVisits.map((visit) => visit.id));
+      const fallbackVisits = this.getFallbackVisits().filter((visit) =>
+        isWithinOperationalDataWindow(
+          visit.visitDateTime,
+          visit.visitStatus,
+          [VisitStatus.WAITING, VisitStatus.IN_TRIAGE, VisitStatus.IN_TREATMENT],
+          cutoff
+        ) &&
+        !remoteIds.has(visit.id) &&
+        (!effectiveBranchId || isBranchMatch(visit.branchId, effectiveBranchId))
+      );
+      return [...remoteVisits, ...fallbackVisits];
+    });
+  }
+
   private async loadVisits(
     requestKey: string,
     load: () => Promise<PatientVisit[]>
@@ -4052,20 +4341,45 @@ export class SupabaseVisitRepository implements VisitRepository {
       .filter((visit) => isBranchMatch(visit.branchId, branchId));
   }
 
-  async getVisitAnalyticsRecords(): Promise<PatientVisitAnalyticsRecord[]> {
+  async getVisitAnalyticsRecords(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientVisitAnalyticsRecord[]> {
     ensureSupabaseConnected();
+    const isBranchScopedRole =
+      currentUserRole === UserRole.BRANCH_ADMIN ||
+      currentUserRole === UserRole.DOCTOR_ASSISTANT ||
+      currentUserRole === UserRole.DOCTOR;
+    const effectiveBranchId = isBranchScopedRole && userBranchId ? userBranchId : branchId || null;
+    if (
+      isBranchScopedRole &&
+      userBranchId &&
+      branchId &&
+      !isBranchMatch(branchId, userBranchId)
+    ) {
+      throw new Error("Akses ditolak: pengguna tidak dapat membaca kunjungan cabang lain.");
+    }
+    if (effectiveBranchId && !isValidUUID(effectiveBranchId) && !useRepositoryTestFallbacks()) {
+      throw new Error("ID cabang tidak valid untuk memuat analitik kunjungan.");
+    }
     const pageSize = 1000;
     const records: PatientVisitAnalyticsRecord[] = [];
     for (let offset = 0; ; offset += pageSize) {
-      const { data, error } = await supabase
+      let query = supabase
         .from("patient_visits")
-        .select("patient_id, visit_date_time, visit_status")
+        .select("patient_id, branch_id, visit_date_time, visit_status")
         .order("visit_date_time", { ascending: true })
-        .range(offset, offset + pageSize - 1);
+        .order("id", { ascending: true });
+      if (effectiveBranchId && isValidUUID(effectiveBranchId)) {
+        query = query.eq("branch_id", effectiveBranchId);
+      }
+      const { data, error } = await query.range(offset, offset + pageSize - 1);
       if (error) throw new Error(`Gagal memuat data analisa kunjungan pasien: ${error.message}`);
       const page = data || [];
       records.push(...page.map((row: any) => ({
         patientId: row.patient_id,
+        branchId: row.branch_id,
         visitDateTime: row.visit_date_time,
         visitStatus: row.visit_status
       })));

@@ -622,7 +622,7 @@ export interface PatientVisit {
 
 export type PatientVisitAnalyticsRecord = Pick<
   PatientVisit,
-  "patientId" | "visitDateTime" | "visitStatus"
+  "patientId" | "branchId" | "visitDateTime" | "visitStatus"
 >;
 
 export interface QueueItem {

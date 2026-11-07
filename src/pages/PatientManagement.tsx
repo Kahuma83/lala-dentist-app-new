@@ -4,6 +4,7 @@ import { useApp } from "../context/AppContext";
 import {
   PatientProfile,
   PatientVisit,
+  PatientVisitAnalyticsRecord,
   VisitType,
   VisitStatus,
   UserRole,
@@ -95,7 +96,7 @@ export const PatientManagement: React.FC = () => {
     doctorBranchAssignments,
     patients: contextPatients,
     visits,
-    bookings,
+    bookings: contextBookings,
     treatmentJobs,
     staff,
     services,
@@ -103,6 +104,9 @@ export const PatientManagement: React.FC = () => {
     refreshData
   } = useApp();
   const { path, navigate } = useRouter();
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [visitHistory, setVisitHistory] = useState<PatientVisitAnalyticsRecord[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const isOptimizedPatientDirectory =
     path === "/super-admin/patients" || path === "/branch-admin/patients";
   const [searchedPatients, setSearchedPatients] = useState<PatientProfile[]>([]);
@@ -449,6 +453,49 @@ export const PatientManagement: React.FC = () => {
   const [patientToDelete, setPatientToDelete] = useState<PatientProfile | null>(null);
   const [isDeletingPatient, setIsDeletingPatient] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentUser) return;
+    setHistoryError(null);
+    void Promise.all([
+      repos.booking.getAllBookingsPaged(currentUser.role, currentUser.assignedBranchId),
+      repos.visit.getVisitAnalyticsRecords(
+        currentUser.role === UserRole.BRANCH_ADMIN ||
+          currentUser.role === UserRole.DOCTOR_ASSISTANT ||
+          currentUser.role === UserRole.DOCTOR
+          ? currentUser.assignedBranchId
+          : undefined,
+        currentUser.role,
+        currentUser.assignedBranchId
+      )
+    ]).then(([allBookings, allVisitHistory]) => {
+      if (cancelled) return;
+      setBookings((current) => {
+        const mergedBookings = new Map(allBookings.map((booking) => [booking.id, booking]));
+        current.forEach((booking) => mergedBookings.set(booking.id, booking));
+        return [...mergedBookings.values()];
+      });
+      setVisitHistory(allVisitHistory);
+    }).catch((loadError: unknown) => {
+      if (!cancelled) {
+        setHistoryError(
+          loadError instanceof Error ? loadError.message : "Gagal memuat riwayat pasien."
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.role, currentUser?.assignedBranchId, repos.booking, repos.visit]);
+
+  useEffect(() => {
+    setBookings((current) => {
+      const merged = new Map(current.map((booking) => [booking.id, booking]));
+      contextBookings.forEach((booking) => merged.set(booking.id, booking));
+      return [...merged.values()];
+    });
+  }, [contextBookings]);
+
   // Load patient's visits when selectedPatient changes
   useEffect(() => {
     if (selectedPatient) {
@@ -462,7 +509,7 @@ export const PatientManagement: React.FC = () => {
     } else {
       setPatientVisits([]);
     }
-  }, [selectedPatient, visits]);
+  }, [selectedPatient, repos.visit]);
 
   // Filtered Patients list
   const filteredPatients = useMemo(() => {
@@ -475,7 +522,7 @@ export const PatientManagement: React.FC = () => {
     if (selectedBranchFilter !== "ALL") {
       const branchId = selectedBranchFilter;
       const branchPatientIds = new Set<string>();
-      visits.filter((v) => v.branchId === branchId).forEach((v) => { if (v.patientId) branchPatientIds.add(v.patientId); });
+      visitHistory.filter((v) => v.branchId === branchId).forEach((v) => { if (v.patientId) branchPatientIds.add(v.patientId); });
       bookings.filter((b) => b.branchId === branchId).forEach((b) => { if (b.patientId) branchPatientIds.add(b.patientId); });
       list = list.filter((p) => 
         branchPatientIds.has(p.id) ||
@@ -521,13 +568,13 @@ export const PatientManagement: React.FC = () => {
       return branchRm.includes(q) || !!otherBranchRmMatch || !!globalCodeMatch ||
         !!identityDocumentMatch || p.identityDocumentMatch === true || nameMatch || phoneMatch;
     });
-  }, [patients, visits, currentUser?.role, searchQuery, selectedBranchFilter, isOptimizedPatientDirectory]);
+  }, [patients, visitHistory, currentUser?.role, searchQuery, selectedBranchFilter, isOptimizedPatientDirectory]);
 
   // Map of patient ID to visits count and branch names
   const patientVisitStats = useMemo(() => {
     const stats: Record<string, { count: number; branchNames: string[] }> = {};
 
-    visits.forEach((v) => {
+    visitHistory.forEach((v) => {
       if (!stats[v.patientId]) {
         stats[v.patientId] = { count: 0, branchNames: [] };
       }
@@ -539,7 +586,7 @@ export const PatientManagement: React.FC = () => {
     });
 
     return stats;
-  }, [visits, branches]);
+  }, [visitHistory, branches]);
 
   // Real-time RM uniqueness validation for manual input
   const manualRMValidation = useMemo(() => {
@@ -1370,6 +1417,11 @@ export const PatientManagement: React.FC = () => {
           <button type="button" onClick={closeMedicalRecord} className="shrink-0 font-semibold underline">
             Kembali ke Dashboard
           </button>
+        </div>
+      )}
+      {historyError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          Gagal memuat riwayat pasien: {historyError}
         </div>
       )}
       {mrModalOpen && selectedVisitForMR && selectedPatient && canReadMedicalRecords && createPortal(

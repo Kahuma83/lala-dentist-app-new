@@ -51,9 +51,13 @@ interface HotProspectItem {
 }
 
 export const HotProspectPage: React.FC = () => {
-  const { currentUser, patients, visits, bookings, treatmentJobs, branches } = useApp();
+  const { currentUser, repos, patients, treatmentJobs, branches } = useApp();
   const canViewPatientPhoneNumber = canViewPatientPhone(currentUser?.role);
 
+  const [historyVisits, setHistoryVisits] = useState<PatientVisit[]>([]);
+  const [historyBookings, setHistoryBookings] = useState<Booking[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
@@ -75,6 +79,32 @@ export const HotProspectPage: React.FC = () => {
   const [editNotes, setEditNotes] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+    if (!currentUser) return;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    void Promise.all([
+      repos.visit.getAllVisitsPaged(undefined, currentUser.role, currentUser.assignedBranchId),
+      repos.booking.getAllBookingsPaged(currentUser.role, currentUser.assignedBranchId)
+    ]).then(([allVisits, allBookings]) => {
+      if (cancelled) return;
+      setHistoryVisits(allVisits);
+      setHistoryBookings(allBookings);
+    }).catch((loadError: unknown) => {
+      if (!cancelled) {
+        setHistoryError(
+          loadError instanceof Error ? loadError.message : "Gagal memuat riwayat prospek pasien."
+        );
+      }
+    }).finally(() => {
+      if (!cancelled) setHistoryLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.role, currentUser?.assignedBranchId, repos.booking, repos.visit]);
+
+  useEffect(() => {
     try {
       localStorage.setItem("lala_hot_prospect_statuses", JSON.stringify(prospectStatusMap));
     } catch (e) {
@@ -90,12 +120,12 @@ export const HotProspectPage: React.FC = () => {
     const branchMap = new Map(branches.map((b) => [b.id, b.name]));
 
     // Sort visits descending
-    const sortedVisits = [...visits].sort((a, b) => new Date(b.visitDateTime).getTime() - new Date(a.visitDateTime).getTime());
+    const sortedVisits = [...historyVisits].sort((a, b) => new Date(b.visitDateTime).getTime() - new Date(a.visitDateTime).getTime());
 
     // Iterate through patients to build hot prospects
     patients.forEach((patient) => {
       const patientVisits = sortedVisits.filter((v) => v.patientId === patient.id);
-      const patientBookings = bookings.filter((b) => b.patientId === patient.id);
+      const patientBookings = historyBookings.filter((b) => b.patientId === patient.id);
 
       if (patientVisits.length === 0 && patientBookings.length === 0) return;
 
@@ -150,7 +180,7 @@ export const HotProspectPage: React.FC = () => {
     });
 
     return Array.from(map.values());
-  }, [patients, visits, bookings, treatmentJobs, branches, prospectStatusMap, canViewPatientPhoneNumber]);
+  }, [patients, historyVisits, historyBookings, treatmentJobs, branches, prospectStatusMap, canViewPatientPhoneNumber]);
 
   // Filtered items
   const filteredProspects = useMemo(() => {
@@ -279,6 +309,16 @@ export const HotProspectPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12" id="hot-prospect-page">
+      {historyError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          Gagal memuat riwayat prospek: {historyError}
+        </div>
+      )}
+      {historyLoading && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800">
+          Memuat riwayat kunjungan dan booking...
+        </div>
+      )}
       {/* Header Banner */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

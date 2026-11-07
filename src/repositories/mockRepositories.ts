@@ -140,6 +140,11 @@ import {
 } from "../types/domain";
 import { AppClock } from "../utils/clock";
 export { AppClock } from "../utils/clock";
+import {
+  DEFAULT_OPERATIONAL_DATA_LOOKBACK_DAYS,
+  getOperationalDataCutoff,
+  isWithinOperationalDataWindow
+} from "../utils/operationalDataWindow";
 import { redactPatientPhone } from "../utils/patientPrivacy";
 import { generateInvoiceNumber, generateReceiptNumber } from "../utils/documentUtils";
 import { getPlannedTreatmentDurationMinutes } from "../utils/plannedTreatmentUtils";
@@ -2274,6 +2279,28 @@ export class MockBookingRepository implements BookingRepository {
     return db.bookings.map((b) => ({ ...b }));
   }
 
+  async getAllBookingsPaged(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<Booking[]> {
+    return this.getBookings(currentUserRole, userBranchId);
+  }
+
+  async getOperationalBookings(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    lookbackDays = DEFAULT_OPERATIONAL_DATA_LOOKBACK_DAYS
+  ): Promise<Booking[]> {
+    const cutoff = getOperationalDataCutoff(lookbackDays, AppClock.nowISO());
+    const bookings = await this.getBookings(currentUserRole, userBranchId);
+    return bookings.filter((booking) => isWithinOperationalDataWindow(
+      booking.bookingDateTime,
+      booking.status,
+      [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+      cutoff
+    ));
+  }
+
   async getBookingById(
     id: string,
     currentUserRole?: UserRole,
@@ -2734,12 +2761,55 @@ export class MockVisitRepository implements VisitRepository {
     return [...db.visits];
   }
 
-  async getVisitAnalyticsRecords() {
-    return db.visits.map(({ patientId, visitDateTime, visitStatus }) => ({
+  async getAllVisitsPaged(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientVisit[]> {
+    const visits = branchId
+      ? await this.getVisitsByBranch(branchId, currentUserRole, userBranchId)
+      : await this.getVisits();
+    return visits;
+  }
+
+  async getOperationalVisits(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    lookbackDays = DEFAULT_OPERATIONAL_DATA_LOOKBACK_DAYS
+  ): Promise<PatientVisit[]> {
+    const cutoff = getOperationalDataCutoff(lookbackDays, AppClock.nowISO());
+    const visits = branchId
+      ? await this.getVisitsByBranch(branchId, currentUserRole, userBranchId)
+      : await this.getVisits();
+    return visits.filter((visit) => isWithinOperationalDataWindow(
+      visit.visitDateTime,
+      visit.visitStatus,
+      [VisitStatus.WAITING, VisitStatus.IN_TRIAGE, VisitStatus.IN_TREATMENT],
+      cutoff
+    ));
+  }
+
+  async getVisitAnalyticsRecords(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ) {
+    const effectiveBranchId =
+      (currentUserRole === UserRole.BRANCH_ADMIN ||
+        currentUserRole === UserRole.DOCTOR_ASSISTANT ||
+        currentUserRole === UserRole.DOCTOR) &&
+      userBranchId
+        ? userBranchId
+        : branchId || null;
+    return db.visits
+      .filter((visit) => !effectiveBranchId || isBranchMatch(visit.branchId, effectiveBranchId))
+      .map(({ patientId, branchId: visitBranchId, visitDateTime, visitStatus }) => ({
       patientId,
+      branchId: visitBranchId,
       visitDateTime,
       visitStatus
-    }));
+      }));
   }
 
   async getVisitById(id: string): Promise<PatientVisit | null> {
@@ -2900,6 +2970,33 @@ export class MockQueueRepository implements QueueRepository {
 
   async getQueueItems(): Promise<QueueItem[]> {
     return [...db.queueItems];
+  }
+
+  async getAllQueueItemsPaged(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<QueueItem[]> {
+    const items = await this.getQueueItems();
+    const isBranchScopedRole =
+      currentUserRole === UserRole.BRANCH_ADMIN ||
+      currentUserRole === UserRole.DOCTOR_ASSISTANT ||
+      currentUserRole === UserRole.DOCTOR;
+    const effectiveBranchId = isBranchScopedRole ? userBranchId : null;
+    return items.filter((item) =>
+      !effectiveBranchId || isBranchMatch(item.branchId, effectiveBranchId)
+    );
+  }
+
+  async getOperationalQueueItems(
+    lookbackDays = DEFAULT_OPERATIONAL_DATA_LOOKBACK_DAYS
+  ): Promise<QueueItem[]> {
+    const cutoff = getOperationalDataCutoff(lookbackDays, AppClock.nowISO());
+    return db.queueItems.filter((item) => isWithinOperationalDataWindow(
+      item.arrivalAt || item.checkInTime || item.createdAt,
+      item.status,
+      [QueueStatus.WAITING, QueueStatus.CALLING, QueueStatus.IN_PREPARATION, QueueStatus.IN_CONSULTATION],
+      cutoff
+    ));
   }
 
   async getQueueByBranch(

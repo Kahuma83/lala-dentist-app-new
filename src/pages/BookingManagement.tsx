@@ -109,8 +109,29 @@ const getMinutesOfDay = (time: string) => {
   return hours * 60 + Number(match[2]);
 };
 
+function mergeRowsById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const rows = new Map(current.map((row) => [row.id, row]));
+  incoming.forEach((row) => rows.set(row.id, row));
+  return [...rows.values()];
+}
+
 export const BookingManagement: React.FC = () => {
-  const { repos, currentUser, selectedBranchId, branches, patients, staff, services, refreshData, realtimeSyncStatus } = useApp();
+  const {
+    repos,
+    currentUser,
+    selectedBranchId,
+    branches,
+    patients,
+    doctors,
+    staff,
+    services,
+    bookings: contextBookings,
+    visits: contextVisits,
+    queueItems: contextQueueItems,
+    loading: appLoading,
+    realtimeSyncStatus,
+    refreshData
+  } = useApp();
   const canViewPatientPhoneNumber = canViewPatientPhone(currentUser?.role);
   const { navigate, path } = useRouter();
 
@@ -118,6 +139,8 @@ export const BookingManagement: React.FC = () => {
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [visits, setVisits] = useState<PatientVisit[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("ACTIVE");
   const [branchFilter, setBranchFilter] = useState<string>("ALL");
@@ -359,55 +382,68 @@ export const BookingManagement: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const branchScopedRole = currentUser?.role === UserRole.BRANCH_ADMIN
-        || currentUser?.role === UserRole.DOCTOR_ASSISTANT
-        || currentUser?.role === UserRole.DOCTOR
-        || currentUser?.role === UserRole.OB;
-      const visitRequest = branchScopedRole && (currentUser?.assignedBranchId || selectedBranchId)
-        ? repos.visit.getVisitsByBranch(
-            currentUser?.assignedBranchId || selectedBranchId!,
-            currentUser?.role,
-            currentUser?.assignedBranchId
-          )
-        : repos.visit.getVisits();
-      const results = await Promise.allSettled([
-        repos.booking.getBookings(
-          currentUser?.role,
-          currentUser?.assignedBranchId
-        ),
-        repos.doctor.getDoctors(),
-        repos.queue.getQueueItems(),
-        visitRequest
+      await Promise.all([
+        refreshData("bookings"),
+        refreshData("dental_doctors"),
+        refreshData("queue_items"),
+        refreshData("patient_visits")
       ]);
-
-      const [bkRes, docRes, qRes, visRes] = results;
-      if (bkRes.status === "fulfilled") {
-        setBookings(bkRes.value);
-        setSelectedBooking((current) => current
-          ? bkRes.value.find((booking) => booking.id === current.id) || current
-          : null);
-      }
-      if (docRes.status === "fulfilled") {
-        setDoctorsList(docRes.value);
-      }
-      if (qRes.status === "fulfilled") setQueueItems(qRes.value);
-      if (visRes.status === "fulfilled") setVisits(visRes.value);
-    } catch (err: any) {
-      console.error("Error loading bookings:", err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData();
-  }, [effectiveBranchId]);
+    setBookings((current) => mergeRowsById(current, contextBookings));
+    setDoctorsList(doctors);
+    setQueueItems((current) => mergeRowsById(current, contextQueueItems));
+    setVisits((current) => mergeRowsById(current, contextVisits));
+    setSelectedBooking((current) => current
+      ? contextBookings.find((booking) => booking.id === current.id) || current
+      : null);
+    if (!appLoading && !historyLoading) setLoading(false);
+  }, [appLoading, contextBookings, contextQueueItems, contextVisits, doctors, historyLoading]);
 
   useEffect(() => {
-    if (realtimeSyncStatus.lastEventTable === "bookings") {
-      void loadData();
-    }
-  }, [realtimeSyncStatus.lastEventAt, realtimeSyncStatus.lastEventTable]);
+    let cancelled = false;
+    if (!currentUser) return;
+    const branchId = currentUser.role === UserRole.BRANCH_ADMIN ||
+      currentUser.role === UserRole.DOCTOR_ASSISTANT ||
+      currentUser.role === UserRole.DOCTOR
+      ? currentUser.assignedBranchId
+      : undefined;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    void Promise.all([
+      repos.booking.getAllBookingsPaged(currentUser.role, currentUser.assignedBranchId),
+      repos.visit.getAllVisitsPaged(branchId, currentUser.role, currentUser.assignedBranchId),
+      repos.queue.getAllQueueItemsPaged(currentUser.role, currentUser.assignedBranchId)
+    ]).then(([allBookings, allVisits, allQueueItems]) => {
+      if (cancelled) return;
+      setBookings((current) => mergeRowsById(allBookings, current));
+      setVisits((current) => mergeRowsById(allVisits, current));
+      setQueueItems((current) => mergeRowsById(allQueueItems, current));
+    }).catch((loadError: unknown) => {
+      if (!cancelled) {
+        setHistoryError(
+          loadError instanceof Error ? loadError.message : "Gagal memuat seluruh riwayat booking."
+        );
+      }
+    }).finally(() => {
+      if (!cancelled) {
+        setHistoryLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentUser?.role,
+    currentUser?.assignedBranchId,
+    repos.booking,
+    repos.queue,
+    repos.visit
+  ]);
 
   useEffect(() => {
     setPlannedServices((selected) => selected.map((selectedService) =>
@@ -1013,7 +1049,7 @@ export const BookingManagement: React.FC = () => {
         currentUser?.role,
         currentUser?.assignedBranchId
       );
-      await refreshData();
+      await refreshData("patient_profiles");
       setSelectedPatient(patient);
       setPatientSearch("");
       setShowNewPatientForm(false);
@@ -1128,7 +1164,7 @@ export const BookingManagement: React.FC = () => {
       );
       setSelectedBookingPatient(updatedPatient);
       setSelectedBookingPatientError(null);
-      await refreshData();
+      await refreshData("patient_profiles");
       setIsPatientEditorOpen(false);
       setPatientEditSuccess("Data pasien berhasil diperbarui.");
     } catch (error) {
@@ -1848,7 +1884,6 @@ export const BookingManagement: React.FC = () => {
         confirmationWarning = " Konfirmasi H-1 belum berhasil dibuat; hubungi admin untuk menindaklanjuti.";
       }
       setRescheduleSuccess(`Jadwal berhasil dipindahkan. Riwayat jadwal lama tetap tersimpan.${confirmationWarning}`);
-      void refreshData();
       loadData();
     } catch (error) {
       console.error("Gagal menjadwalkan ulang booking:", error);
@@ -1860,6 +1895,11 @@ export const BookingManagement: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12" id="booking-management-page">
+      {historyError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          Gagal memuat seluruh riwayat booking: {historyError}
+        </div>
+      )}
       {/* SUPABASE PROFILE NOTICE */}
       {currentUser?.isMockFallback && (
         <div className="p-5 bg-amber-50 border border-amber-200 rounded-2xl shadow-sm text-slate-800 space-y-3">
