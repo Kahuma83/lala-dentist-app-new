@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { useRouter } from "../components/Router";
-import { UserRole } from "../types/domain";
+import { PatientVisit, UserRole } from "../types/domain";
 import {
   archiveInventoryItem,
   InventoryCategory,
@@ -69,7 +69,7 @@ function statusFor(item: InventoryItem): { label: string; className: string } {
 }
 
 export const InventoryManagement: React.FC = () => {
-  const { currentUser, branches, selectedBranchId, patients, visits, services } = useApp();
+  const { currentUser, branches, selectedBranchId, patients, visits, visitRepo, services } = useApp();
   const { path, navigate } = useRouter();
   const isSuper = currentUser?.role === UserRole.SUPER_ADMIN;
   const isDoctor = currentUser?.role === UserRole.DOCTOR;
@@ -91,6 +91,7 @@ export const InventoryManagement: React.FC = () => {
   );
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
+  const [movementVisits, setMovementVisits] = useState<PatientVisit[]>([]);
   const [search, setSearch] = useState("");
   const [historyItemFilter, setHistoryItemFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -127,6 +128,7 @@ export const InventoryManagement: React.FC = () => {
     if (!isSuper && !branchScope) {
       setItems([]);
       setMovements([]);
+      setMovementVisits([]);
       setError("Akun Anda belum ditautkan ke cabang. Hubungi Super Admin untuk memperbaiki akses.");
       setLoading(false);
       return;
@@ -138,8 +140,15 @@ export const InventoryManagement: React.FC = () => {
       const movementRows = isDoctor
         ? []
         : await listInventoryMovements({ branchId: effectiveBranchId, itemId: historyItemFilter });
+      const currentVisitIds = new Set(visits.map((visit) => visit.id));
+      const historicalVisitIds = [...new Set(movementRows
+        .map((movement) => movement.patientVisitId)
+        .filter((visitId): visitId is string =>
+          typeof visitId === "string" && !currentVisitIds.has(visitId)))];
+      const historicalVisits = await visitRepo.getVisitsByIds(historicalVisitIds);
       setItems(itemRows);
       setMovements(movementRows);
+      setMovementVisits([...visits, ...historicalVisits]);
     } catch (loadError: unknown) {
       setError(loadError instanceof Error ? loadError.message : "Gagal memuat data inventori.");
     } finally {
@@ -323,7 +332,7 @@ export const InventoryManagement: React.FC = () => {
   };
 
   const patientNameForMovement = (movement: InventoryMovement) => {
-    const visit = visits.find((row) => row.id === movement.patientVisitId);
+    const visit = movementVisits.find((row) => row.id === movement.patientVisitId);
     return patients.find((patient) => patient.id === visit?.patientId)?.fullName;
   };
 

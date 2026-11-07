@@ -474,9 +474,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     )
       ? (currentUser.assignedBranchId ?? currentUser.branchId ?? null)
       : null;
-    const getUserVisits = () => userBranchId
-      ? visitRepo.getVisitsByBranch(userBranchId, userRole, userBranchId)
-      : visitRepo.getVisits();
+    const getUserVisits = () => visitRepo.getOperationalVisits(
+      userBranchId,
+      userRole,
+      userBranchId
+    );
 
     if (userRole === UserRole.OB) {
       if (changedTable) {
@@ -653,7 +655,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               window.dispatchEvent(new Event("patient-directory-data-changed"));
               return;
             }
-            setPatients(await patientRepo.getPatients(userRole, userBranchId));
+            setPatients(await patientRepo.getPatients(userRole, userBranchId, { includeMedicalEnrichment: false }));
             return;
           case "dental_doctors":
             setDoctors(await doctorRepo.getDoctors(userRole, userBranchId));
@@ -688,13 +690,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setOvertimes(await overtimeRepo.list());
             return;
           case "bookings":
-            setBookings(await bookingRepo.getBookings(userRole, userBranchId));
+            setBookings(await bookingRepo.getOperationalBookings(userRole, userBranchId));
             return;
           case "patient_visits":
             setVisits(await getUserVisits());
             return;
           case "queue_items":
-            setQueueItems(await queueRepo.getQueueItems());
+            setQueueItems(await queueRepo.getOperationalQueueItems());
             return;
           case "treatment_jobs":
             setTreatmentJobs(await treatmentRepo.getTreatmentJobs());
@@ -747,7 +749,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         branchRepo.getBranches(),
         isPaginatedPatientDirectory
           ? Promise.resolve<PatientProfile[]>([])
-          : patientRepo.getPatients(userRole, userBranchId),
+          : patientRepo.getPatients(userRole, userBranchId, { includeMedicalEnrichment: false }),
         doctorRepo.getDoctors(),
         staffRepo.getStaff(),
         doctorScheduleRepo.getSchedules(
@@ -761,9 +763,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         doctorRepo.getDoctorBranchAssignments(),
         attendanceRepo.list(attendanceFilter, userRole, userBranchId, currentUser?.staffId),
         overtimeRepo.list(),
-        bookingRepo.getBookings(userRole, userBranchId),
+        bookingRepo.getOperationalBookings(userRole, userBranchId),
         getUserVisits(),
-        queueRepo.getQueueItems(),
+        queueRepo.getOperationalQueueItems(),
         treatmentRepo.getTreatmentJobs(),
         invoiceRepo.getInvoices(),
         paymentRepo.getPayments(),
@@ -1015,7 +1017,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       currentUser.role === UserRole.OB
       ? currentUser.assignedBranchId ?? currentUser.branchId ?? null
       : null;
-    patientRepo.getPatients(currentUser.role, userBranchId)
+    patientRepo.getPatients(currentUser.role, userBranchId, { includeMedicalEnrichment: false })
       .then((loadedPatients) => {
         if (active) setPatients(loadedPatients);
       })

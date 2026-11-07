@@ -113,7 +113,11 @@ export interface PatientSearchPage {
 }
 
 export interface PatientRepository {
-  getPatients(currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]>;
+  getPatients(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    options?: { includeMedicalEnrichment?: boolean }
+  ): Promise<PatientProfile[]>;
   getPatientById(
     id: string,
     currentUserRole?: UserRole,
@@ -437,6 +441,12 @@ export interface BookingRepository {
     updatedDraftPayrollCount: number;
   }>;
   getBookings(currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
+  getAllBookingsPaged(currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
+  getOperationalBookings(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    lookbackDays?: number
+  ): Promise<Booking[]>;
   getBookingById(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking | null>;
   getBookingsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Booking[]>;
   getBookingsByPatient(patientId: string): Promise<Booking[]>;
@@ -484,7 +494,22 @@ export interface H1ConfirmationRepository {
 
 export interface VisitRepository {
   getVisits(): Promise<PatientVisit[]>;
-  getVisitAnalyticsRecords(): Promise<PatientVisitAnalyticsRecord[]>;
+  getAllVisitsPaged(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientVisit[]>;
+  getOperationalVisits(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    lookbackDays?: number
+  ): Promise<PatientVisit[]>;
+  getVisitAnalyticsRecords(
+    branchId?: string | null,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<PatientVisitAnalyticsRecord[]>;
   getVisitById(id: string): Promise<PatientVisit | null>;
   getVisitsByIds(ids: string[]): Promise<PatientVisit[]>;
   getVisitsByPatient(patientId: string): Promise<PatientVisit[]>;
@@ -508,6 +533,11 @@ export interface VisitRepository {
 
 export interface QueueRepository {
   getQueueItems(): Promise<QueueItem[]>;
+  getAllQueueItemsPaged(
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<QueueItem[]>;
+  getOperationalQueueItems(lookbackDays?: number): Promise<QueueItem[]>;
   getQueueByBranch(
     branchId: string,
     currentUserRole?: UserRole,
