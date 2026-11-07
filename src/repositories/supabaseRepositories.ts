@@ -1092,13 +1092,13 @@ export class SupabasePatientRepository implements PatientRepository {
       if (!rmBranchId) {
         throw new Error("Cabang wajib ditentukan untuk mengelola No. RM lokal pasien.");
       }
-      await this.registerPatientBranchMedicalRecordNumber(
-        id,
-        rmBranchId,
-        updates.medicalRecordNumber,
-        currentUserRole,
-        userBranchId
-      );
+      if (!supabase) throw new Error("Koneksi Supabase belum terkonfigurasi.");
+      const { error } = await supabase.rpc("update_patient_branch_medical_record_number", {
+        target_patient_id: id,
+        target_branch_id: rmBranchId,
+        requested_rm: updates.medicalRecordNumber
+      });
+      if (error) throw new Error(`Gagal memperbarui No. RM pasien: ${error.message}`);
     }
 
     const dbPayload: any = {
@@ -1137,7 +1137,7 @@ export class SupabasePatientRepository implements PatientRepository {
     }
 
     const effBranch = (updates as any).registeredBranchId || (updates as any).branch_id || (updates as any).assignedBranchId || (updates as any).branchId || userBranchId;
-    if (effBranch) {
+    if (effBranch && currentUserRole !== UserRole.BRANCH_ADMIN) {
       dbPayload.registered_branch_id = effBranch;
       dbPayload.branch_id = effBranch;
       dbPayload.assigned_branch_id = effBranch;
