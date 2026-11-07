@@ -45,6 +45,30 @@ describe("Supabase patient repository", () => {
     expect(queriedIds.patient_branch_medical_records.map((batch) => batch.length)).toEqual([100, 100, 50]);
   });
 
+  it("shares concurrent full patient reads instead of duplicating profile and RM requests", async () => {
+    const from = vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) => {
+      const result = { data: [], error: null };
+      const query = {
+        select: vi.fn().mockReturnThis(),
+        then: (
+          resolve: (value: typeof result) => unknown,
+          reject?: (reason: unknown) => unknown
+        ) => Promise.resolve(result).then(resolve, reject)
+      };
+      return query as unknown as ReturnType<typeof supabaseLib.supabase.from>;
+    }) as unknown as typeof supabaseLib.supabase.from);
+
+    const repository = new SupabasePatientRepository();
+    const [first, second] = await Promise.all([
+      repository.getPatients(UserRole.SUPER_ADMIN),
+      repository.getPatients(UserRole.SUPER_ADMIN)
+    ]);
+
+    expect(first).toEqual(second);
+    expect(from).toHaveBeenCalledTimes(1);
+    expect(from).toHaveBeenCalledWith("patient_profiles");
+  });
+
   it("searches a bounded patient page on the server and includes identity numbers for admins", async () => {
     const patientRow = {
       id: "patient-1",

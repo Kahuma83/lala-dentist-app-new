@@ -203,7 +203,7 @@ export const LiveQueueManagement: React.FC = () => {
       setActionSuccess(`Berhasil menambah +${addedMinutesChoice} menit pada antrean pasien ${addTimeModalItem.patientNameSnapshot || ""}.`);
       setAddTimeModalItem(null);
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(["queue_items"]);
     } catch (err: any) {
       setActionError(err.message || "Gagal menambah waktu tindakan.");
     } finally {
@@ -255,12 +255,7 @@ export const LiveQueueManagement: React.FC = () => {
 
       setSnapshot(snap);
 
-      const items = await repos.queue.getQueueByBranch(
-        branchId,
-        currentUser?.role,
-        currentUser?.assignedBranchId,
-        isDoctor ? currentUser?.doctorId : null
-      );
+      const items = snap?.queueItems ?? [];
 
       const queueScopeItems = items.filter((q) => {
         const qDate = getOperationalDateString(q.arrivalAt || q.checkInTime);
@@ -273,18 +268,11 @@ export const LiveQueueManagement: React.FC = () => {
         return true;
       });
 
-      // Load visits for Check-In dropdown
-      let allVisits: PatientVisit[] = [];
-      try {
-        allVisits = await repos.visit.getVisits();
-      } catch (vErr) {
-        console.warn("getVisits fallback:", vErr);
-        allVisits = await repos.visit.getVisitsByBranch(
-          branchId,
-          currentUser?.role,
-          currentUser?.assignedBranchId
-        );
-      }
+      const allVisits = await repos.visit.getVisitsByBranch(
+        branchId,
+        currentUser?.role,
+        currentUser?.assignedBranchId
+      );
 
       // Filter eligible visits for current branch
       const eligibleVisits = allVisits.filter((v) => {
@@ -383,6 +371,10 @@ export const LiveQueueManagement: React.FC = () => {
     }
   };
 
+  const refreshQueueContext = async (changedTables: string[]) => {
+    await Promise.all(changedTables.map((table) => refreshData(table)));
+  };
+
   useEffect(() => {
     const handleDemoDatabaseUpdate = () => void loadQueueData();
     window.addEventListener("demo-database-updated", handleDemoDatabaseUpdate);
@@ -414,7 +406,9 @@ export const LiveQueueManagement: React.FC = () => {
         setActionSuccess("Pasien berhasil dipanggil / dipersiapkan");
       }
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(
+        isAssistant ? ["queue_items"] : ["queue_items", "patient_visits"]
+      );
     } catch (err: any) {
       setActionError(err.message || "Gagal memanggil pasien");
     } finally {
@@ -436,7 +430,7 @@ export const LiveQueueManagement: React.FC = () => {
       );
       setActionSuccess("Anda tercatat sebagai pendamping untuk semua tindakan kunjungan ini.");
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(["queue_items"]);
     } catch (err: any) {
       setActionError(err.message || "Gagal mencatat asisten pendamping");
     } finally {
@@ -459,7 +453,7 @@ export const LiveQueueManagement: React.FC = () => {
       );
       setActionSuccess("Konsultasi & tindakan medis dimulai");
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(["queue_items", "patient_visits"]);
     } catch (err: any) {
       setActionError(err.message || "Gagal memulai layanan");
     } finally {
@@ -481,7 +475,7 @@ export const LiveQueueManagement: React.FC = () => {
       );
       setActionSuccess("Antrean pasien dilewati");
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(["queue_items"]);
     } catch (err: any) {
       setActionError(err.message || "Gagal melewati antrean");
     } finally {
@@ -507,7 +501,7 @@ export const LiveQueueManagement: React.FC = () => {
       );
       setActionSuccess("Pasien dikembalikan ke antrean menunggu");
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(["queue_items", "patient_visits"]);
     } catch (err: any) {
       setActionError(err.message || "Gagal mengembalikan pasien ke antrean");
     } finally {
@@ -532,7 +526,7 @@ export const LiveQueueManagement: React.FC = () => {
       );
       setActionSuccess("Antrean berhasil dihapus");
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(["queue_items"]);
     } catch (err: any) {
       setActionError(err.message || "Gagal menghapus antrean");
     } finally {
@@ -556,7 +550,7 @@ export const LiveQueueManagement: React.FC = () => {
       setActionSuccess("Durasi estimasi diperbarui, antrean otomatis dikalkulasi ulang");
       setEditDurationQueueId(null);
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(["queue_items"]);
     } catch (err: any) {
       setActionError(err.message || "Gagal memperbarui durasi");
     }
@@ -677,7 +671,7 @@ export const LiveQueueManagement: React.FC = () => {
       setSelectedVisitIdForCheckIn("");
       setSelectedBookingIdForCheckIn("");
       await loadQueueData();
-      await refreshData();
+      await refreshQueueContext(["queue_items", "patient_visits", "bookings"]);
     } catch (err: any) {
       setActionError(err.message || "Gagal melakukan check-in antrean");
     } finally {

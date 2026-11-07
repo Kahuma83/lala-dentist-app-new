@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { MockDatabase } from "../data/mockData";
 import {
+  MockVisitRepository,
   MockTreatmentActivityRepository,
   MockTreatmentRepository
 } from "../repositories/mockRepositories";
@@ -8,6 +9,7 @@ import {
   InvoiceStatus,
   TreatmentActivityType,
   TreatmentJobStatus,
+  VisitType,
   UserRole
 } from "../types/domain";
 
@@ -156,5 +158,51 @@ describe("Cashier treatment revision workflow", () => {
       activity.activityType === TreatmentActivityType.REVISION_RESUBMITTED
       && activity.notes?.includes("120.000")
     )).toBe(true);
+  });
+
+  it("allows the assigned doctor to add a separate pending treatment to a returned visit", async () => {
+    const returnedTreatment = db.treatmentJobs.find((job) => job.id === "treatment-job-3");
+    if (!returnedTreatment) throw new Error("Revision test treatment fixture is missing");
+    const visit = await new MockVisitRepository().createVisit({
+      patientId: returnedTreatment.patientId,
+      branchId: returnedTreatment.branchId,
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: returnedTreatment.doctorId
+    });
+    returnedTreatment.visitId = visit.id;
+
+    await treatmentRepo.returnTreatmentToDoctor(
+      returnedTreatment.id,
+      "Mohon koreksi dan tambah tindakan lain",
+      UserRole.BRANCH_ADMIN,
+      returnedTreatment.branchId,
+      "admin-test"
+    );
+
+    const additionalService = db.services.find((service) =>
+      service.isActive && service.id !== returnedTreatment.serviceId
+    );
+    if (!additionalService) throw new Error("An additional active treatment service is required");
+
+    const additionalTreatment = await treatmentRepo.createTreatmentJob(
+      {
+        visitId: visit.id,
+        serviceId: additionalService.id,
+        doctorId: returnedTreatment.assignedDoctorId || returnedTreatment.doctorId,
+        patientApprovalConfirmed: true,
+        estimatedDurationMinutes: additionalService.estimatedDurationMinutes || 30
+      },
+      UserRole.DOCTOR,
+      returnedTreatment.branchId,
+      returnedTreatment.assignedDoctorId || returnedTreatment.doctorId
+    );
+
+    expect(returnedTreatment.status).toBe(TreatmentJobStatus.PERLU_REVISI);
+    expect(additionalTreatment.visitId).toBe(visit.id);
+    expect(additionalTreatment.serviceId).toBe(additionalService.id);
+    expect(additionalTreatment.status).toBe(TreatmentJobStatus.BELUM_DIMULAI);
+    expect(additionalTreatment.patientApprovalMethod).toBe("VERBAL");
+    expect(additionalTreatment.patientApprovedAt).toBeDefined();
   });
 });

@@ -474,6 +474,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     )
       ? (currentUser.assignedBranchId ?? currentUser.branchId ?? null)
       : null;
+    const getUserVisits = () => userBranchId
+      ? visitRepo.getVisitsByBranch(userBranchId, userRole, userBranchId)
+      : visitRepo.getVisits();
 
     if (userRole === UserRole.OB) {
       if (changedTable) {
@@ -688,7 +691,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setBookings(await bookingRepo.getBookings(userRole, userBranchId));
             return;
           case "patient_visits":
-            setVisits(await visitRepo.getVisits());
+            setVisits(await getUserVisits());
             return;
           case "queue_items":
             setQueueItems(await queueRepo.getQueueItems());
@@ -759,7 +762,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         attendanceRepo.list(attendanceFilter, userRole, userBranchId, currentUser?.staffId),
         overtimeRepo.list(),
         bookingRepo.getBookings(userRole, userBranchId),
-        visitRepo.getVisits(),
+        getUserVisits(),
         queueRepo.getQueueItems(),
         treatmentRepo.getTreatmentJobs(),
         invoiceRepo.getInvoices(),

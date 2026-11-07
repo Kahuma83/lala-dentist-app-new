@@ -359,6 +359,17 @@ export const BookingManagement: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
+      const branchScopedRole = currentUser?.role === UserRole.BRANCH_ADMIN
+        || currentUser?.role === UserRole.DOCTOR_ASSISTANT
+        || currentUser?.role === UserRole.DOCTOR
+        || currentUser?.role === UserRole.OB;
+      const visitRequest = branchScopedRole && (currentUser?.assignedBranchId || selectedBranchId)
+        ? repos.visit.getVisitsByBranch(
+            currentUser?.assignedBranchId || selectedBranchId!,
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          )
+        : repos.visit.getVisits();
       const results = await Promise.allSettled([
         repos.booking.getBookings(
           currentUser?.role,
@@ -366,7 +377,7 @@ export const BookingManagement: React.FC = () => {
         ),
         repos.doctor.getDoctors(),
         repos.queue.getQueueItems(),
-        repos.visit.getVisits()
+        visitRequest
       ]);
 
       const [bkRes, docRes, qRes, visRes] = results;

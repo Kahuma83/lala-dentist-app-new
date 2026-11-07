@@ -671,6 +671,7 @@ export interface LiveQueueSnapshot {
   consultationQueue: QueueItem[];
   completedQueue: QueueItem[];
   skippedQueue: QueueItem[];
+  queueItems: QueueItem[];
   generatedAt: string; // ISO date-time
 
   // Backward compatibility fields

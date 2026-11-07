@@ -486,6 +486,7 @@ export interface VisitRepository {
   getVisits(): Promise<PatientVisit[]>;
   getVisitAnalyticsRecords(): Promise<PatientVisitAnalyticsRecord[]>;
   getVisitById(id: string): Promise<PatientVisit | null>;
+  getVisitsByIds(ids: string[]): Promise<PatientVisit[]>;
   getVisitsByPatient(patientId: string): Promise<PatientVisit[]>;
   getVisitsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientVisit[]>;
   createVisit(
