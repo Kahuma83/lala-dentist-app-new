@@ -124,6 +124,8 @@ export const PatientManagement: React.FC = () => {
   const [directMedicalRecordError, setDirectMedicalRecordError] = useState<string | null>(null);
   const canReadMedicalRecords =
     currentUser?.role === UserRole.DOCTOR || currentUser?.role === UserRole.SUPER_ADMIN;
+  const canEditPatientRM =
+    currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN;
   const canViewPatientPhone = isPatientPhoneVisible(currentUser?.role);
   const canEditMedicalRecords =
     canReadMedicalRecords;
@@ -600,13 +602,15 @@ export const PatientManagement: React.FC = () => {
 
   // Helper to open Edit Patient Modal
   const handleOpenEditPatient = (p: PatientProfile) => {
-    setRmMode("manual");
-    const existingBranchId = p.registeredBranchId 
+    setRmMode(canEditPatientRM ? "manual" : "auto");
+    const patientRegisteredBranchId = p.registeredBranchId
       || p.branch_id 
       || p.assignedBranchId 
       || p.branchId 
-      || currentUser?.assignedBranchId
       || "";
+    const existingBranchId = currentUser?.role === UserRole.BRANCH_ADMIN
+      ? currentUser.assignedBranchId || ""
+      : patientRegisteredBranchId || currentUser?.assignedBranchId || "";
 
     setPatientForm({
       id: p.id,
@@ -692,7 +696,12 @@ export const PatientManagement: React.FC = () => {
         const patientsForUniqueness = isOptimizedPatientDirectory
           ? await repos.patient.getPatients(currentUser?.role, currentUser?.assignedBranchId)
           : patients;
-        const rmCheck = checkRMUniqueness(candidateRM, patientsForUniqueness, patientForm.id || undefined);
+        const rmCheck = checkRMUniqueness(
+          candidateRM,
+          patientsForUniqueness,
+          patientForm.id || undefined,
+          patientForm.registeredBranchId
+        );
         if (!rmCheck.isUnique && rmCheck.conflictPatient) {
           throw new Error(`Nomor RM "${candidateRM}" sudah digunakan oleh pasien "${rmCheck.conflictPatient.fullName || rmCheck.conflictPatient.name}". Harap gunakan nomor RM lain.`);
         }
@@ -728,7 +737,7 @@ export const PatientManagement: React.FC = () => {
           {
             fullName: patientForm.name,
             name: patientForm.name,
-            ...(rmToSubmit ? { medicalRecordNumber: rmToSubmit } : {}),
+            ...(rmToSubmit && canEditPatientRM ? { medicalRecordNumber: rmToSubmit } : {}),
             phone: patientForm.phone,
             email: patientEmail,
             emergencyContactName: patientForm.emergencyContactName.trim(),
@@ -2232,6 +2241,7 @@ export const PatientManagement: React.FC = () => {
                     id="input-patient-branch"
                     value={patientForm.registeredBranchId}
                     onChange={(e) => setPatientForm({ ...patientForm, registeredBranchId: e.target.value })}
+                    disabled={!!patientForm.id && currentUser?.role === UserRole.BRANCH_ADMIN}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-medium text-xs"
                   >
                     <option value="">Belum ditentukan</option>
@@ -2242,7 +2252,9 @@ export const PatientManagement: React.FC = () => {
                     ))}
                   </select>
                   <p className="text-[10px] text-slate-500 mt-1">
-                    Cabang kunjungan dipilih saat booking atau check-in; profil pasien tidak harus terikat ke satu cabang.
+                    {patientForm.id && currentUser?.role === UserRole.BRANCH_ADMIN
+                      ? "Admin Cabang hanya dapat mengelola No. RM untuk cabangnya sendiri. Cabang asal pasien tidak diubah."
+                      : "Cabang kunjungan dipilih saat booking atau check-in; profil pasien tidak harus terikat ke satu cabang."}
                   </p>
                 </div>
 
@@ -2303,6 +2315,7 @@ export const PatientManagement: React.FC = () => {
                           type="text"
                           value={patientForm.medicalRecordNumber}
                           onChange={(e) => setPatientForm({ ...patientForm, medicalRecordNumber: e.target.value })}
+                          disabled={!!patientForm.id && !canEditPatientRM}
                           placeholder="Ketik No. RM lama (contoh: 3000, 2500, dll)"
                           className={`w-full bg-white border rounded-lg p-2.5 font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 ${
                             manualRMValidation && !manualRMValidation.isUnique
@@ -2340,7 +2353,11 @@ export const PatientManagement: React.FC = () => {
                       )}
                       {!manualRMValidation && (
                         <p className="text-[10px] text-slate-500 mt-1">
-                          💡 Masukkan nomor rekam medis atau nomor kunjungan pasien terdahulu. Sistem otomatis mencegah nomor duplikat dan meneruskan nomor urut berikutnya.
+                          {patientForm.id
+                            ? canEditPatientRM
+                              ? "Perubahan No. RM hanya berlaku untuk cabang yang dipilih. Nomor yang sudah dipakai pasien lain di cabang ini akan ditolak."
+                              : "Hanya Admin Cabang atau Super Admin yang dapat mengubah No. RM."
+                            : "Masukkan nomor rekam medis atau nomor kunjungan pasien terdahulu. Sistem otomatis mencegah nomor duplikat dan meneruskan nomor urut berikutnya."}
                         </p>
                       )}
                     </div>

@@ -443,36 +443,59 @@ export class MockPatientRepository implements PatientRepository {
       existing.branch_id ||
       existing.assignedBranchId ||
       existing.branchId;
-    if (updates.medicalRecordNumber) {
+    let updatedMedicalRecordNumber = existing.medicalRecordNumber;
+    let updatedInternalPatientCode = existing.internalPatientCode;
+    let updatedBranchMedicalRecordNumbers = existing.branchMedicalRecordNumbers || [];
+    if (updates.medicalRecordNumber !== undefined) {
+      if (currentUserRole !== UserRole.BRANCH_ADMIN && currentUserRole !== UserRole.SUPER_ADMIN) {
+        throw new Error("Hanya Admin Cabang atau Super Admin yang dapat mengubah No. RM.");
+      }
+      if (!effectiveBranchId) throw new Error("Cabang wajib ditentukan untuk mengelola No. RM lokal pasien.");
+      if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId !== effectiveBranchId) {
+        throw new Error("Admin cabang hanya dapat mengelola No. RM cabangnya sendiri.");
+      }
       const newRM = updates.medicalRecordNumber.trim();
+      if (!newRM) throw new Error("No. RM wajib diisi.");
+      const oldRM = getPatientMedicalRecordNumber(existing, effectiveBranchId);
       const duplicateRM = db.patients.find(
         (patient) =>
           patient.id !== id &&
           getPatientMedicalRecordNumber(patient, effectiveBranchId).trim().toLowerCase() === newRM.toLowerCase()
       );
       if (duplicateRM) {
-        throw new Error("Medical record number already exists");
+        throw new Error("No. RM sudah digunakan pasien lain di cabang ini.");
+      }
+
+      const branch = db.branches.find((item) => item.id === effectiveBranchId);
+      if (!branch) throw new Error("Cabang tidak ditemukan.");
+      updatedBranchMedicalRecordNumbers = [
+        ...updatedBranchMedicalRecordNumbers.filter((record) => record.branchId !== effectiveBranchId),
+        { branchId: effectiveBranchId, medicalRecordNumber: newRM }
+      ];
+      if (existing.registeredBranchId === effectiveBranchId || !existing.medicalRecordNumber) {
+        updatedMedicalRecordNumber = newRM;
+        const oldInternalCode = oldRM
+          ? formatInternalPatientCode(branch.branchCode || "BRN", oldRM)
+          : undefined;
+        if (!existing.internalPatientCode || existing.internalPatientCode === oldInternalCode) {
+          updatedInternalPatientCode = formatInternalPatientCode(branch.branchCode || "BRN", newRM);
+        }
       }
     }
 
     const nameToUse = updates.fullName || updates.name || existing.fullName || existing.name;
-    const effBranch = (updates as any).registeredBranchId || (updates as any).branch_id || (updates as any).assignedBranchId || (updates as any).branchId || existing.registeredBranchId;
+    const effBranch = currentUserRole === UserRole.BRANCH_ADMIN
+      ? existing.registeredBranchId || existing.branch_id || existing.assignedBranchId || existing.branchId
+      : (updates as any).registeredBranchId || (updates as any).branch_id || (updates as any).assignedBranchId || (updates as any).branchId || existing.registeredBranchId;
 
     const updatedPatient: PatientProfile = {
       ...existing,
       ...updates,
-      ...(updates.medicalRecordNumber && effectiveBranchId
+      ...(updates.medicalRecordNumber !== undefined
         ? {
-            internalPatientCode: existing.internalPatientCode || formatInternalPatientCode(
-              db.branches.find((branch) => branch.id === effectiveBranchId)?.branchCode || effectiveBranchId.slice(0, 3),
-              updates.medicalRecordNumber
-            ),
-            branchMedicalRecordNumbers: [
-              ...(existing.branchMedicalRecordNumbers || []).filter(
-                (record) => record.branchId !== effectiveBranchId
-              ),
-              { branchId: effectiveBranchId, medicalRecordNumber: updates.medicalRecordNumber.trim() }
-            ]
+            medicalRecordNumber: updatedMedicalRecordNumber,
+            internalPatientCode: updatedInternalPatientCode,
+            branchMedicalRecordNumbers: updatedBranchMedicalRecordNumbers
           }
         : {}),
       name: nameToUse,

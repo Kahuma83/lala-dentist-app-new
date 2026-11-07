@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { MockDatabase } from "../data/mockData";
 import { MockPatientRepository, MockVisitRepository, MockQueueRepository } from "../repositories/mockRepositories";
 import { PatientProfile, UserRole, VisitStatus, VisitType } from "../types/domain";
@@ -192,6 +194,151 @@ describe("Patient Custom RM, Sequential Auto-Generation, and Database Clean Work
     expect(
       checkRMUniqueness("3000", [firstRmIssuedAtAnotherBranch], undefined, "branch-a").isUnique
     ).toBe(true);
+  });
+
+  it("allows a branch admin to change an existing RM and keeps the branch code in sync", async () => {
+    const branch = db.branches[0];
+    const patient = await patientRepo.createPatient({
+      ...basePatient,
+      name: "Pasien RM Diubah",
+      registeredBranchId: branch.id,
+      medicalRecordNumber: "4100"
+    }, UserRole.BRANCH_ADMIN, branch.id);
+
+    const updated = await patientRepo.updatePatient(patient.id, {
+      medicalRecordNumber: "4101",
+      registeredBranchId: branch.id
+    }, UserRole.BRANCH_ADMIN, branch.id);
+
+    expect(getPatientMedicalRecordNumber(updated, branch.id)).toBe("4101");
+    expect(updated.medicalRecordNumber).toBe("4101");
+    expect(updated.internalPatientCode).toBe(`${branch.branchCode}-RM4101`);
+  });
+
+  it("rejects an RM already used by another patient in the same branch", async () => {
+    const branch = db.branches[0];
+    const firstPatient = await patientRepo.createPatient({
+      ...basePatient,
+      name: "Pasien Pemilik RM",
+      registeredBranchId: branch.id,
+      medicalRecordNumber: "4200"
+    }, UserRole.BRANCH_ADMIN, branch.id);
+    const secondPatient = await patientRepo.createPatient({
+      ...basePatient,
+      name: "Pasien Pengganti RM",
+      registeredBranchId: branch.id,
+      medicalRecordNumber: "4201"
+    }, UserRole.BRANCH_ADMIN, branch.id);
+
+    await expect(patientRepo.updatePatient(secondPatient.id, {
+      medicalRecordNumber: "4200",
+      registeredBranchId: branch.id
+    }, UserRole.BRANCH_ADMIN, branch.id)).rejects.toThrow("No. RM sudah digunakan pasien lain di cabang ini.");
+
+    expect(getPatientMedicalRecordNumber(
+      (await patientRepo.getPatientById(secondPatient.id))!,
+      branch.id
+    )).toBe("4201");
+    expect(getPatientMedicalRecordNumber(
+      (await patientRepo.getPatientById(firstPatient.id))!,
+      branch.id
+    )).toBe("4200");
+  });
+
+  it("rejects branch admins changing an RM outside their assigned branch", async () => {
+    const [branch, otherBranch] = db.branches;
+    const patient = await patientRepo.createPatient({
+      ...basePatient,
+      name: "Pasien Cabang Terbatas",
+      registeredBranchId: otherBranch.id,
+      medicalRecordNumber: "4300"
+    }, UserRole.BRANCH_ADMIN, otherBranch.id);
+
+    await expect(patientRepo.updatePatient(patient.id, {
+      medicalRecordNumber: "4301",
+      registeredBranchId: otherBranch.id
+    }, UserRole.BRANCH_ADMIN, branch.id)).rejects.toThrow(
+      "Admin cabang hanya dapat mengelola No. RM cabangnya sendiri."
+    );
+
+    expect(getPatientMedicalRecordNumber(
+      (await patientRepo.getPatientById(patient.id))!,
+      otherBranch.id
+    )).toBe("4300");
+  });
+
+  it("rejects clinical users from changing an RM", async () => {
+    const branch = db.branches[0];
+    const patient = await patientRepo.createPatient({
+      ...basePatient,
+      name: "Pasien Hanya Admin RM",
+      registeredBranchId: branch.id,
+      medicalRecordNumber: "4320"
+    }, UserRole.BRANCH_ADMIN, branch.id);
+
+    await expect(patientRepo.updatePatient(patient.id, {
+      medicalRecordNumber: "4321",
+      registeredBranchId: branch.id
+    }, UserRole.DOCTOR, branch.id)).rejects.toThrow(
+      "Hanya Admin Cabang atau Super Admin yang dapat mengubah No. RM."
+    );
+
+    expect(getPatientMedicalRecordNumber(
+      (await patientRepo.getPatientById(patient.id))!,
+      branch.id
+    )).toBe("4320");
+  });
+
+  it("lets a branch admin manage their local RM without changing the patient's registered branch", async () => {
+    const [branch, registeredBranch] = db.branches;
+    const patient = await patientRepo.createPatient({
+      ...basePatient,
+      name: "Pasien Lintas Cabang",
+      registeredBranchId: registeredBranch.id,
+      medicalRecordNumber: "4350"
+    }, UserRole.BRANCH_ADMIN, registeredBranch.id);
+
+    const updated = await patientRepo.updatePatient(patient.id, {
+      name: "Pasien Lintas Cabang Diperbarui",
+      medicalRecordNumber: "4351",
+      registeredBranchId: branch.id
+    }, UserRole.BRANCH_ADMIN, branch.id);
+
+    expect(updated.registeredBranchId).toBe(registeredBranch.id);
+    expect(getPatientMedicalRecordNumber(updated, registeredBranch.id)).toBe("4350");
+    expect(getPatientMedicalRecordNumber(updated, branch.id)).toBe("4351");
+    expect(updated.medicalRecordNumber).toBe("4350");
+  });
+
+  it("allows the first RM to be assigned through the edit flow", async () => {
+    const branch = db.branches[0];
+    const patient = await patientRepo.createPatient({
+      ...basePatient,
+      name: "Pasien Belum Memiliki RM"
+    }, UserRole.BRANCH_ADMIN, branch.id);
+
+    const updated = await patientRepo.updatePatient(patient.id, {
+      medicalRecordNumber: "4400",
+      registeredBranchId: branch.id
+    }, UserRole.BRANCH_ADMIN, branch.id);
+
+    expect(updated.medicalRecordNumber).toBe("4400");
+    expect(getPatientMedicalRecordNumber(updated, branch.id)).toBe("4400");
+    expect(updated.internalPatientCode).toBe(`${branch.branchCode}-RM4400`);
+  });
+
+  it("defines a secured atomic RPC for changing branch-scoped RMs", () => {
+    const migration = fs.readFileSync(path.resolve(
+      process.cwd(),
+      "supabase/migrations/20270221000000_edit_branch_patient_medical_record_number.sql"
+    ), "utf8");
+
+    expect(migration).toMatch(/CREATE OR REPLACE FUNCTION public\.update_patient_branch_medical_record_number/i);
+    expect(migration).toContain("COALESCE(public.get_user_role(), '') <> 'BRANCH_ADMIN'");
+    expect(migration).toContain("FOR UPDATE");
+    expect(migration).toContain("WHEN unique_violation");
+    expect(migration).toContain("GRANT EXECUTE ON FUNCTION public.update_patient_branch_medical_record_number");
+    expect(migration).toContain("FROM PUBLIC, anon");
   });
 
   it("5. Should support existing patients with manually entered RMs while leaving new patients unnumbered", async () => {
