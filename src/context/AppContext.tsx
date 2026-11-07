@@ -354,8 +354,9 @@ export const SIMULATED_USERS: CurrentUser[] = [
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { path } = useRouter();
-  const isSuperAdminPatientDirectory = path === "/super-admin/patients";
-  const wasSuperAdminPatientDirectoryRef = useRef(isSuperAdminPatientDirectory);
+  const isPaginatedPatientDirectory =
+    path === "/super-admin/patients" || path === "/branch-admin/patients";
+  const wasPaginatedPatientDirectoryRef = useRef(isPaginatedPatientDirectory);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
 
@@ -645,7 +646,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return;
           case "patient_profiles":
           case "patients":
-            if (isSuperAdminPatientDirectory) {
+            if (isPaginatedPatientDirectory) {
               window.dispatchEvent(new Event("patient-directory-data-changed"));
               return;
             }
@@ -741,7 +742,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const results = await Promise.allSettled([
         branchRepo.getBranches(),
-        isSuperAdminPatientDirectory
+        isPaginatedPatientDirectory
           ? Promise.resolve<PatientProfile[]>([])
           : patientRepo.getPatients(userRole, userBranchId),
         doctorRepo.getDoctors(),
@@ -991,10 +992,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [authStatus, currentUser?.id, currentUser?.role, currentUser?.assignedBranchId]);
 
   useEffect(() => {
-    if (wasSuperAdminPatientDirectoryRef.current === isSuperAdminPatientDirectory) return;
-    wasSuperAdminPatientDirectoryRef.current = isSuperAdminPatientDirectory;
+    if (wasPaginatedPatientDirectoryRef.current === isPaginatedPatientDirectory) return;
+    wasPaginatedPatientDirectoryRef.current = isPaginatedPatientDirectory;
 
-    if (isSuperAdminPatientDirectory) {
+    if (isPaginatedPatientDirectory) {
       setPatients([]);
       return;
     }
@@ -1027,7 +1028,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       active = false;
     };
   }, [
-    isSuperAdminPatientDirectory,
+    isPaginatedPatientDirectory,
     authStatus,
     currentUser?.id,
     currentUser?.role,
