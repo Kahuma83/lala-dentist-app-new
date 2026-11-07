@@ -107,6 +107,11 @@ export interface DuplicateCheckResult {
   hasDuplicates: boolean;
 }
 
+export interface PatientSearchPage {
+  patients: PatientProfile[];
+  totalCount: number;
+}
+
 export interface PatientRepository {
   getPatients(currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]>;
   getPatientById(
@@ -120,6 +125,13 @@ export interface PatientRepository {
     currentUserRole?: UserRole
   ): Promise<string>;
   searchPatients(query: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]>;
+  searchPatientsPage(
+    query: string,
+    currentUserRole: UserRole | undefined,
+    userBranchId: string | null | undefined,
+    offset: number,
+    limit: number
+  ): Promise<PatientSearchPage>;
   createPatient(
     patientData: Omit<PatientProfile, "id" | "medicalRecordNumber" | "createdAt" | "updatedAt"> & { id?: string; medicalRecordNumber?: string },
     currentUserRole?: UserRole,

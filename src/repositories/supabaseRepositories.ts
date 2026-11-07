@@ -801,11 +801,90 @@ export class SupabasePatientRepository implements PatientRepository {
         (p.fullName || "").toLowerCase().includes(q) ||
         (p.medicalRecordNumber || "").toLowerCase().includes(q) ||
         (p.internalPatientCode || "").toLowerCase().includes(q) ||
+        (p.identityDocumentNumber || "").replace(/\s/g, "").toLowerCase().includes(q.replace(/\s/g, "")) ||
         p.branchMedicalRecordNumbers?.some((record) =>
           record.medicalRecordNumber.toLowerCase().includes(q)
         ) ||
         (p.phone || "").includes(q)
     );
+  }
+
+  async searchPatientsPage(
+    query: string,
+    currentUserRole?: UserRole,
+    _userBranchId?: string | null,
+    offset = 0,
+    limit = 10
+  ) {
+    ensureSupabaseConnected();
+    if (!isSupabaseConfigured || !supabase) {
+        throw new Error("Koneksi Supabase belum terkonfigurasi.");
+    }
+
+    const normalizedQuery = query.trim();
+    const searchableColumns = [
+        "name",
+        "full_name",
+        "medical_record_number",
+        "internal_patient_code"
+    ];
+    if (canViewPatientPhone(currentUserRole)) searchableColumns.push("phone", "identity_document_number");
+    const safeQuery = normalizedQuery.replace(/[\\%_,()"*]/g, " ").trim();
+    const selectColumns = patientSelectColumns(currentUserRole);
+    const pageOffset = Math.max(0, Math.trunc(offset));
+    const pageLimit = Math.min(50, Math.max(1, Math.trunc(limit)));
+    let branchMedicalRecordPatientIds: string[] = [];
+
+    if (safeQuery && /\d/.test(safeQuery)) {
+      const { data, error } = await supabase
+        .from("patient_branch_medical_records")
+        .select("patient_id")
+        .ilike("medical_record_number", `%${safeQuery}%`)
+        .limit(500);
+      if (error) {
+        throw new Error(`Gagal mencari No. RM per cabang: ${error.message}`);
+      }
+      branchMedicalRecordPatientIds = [...new Set((data || []).map((row) => row.patient_id))];
+    }
+
+    const fetchPage = async (table: "patient_profiles" | "patients", includeExtendedColumns: boolean) => {
+      let request = supabase
+        .from(table)
+        .select(selectColumns, { count: "exact" })
+        .order("created_at", { ascending: false })
+        .range(pageOffset, pageOffset + pageLimit - 1);
+
+      if (safeQuery) {
+        const columns = includeExtendedColumns
+          ? searchableColumns
+          : searchableColumns.filter((column) =>
+              ["name", "full_name", "medical_record_number", "phone"].includes(column)
+            );
+        const filters = columns.map((column) => `${column}.ilike.%${safeQuery}%`);
+        if (branchMedicalRecordPatientIds.length > 0) {
+          filters.push(`id.in.(${branchMedicalRecordPatientIds.join(",")})`);
+        }
+        request = request.or(filters.join(","));
+      }
+
+      return request;
+    };
+
+    let response = await fetchPage("patient_profiles", true);
+    if (response.error && isMissingPatientProfilesTable(response.error)) {
+      response = await fetchPage("patients", false);
+    }
+    if (response.error) {
+      throw new Error(`Gagal mencari pasien: ${response.error.message}`);
+    }
+
+    const mappedPatients = (response.data || []).map(this.mapPatientFromDb.bind(this));
+    const withNotes = await this.attachMedicalHistoryNotes(mappedPatients, currentUserRole);
+    const withBranchRms = await this.attachBranchMedicalRecordNumbers(withNotes);
+    return {
+      patients: withBranchRms.map((patient) => redactPatientPhone(patient, currentUserRole)),
+      totalCount: response.count || 0
+    };
   }
 
   async createPatient(
