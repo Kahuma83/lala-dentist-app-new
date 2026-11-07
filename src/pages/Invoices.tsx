@@ -13,7 +13,8 @@ import {
   JournalStatus,
   ClinicBranding,
   TreatmentJob,
-  TreatmentJobStatus
+  TreatmentJobStatus,
+  PatientProfile
 } from "../types/domain";
 import { DEFAULT_CLINIC_BRANDING } from "../data/mockData";
 import {
@@ -86,7 +87,7 @@ export const Invoices: React.FC = () => {
   const { navigate } = useRouter();
 
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [patients, setPatients] = useState<any[]>([]);
+  const [patients, setPatients] = useState<PatientProfile[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [services, setServices] = useState<any[]>([]);
   const [treatments, setTreatments] = useState<TreatmentJob[]>([]);
@@ -147,6 +148,7 @@ export const Invoices: React.FC = () => {
   const [payDate, setPayDate] = useState(getTodayDateString());
   const [payDateReason, setPayDateReason] = useState("");
   const [payError, setPayError] = useState("");
+  const [patientLookupError, setPatientLookupError] = useState("");
   const [paymentPostingWarning, setPaymentPostingWarning] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -163,12 +165,98 @@ export const Invoices: React.FC = () => {
       ]);
 
       const [invRes, patRes, bRes, sRes, brandRes, trRes] = results;
-      if (invRes.status === "fulfilled") setInvoices(invRes.value);
-      if (patRes.status === "fulfilled") setPatients(patRes.value);
+      const loadedInvoices = invRes.status === "fulfilled" ? invRes.value : [];
+      const loadedPatients = patRes.status === "fulfilled" ? patRes.value : [];
+      const loadedTreatments = trRes.status === "fulfilled" ? trRes.value : [];
+      if (invRes.status === "fulfilled") setInvoices(loadedInvoices);
+      if (patRes.status === "fulfilled") setPatients(loadedPatients);
       if (bRes.status === "fulfilled") setBranches(bRes.value);
       if (sRes.status === "fulfilled") setServices(sRes.value);
       if (brandRes.status === "fulfilled" && brandRes.value) setBranding(brandRes.value);
       if (trRes.status === "fulfilled" && trRes.value) setTreatments(trRes.value);
+
+      const knownPatientIds = new Set(loadedPatients.map((patient) => patient.id));
+      const activeInvoicedVisitIds = new Set(
+        loadedInvoices
+          .filter((invoice) => invoice.status !== InvoiceStatus.CANCELLED)
+          .map((invoice) => invoice.visitId)
+      );
+      const treatmentGroups = loadedTreatments.reduce((groups, treatment) => {
+        const group = groups.get(treatment.visitId) || [];
+        group.push(treatment);
+        groups.set(treatment.visitId, group);
+        return groups;
+      }, new Map<string, TreatmentJob[]>());
+      const billablePatientIds = Array.from(treatmentGroups.entries())
+        .filter(([visitId, visitTreatments]) =>
+          !activeInvoicedVisitIds.has(visitId)
+          && visitTreatments.some((treatment) =>
+            treatment.status === TreatmentJobStatus.SELESAI
+            || treatment.status === TreatmentJobStatus.DISERAHKAN
+          )
+          && visitTreatments.every((treatment) =>
+            treatment.status === TreatmentJobStatus.SELESAI
+            || treatment.status === TreatmentJobStatus.DISERAHKAN
+            || treatment.status === TreatmentJobStatus.DIBATALKAN
+          )
+        )
+        .flatMap(([, visitTreatments]) =>
+          visitTreatments
+            .filter((treatment) =>
+              treatment.status === TreatmentJobStatus.SELESAI
+              || treatment.status === TreatmentJobStatus.DISERAHKAN
+            )
+            .map((treatment) => treatment.patientId)
+        );
+      const missingPatientIds = Array.from(new Set([
+        ...loadedInvoices
+          .filter((invoice) => invoice.status !== InvoiceStatus.CANCELLED)
+          .map((invoice) => invoice.patientId),
+        ...billablePatientIds,
+        ...loadedTreatments
+          .filter((treatment) =>
+            treatment.status === TreatmentJobStatus.PERLU_REVISI
+          )
+          .map((treatment) => treatment.patientId)
+      ])).filter((patientId) => patientId && !knownPatientIds.has(patientId));
+
+      if (missingPatientIds.length > 0) {
+        const patientResults = await Promise.allSettled(missingPatientIds.map((patientId) =>
+          patientRepo.getPatientById(
+            patientId,
+            currentUser?.role,
+            currentUser?.assignedBranchId || currentUser?.branchId
+          )
+        ));
+        const recoveredPatients = patientResults.flatMap((result) =>
+          result.status === "fulfilled" && result.value ? [result.value] : []
+        );
+        if (recoveredPatients.length > 0) {
+          setPatients((currentPatients) => {
+            const currentIds = new Set(currentPatients.map((patient) => patient.id));
+            return [
+              ...currentPatients,
+              ...recoveredPatients.filter((patient) => !currentIds.has(patient.id))
+            ];
+          });
+        }
+
+        const failedLookups = patientResults.filter((result) =>
+          result.status === "rejected" || (result.status === "fulfilled" && !result.value)
+        ).length;
+        if (failedLookups > 0) {
+          const message = `Tidak dapat memuat nama untuk ${failedLookups} pasien terkait faktur atau tindakan.`;
+          setPatientLookupError(message);
+          console.warn("[Invoices] Some invoice/treatment patient profiles could not be loaded:", {
+            patientIds: missingPatientIds,
+            failedLookups
+          });
+        } else {
+          setPatientLookupError("");
+        }
+      } else {
+        setPatientLookupError("");
+      }
     } catch (err: any) {
       console.error("Error loading invoice data:", err);
     } finally {
@@ -205,11 +293,43 @@ export const Invoices: React.FC = () => {
 
   const getPatientName = (patientId: string) => {
     const p = patients.find((pat) => pat.id === patientId);
-    return p ? p.fullName : patientId;
+    if (p?.fullName || p?.name) return p.fullName || p.name;
+    return loading ? "Memuat nama pasien..." : "Nama pasien tidak tersedia";
   };
 
   const getPatient = (patientId: string) => {
     return patients.find((pat) => pat.id === patientId);
+  };
+
+  const ensureInvoicePatientLoaded = async (invoice: Invoice) => {
+    if (patients.some((patient) => patient.id === invoice.patientId)) {
+      setPatientLookupError("");
+      return;
+    }
+
+    setPatientLookupError("");
+    try {
+      const patient = await patientRepo.getPatientById(
+        invoice.patientId,
+        currentUser?.role,
+        currentUser?.assignedBranchId || currentUser?.branchId
+      );
+      if (!patient) {
+        setPatientLookupError("Profil pasien tidak ditemukan atau akun Anda tidak memiliki akses.");
+        console.warn("[Invoices] Patient profile unavailable for invoice:", invoice.id);
+        return;
+      }
+
+      setPatients((currentPatients) =>
+        currentPatients.some((currentPatient) => currentPatient.id === patient.id)
+          ? currentPatients
+          : [...currentPatients, patient]
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? ` ${error.message}` : "";
+      setPatientLookupError(`Gagal memuat profil pasien.${detail}`);
+      console.error("[Invoices] Failed to load patient profile for invoice:", invoice.id, error);
+    }
   };
 
   const getBranch = (branchId: string) => {
@@ -366,6 +486,7 @@ export const Invoices: React.FC = () => {
 
   const handleOpenPayment = async (inv: Invoice) => {
     setSelectedInvoice(inv);
+    await ensureInvoicePatientLoaded(inv);
     setPayAmount(inv.outstandingAmount);
     setPayMethod(PaymentMethod.CASH);
     setPayRef("");
@@ -377,6 +498,7 @@ export const Invoices: React.FC = () => {
 
   const handleOpenDocument = async (inv: Invoice) => {
     setSelectedInvoice(inv);
+    await ensureInvoicePatientLoaded(inv);
     try {
       const items = await invoiceRepo.getInvoiceItems(inv.id);
       setSelectedInvoiceItems(items);
@@ -388,6 +510,7 @@ export const Invoices: React.FC = () => {
 
   const handleOpenDetail = async (inv: Invoice) => {
     setSelectedInvoice(inv);
+    await ensureInvoicePatientLoaded(inv);
     try {
       const [pmts, jrn, items] = await Promise.all([
         paymentRepo.getPaymentsByInvoice(
@@ -631,6 +754,11 @@ export const Invoices: React.FC = () => {
       {paymentPostingWarning && (
         <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {paymentPostingWarning}
+        </div>
+      )}
+      {patientLookupError && (
+        <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {patientLookupError}
         </div>
       )}
 
