@@ -839,7 +839,7 @@ export const BookingManagement: React.FC = () => {
         currentUser.assignedBranchId,
         0,
         10,
-        "booking"
+        "directory"
       ).then((result) => {
         if (active && requestId === branchBookingPatientRequestRef.current) {
           setBranchBookingPatientResults(result.patients);
