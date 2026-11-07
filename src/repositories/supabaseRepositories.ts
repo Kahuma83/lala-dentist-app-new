@@ -646,7 +646,25 @@ function isMissingPatientProfilesTable(error: { code?: string; message?: string 
 }
 
 export class SupabasePatientRepository implements PatientRepository {
+  private patientLoadPromises = new Map<string, Promise<PatientProfile[]>>();
+
   async getPatients(currentUserRole?: UserRole, _userBranchId?: string | null): Promise<PatientProfile[]> {
+    const requestKey = currentUserRole || "default";
+    const pendingRequest = this.patientLoadPromises.get(requestKey);
+    if (pendingRequest) return pendingRequest;
+
+    const request = this.loadPatients(currentUserRole);
+    this.patientLoadPromises.set(requestKey, request);
+    try {
+      return await request;
+    } finally {
+      if (this.patientLoadPromises.get(requestKey) === request) {
+        this.patientLoadPromises.delete(requestKey);
+      }
+    }
+  }
+
+  private async loadPatients(currentUserRole?: UserRole): Promise<PatientProfile[]> {
     ensureSupabaseConnected();
     const selectColumns = patientSelectColumns(currentUserRole);
 
@@ -1675,8 +1693,8 @@ export class SupabaseQueueRepository implements QueueRepository {
       throw new Error("Access denied: Doctor cannot access another doctor queue");
     }
 
-    const items = await this.getQueueByBranch(branchId, currentUserRole, userBranchId, currentUserRole === UserRole.DOCTOR ? doctorId : null);
-    let filtered = items.filter((q) => {
+    const queueItems = await this.getQueueByBranch(branchId, currentUserRole, userBranchId, currentUserRole === UserRole.DOCTOR ? doctorId : null);
+    let filtered = queueItems.filter((q) => {
       const qDate = getOperationalDateString(q.arrivalAt || q.checkInTime || q.createdAt);
       return qDate === date;
     });
@@ -1705,6 +1723,7 @@ export class SupabaseQueueRepository implements QueueRepository {
       consultationQueue,
       completedQueue,
       skippedQueue,
+      queueItems,
       generatedAt: nowIso,
       date,
       activeQueueItems: [...waitingQueue, ...preparationQueue, ...consultationQueue],
@@ -3940,6 +3959,8 @@ export class SupabaseH1ConfirmationRepository implements H1ConfirmationRepositor
 // 9. SUPABASE VISIT REPOSITORY
 // =====================================================================
 export class SupabaseVisitRepository implements VisitRepository {
+  private visitLoadPromises = new Map<string, Promise<PatientVisit[]>>();
+
   private getFallbackVisits(): PatientVisit[] {
     if (!useRepositoryTestFallbacks()) return [];
     if (typeof window !== "undefined") {
@@ -3984,18 +4005,51 @@ export class SupabaseVisitRepository implements VisitRepository {
   }
 
   async getVisits(): Promise<PatientVisit[]> {
+    return this.loadVisits("all", async () => {
+      ensureSupabaseConnected();
+      const { data, error } = await supabase
+        .from("patient_visits")
+        .select("*")
+        .order("visit_date_time", { ascending: false });
+      if (error) throw new Error(`Gagal memuat data kunjungan pasien: ${error.message}`);
+      return this.mergeFallbackVisits((data || []).map(this.mapVisitFromDb));
+    });
+  }
+
+  private async loadVisits(
+    requestKey: string,
+    load: () => Promise<PatientVisit[]>
+  ): Promise<PatientVisit[]> {
+    const pendingRequest = this.visitLoadPromises.get(requestKey);
+    if (pendingRequest) return pendingRequest;
+
+    const request = load();
+    this.visitLoadPromises.set(requestKey, request);
+    try {
+      return await request;
+    } finally {
+      if (this.visitLoadPromises.get(requestKey) === request) {
+        this.visitLoadPromises.delete(requestKey);
+      }
+    }
+  }
+
+  private mergeFallbackVisits(remoteVisits: PatientVisit[]): PatientVisit[] {
+    const fallback = this.getFallbackVisits();
+    const remoteIds = new Set(remoteVisits.map((visit) => visit.id));
+    return [...remoteVisits, ...fallback.filter((visit) => !remoteIds.has(visit.id))];
+  }
+
+  private async loadVisitsFromBranch(branchId: string): Promise<PatientVisit[]> {
     ensureSupabaseConnected();
     const { data, error } = await supabase
       .from("patient_visits")
       .select("*")
+      .eq("branch_id", branchId)
       .order("visit_date_time", { ascending: false });
     if (error) throw new Error(`Gagal memuat data kunjungan pasien: ${error.message}`);
-    const remoteVisits = (data || []).map(this.mapVisitFromDb);
-
-    const fallback = this.getFallbackVisits();
-    const remoteIds = new Set(remoteVisits.map((v) => v.id));
-    const localOnly = fallback.filter((v) => !remoteIds.has(v.id));
-    return [...remoteVisits, ...localOnly];
+    return this.mergeFallbackVisits((data || []).map(this.mapVisitFromDb))
+      .filter((visit) => isBranchMatch(visit.branchId, branchId));
   }
 
   async getVisitAnalyticsRecords(): Promise<PatientVisitAnalyticsRecord[]> {
@@ -4034,6 +4088,43 @@ export class SupabaseVisitRepository implements VisitRepository {
     return fallback.find((v) => v.id === id) || null;
   }
 
+  async getVisitsByIds(ids: string[]): Promise<PatientVisit[]> {
+    ensureSupabaseConnected();
+    const visitIds = [...new Set(ids)];
+    if (visitIds.length === 0) return [];
+
+    const validIds = visitIds.filter(isValidUUID);
+    if (validIds.length !== visitIds.length && !useRepositoryTestFallbacks()) {
+      throw new Error("ID kunjungan tidak valid untuk memuat data kunjungan pasien.");
+    }
+
+    const pageSize = 100;
+    const batches: string[][] = [];
+    for (let offset = 0; offset < validIds.length; offset += pageSize) {
+      batches.push(validIds.slice(offset, offset + pageSize));
+    }
+
+    const remoteVisits = (await Promise.all(batches.map(async (batch) => {
+      const { data, error } = await supabase
+        .from("patient_visits")
+        .select("*")
+        .in("id", batch);
+      if (error) throw new Error(`Gagal memuat data kunjungan pasien: ${error.message}`);
+      return (data || []).map(this.mapVisitFromDb);
+    }))).flat();
+    const visitsById = new Map(remoteVisits.map((visit) => [visit.id, visit]));
+    for (const visit of this.getFallbackVisits()) {
+      if (visitIds.includes(visit.id) && !visitsById.has(visit.id)) {
+        visitsById.set(visit.id, visit);
+      }
+    }
+
+    return visitIds.flatMap((id) => {
+      const visit = visitsById.get(id);
+      return visit ? [visit] : [];
+    });
+  }
+
   async getVisitsByPatient(patientId: string): Promise<PatientVisit[]> {
     ensureSupabaseConnected();
     if (useRepositoryTestFallbacks()) {
@@ -4052,9 +4143,15 @@ export class SupabaseVisitRepository implements VisitRepository {
   }
 
   async getVisitsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientVisit[]> {
-    const all = await this.getVisits();
     const effBranch = (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId ? userBranchId : branchId;
-    return all.filter((v) => isBranchMatch(v.branchId, effBranch));
+    if (useRepositoryTestFallbacks() && !isValidUUID(effBranch)) {
+      const all = await this.getVisits();
+      return all.filter((visit) => isBranchMatch(visit.branchId, effBranch));
+    }
+    if (!isValidUUID(effBranch)) {
+      throw new Error("ID cabang tidak valid untuk memuat kunjungan pasien.");
+    }
+    return this.loadVisits(`branch:${effBranch}`, () => this.loadVisitsFromBranch(effBranch));
   }
 
   async createVisit(

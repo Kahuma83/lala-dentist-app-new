@@ -95,6 +95,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
   const [selectedVisitId, setSelectedVisitId] = useState<string>("");
   const [lockedVisitId, setLockedVisitId] = useState<string | null>(null);
+  const [isAdditionalTreatmentForRevision, setIsAdditionalTreatmentForRevision] = useState(false);
   const [selectedTreatmentServices, setSelectedTreatmentServices] = useState<MasterService[]>([]);
   const [officialTreatmentPrices, setOfficialTreatmentPrices] = useState<Record<string, number>>({});
   const [treatmentPrices, setTreatmentPrices] = useState<Record<string, number>>({});
@@ -287,10 +288,16 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
         throw new Error(`Gagal memuat dokter eksternal: ${externalDoctorResult.error.message}`);
       }
       const vList = currentUser.role === UserRole.DOCTOR
-        ? (await Promise.all(
-            [...new Set(queueList.map((item) => item.visitId))]
-              .map((visitId) => visitRepo.getVisitById(visitId))
-          )).filter((visit): visit is PatientVisit => visit !== null)
+        ? await visitRepo.getVisitsByIds([...new Set([
+            ...queueList.map((item) => item.visitId),
+            ...trList
+              .filter((treatment) =>
+                treatment.status === TreatmentJobStatus.PERLU_REVISI
+                && !treatment.externalDoctorId
+                && (treatment.assignedDoctorId || treatment.doctorId) === currentUser.doctorId
+              )
+              .map((treatment) => treatment.visitId)
+          ])])
         : await visitRepo.getVisitsByBranch(
             branchId,
             currentUser.role,
@@ -421,9 +428,13 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
 
       setTreatments((current) => [...createdTreatments, ...current]);
       setSuccessMsg(
-        `${createdTreatments.length} rencana tindakan tersimpan. Mulai tindakan setelah pasien menyetujui rencana dan estimasi biaya; harga final dicatat saat tindakan diselesaikan.`
+        isAdditionalTreatmentForRevision
+          ? `${createdTreatments.length} tindakan tambahan tersimpan sebagai BELUM DIMULAI. Mulai setelah persetujuan pasien; invoice menunggu tindakan ini selesai atau dibatalkan.`
+          : `${createdTreatments.length} rencana tindakan tersimpan. Mulai tindakan setelah pasien menyetujui rencana dan estimasi biaya; harga final dicatat saat tindakan diselesaikan.`
       );
       setIsCreateOpen(false);
+      setLockedVisitId(null);
+      setIsAdditionalTreatmentForRevision(false);
       if (!embeddedVisitId) setSelectedVisitId("");
       setSelectedTreatmentServices([]);
       setOfficialTreatmentPrices({});
@@ -925,6 +936,28 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     }
   };
 
+  const handleAddTreatmentForRevision = async (treatment: TreatmentJob) => {
+    if (!canReviseTreatment(treatment)) return;
+    const visit = visits.find((item) => item.id === treatment.visitId);
+    if (!visit) {
+      setError("Data kunjungan untuk tindakan yang dikoreksi tidak ditemukan. Muat ulang halaman lalu coba kembali.");
+      return;
+    }
+
+    setError(null);
+    setSuccessMsg(null);
+    setSelectedTreatment(null);
+    setIsAdditionalTreatmentForRevision(true);
+    setLockedVisitId(visit.id);
+    setSelectedVisitId(visit.id);
+    setSelectedDoctorId(currentUser?.doctorId || "");
+    setTreatmentDoctorIds({});
+    setTreatmentNotes("");
+    setPatientApprovalConfirmed(false);
+    setIsCreateOpen(true);
+    await prefillVisitTreatmentPlan(visit);
+  };
+
   const handleRevisionServiceChange = async (serviceId: string) => {
     setRevisedServiceId(serviceId);
     setRevisionPatientApprovalConfirmed(false);
@@ -1060,7 +1093,18 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const activeQueueVisitIds = new Set(
     queueItems.filter((item) => isActiveQueueStatus(item.status)).map((item) => item.visitId)
   );
-  const eligibleVisits = visits.filter((visit) => activeQueueVisitIds.has(visit.id));
+  const revisionVisitIds = currentUser?.role === UserRole.DOCTOR
+    ? new Set(treatments
+        .filter((treatment) =>
+          treatment.status === TreatmentJobStatus.PERLU_REVISI
+          && !treatment.externalDoctorId
+          && (treatment.assignedDoctorId || treatment.doctorId) === currentUser.doctorId
+        )
+        .map((treatment) => treatment.visitId))
+    : new Set<string>();
+  const eligibleVisits = visits.filter((visit) =>
+    activeQueueVisitIds.has(visit.id) || revisionVisitIds.has(visit.id)
+  );
   const selectedVisit = eligibleVisits.find((visit) => visit.id === selectedVisitId);
   const selectedVisitPlannedTreatments = selectedVisit ? getVisitPlannedTreatments(selectedVisit) : [];
   const treatmentVisitDate = getOperationalDateString(selectedVisit?.visitDateTime);
@@ -1086,10 +1130,14 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     );
   };
   const visitAssignedDoctor = resolveDoctor(assignedDoctorId);
-  const doctorsForVisit = visitAssignedDoctor
-    && !scheduledDoctorsForVisit.some((doctor) => doctor.id === visitAssignedDoctor.id)
-    ? [...scheduledDoctorsForVisit, visitAssignedDoctor]
-    : scheduledDoctorsForVisit;
+  const returnedTreatmentDoctor = revisionVisitIds.has(selectedVisitId)
+    ? resolveDoctor(currentUser?.doctorId)
+    : undefined;
+  const doctorsForVisit = [...new Map(
+    [...scheduledDoctorsForVisit, visitAssignedDoctor, returnedTreatmentDoctor]
+      .filter((doctor): doctor is DentalDoctor => Boolean(doctor))
+      .map((doctor) => [doctor.id, doctor])
+  ).values()];
 
   useEffect(() => {
     if (loading || !currentUser) return;
@@ -1947,11 +1995,15 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             <div className="-mx-4 -mt-4 flex items-center justify-between border-b border-[#eadbb9] bg-gradient-to-r from-[#9b7625] via-[#bd963e] to-[#dfbd69] px-4 py-4 text-white md:-mx-6 md:-mt-6 md:px-6">
               <h3 className="flex items-center gap-2 text-sm font-bold text-white">
                 <Stethoscope className="w-4 h-4 text-white" />
-                Rencana Tindakan Kunjungan
+                {isAdditionalTreatmentForRevision
+                  ? "Tambah Tindakan untuk Kunjungan Koreksi"
+                  : "Rencana Tindakan Kunjungan"}
               </h3>
               <button
                 onClick={() => {
                   setIsCreateOpen(false);
+                  setLockedVisitId(null);
+                  setIsAdditionalTreatmentForRevision(false);
                   setPatientApprovalConfirmed(false);
                 }}
                 className="rounded-lg border border-white/50 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
@@ -1971,6 +2023,11 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                 <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
                   <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{successMsg}</span>
+                </div>
+              )}
+              {isAdditionalTreatmentForRevision && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
+                  Tindakan tambahan akan dibuat sebagai tindakan baru berstatus BELUM DIMULAI, bukan mengganti tindakan yang dikembalikan. Jelaskan estimasi biaya dan minta persetujuan pasien. Invoice baru dapat diproses setelah tindakan ini selesai atau dibatalkan.
                 </div>
               )}
 
@@ -2279,6 +2336,8 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                   type="button"
                   onClick={() => {
                     setIsCreateOpen(false);
+                    setLockedVisitId(null);
+                    setIsAdditionalTreatmentForRevision(false);
                     setPatientApprovalConfirmed(false);
                   }}
                   className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 font-medium"
@@ -2699,21 +2758,32 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                   </button>
                 )}
                 {canReviseTreatment(selectedTreatment) && (
-                  <button
-                    type="button"
-                    onClick={() => void handleResubmitTreatment(selectedTreatment)}
-                    disabled={
-                      submittingRevision
-                      || loadingRevisionTariff
-                      || !correctedTreatmentNotes.trim()
-                      || !revisedServiceId
-                      || !revisionPatientApprovalConfirmed
-                    }
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    {submittingRevision ? "Menyimpan..." : "Simpan Koreksi"}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleAddTreatmentForRevision(selectedTreatment)}
+                      disabled={submittingRevision}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-4 py-2 text-xs font-bold text-teal-800 hover:bg-teal-100 disabled:opacity-50"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Tambah Tindakan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleResubmitTreatment(selectedTreatment)}
+                      disabled={
+                        submittingRevision
+                        || loadingRevisionTariff
+                        || !correctedTreatmentNotes.trim()
+                        || !revisedServiceId
+                        || !revisionPatientApprovalConfirmed
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      {submittingRevision ? "Menyimpan..." : "Simpan Koreksi"}
+                    </button>
+                  </>
                 )}
               </div>
             </div>

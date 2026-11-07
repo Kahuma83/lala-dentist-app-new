@@ -2747,6 +2747,11 @@ export class MockVisitRepository implements VisitRepository {
     return visit ? { ...visit } : null;
   }
 
+  async getVisitsByIds(ids: string[]): Promise<PatientVisit[]> {
+    const visitIds = new Set(ids);
+    return db.visits.filter((visit) => visitIds.has(visit.id));
+  }
+
   async getVisitsByPatient(patientId: string): Promise<PatientVisit[]> {
     return db.visits.filter((v) => v.patientId === patientId);
   }
@@ -2966,12 +2971,13 @@ export class MockQueueRepository implements QueueRepository {
       throw new Error("Access denied: Doctor cannot access another doctor queue");
     }
 
-    let items = (await this.getQueueByBranch(
+    const queueItems = await this.getQueueByBranch(
       branchId,
       currentUserRole,
       userBranchId,
       currentUserRole === UserRole.DOCTOR ? doctorId : null
-    )).filter((q) => {
+    );
+    let items = queueItems.filter((q) => {
       const qDate = (q.arrivalAt || q.checkInTime || "").split("T")[0];
       return q.branchId === branchId && qDate === date;
     });
@@ -3000,6 +3006,7 @@ export class MockQueueRepository implements QueueRepository {
       consultationQueue,
       completedQueue,
       skippedQueue,
+      queueItems,
       generatedAt: nowIso,
       date,
       activeQueueItems: [...waitingQueue, ...preparationQueue, ...consultationQueue],

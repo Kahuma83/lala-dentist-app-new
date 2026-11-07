@@ -509,6 +509,7 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
     expect(restored.status).toBe(QueueStatus.WAITING);
     expect(snapshot?.waitingQueue).toHaveLength(1);
     expect(snapshot?.skippedQueue).toHaveLength(0);
+    expect(snapshot?.queueItems).toEqual([expect.objectContaining({ id: item.id })]);
   });
 
   it("19b. should not call another patient while the previous patient is still in preparation", async () => {
