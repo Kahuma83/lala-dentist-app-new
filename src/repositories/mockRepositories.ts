@@ -265,11 +265,26 @@ export class MockPatientRepository implements PatientRepository {
       const rmMatch =
         (p.medicalRecordNumber || "").toLowerCase().includes(q) ||
         (p.internalPatientCode || "").toLowerCase().includes(q) ||
+        (p.identityDocumentNumber || "").replace(/\s/g, "").toLowerCase().includes(q.replace(/\s/g, "")) ||
         p.branchMedicalRecordNumbers?.some((record) =>
           record.medicalRecordNumber.toLowerCase().includes(q)
         );
       return nameMatch || phoneMatch || rmMatch;
     });
+  }
+
+  async searchPatientsPage(
+    query: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    offset = 0,
+    limit = 10
+  ) {
+    const matches = await this.searchPatients(query, currentUserRole, userBranchId);
+    return {
+      patients: matches.slice(offset, offset + limit),
+      totalCount: matches.length
+    };
   }
 
   async checkDuplicates(

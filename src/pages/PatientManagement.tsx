@@ -93,7 +93,7 @@ export const PatientManagement: React.FC = () => {
     branches,
     doctors,
     doctorBranchAssignments,
-    patients,
+    patients: contextPatients,
     visits,
     bookings,
     treatmentJobs,
@@ -103,6 +103,17 @@ export const PatientManagement: React.FC = () => {
     refreshData
   } = useApp();
   const { path, navigate } = useRouter();
+  const isOptimizedPatientDirectory = path === "/super-admin/patients";
+  const [searchedPatients, setSearchedPatients] = useState<PatientProfile[]>([]);
+  const [patientSearchTotal, setPatientSearchTotal] = useState(0);
+  const [patientSearchPage, setPatientSearchPage] = useState(0);
+  const [patientSearchRefreshKey, setPatientSearchRefreshKey] = useState(0);
+  const [isPatientSearchLoading, setIsPatientSearchLoading] = useState(false);
+  const [patientSearchError, setPatientSearchError] = useState<string | null>(null);
+  const [patientsForTools, setPatientsForTools] = useState<PatientProfile[]>([]);
+  const patientSearchRequestRef = useRef(0);
+  const patients = isOptimizedPatientDirectory ? searchedPatients : contextPatients;
+  const patientSearchPageSize = 10;
   const directMedicalRecordParams = new URLSearchParams(window.location.search);
   const directMedicalRecordVisitId = path === "/doctor/patients"
     ? directMedicalRecordParams.get("visitId")
@@ -128,9 +139,156 @@ export const PatientManagement: React.FC = () => {
     navigate(`${checkInRoutePrefix}/check-in${suffix ? `?${suffix}` : ""}`);
   };
 
+  const openClearDatabaseConfirmation = async () => {
+    try {
+      if (isOptimizedPatientDirectory) {
+        const result = await repos.patient.searchPatientsPage(
+          "",
+          currentUser?.role,
+          currentUser?.assignedBranchId,
+          0,
+          1
+        );
+        setClearDbPatientCount(result.totalCount);
+      } else {
+        setClearDbPatientCount(patients.length);
+      }
+      setClearDbStartingRM(3000);
+      setClearDbConfirmed(false);
+      setIsClearDbModalOpen(true);
+    } catch (error: unknown) {
+      setFormError(error instanceof Error ? error.message : "Gagal memeriksa jumlah pasien.");
+    }
+  };
+
   // Search and Filtering State
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("ALL");
+
+  useEffect(() => {
+    if (!isOptimizedPatientDirectory) return;
+    const requestId = ++patientSearchRequestRef.current;
+    let active = true;
+    setIsPatientSearchLoading(true);
+    setPatientSearchError(null);
+
+    const loadPatients = async () => {
+      try {
+        if (selectedBranchFilter !== "ALL") {
+          const allPatients = await repos.patient.getPatients(
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          );
+          if (!active || requestId !== patientSearchRequestRef.current) return;
+          setSearchedPatients(allPatients);
+          setPatientSearchTotal(allPatients.length);
+          return;
+        }
+
+        const result = await repos.patient.searchPatientsPage(
+          searchQuery,
+          currentUser?.role,
+          currentUser?.assignedBranchId,
+          patientSearchPage * patientSearchPageSize,
+          patientSearchPageSize
+        );
+        if (!active || requestId !== patientSearchRequestRef.current) return;
+        setSearchedPatients(result.patients);
+        setPatientSearchTotal(result.totalCount);
+      } catch (error: unknown) {
+        if (!active || requestId !== patientSearchRequestRef.current) return;
+        setPatientSearchError(
+          error instanceof Error ? error.message : "Gagal mencari data pasien."
+        );
+      } finally {
+        if (active && requestId === patientSearchRequestRef.current) {
+          setIsPatientSearchLoading(false);
+        }
+      }
+    };
+
+    const timer = window.setTimeout(() => {
+      void loadPatients();
+    }, searchQuery.trim() ? 250 : 0);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    isOptimizedPatientDirectory,
+    searchQuery,
+    selectedBranchFilter,
+    patientSearchPage,
+    patientSearchRefreshKey,
+    patientSearchPageSize,
+    repos.patient,
+    currentUser?.role,
+    currentUser?.assignedBranchId
+  ]);
+
+  useEffect(() => {
+    setPatientSearchPage(0);
+  }, [searchQuery, selectedBranchFilter]);
+
+  useEffect(() => {
+    if (!isOptimizedPatientDirectory) return;
+    const handlePatientDirectoryChange = () => {
+      setPatientSearchRefreshKey((key) => key + 1);
+    };
+    window.addEventListener("patient-directory-data-changed", handlePatientDirectoryChange);
+    return () => {
+      window.removeEventListener("patient-directory-data-changed", handlePatientDirectoryChange);
+    };
+  }, [isOptimizedPatientDirectory]);
+
+  const refreshPatientDirectory = async (refreshRelatedData = false) => {
+    if (isOptimizedPatientDirectory) {
+      if (refreshRelatedData) await refreshData();
+      setPatientSearchRefreshKey((key) => key + 1);
+      return;
+    }
+    await refreshData();
+  };
+
+  const loadPatientsForTools = async () => {
+    if (!isOptimizedPatientDirectory) return patients;
+    const allPatients = await repos.patient.getPatients(
+      currentUser?.role,
+      currentUser?.assignedBranchId
+    );
+    setPatientsForTools(allPatients);
+    return allPatients;
+  };
+
+  const openPatientExcel = async (tab: "export" | "import") => {
+    try {
+      await loadPatientsForTools();
+      setExcelModalTab(tab);
+      setIsExcelModalOpen(true);
+    } catch (error: unknown) {
+      setFormError(error instanceof Error ? error.message : "Gagal memuat data pasien untuk Excel.");
+    }
+  };
+
+  const openLegacyHistoryImport = async () => {
+    try {
+      await loadPatientsForTools();
+      setIsLegacyHistoryImportOpen(true);
+    } catch (error: unknown) {
+      setFormError(error instanceof Error ? error.message : "Gagal memuat data pasien untuk impor riwayat.");
+    }
+  };
+
+  const openRMConfiguration = async () => {
+    try {
+      if (isOptimizedPatientDirectory) await loadPatientsForTools();
+      setRmConfigForm(getRMConfig());
+      setIsRMConfigModalOpen(true);
+    } catch (error: unknown) {
+      setFormError(error instanceof Error ? error.message : "Gagal memuat data pasien untuk preview No. RM.");
+    }
+  };
 
   // Selected Patient for Detail View
   const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(null);
@@ -158,6 +316,7 @@ export const PatientManagement: React.FC = () => {
   const [rmConfigForm, setRmConfigForm] = useState<RMConfig>(getRMConfig());
   const [isClearDbModalOpen, setIsClearDbModalOpen] = useState(false);
   const [clearDbStartingRM, setClearDbStartingRM] = useState<number>(3000);
+  const [clearDbPatientCount, setClearDbPatientCount] = useState(0);
   const [clearDbConfirmed, setClearDbConfirmed] = useState(false);
   const [isClearingDb, setIsClearingDb] = useState(false);
 
@@ -304,6 +463,9 @@ export const PatientManagement: React.FC = () => {
 
   // Filtered Patients list
   const filteredPatients = useMemo(() => {
+    if (isOptimizedPatientDirectory && selectedBranchFilter === "ALL") {
+      return patients;
+    }
     let list = patients;
 
     // Filter by branch if user explicitly selected a specific branch
@@ -344,13 +506,18 @@ export const PatientManagement: React.FC = () => {
           record.medicalRecordNumber.toLowerCase().includes(q)
         );
       const globalCodeMatch = p.internalPatientCode?.trim().toLowerCase().includes(q);
+      const identityDocumentMatch = p.identityDocumentNumber
+        ?.replace(/\s/g, "")
+        .toLowerCase()
+        .includes(q.replace(/\s/g, ""));
       const nameMatch = [p.name, p.fullName]
         .some((name) => typeof name === "string" && name.toLowerCase().includes(q));
       const phoneQuery = q.replace(/\D/g, "");
       const phoneMatch = phoneQuery.length > 0 && Boolean(p.phone?.replace(/\D/g, "").includes(phoneQuery));
-      return branchRm.includes(q) || !!otherBranchRmMatch || !!globalCodeMatch || nameMatch || phoneMatch;
+      return branchRm.includes(q) || !!otherBranchRmMatch || !!globalCodeMatch ||
+        !!identityDocumentMatch || nameMatch || phoneMatch;
     });
-  }, [patients, visits, currentUser?.role, searchQuery, selectedBranchFilter]);
+  }, [patients, visits, currentUser?.role, searchQuery, selectedBranchFilter, isOptimizedPatientDirectory]);
 
   // Map of patient ID to visits count and branch names
   const patientVisitStats = useMemo(() => {
@@ -375,13 +542,21 @@ export const PatientManagement: React.FC = () => {
     if (rmMode !== "manual" || !patientForm.medicalRecordNumber.trim()) {
       return null;
     }
+    if (isOptimizedPatientDirectory) return null;
     return checkRMUniqueness(
       patientForm.medicalRecordNumber,
       patients,
       patientForm.id || undefined,
       patientForm.registeredBranchId
     );
-  }, [rmMode, patientForm.medicalRecordNumber, patientForm.id, patientForm.registeredBranchId, patients]);
+  }, [
+    rmMode,
+    patientForm.medicalRecordNumber,
+    patientForm.id,
+    patientForm.registeredBranchId,
+    patients,
+    isOptimizedPatientDirectory
+  ]);
 
   // Helper to open Add Patient Modal
   const handleOpenAddPatient = () => {
@@ -483,11 +658,22 @@ export const PatientManagement: React.FC = () => {
       if (identityNumber && patientForm.identityDocumentType === "PASSPORT" && !/^[A-Za-z0-9]{6,20}$/.test(identityNumber)) {
         throw new Error("Nomor paspor harus terdiri dari 6–20 huruf atau angka.");
       }
-      if (!patientForm.id && identityNumber && patients.some((patient) =>
-        patient.identityDocumentType === patientForm.identityDocumentType &&
-        patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === identityNumber.toLowerCase()
-      )) {
-        throw new Error("Nomor identitas ini sudah terdaftar pada pasien lain.");
+      if (!patientForm.id && identityNumber) {
+        const identityCandidates = isOptimizedPatientDirectory
+          ? (await repos.patient.searchPatientsPage(
+              identityNumber,
+              currentUser?.role,
+              currentUser?.assignedBranchId,
+              0,
+              10
+            )).patients
+          : patients;
+        if (identityCandidates.some((patient) =>
+          patient.identityDocumentType === patientForm.identityDocumentType &&
+          patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === identityNumber.toLowerCase()
+        )) {
+          throw new Error("Nomor identitas ini sudah terdaftar pada pasien lain.");
+        }
       }
 
       const patientEmail = patientForm.email.trim().toLowerCase();
@@ -498,7 +684,10 @@ export const PatientManagement: React.FC = () => {
       // Check RM uniqueness if manual or modified
       const candidateRM = patientForm.medicalRecordNumber.trim();
       if (candidateRM) {
-        const rmCheck = checkRMUniqueness(candidateRM, patients, patientForm.id || undefined);
+        const patientsForUniqueness = isOptimizedPatientDirectory
+          ? await repos.patient.getPatients(currentUser?.role, currentUser?.assignedBranchId)
+          : patients;
+        const rmCheck = checkRMUniqueness(candidateRM, patientsForUniqueness, patientForm.id || undefined);
         if (!rmCheck.isUnique && rmCheck.conflictPatient) {
           throw new Error(`Nomor RM "${candidateRM}" sudah digunakan oleh pasien "${rmCheck.conflictPatient.fullName || rmCheck.conflictPatient.name}". Harap gunakan nomor RM lain.`);
         }
@@ -613,7 +802,7 @@ export const PatientManagement: React.FC = () => {
         }
       }
 
-      await refreshData();
+      await refreshPatientDirectory();
       setIsAddPatientOpen(false);
       setIsEditPatientOpen(false);
       setDuplicateWarning(null);
@@ -644,7 +833,7 @@ export const PatientManagement: React.FC = () => {
 
       setSelectedPatient(null);
       setPatientVisits([]);
-      await refreshData();
+      await refreshPatientDirectory(true);
       setIsClearDbModalOpen(false);
       setClearDbConfirmed(false);
       setFormSuccess(`Database pasien berhasil dikosongkan. Nomor RM otomatis berikutnya telah disiapkan mulai dari ${clearDbStartingRM}.`);
@@ -675,7 +864,7 @@ export const PatientManagement: React.FC = () => {
       setFormSuccess(`Pasien ${patientToDelete.fullName || patientToDelete.name} (${patientToDelete.medicalRecordNumber || "belum memiliki RM"}) berhasil dihapus.`);
       setPatientToDelete(null);
       setIsEditPatientOpen(false);
-      await refreshData();
+      await refreshPatientDirectory(true);
     } catch (err: any) {
       setFormError(err.message || "Gagal menghapus data pasien.");
     } finally {
@@ -728,9 +917,15 @@ export const PatientManagement: React.FC = () => {
         } | null;
       } | null;
       if (!response.ok) throw new Error(result?.message || "QR pasien gagal diverifikasi.");
-      const patient = patients.find((item) => item.id === result?.patient?.id);
+      const patient = result?.patient?.id
+        ? await repos.patient.getPatientById(
+            result.patient.id,
+            currentUser?.role,
+            currentUser?.assignedBranchId
+          )
+        : null;
       if (!patient) {
-        throw new Error("QR valid, tetapi data pasien belum tersedia di daftar. Muat ulang data pasien lalu coba lagi.");
+        throw new Error("QR valid, tetapi profil pasien tidak dapat diakses oleh akun ini.");
       }
       setVerifiedCardPatient(patient);
       setVerifiedCardBooking(result?.booking || null);
@@ -785,7 +980,7 @@ export const PatientManagement: React.FC = () => {
         }
       );
 
-      await refreshData();
+      await refreshPatientDirectory(true);
       setIsBookingVisitOpen(false);
       setFormSuccess("Kunjungan Booking berhasil dicatat ke antrean.");
     } catch (err: any) {
@@ -1271,8 +1466,7 @@ export const PatientManagement: React.FC = () => {
           )}
           <button
             onClick={() => {
-              setExcelModalTab("export");
-              setIsExcelModalOpen(true);
+              void openPatientExcel("export");
             }}
             className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-slate-200 shadow-2xs transition-all active:scale-95"
             id="btn-export-excel"
@@ -1283,10 +1477,7 @@ export const PatientManagement: React.FC = () => {
 
           {currentUser?.role !== UserRole.DOCTOR_ASSISTANT && (
             <button
-              onClick={() => {
-                setExcelModalTab("import");
-                setIsExcelModalOpen(true);
-              }}
+              onClick={() => void openPatientExcel("import")}
               className="inline-flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-emerald-300 shadow-2xs transition-all active:scale-95"
               id="btn-import-excel"
               title="Import Data Pasien dari File Excel / CSV"
@@ -1297,7 +1488,7 @@ export const PatientManagement: React.FC = () => {
 
           {currentUser?.role === UserRole.SUPER_ADMIN && (
             <button
-              onClick={() => setIsLegacyHistoryImportOpen(true)}
+              onClick={() => void openLegacyHistoryImport()}
               className="inline-flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-indigo-300 shadow-2xs transition-all active:scale-95"
               id="btn-import-legacy-history"
               title="Impor profil dan riwayat kunjungan dari workbook historis"
@@ -1307,10 +1498,7 @@ export const PatientManagement: React.FC = () => {
           )}
 
           <button
-            onClick={() => {
-              setRmConfigForm(getRMConfig());
-              setIsRMConfigModalOpen(true);
-            }}
+            onClick={() => void openRMConfiguration()}
             className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-slate-200 shadow-2xs transition-all active:scale-95"
             id="btn-rm-config"
             title="Atur format dan nomor urut awal Rekam Medis (No RM)"
@@ -1320,11 +1508,8 @@ export const PatientManagement: React.FC = () => {
 
           {(currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.BRANCH_ADMIN) && (
             <button
-              onClick={() => {
-                setClearDbStartingRM(3000);
-                setClearDbConfirmed(false);
-                setIsClearDbModalOpen(true);
-              }}
+              onClick={() => void openClearDatabaseConfirmation()}
+              disabled={isOptimizedPatientDirectory && (isPatientSearchLoading || Boolean(patientSearchError))}
               className="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-rose-200 shadow-2xs transition-all active:scale-95"
               id="btn-clear-patients"
               title="Kosongkan seluruh data pasien untuk mulai input manual dari awal"
@@ -1374,7 +1559,7 @@ export const PatientManagement: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Cari nama, No. RM, kode global, atau nomor HP..."
+              placeholder={`Cari nama, No. RM, kode global${canViewPatientPhone ? ", NIK/paspor" : ""}, atau nomor HP...`}
               className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-8 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
               id="input-search-patient"
             />
@@ -1435,18 +1620,26 @@ export const PatientManagement: React.FC = () => {
           )}
           <span className="text-xs font-medium text-slate-500">
             {searchQuery.trim()
-              ? <>Hasil pencarian: <strong className="text-slate-800">{filteredPatients.length}</strong> pasien</>
-              : <>Menampilkan <strong className="text-slate-800">{filteredPatients.length}</strong> pasien terbaru{currentUser?.role === UserRole.DOCTOR ? " (maksimal 5)" : ""}</>}
+              ? <>Hasil pencarian: <strong className="text-slate-800">{isOptimizedPatientDirectory && selectedBranchFilter === "ALL" ? patientSearchTotal : filteredPatients.length}</strong> pasien</>
+              : isOptimizedPatientDirectory && selectedBranchFilter === "ALL"
+                ? <>Menampilkan {filteredPatients.length} dari <strong className="text-slate-800">{patientSearchTotal}</strong> pasien terbaru</>
+                : <>Menampilkan <strong className="text-slate-800">{filteredPatients.length}</strong> pasien terbaru{currentUser?.role === UserRole.DOCTOR ? " (maksimal 5)" : ""}</>}
           </span>
           <button
-            onClick={() => refreshData()}
+            onClick={() => void refreshPatientDirectory()}
             className="p-2 text-slate-500 hover:text-emerald-600 bg-slate-50 hover:bg-slate-100 rounded-lg border border-slate-200 transition-colors"
             title="Refresh Data"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${isPatientSearchLoading ? "animate-spin" : ""}`} />
           </button>
         </div>
       </div>
+
+      {patientSearchError && isOptimizedPatientDirectory && (
+        <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          Gagal memuat pasien: {patientSearchError}
+        </div>
+      )}
 
       {/* Main Content Area: Patients Table & Detail Sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1469,13 +1662,25 @@ export const PatientManagement: React.FC = () => {
                   {filteredPatients.length === 0 ? (
                     <tr>
                       <td colSpan={canViewPatientPhone ? 6 : 5} className="text-center py-12 text-slate-400">
-                        <User className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="font-bold text-slate-700">{patients.length === 0 ? "Belum Ada Data Pasien" : searchQuery.trim() ? "Pasien tersebut tidak ditemukan" : "Belum ada data pasien"}</p>
+                        {isPatientSearchLoading ? (
+                          <RefreshCw className="w-8 h-8 mx-auto mb-2 animate-spin opacity-40" />
+                        ) : (
+                          <User className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                        )}
+                        <p className="font-bold text-slate-700">
+                          {isPatientSearchLoading
+                            ? "Memuat pasien..."
+                            : (isOptimizedPatientDirectory ? patientSearchTotal : patients.length) === 0
+                              ? "Belum Ada Data Pasien"
+                              : searchQuery.trim()
+                                ? "Pasien tersebut tidak ditemukan"
+                                : "Belum ada data pasien"}
+                        </p>
                         <p className="text-[11px] text-slate-400 mt-1">
-                          {patients.length === 0
+                          {(isOptimizedPatientDirectory ? patientSearchTotal : patients.length) === 0
                             ? "Klik tombol \"+ Tambah Pasien Baru\" di atas untuk mendaftarkan pasien pertama."
                             : searchQuery.trim()
-                              ? "Coba periksa ejaan nama, No. RM, kode global, nomor HP, atau filter cabang yang dipilih."
+                              ? "Coba periksa ejaan nama, No. RM, kode global, NIK/paspor, nomor HP, atau filter cabang yang dipilih."
                               : currentUser?.role === UserRole.DOCTOR
                                 ? "Pasien lainnya dapat dicari menggunakan kode global."
                                 : "Pasien lainnya dapat dicari menggunakan No. RM."}
@@ -1588,6 +1793,31 @@ export const PatientManagement: React.FC = () => {
                 </tbody>
               </table>
             </div>
+            {isOptimizedPatientDirectory && selectedBranchFilter === "ALL" && patientSearchTotal > patientSearchPageSize && (
+              <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+                <span className="text-[11px] text-slate-500">
+                  Halaman {patientSearchPage + 1} dari {Math.ceil(patientSearchTotal / patientSearchPageSize)}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={patientSearchPage === 0 || isPatientSearchLoading}
+                    onClick={() => setPatientSearchPage((page) => Math.max(0, page - 1))}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-700 disabled:opacity-40"
+                  >
+                    Sebelumnya
+                  </button>
+                  <button
+                    type="button"
+                    disabled={(patientSearchPage + 1) * patientSearchPageSize >= patientSearchTotal || isPatientSearchLoading}
+                    onClick={() => setPatientSearchPage((page) => page + 1)}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-700 disabled:opacity-40"
+                  >
+                    Berikutnya
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -3301,7 +3531,10 @@ export const PatientManagement: React.FC = () => {
               <div className="bg-slate-100 p-3 rounded-xl border border-slate-200 space-y-1">
                 <span className="text-[11px] font-bold text-slate-600">Preview Lokal (tidak mengatur check-in):</span>
                 <div className="font-mono text-base font-black text-emerald-700 tracking-wider">
-                  {getNextMedicalRecordNumber(patients, rmConfigForm)}
+                    {getNextMedicalRecordNumber(
+                      isOptimizedPatientDirectory ? patientsForTools : patients,
+                      rmConfigForm
+                    )}
                 </div>
               </div>
 
@@ -3349,7 +3582,7 @@ export const PatientManagement: React.FC = () => {
                   <span>Peringatan Penghapusan Bersih</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-rose-700">
-                  Tindakan ini akan mengosongkan seluruh data pasien saat ini ({patients.length} pasien) beserta kunjungan dan rekam medisnya, sehingga Anda dapat mulai menginput data pasien klinik Anda secara manual dari awal.
+                  Tindakan ini akan mengosongkan seluruh data pasien saat ini ({clearDbPatientCount} pasien) beserta kunjungan dan rekam medisnya, sehingga Anda dapat mulai menginput data pasien klinik Anda secara manual dari awal.
                 </p>
               </div>
 
@@ -3549,14 +3782,14 @@ export const PatientManagement: React.FC = () => {
         isOpen={isExcelModalOpen}
         onClose={() => setIsExcelModalOpen(false)}
         initialTab={excelModalTab}
-        allPatients={patients}
+        allPatients={isOptimizedPatientDirectory ? patientsForTools : patients}
         filteredPatients={filteredPatients}
         branches={branches}
         patientRepo={repos.patient}
         currentUserRole={currentUser?.role}
         userBranchId={currentUser?.assignedBranchId}
         onImportSuccess={async (res: ImportPatientExecutionResult) => {
-          await refreshData();
+          await refreshPatientDirectory();
           setFormSuccess(
             `Impor Excel Selesai: ${res.imported} pasien baru berhasil didaftarkan, ${res.updated} diperbarui, ${res.skipped} dilewati.`
           );
@@ -3567,13 +3800,14 @@ export const PatientManagement: React.FC = () => {
           isOpen={isLegacyHistoryImportOpen}
           onClose={() => setIsLegacyHistoryImportOpen(false)}
           branches={branches}
-          patients={patients}
+          patients={isOptimizedPatientDirectory ? patientsForTools : patients}
           patientRepo={repos.patient}
           visitRepo={repos.visit}
           currentUserRole={currentUser.role}
           userBranchId={currentUser.assignedBranchId}
           onImportComplete={async () => {
-            await refreshData();
+            await refreshPatientDirectory();
+            await refreshData("patient_visits");
             setFormSuccess("Impor riwayat kunjungan historis selesai. Periksa ringkasan dan baris yang gagal.");
           }}
         />

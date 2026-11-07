@@ -353,10 +353,10 @@ const PatientPortalSessionConflict: React.FC = () => {
 
 export default function App() {
   return (
-    <AppProvider>
-      <RouterProvider>
+    <RouterProvider>
+      <AppProvider>
         <AppContent />
-      </RouterProvider>
-    </AppProvider>
+      </AppProvider>
+    </RouterProvider>
   );
 }
