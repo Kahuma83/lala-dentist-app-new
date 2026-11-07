@@ -93,6 +93,47 @@ describe("Supabase patient repository", () => {
     expect(result.patients[0].identityDocumentNumber).toBe("3509092705890002");
   });
 
+  it("uses the restricted global booking lookup for branch admins", async () => {
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({
+      data: [{
+        id: "patient-global-1",
+        name: "Andri Kiswanto",
+        full_name: "Andri Kiswanto",
+        phone: "08123456789",
+        medical_record_number: "1584",
+        internal_patient_code: "GB-1584",
+        registered_branch_id: null,
+        booking_lookup_only: true,
+        match_count: 1
+      }],
+      error: null
+    } as never);
+    const from = vi.spyOn(supabaseLib.supabase, "from");
+
+    const result = await new SupabasePatientRepository().searchPatientsPage(
+      "Andri Kiswanto",
+      UserRole.BRANCH_ADMIN,
+      "branch-gebang",
+      0,
+      10
+    );
+
+    expect(rpc).toHaveBeenCalledWith("search_patients_for_branch_admin_booking", {
+      p_query: "Andri Kiswanto",
+      p_offset: 0,
+      p_limit: 10
+    });
+    expect(from).not.toHaveBeenCalled();
+    expect(result.totalCount).toBe(1);
+    expect(result.patients[0]).toMatchObject({
+      id: "patient-global-1",
+      fullName: "Andri Kiswanto",
+      phone: "08123456789",
+      medicalRecordNumber: "1584",
+      bookingLookupOnly: true
+    });
+  });
+
   it("does not search hidden phone or identity fields for roles without phone access", async () => {
     const patientOr = vi.fn();
     vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) => {

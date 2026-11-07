@@ -835,6 +835,49 @@ export class SupabasePatientRepository implements PatientRepository {
     const pageLimit = Math.min(50, Math.max(1, Math.trunc(limit)));
     let branchMedicalRecordPatientIds: string[] = [];
 
+    if (currentUserRole === UserRole.BRANCH_ADMIN && safeQuery.length >= 2) {
+      const { data, error } = await supabase.rpc("search_patients_for_branch_admin_booking", {
+        p_query: safeQuery,
+        p_offset: pageOffset,
+        p_limit: pageLimit
+      });
+      if (error) {
+        throw new Error(`Gagal mencari pasien untuk booking: ${error.message}`);
+      }
+
+      const rows = data || [];
+      const visiblePatientIds = rows
+        .filter((row) => !row.booking_lookup_only)
+        .map((row) => row.id);
+      const visiblePatients = new Map<string, PatientProfile>();
+
+      if (visiblePatientIds.length > 0) {
+        const { data: visibleRows, error: visibleError } = await supabase
+          .from("patient_profiles")
+          .select(selectColumns)
+          .in("id", visiblePatientIds);
+        if (visibleError) {
+          throw new Error(`Gagal membaca profil pasien cabang: ${visibleError.message}`);
+        }
+        const mappedVisible = await this.attachBranchMedicalRecordNumbers(
+          (visibleRows || []).map(this.mapPatientFromDb.bind(this))
+        );
+        mappedVisible.forEach((patient) => visiblePatients.set(patient.id, patient));
+      }
+
+      return {
+        patients: rows.map((row) => {
+          const visiblePatient = visiblePatients.get(row.id);
+          if (visiblePatient) return visiblePatient;
+          return {
+            ...this.mapPatientFromDb(row),
+            bookingLookupOnly: true
+          };
+        }),
+        totalCount: Number(rows[0]?.match_count || 0)
+      };
+    }
+
     if (safeQuery && /\d/.test(safeQuery)) {
       const { data, error } = await supabase
         .from("patient_branch_medical_records")

@@ -271,6 +271,7 @@ export interface PatientProfile {
   branch_id?: string;
   assignedBranchId?: string;
   branchId?: string;
+  bookingLookupOnly?: boolean;
   createdAt: string; // ISO 8601 (e.g. 2026-09-21T14:30:00Z)
   updatedAt: string;
 }

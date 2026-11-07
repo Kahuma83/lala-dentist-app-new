@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import {
   Booking,
@@ -143,11 +143,15 @@ export const BookingManagement: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [patientSearch, setPatientSearch] = useState<string>("");
   const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(null);
+  const [branchBookingPatientResults, setBranchBookingPatientResults] = useState<PatientProfile[] | null>(null);
+  const [branchBookingPatientError, setBranchBookingPatientError] = useState<string | null>(null);
+  const [isBranchBookingPatientLoading, setIsBranchBookingPatientLoading] = useState(false);
   const [formBranchId, setFormBranchId] = useState<string>("");
   const [formDoctorId, setFormDoctorId] = useState<string>("");
   const [formExternalDoctorId, setFormExternalDoctorId] = useState<string>("");
   const [formDate, setFormDate] = useState<string>(getTomorrowDateString());
   const [walkInExternalDoctors, setWalkInExternalDoctors] = useState<WalkInExternalDoctorOption[]>([]);
+  const branchBookingPatientRequestRef = useRef(0);
   const [isLoadingWalkInExternalDoctors, setIsLoadingWalkInExternalDoctors] = useState(false);
   const [walkInExternalDoctorError, setWalkInExternalDoctorError] = useState<string | null>(null);
   const [formTimeSlot, setFormTimeSlot] = useState<string>("");
@@ -470,10 +474,11 @@ export const BookingManagement: React.FC = () => {
     if (params.get("source") !== BookingSource.WALK_IN) return;
 
     const requestedPatientId = params.get("patientId");
+    const requestedPatientSearch = params.get("patientSearch") || "";
     const patient = requestedPatientId
       ? patients.find((item) => item.id === requestedPatientId)
       : undefined;
-    if (requestedPatientId && !patient) return;
+    if (requestedPatientId && !patient && !requestedPatientSearch) return;
 
     setFormBranchId(
       currentUser?.role === UserRole.BRANCH_ADMIN
@@ -488,7 +493,7 @@ export const BookingManagement: React.FC = () => {
     setFormReferringStaffId("");
     setReferringStaffSearch("");
     setSelectedPatient(patient || null);
-    setPatientSearch("");
+    setPatientSearch(requestedPatientSearch);
     setShowNewPatientForm(false);
     setBookingSource(BookingSource.WALK_IN);
     setFormError(null);
@@ -798,16 +803,65 @@ export const BookingManagement: React.FC = () => {
 
   // Filtered patients for booking creation search
   const searchedPatients = useMemo(() => {
-    if (!patientSearch.trim()) return patients.slice(0, 5);
+    const patientSource = branchBookingPatientResults ?? patients;
+    if (!patientSearch.trim()) return patientSource.slice(0, 5);
     const q = patientSearch.toLowerCase();
-    return patients.filter(
+    return patientSource.filter(
       (p) =>
         (p.fullName || p.name || "").toLowerCase().includes(q) ||
         (canViewPatientPhoneNumber && (p.phone || "").includes(q)) ||
         getPatientMedicalRecordNumber(p, formBranchId || effectiveBranchId).toLowerCase().includes(q) ||
         (p.internalPatientCode || "").toLowerCase().includes(q)
     ).slice(0, 5);
-  }, [patientSearch, patients, canViewPatientPhoneNumber, formBranchId, effectiveBranchId]);
+  }, [patientSearch, patients, branchBookingPatientResults, canViewPatientPhoneNumber, formBranchId, effectiveBranchId]);
+
+  useEffect(() => {
+    if (
+      !isModalOpen ||
+      currentUser?.role !== UserRole.BRANCH_ADMIN ||
+      patientSearch.trim().length < 2
+    ) {
+      setBranchBookingPatientResults(null);
+      setBranchBookingPatientError(null);
+      setIsBranchBookingPatientLoading(false);
+      return;
+    }
+
+    const requestId = ++branchBookingPatientRequestRef.current;
+    let active = true;
+    setBranchBookingPatientResults(null);
+    setBranchBookingPatientError(null);
+    setIsBranchBookingPatientLoading(true);
+    const timer = window.setTimeout(() => {
+      void repos.patient.searchPatientsPage(
+        patientSearch,
+        currentUser.role,
+        currentUser.assignedBranchId,
+        0,
+        10
+      ).then((result) => {
+        if (active && requestId === branchBookingPatientRequestRef.current) {
+          setBranchBookingPatientResults(result.patients);
+        }
+      }).catch((error: unknown) => {
+        if (active && requestId === branchBookingPatientRequestRef.current) {
+          setBranchBookingPatientResults([]);
+          setBranchBookingPatientError(
+            error instanceof Error ? error.message : "Gagal mencari pasien untuk booking."
+          );
+        }
+      }).finally(() => {
+        if (active && requestId === branchBookingPatientRequestRef.current) {
+          setIsBranchBookingPatientLoading(false);
+        }
+      });
+    }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [isModalOpen, patientSearch, currentUser?.role, currentUser?.assignedBranchId, repos.patient]);
 
   const handleCreatePatientForSchedule = async () => {
     const fullName = newPatientForm.fullName.trim();
@@ -2454,6 +2508,9 @@ export const BookingManagement: React.FC = () => {
                       className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       id="input-modal-patient-search"
                     />
+                    {branchBookingPatientError && (
+                      <p className="text-[11px] text-rose-600">{branchBookingPatientError}</p>
+                    )}
                     <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-36 overflow-y-auto bg-slate-50/50">
                       {searchedPatients.map((p) => (
                         <div
@@ -2472,7 +2529,10 @@ export const BookingManagement: React.FC = () => {
                           </span>
                         </div>
                       ))}
-                      {searchedPatients.length === 0 && patientSearch.trim() && (
+                      {isBranchBookingPatientLoading && (
+                        <p className="p-3 text-[11px] text-slate-500">Mencari pasien...</p>
+                      )}
+                      {!isBranchBookingPatientLoading && !branchBookingPatientError && searchedPatients.length === 0 && patientSearch.trim() && (
                         <p className="p-3 text-[11px] text-slate-500">Pasien tidak ditemukan. Tambahkan pasien baru untuk melanjutkan.</p>
                       )}
                     </div>
