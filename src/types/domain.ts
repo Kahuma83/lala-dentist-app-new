@@ -245,6 +245,8 @@ export interface PatientProfile {
   branchMedicalRecordNumbers?: Array<{
     branchId: string;
     medicalRecordNumber: string;
+    branchName?: string;
+    branchCode?: string;
   }>;
   name: string;
   fullName?: string; // Optional alias for name
@@ -255,6 +257,7 @@ export interface PatientProfile {
   emergencyContactRelationship?: string;
   identityDocumentType?: "NIK" | "PASSPORT";
   identityDocumentNumber?: string;
+  identityDocumentMatch?: boolean;
   placeOfBirth?: string;
   dateOfBirth: string; // ISO format (YYYY-MM-DD)
   gender: "L" | "P" | "";

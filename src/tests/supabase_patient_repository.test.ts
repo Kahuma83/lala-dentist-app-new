@@ -51,21 +51,36 @@ describe("Supabase patient repository", () => {
       name: "Andri Kiswanto",
       full_name: "Andri Kiswanto",
       identity_document_type: "NIK",
-      identity_document_number: "3509092705890002"
+      identity_document_number: "3509092705890002",
+      phone: "08123456789"
     };
-    const patientRange = vi.fn();
-    const patientOr = vi.fn();
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({
+      data: [{
+        id: "patient-1",
+        name: "Andri Kiswanto",
+        full_name: "Andri Kiswanto",
+        phone: "08123456789",
+        medical_record_number: "1584",
+        internal_patient_code: "GEB-1584",
+        registered_branch_id: null,
+        lookup_only: false,
+        identity_document_match: true,
+        branch_medical_records: [{
+          branch_id: "branch-gebang",
+          branch_name: "Gebang",
+          branch_code: "GEB",
+          medical_record_number: "1584"
+        }],
+        match_count: 21
+      }],
+      error: null
+    } as never);
     const from = vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) => {
       const result = table === "patient_profiles"
-        ? { data: [patientRow], count: 21, error: null }
-        : { data: [], count: 0, error: null };
+        ? { data: [patientRow], error: null }
+        : { data: [], error: null };
       const query = {
         select: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        range: patientRange.mockReturnThis(),
-        or: patientOr.mockReturnThis(),
-        ilike: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
         in: vi.fn().mockReturnThis(),
         then: (
           resolve: (value: typeof result) => unknown,
@@ -83,17 +98,27 @@ describe("Supabase patient repository", () => {
       10
     );
 
+    expect(rpc).toHaveBeenCalledWith("search_patients_global_for_admin", {
+      p_query: "3509092705890002",
+      p_offset: 10,
+      p_limit: 10
+    });
     expect(from).toHaveBeenCalledWith("patient_profiles");
-    expect(patientRange).toHaveBeenCalledWith(10, 19);
-    expect(patientOr).toHaveBeenCalledWith(
-      expect.stringContaining("identity_document_number.ilike.%3509092705890002%")
-    );
     expect(result.totalCount).toBe(21);
     expect(result.patients).toHaveLength(1);
-    expect(result.patients[0].identityDocumentNumber).toBe("3509092705890002");
+    expect(result.patients[0]).toMatchObject({
+      identityDocumentNumber: "3509092705890002",
+      identityDocumentMatch: true,
+      branchMedicalRecordNumbers: [{
+        branchId: "branch-gebang",
+        branchName: "Gebang",
+        branchCode: "GEB",
+        medicalRecordNumber: "1584"
+      }]
+    });
   });
 
-  it("uses the restricted global booking lookup for branch admins", async () => {
+  it("uses the restricted global patient lookup for branch admins", async () => {
     const rpc = vi.spyOn(supabaseLib.supabase, "rpc").mockResolvedValue({
       data: [{
         id: "patient-global-1",
@@ -103,7 +128,19 @@ describe("Supabase patient repository", () => {
         medical_record_number: "1584",
         internal_patient_code: "GB-1584",
         registered_branch_id: null,
-        booking_lookup_only: true,
+        lookup_only: true,
+        identity_document_match: false,
+        branch_medical_records: [{
+          branch_id: "branch-gebang",
+          branch_name: "Gebang",
+          branch_code: "GEB",
+          medical_record_number: "1584"
+        }, {
+          branch_id: "branch-kencong",
+          branch_name: "Kencong",
+          branch_code: "KEN",
+          medical_record_number: "205"
+        }],
         match_count: 1
       }],
       error: null
@@ -115,11 +152,10 @@ describe("Supabase patient repository", () => {
       UserRole.BRANCH_ADMIN,
       "branch-gebang",
       0,
-      10,
-      "booking"
+      10
     );
 
-    expect(rpc).toHaveBeenCalledWith("search_patients_for_branch_admin_booking", {
+    expect(rpc).toHaveBeenCalledWith("search_patients_global_for_admin", {
       p_query: "Andri Kiswanto",
       p_offset: 0,
       p_limit: 10
@@ -131,60 +167,18 @@ describe("Supabase patient repository", () => {
       fullName: "Andri Kiswanto",
       phone: "08123456789",
       medicalRecordNumber: "1584",
-      bookingLookupOnly: true
-    });
-  });
-
-  it("uses the regular paginated directory query for branch-admin patient search", async () => {
-    const rpc = vi.spyOn(supabaseLib.supabase, "rpc");
-    const patientOr = vi.fn();
-    vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) => {
-      const result = table === "patient_profiles"
-        ? {
-            data: [{
-              id: "patient-1",
-              name: "Andri Kiswanto",
-              full_name: "Andri Kiswanto",
-              phone: "08123456789"
-            }],
-            count: 1,
-            error: null
-          }
-        : { data: [], error: null };
-      const query = {
-        select: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        range: vi.fn().mockReturnThis(),
-        or: patientOr.mockReturnThis(),
-        ilike: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
-        in: vi.fn().mockReturnThis(),
-        then: (
-          resolve: (value: typeof result) => unknown,
-          reject?: (reason: unknown) => unknown
-        ) => Promise.resolve(result).then(resolve, reject)
-      };
-      return query as unknown as ReturnType<typeof supabaseLib.supabase.from>;
-    }) as unknown as typeof supabaseLib.supabase.from);
-
-    const result = await new SupabasePatientRepository().searchPatientsPage(
-      "Andri",
-      UserRole.BRANCH_ADMIN,
-      "branch-gebang",
-      0,
-      10,
-      "directory"
-    );
-
-    expect(rpc).not.toHaveBeenCalled();
-    expect(patientOr).toHaveBeenCalledWith(
-      expect.stringContaining("name.ilike.%Andri%")
-    );
-    expect(result.totalCount).toBe(1);
-    expect(result.patients[0]).toMatchObject({
-      id: "patient-1",
-      fullName: "Andri Kiswanto",
-      phone: "08123456789"
+      bookingLookupOnly: true,
+      branchMedicalRecordNumbers: [{
+        branchId: "branch-gebang",
+        branchName: "Gebang",
+        branchCode: "GEB",
+        medicalRecordNumber: "1584"
+      }, {
+        branchId: "branch-kencong",
+        branchName: "Kencong",
+        branchCode: "KEN",
+        medicalRecordNumber: "205"
+      }]
     });
   });
 
