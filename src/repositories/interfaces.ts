@@ -112,6 +112,8 @@ export interface PatientSearchPage {
   totalCount: number;
 }
 
+export type PatientSearchScope = "directory" | "booking";
+
 export interface PatientRepository {
   getPatients(currentUserRole?: UserRole, userBranchId?: string | null): Promise<PatientProfile[]>;
   getPatientById(
@@ -130,7 +132,8 @@ export interface PatientRepository {
     currentUserRole: UserRole | undefined,
     userBranchId: string | null | undefined,
     offset: number,
-    limit: number
+    limit: number,
+    scope?: PatientSearchScope
   ): Promise<PatientSearchPage>;
   createPatient(
     patientData: Omit<PatientProfile, "id" | "medicalRecordNumber" | "createdAt" | "updatedAt"> & { id?: string; medicalRecordNumber?: string },

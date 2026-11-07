@@ -115,7 +115,8 @@ describe("Supabase patient repository", () => {
       UserRole.BRANCH_ADMIN,
       "branch-gebang",
       0,
-      10
+      10,
+      "booking"
     );
 
     expect(rpc).toHaveBeenCalledWith("search_patients_for_branch_admin_booking", {
@@ -131,6 +132,59 @@ describe("Supabase patient repository", () => {
       phone: "08123456789",
       medicalRecordNumber: "1584",
       bookingLookupOnly: true
+    });
+  });
+
+  it("uses the regular paginated directory query for branch-admin patient search", async () => {
+    const rpc = vi.spyOn(supabaseLib.supabase, "rpc");
+    const patientOr = vi.fn();
+    vi.spyOn(supabaseLib.supabase, "from").mockImplementation(((table: string) => {
+      const result = table === "patient_profiles"
+        ? {
+            data: [{
+              id: "patient-1",
+              name: "Andri Kiswanto",
+              full_name: "Andri Kiswanto",
+              phone: "08123456789"
+            }],
+            count: 1,
+            error: null
+          }
+        : { data: [], error: null };
+      const query = {
+        select: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        range: vi.fn().mockReturnThis(),
+        or: patientOr.mockReturnThis(),
+        ilike: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        in: vi.fn().mockReturnThis(),
+        then: (
+          resolve: (value: typeof result) => unknown,
+          reject?: (reason: unknown) => unknown
+        ) => Promise.resolve(result).then(resolve, reject)
+      };
+      return query as unknown as ReturnType<typeof supabaseLib.supabase.from>;
+    }) as unknown as typeof supabaseLib.supabase.from);
+
+    const result = await new SupabasePatientRepository().searchPatientsPage(
+      "Andri",
+      UserRole.BRANCH_ADMIN,
+      "branch-gebang",
+      0,
+      10,
+      "directory"
+    );
+
+    expect(rpc).not.toHaveBeenCalled();
+    expect(patientOr).toHaveBeenCalledWith(
+      expect.stringContaining("name.ilike.%Andri%")
+    );
+    expect(result.totalCount).toBe(1);
+    expect(result.patients[0]).toMatchObject({
+      id: "patient-1",
+      fullName: "Andri Kiswanto",
+      phone: "08123456789"
     });
   });
 

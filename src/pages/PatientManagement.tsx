@@ -148,7 +148,8 @@ export const PatientManagement: React.FC = () => {
           currentUser?.role,
           currentUser?.assignedBranchId,
           0,
-          1
+          1,
+          "directory"
         );
         setClearDbPatientCount(result.totalCount);
       } else {
@@ -191,7 +192,8 @@ export const PatientManagement: React.FC = () => {
           currentUser?.role,
           currentUser?.assignedBranchId,
           patientSearchPage * patientSearchPageSize,
-          patientSearchPageSize
+          patientSearchPageSize,
+          "directory"
         );
         if (!active || requestId !== patientSearchRequestRef.current) return;
         setSearchedPatients(result.patients);
@@ -666,7 +668,8 @@ export const PatientManagement: React.FC = () => {
               currentUser?.role,
               currentUser?.assignedBranchId,
               0,
-              10
+              10,
+              "directory"
             )).patients
           : patients;
         if (identityCandidates.some((patient) =>

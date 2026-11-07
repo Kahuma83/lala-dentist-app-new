@@ -814,7 +814,8 @@ export class SupabasePatientRepository implements PatientRepository {
     currentUserRole?: UserRole,
     _userBranchId?: string | null,
     offset = 0,
-    limit = 10
+    limit = 10,
+    scope: "directory" | "booking" = "directory"
   ) {
     ensureSupabaseConnected();
     if (!isSupabaseConfigured || !supabase) {
@@ -835,7 +836,7 @@ export class SupabasePatientRepository implements PatientRepository {
     const pageLimit = Math.min(50, Math.max(1, Math.trunc(limit)));
     let branchMedicalRecordPatientIds: string[] = [];
 
-    if (currentUserRole === UserRole.BRANCH_ADMIN && safeQuery.length >= 2) {
+    if (scope === "booking" && currentUserRole === UserRole.BRANCH_ADMIN && safeQuery.length >= 2) {
       const { data, error } = await supabase.rpc("search_patients_for_branch_admin_booking", {
         p_query: safeQuery,
         p_offset: pageOffset,
