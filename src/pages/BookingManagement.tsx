@@ -124,6 +124,9 @@ export const BookingManagement: React.FC = () => {
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => getWeekStart(getTodayDateString()));
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [selectedBookingPatient, setSelectedBookingPatient] = useState<PatientProfile | null>(null);
+  const [isSelectedBookingPatientLoading, setIsSelectedBookingPatientLoading] = useState(false);
+  const [selectedBookingPatientError, setSelectedBookingPatientError] = useState<string | null>(null);
   const [isEditingBookingReferral, setIsEditingBookingReferral] = useState(false);
   const [bookingReferralDraft, setBookingReferralDraft] = useState("");
   const [isSavingBookingReferral, setIsSavingBookingReferral] = useState(false);
@@ -300,9 +303,58 @@ export const BookingManagement: React.FC = () => {
       isCurrent = false;
     };
   }, [currentUser?.id, currentUser?.role, staff]);
-  const patientProfileForDetail = selectedBooking
-    ? patients.find((patient) => patient.id === selectedBooking.patientId)
+  const patientProfileForDetail = selectedBookingPatient?.id === selectedBooking?.patientId
+    ? selectedBookingPatient
     : undefined;
+  const patientRealtimeEventAt = ["patient_profiles", "patients"].includes(realtimeSyncStatus.lastEventTable || "")
+    ? realtimeSyncStatus.lastEventAt
+    : null;
+
+  useEffect(() => {
+    if (!selectedBooking) {
+      setSelectedBookingPatient(null);
+      setSelectedBookingPatientError(null);
+      setIsSelectedBookingPatientLoading(false);
+      return;
+    }
+
+    let active = true;
+    setSelectedBookingPatient(null);
+    setSelectedBookingPatientError(null);
+    setIsSelectedBookingPatientLoading(true);
+
+    repos.patient.getPatientById(
+      selectedBooking.patientId,
+      currentUser?.role,
+      currentUser?.assignedBranchId
+    ).then((patient) => {
+      if (!active) return;
+      if (!patient) {
+        setSelectedBookingPatientError("Profil pasien untuk jadwal ini tidak ditemukan.");
+        return;
+      }
+      setSelectedBookingPatient(patient);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      console.error("Gagal memuat profil pasien pada detail jadwal:", error);
+      setSelectedBookingPatientError(
+        error instanceof Error ? error.message : "Gagal memuat data pasien."
+      );
+    }).finally(() => {
+      if (active) setIsSelectedBookingPatientLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    selectedBooking?.id,
+    selectedBooking?.patientId,
+    currentUser?.role,
+    currentUser?.assignedBranchId,
+    repos.patient,
+    patientRealtimeEventAt
+  ]);
 
   const loadData = async () => {
     setLoading(true);
@@ -1041,7 +1093,7 @@ export const BookingManagement: React.FC = () => {
           currentUser.assignedBranchId
         );
       }
-      await repos.patient.updatePatient(
+      const updatedPatient = await repos.patient.updatePatient(
         selectedBooking.patientId,
         {
           name: patientEditDraft.fullName.trim(),
@@ -1063,6 +1115,8 @@ export const BookingManagement: React.FC = () => {
         currentUser?.role,
         currentUser?.assignedBranchId
       );
+      setSelectedBookingPatient(updatedPatient);
+      setSelectedBookingPatientError(null);
       await refreshData();
       setIsPatientEditorOpen(false);
       setPatientEditSuccess("Data pasien berhasil diperbarui.");
@@ -3087,11 +3141,11 @@ export const BookingManagement: React.FC = () => {
             <div className="flex items-start justify-between gap-4 border-b border-[#d9bf8f]/70 bg-gradient-to-r from-[#916b1c] via-[#ebd4a8] via-[#e1b951] to-[#916b1c] px-5 py-4 shadow-sm">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/70 bg-white/90 text-base font-extrabold text-[#76591f] shadow-sm">
-                  {(patientProfileForDetail?.fullName || patientProfileForDetail?.name || selectedBooking.patientNameSnapshot || "P").trim().charAt(0).toUpperCase()}
+                  {(patientProfileForDetail?.fullName || patientProfileForDetail?.name || (isSelectedBookingPatientLoading ? "…" : selectedBooking.patientNameSnapshot) || "P").trim().charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#604718]">Detail Jadwal</p>
-                  <h2 className="mt-0.5 truncate text-base font-extrabold text-[#35270f]">{patientProfileForDetail?.fullName || patientProfileForDetail?.name || selectedBooking.patientNameSnapshot || "Pasien"}</h2>
+                  <h2 className="mt-0.5 truncate text-base font-extrabold text-[#35270f]">{patientProfileForDetail?.fullName || patientProfileForDetail?.name || (isSelectedBookingPatientLoading ? "Memuat data pasien..." : selectedBooking.patientNameSnapshot || "Pasien")}</h2>
                   <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-[#594725]">
                     <Calendar className="h-3.5 w-3.5 text-[#76591f]" />
                     {formatIndonesianDate(getOperationalDateString(selectedBooking.bookingDateTime))}
@@ -3142,6 +3196,11 @@ export const BookingManagement: React.FC = () => {
                 </div>
               )}
               <section className="rounded-2xl border border-amber-200/80 bg-white p-3.5 shadow-sm shadow-amber-900/[0.03]">
+                {selectedBookingPatientError && (
+                  <div role="alert" className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-700">
+                    {selectedBookingPatientError}
+                  </div>
+                )}
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-xs font-extrabold text-slate-800">Data pasien</h3>
@@ -3335,16 +3394,16 @@ export const BookingManagement: React.FC = () => {
                   </form>
                 ) : (
                   <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">No. RM</span><span className="text-slate-700">{patientProfileForDetail ? getPatientMedicalRecordNumber(patientProfileForDetail, selectedBooking?.branchId) || "Belum ada" : "Belum ada"}</span></div>
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Identitas</span><span className="text-slate-700">{patientProfileForDetail?.identityDocumentType || "Belum diisi"}{patientProfileForDetail?.identityDocumentNumber ? ` ••••${patientProfileForDetail.identityDocumentNumber.slice(-4)}` : ""}</span></div>
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Tempat, tanggal lahir</span><span className="text-slate-700">{patientProfileForDetail?.placeOfBirth || "Belum diisi"}{patientProfileForDetail?.dateOfBirth ? `, ${patientProfileForDetail.dateOfBirth}` : ""}</span></div>
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Jenis kelamin</span><span className="text-slate-700">{patientProfileForDetail?.gender === "P" ? "Perempuan" : patientProfileForDetail?.gender === "L" ? "Laki-laki" : "Belum diisi"}</span></div>
-                    {canViewPatientPhoneNumber && <div><span className="block text-[9px] font-bold uppercase text-slate-400">Telepon</span><span className="text-slate-700">{patientProfileForDetail?.phone || "Belum diisi"}</span></div>}
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Alamat</span><span className="text-slate-700">{patientProfileForDetail?.address || "Belum diisi"}</span></div>
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Pekerjaan</span><span className="text-slate-700">{patientProfileForDetail?.occupation || "Belum diisi"}</span></div>
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Agama / kepercayaan</span><span className="text-slate-700">{patientProfileForDetail?.religion || "Belum diisi"}</span></div>
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Status pernikahan</span><span className="text-slate-700">{patientProfileForDetail?.maritalStatus || "Belum diisi"}</span></div>
-                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Pendidikan</span><span className="text-slate-700">{patientProfileForDetail?.education || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">No. RM</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail ? getPatientMedicalRecordNumber(patientProfileForDetail, selectedBooking.branchId) || "Belum ada" : "Belum ada"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Identitas</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail ? `${patientProfileForDetail.identityDocumentType || "Belum diisi"}${patientProfileForDetail.identityDocumentNumber ? ` ••••${patientProfileForDetail.identityDocumentNumber.slice(-4)}` : ""}` : "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Tempat, tanggal lahir</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail ? `${patientProfileForDetail.placeOfBirth || "Belum diisi"}${patientProfileForDetail.dateOfBirth ? `, ${patientProfileForDetail.dateOfBirth}` : ""}` : "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Jenis kelamin</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail?.gender === "P" ? "Perempuan" : patientProfileForDetail?.gender === "L" ? "Laki-laki" : "Belum diisi"}</span></div>
+                    {canViewPatientPhoneNumber && <div><span className="block text-[9px] font-bold uppercase text-slate-400">Telepon</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail?.phone || "Belum diisi"}</span></div>}
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Alamat</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail?.address || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Pekerjaan</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail?.occupation || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Agama / kepercayaan</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail?.religion || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Status pernikahan</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail?.maritalStatus || "Belum diisi"}</span></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-slate-400">Pendidikan</span><span className="text-slate-700">{isSelectedBookingPatientLoading ? "Memuat..." : patientProfileForDetail?.education || "Belum diisi"}</span></div>
                   </div>
                 )}
               </section>
