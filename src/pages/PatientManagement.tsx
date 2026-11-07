@@ -148,8 +148,7 @@ export const PatientManagement: React.FC = () => {
           currentUser?.role,
           currentUser?.assignedBranchId,
           0,
-          1,
-          "directory"
+          1
         );
         setClearDbPatientCount(result.totalCount);
       } else {
@@ -192,8 +191,7 @@ export const PatientManagement: React.FC = () => {
           currentUser?.role,
           currentUser?.assignedBranchId,
           patientSearchPage * patientSearchPageSize,
-          patientSearchPageSize,
-          "directory"
+          patientSearchPageSize
         );
         if (!active || requestId !== patientSearchRequestRef.current) return;
         setSearchedPatients(result.patients);
@@ -506,7 +504,8 @@ export const PatientManagement: React.FC = () => {
       ).toLowerCase();
       const otherBranchRmMatch = selectedBranchFilter === "ALL" &&
         p.branchMedicalRecordNumbers?.some((record) =>
-          record.medicalRecordNumber.toLowerCase().includes(q)
+          record.medicalRecordNumber.toLowerCase().includes(q) ||
+          `${record.branchCode || ""}-${record.medicalRecordNumber}`.toLowerCase().includes(q)
         );
       const globalCodeMatch = p.internalPatientCode?.trim().toLowerCase().includes(q);
       const identityDocumentMatch = p.identityDocumentNumber
@@ -518,7 +517,7 @@ export const PatientManagement: React.FC = () => {
       const phoneQuery = q.replace(/\D/g, "");
       const phoneMatch = phoneQuery.length > 0 && Boolean(p.phone?.replace(/\D/g, "").includes(phoneQuery));
       return branchRm.includes(q) || !!otherBranchRmMatch || !!globalCodeMatch ||
-        !!identityDocumentMatch || nameMatch || phoneMatch;
+        !!identityDocumentMatch || p.identityDocumentMatch === true || nameMatch || phoneMatch;
     });
   }, [patients, visits, currentUser?.role, searchQuery, selectedBranchFilter, isOptimizedPatientDirectory]);
 
@@ -668,13 +667,15 @@ export const PatientManagement: React.FC = () => {
               currentUser?.role,
               currentUser?.assignedBranchId,
               0,
-              10,
-              "directory"
+              10
             )).patients
           : patients;
         if (identityCandidates.some((patient) =>
-          patient.identityDocumentType === patientForm.identityDocumentType &&
-          patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === identityNumber.toLowerCase()
+          patient.identityDocumentMatch ||
+          (
+            patient.identityDocumentType === patientForm.identityDocumentType &&
+            patient.identityDocumentNumber?.replace(/\s/g, "").toLowerCase() === identityNumber.toLowerCase()
+          )
         )) {
           throw new Error("Nomor identitas ini sudah terdaftar pada pasien lain.");
         }
@@ -1729,6 +1730,15 @@ export const PatientManagement: React.FC = () => {
                               {p.bookingLookupOnly
                                 ? <span className="text-[10px] font-semibold text-amber-700">Data terbatas untuk booking</span>
                                 : p.address && <span className="text-[10px] text-slate-400 line-clamp-1">{p.address}</span>}
+                              {p.branchMedicalRecordNumbers && p.branchMedicalRecordNumbers.length > 0 && (
+                                <span className="text-[10px] text-indigo-700 font-mono">
+                                  RM cabang: {p.branchMedicalRecordNumbers.map((record) => {
+                                    const branch = branches.find((item) => item.id === record.branchId);
+                                    const code = record.branchCode || branch?.branchCode;
+                                    return `${code ? `${code}-` : ""}${record.medicalRecordNumber}`;
+                                  }).join(" · ")}
+                                </span>
+                              )}
                             </div>
                           </td>
                           {canViewPatientPhone && (

@@ -814,8 +814,7 @@ export class SupabasePatientRepository implements PatientRepository {
     currentUserRole?: UserRole,
     _userBranchId?: string | null,
     offset = 0,
-    limit = 10,
-    scope: "directory" | "booking" = "directory"
+    limit = 10
   ) {
     ensureSupabaseConnected();
     if (!isSupabaseConfigured || !supabase) {
@@ -836,19 +835,19 @@ export class SupabasePatientRepository implements PatientRepository {
     const pageLimit = Math.min(50, Math.max(1, Math.trunc(limit)));
     let branchMedicalRecordPatientIds: string[] = [];
 
-    if (scope === "booking" && currentUserRole === UserRole.BRANCH_ADMIN && safeQuery.length >= 2) {
-      const { data, error } = await supabase.rpc("search_patients_for_branch_admin_booking", {
+    if (currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.SUPER_ADMIN) {
+      const { data, error } = await supabase.rpc("search_patients_global_for_admin", {
         p_query: safeQuery,
         p_offset: pageOffset,
         p_limit: pageLimit
       });
       if (error) {
-        throw new Error(`Gagal mencari pasien untuk booking: ${error.message}`);
+        throw new Error(`Gagal mencari direktori pasien global: ${error.message}`);
       }
 
       const rows = data || [];
       const visiblePatientIds = rows
-        .filter((row) => !row.booking_lookup_only)
+        .filter((row) => !row.lookup_only)
         .map((row) => row.id);
       const visiblePatients = new Map<string, PatientProfile>();
 
@@ -860,19 +859,31 @@ export class SupabasePatientRepository implements PatientRepository {
         if (visibleError) {
           throw new Error(`Gagal membaca profil pasien cabang: ${visibleError.message}`);
         }
-        const mappedVisible = await this.attachBranchMedicalRecordNumbers(
-          (visibleRows || []).map(this.mapPatientFromDb.bind(this))
-        );
+        const mappedRows = (visibleRows || []).map(this.mapPatientFromDb.bind(this));
+        const withNotes = await this.attachMedicalHistoryNotes(mappedRows, currentUserRole);
+        const mappedVisible = await this.attachBranchMedicalRecordNumbers(withNotes);
         mappedVisible.forEach((patient) => visiblePatients.set(patient.id, patient));
       }
 
       return {
         patients: rows.map((row) => {
           const visiblePatient = visiblePatients.get(row.id);
-          if (visiblePatient) return visiblePatient;
+          const branchMedicalRecordNumbers = (row.branch_medical_records || []).map((record: {
+            branch_id: string;
+            branch_name: string;
+            branch_code: string;
+            medical_record_number: string;
+          }) => ({
+            branchId: record.branch_id,
+            branchName: record.branch_name,
+            branchCode: record.branch_code,
+            medicalRecordNumber: record.medical_record_number
+          }));
           return {
-            ...this.mapPatientFromDb(row),
-            bookingLookupOnly: true
+            ...(visiblePatient || this.mapPatientFromDb(row)),
+            branchMedicalRecordNumbers,
+            identityDocumentMatch: Boolean(row.identity_document_match),
+            bookingLookupOnly: Boolean(row.lookup_only)
           };
         }),
         totalCount: Number(rows[0]?.match_count || 0)

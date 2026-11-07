@@ -810,10 +810,23 @@ export const BookingManagement: React.FC = () => {
       (p) =>
         (p.fullName || p.name || "").toLowerCase().includes(q) ||
         (canViewPatientPhoneNumber && (p.phone || "").includes(q)) ||
+        p.identityDocumentMatch === true ||
         getPatientMedicalRecordNumber(p, formBranchId || effectiveBranchId).toLowerCase().includes(q) ||
-        (p.internalPatientCode || "").toLowerCase().includes(q)
+        (p.internalPatientCode || "").toLowerCase().includes(q) ||
+        p.branchMedicalRecordNumbers?.some((record) =>
+          `${record.branchCode || ""}-${record.medicalRecordNumber}`.toLowerCase().includes(q) ||
+          record.medicalRecordNumber.toLowerCase().includes(q)
+        )
     ).slice(0, 5);
   }, [patientSearch, patients, branchBookingPatientResults, canViewPatientPhoneNumber, formBranchId, effectiveBranchId]);
+
+  const getPatientBranchIdentifiers = (patient: PatientProfile) =>
+    (patient.branchMedicalRecordNumbers || []).map((record) => {
+      const branch = branches.find((item) => item.id === record.branchId);
+      const code = record.branchCode || branch?.branchCode;
+      const branchName = record.branchName || branch?.name;
+      return `${code ? `${code}-` : ""}${record.medicalRecordNumber}${branchName ? ` (${branchName})` : ""}`;
+    });
 
   useEffect(() => {
     if (
@@ -838,8 +851,7 @@ export const BookingManagement: React.FC = () => {
         currentUser.role,
         currentUser.assignedBranchId,
         0,
-        10,
-        "directory"
+        10
       ).then((result) => {
         if (active && requestId === branchBookingPatientRequestRef.current) {
           setBranchBookingPatientResults(result.patients);
@@ -2488,8 +2500,18 @@ export const BookingManagement: React.FC = () => {
                       </div>
                       <div className="text-[11px] text-emerald-700">
                         {canViewPatientPhoneNumber && selectedPatient.phone ? `${selectedPatient.phone} — ` : ""}
-                        {getPatientMedicalRecordNumber(selectedPatient, formBranchId) || "No RM"}
+                        RM cabang ini: {getPatientMedicalRecordNumber(selectedPatient, formBranchId) || "belum ada"}
                       </div>
+                      {selectedPatient.internalPatientCode && (
+                        <div className="text-[10px] text-emerald-700 font-mono">
+                          Kode global: {selectedPatient.internalPatientCode}
+                        </div>
+                      )}
+                      {getPatientBranchIdentifiers(selectedPatient).length > 0 && (
+                        <div className="text-[10px] text-slate-600">
+                          RM cabang: {getPatientBranchIdentifiers(selectedPatient).join(" · ")}
+                        </div>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -2522,11 +2544,17 @@ export const BookingManagement: React.FC = () => {
                           <div>
                             <span className="font-bold text-slate-800">{p.fullName}</span>
                             {canViewPatientPhoneNumber && p.phone && <span className="text-slate-500 ml-2">({p.phone})</span>}
+                            {p.internalPatientCode && (
+                              <div className="text-[10px] text-indigo-700 font-mono">Kode global: {p.internalPatientCode}</div>
+                            )}
+                            {getPatientBranchIdentifiers(p).length > 0 && (
+                              <div className="text-[10px] text-slate-500">
+                                RM cabang: {getPatientBranchIdentifiers(p).join(" · ")}
+                              </div>
+                            )}
                           </div>
                           <span className="text-[10px] text-slate-400 font-mono">
-                            {getPatientMedicalRecordNumber(p, formBranchId) ||
-                              p.internalPatientCode ||
-                              "No. RM belum tersedia"}
+                            RM cabang ini: {getPatientMedicalRecordNumber(p, formBranchId) || "belum ada"}
                           </span>
                         </div>
                       ))}
