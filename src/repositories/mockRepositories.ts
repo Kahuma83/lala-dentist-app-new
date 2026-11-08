@@ -45,7 +45,11 @@ import {
 
 import { MockDatabase, MOCK_SERVICES, MOCK_BRANCH_TARIFFS, MOCK_DOCTORS, MOCK_BRANCHES } from "../data/mockData";
 import { formatInternalPatientCode, getPatientMedicalRecordNumber } from "../utils/rmUtils";
-import { advanceStoredBranchRM, getNextStoredBranchRM } from "../utils/branchRMSettings";
+import {
+  advanceStoredBranchRM,
+  getNextStoredBranchRM,
+  getStoredBranchRMFormat
+} from "../utils/branchRMSettings";
 import { calculatePayrollTax } from "../utils/payrollTax";
 import {
   getOperationalDateString,
@@ -3234,7 +3238,11 @@ export class MockQueueRepository implements QueueRepository {
       throw new Error("Pasien ini sudah berada di antrean aktif hari ini melalui kunjungan lain");
     }
 
-    if (!getPatientMedicalRecordNumber(patient, visit.branchId)) {
+    const branchRMFormat = getStoredBranchRMFormat(visit.branchId);
+    if (
+      branchRMFormat?.autoIssueEnabled !== false &&
+      !getPatientMedicalRecordNumber(patient, visit.branchId)
+    ) {
       const branchPatients = db.patients.map((candidate) => ({
         ...candidate,
         medicalRecordNumber: getPatientMedicalRecordNumber(candidate, visit.branchId)

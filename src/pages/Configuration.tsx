@@ -330,6 +330,12 @@ export const Configuration: React.FC = () => {
 
   const selectedRMBranch = branches.find((branch) => branch.id === selectedBranchId);
 
+  const updateBranchRMSettings = (updates: Partial<BranchRMSettings>) => {
+    setBranchRMSettings((current) => current ? { ...current, ...updates } : current);
+    setBranchRMSettingsSuccess("");
+    setBranchRMSettingsError("");
+  };
+
   // ==========================================
   // BRANCH MANAGEMENT HANDLERS
   // ==========================================
@@ -1637,6 +1643,24 @@ export const Configuration: React.FC = () => {
             </div>
           ) : branchRMSettings ? (
             <form onSubmit={handleSaveBranchRMSettings} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+              <label className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-950">
+                <input
+                  type="checkbox"
+                  checked={branchRMSettings.autoIssueEnabled}
+                  onChange={(event) => updateBranchRMSettings({
+                    autoIssueEnabled: event.target.checked
+                  })}
+                  className="mt-0.5 h-4 w-4 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500"
+                  disabled={branchRMSettingsSaving}
+                />
+                <span>
+                  <span className="block font-bold">Terbitkan No. RM otomatis saat check-in</span>
+                  <span className="mt-1 block leading-5 text-emerald-800">
+                    Jika dinonaktifkan, check-in tetap berjalan tanpa membuat RM. Admin dapat mencocokkan data lama lalu memasukkan RM secara manual.
+                  </span>
+                </span>
+              </label>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="text-xs font-semibold text-slate-700">
                   Jumlah digit angka (0 = tanpa nol di depan)
@@ -1646,8 +1670,7 @@ export const Configuration: React.FC = () => {
                     max="18"
                     step="1"
                     value={branchRMSettings.padDigits}
-                    onChange={(event) => setBranchRMSettings({
-                      ...branchRMSettings,
+                    onChange={(event) => updateBranchRMSettings({
                       padDigits: Math.max(0, Math.min(18, Number.parseInt(event.target.value, 10) || 0))
                     })}
                     className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs"
@@ -1663,8 +1686,7 @@ export const Configuration: React.FC = () => {
                     pattern="[0-9]+"
                     maxLength={18}
                     value={branchRMSettings.nextNumber}
-                    onChange={(event) => setBranchRMSettings({
-                      ...branchRMSettings,
+                    onChange={(event) => updateBranchRMSettings({
                       nextNumber: event.target.value.replace(/\D/g, "")
                     })}
                     required
@@ -1708,15 +1730,27 @@ export const Configuration: React.FC = () => {
 
               <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <p className="max-w-lg text-[10px] leading-4 text-slate-500">
-                  RM pasien lama yang sudah diterbitkan tetap. Pengaturan nomor dan format ini digunakan ketika sistem menerbitkan RM baru saat check-in.
+                  RM pasien lama yang sudah diterbitkan tetap. Jika otomatis nonaktif, check-in tidak menerbitkan RM dan admin dapat memasukkannya secara manual setelah mencocokkan data.
                 </p>
                 <button
                   type="submit"
                   disabled={branchRMSettingsSaving || branchRMSettingsLoading}
-                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-bold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    branchRMSettingsSuccess
+                      ? "bg-emerald-800 hover:bg-emerald-900"
+                      : "bg-emerald-600 hover:bg-emerald-700"
+                  }`}
                 >
-                  <Save className="h-4 w-4" />
-                  {branchRMSettingsSaving ? "Menyimpan..." : "Simpan Pengaturan RM"}
+                  {branchRMSettingsSuccess ? (
+                    <CheckCircle2 className="h-4 w-4" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {branchRMSettingsSaving
+                    ? "Menyimpan..."
+                    : branchRMSettingsSuccess
+                      ? "Tersimpan"
+                      : "Simpan Pengaturan RM"}
                 </button>
               </div>
             </form>

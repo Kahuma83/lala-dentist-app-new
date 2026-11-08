@@ -9,10 +9,14 @@ DECLARE
   patient_b UUID := '30000000-0000-0000-0000-000000000005';
   patient_duplicate UUID := '30000000-0000-0000-0000-000000000006';
   patient_registered_at_a UUID := '30000000-0000-0000-0000-000000000007';
+  patient_auto_disabled UUID := '30000000-0000-0000-0000-000000000008';
+  patient_auto_enabled UUID := '30000000-0000-0000-0000-000000000009';
+  patient_manual_with_auto_disabled UUID := '30000000-0000-0000-0000-000000000010';
   rm_a TEXT;
   rm_b TEXT;
   rm_patient_a_at_b TEXT;
   rm_registered_patient_at_b TEXT;
+  rm_auto_enabled TEXT;
 BEGIN
   INSERT INTO public.dental_branches (id, name, address, phone, branch_code)
   VALUES
@@ -144,6 +148,88 @@ BEGIN
     FROM public.patient_profiles
     WHERE id = patient_registered_at_a
   ), 'The internal code must identify the branch that issued the first RM.';
+
+  INSERT INTO public.patient_branch_rm_settings (
+    branch_id, prefix, pad_digits, next_number, auto_issue_enabled
+  )
+  VALUES (branch_a, '', 0, 3001, FALSE)
+  ON CONFLICT (branch_id) DO UPDATE
+  SET auto_issue_enabled = FALSE;
+
+  INSERT INTO public.patient_profiles (id, name, phone, address, date_of_birth, gender)
+  VALUES (patient_auto_disabled, 'Patient Auto Disabled', '080000000008', 'Test', NULL, NULL);
+  INSERT INTO public.patient_profiles (
+    id, name, phone, address, date_of_birth, gender, registered_branch_id, medical_record_number
+  )
+  VALUES (
+    patient_manual_with_auto_disabled, 'Patient Manual RM', '080000000010',
+    'Test', NULL, NULL, branch_a, '2500'
+  );
+  ASSERT EXISTS (
+    SELECT 1
+    FROM public.patient_branch_medical_records
+    WHERE patient_id = patient_manual_with_auto_disabled
+      AND branch_id = branch_a
+      AND medical_record_number = '2500'
+  ), 'Manual RM registration must continue to work when branch automatic issuance is disabled.';
+
+  INSERT INTO public.patient_visits (
+    id, patient_id, branch_id, visit_date_time, visit_type, visit_status, doctor_id
+  )
+  VALUES (
+    '30000000-0000-0000-0000-000000000015',
+    patient_auto_disabled,
+    branch_a,
+    NOW(),
+    'WALK_IN',
+    'WAITING',
+    doctor_id
+  );
+  INSERT INTO public.queue_items (
+    branch_id, doctor_id, visit_id, patient_id, queue_number, status, arrival_at
+  )
+  VALUES (
+    branch_a, doctor_id, '30000000-0000-0000-0000-000000000015',
+    patient_auto_disabled, 'TEST-A-04', 'WAITING', NOW()
+  );
+
+  ASSERT NOT EXISTS (
+    SELECT 1
+    FROM public.patient_branch_medical_records
+    WHERE patient_id = patient_auto_disabled AND branch_id = branch_a
+  ), 'A branch with automatic issuance disabled must allow check-in without issuing an RM.';
+
+  UPDATE public.patient_branch_rm_settings
+  SET auto_issue_enabled = TRUE
+  WHERE branch_id = branch_a;
+
+  INSERT INTO public.patient_profiles (id, name, phone, address, date_of_birth, gender)
+  VALUES (patient_auto_enabled, 'Patient Auto Enabled', '080000000009', 'Test', NULL, NULL);
+  INSERT INTO public.patient_visits (
+    id, patient_id, branch_id, visit_date_time, visit_type, visit_status, doctor_id
+  )
+  VALUES (
+    '30000000-0000-0000-0000-000000000016',
+    patient_auto_enabled,
+    branch_a,
+    NOW(),
+    'WALK_IN',
+    'WAITING',
+    doctor_id
+  );
+  INSERT INTO public.queue_items (
+    branch_id, doctor_id, visit_id, patient_id, queue_number, status, arrival_at
+  )
+  VALUES (
+    branch_a, doctor_id, '30000000-0000-0000-0000-000000000016',
+    patient_auto_enabled, 'TEST-A-05', 'WAITING', NOW()
+  );
+
+  SELECT medical_record_number INTO rm_auto_enabled
+  FROM public.patient_branch_medical_records
+  WHERE patient_id = patient_auto_enabled AND branch_id = branch_a;
+  ASSERT rm_auto_enabled = '3001',
+    'Re-enabling automatic issuance must resume branch numbering from the next available RM.';
 
   BEGIN
     INSERT INTO public.patient_branch_medical_records (patient_id, branch_id, medical_record_number)

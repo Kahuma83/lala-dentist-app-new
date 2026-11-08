@@ -14,6 +14,7 @@ export type BranchRMSettings = {
   nextNumber: string;
   highestNumber: string | null;
   previewRM: string;
+  autoIssueEnabled: boolean;
 };
 
 function parseSettings(value: unknown): BranchRMSettings {
@@ -27,7 +28,8 @@ function parseSettings(value: unknown): BranchRMSettings {
     typeof row.pad_digits !== "number" ||
     typeof row.next_number !== "string" ||
     (row.highest_number !== null && typeof row.highest_number !== "string") ||
-    typeof row.preview_rm !== "string"
+    typeof row.preview_rm !== "string" ||
+    typeof row.auto_issue_enabled !== "boolean"
   ) {
     throw new Error("Data pengaturan RM cabang tidak lengkap.");
   }
@@ -37,7 +39,8 @@ function parseSettings(value: unknown): BranchRMSettings {
     padDigits: row.pad_digits,
     nextNumber: row.next_number,
     highestNumber: row.highest_number,
-    previewRM: row.preview_rm
+    previewRM: row.preview_rm,
+    autoIssueEnabled: row.auto_issue_enabled
   };
 }
 
@@ -69,7 +72,8 @@ export async function getBranchRMSettings(branchId: string): Promise<BranchRMSet
       ...format,
       nextNumber: String(nextNumber),
       highestNumber: highestRecord?.number ? String(highestRecord.number) : null,
-      previewRM: String(nextNumber).padStart(padDigits, "0")
+      previewRM: String(nextNumber).padStart(padDigits, "0"),
+      autoIssueEnabled: stored?.autoIssueEnabled ?? true
     };
   }
 
@@ -84,7 +88,7 @@ export async function getBranchRMSettings(branchId: string): Promise<BranchRMSet
 
 export async function saveBranchRMSettings(
   branchId: string,
-  settings: Pick<BranchRMSettings, "padDigits" | "nextNumber">
+  settings: Pick<BranchRMSettings, "padDigits" | "nextNumber" | "autoIssueEnabled">
 ): Promise<BranchRMSettings> {
   if (isLocalPatientDemoEnabled) {
     const currentSettings = await getBranchRMSettings(branchId);
@@ -101,7 +105,8 @@ export async function saveBranchRMSettings(
 
     saveStoredBranchRMFormat(branchId, {
       padDigits: settings.padDigits,
-      nextNumber: requestedNumber
+      nextNumber: requestedNumber,
+      autoIssueEnabled: settings.autoIssueEnabled
     });
     return getBranchRMSettings(branchId);
   }
@@ -110,7 +115,8 @@ export async function saveBranchRMSettings(
     target_branch_id: branchId,
     requested_prefix: "",
     requested_pad_digits: settings.padDigits,
-    requested_next_number: settings.nextNumber
+    requested_next_number: settings.nextNumber,
+    requested_auto_issue_enabled: settings.autoIssueEnabled
   });
   if (error) {
     throw new Error(`Gagal menyimpan pengaturan RM cabang: ${error.message}`);

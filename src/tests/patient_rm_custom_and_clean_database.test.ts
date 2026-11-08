@@ -341,6 +341,25 @@ describe("Patient Custom RM, Sequential Auto-Generation, and Database Clean Work
     expect(migration).toContain("FROM PUBLIC, anon");
   });
 
+  it("supports turning branch-level automatic RM issuance off and on", () => {
+    const migration = fs.readFileSync(path.resolve(
+      process.cwd(),
+      "supabase/migrations/20270223000000_branch_rm_auto_issue_toggle.sql"
+    ), "utf8");
+    const databaseTest = fs.readFileSync(path.resolve(
+      process.cwd(),
+      "supabase/tests/20261215000000_branch_scoped_patient_medical_record_numbers_test.sql"
+    ), "utf8");
+
+    expect(migration).toContain("ADD COLUMN IF NOT EXISTS auto_issue_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+    expect(migration).toContain("'auto_issue_enabled', COALESCE(config_row.auto_issue_enabled, TRUE)");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.save_patient_branch_rm_settings");
+    expect(migration).toContain("setting.auto_issue_enabled = FALSE");
+    expect(migration).toContain("requested_auto_issue_enabled");
+    expect(databaseTest).toContain("A branch with automatic issuance disabled must allow check-in without issuing an RM.");
+    expect(databaseTest).toContain("Re-enabling automatic issuance must resume branch numbering");
+  });
+
   it("5. Should support existing patients with manually entered RMs while leaving new patients unnumbered", async () => {
     // Patient with 3000 exists
     await patientRepo.createPatient({

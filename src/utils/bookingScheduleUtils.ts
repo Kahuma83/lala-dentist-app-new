@@ -1,6 +1,6 @@
 import { DoctorSchedule } from "../types/domain";
 
-const SLOT_INTERVAL_MINUTES = 30;
+const SLOT_INTERVAL_MINUTES = 15;
 const DEFAULT_START_MINUTES = 8 * 60;
 const DEFAULT_END_MINUTES = 20 * 60;
 

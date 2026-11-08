@@ -5,6 +5,7 @@ import { isFullAppDemoEnabled } from "./localPatientDemo";
 export type LocalBranchRMFormat = {
   padDigits: number;
   nextNumber: number;
+  autoIssueEnabled?: boolean;
 };
 
 const STORAGE_KEY = isFullAppDemoEnabled
@@ -39,7 +40,12 @@ export function getStoredBranchRMFormat(branchId: string): LocalBranchRMFormat |
   ) {
     return null;
   }
-  return value;
+  return {
+    ...value,
+    autoIssueEnabled: typeof value.autoIssueEnabled === "boolean"
+      ? value.autoIssueEnabled
+      : true
+  };
 }
 
 export function saveStoredBranchRMFormat(branchId: string, value: LocalBranchRMFormat): void {
