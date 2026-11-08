@@ -20,21 +20,25 @@ const schedule: DoctorSchedule = {
 };
 
 describe("patient portal booking time slots", () => {
-  it("returns every 30-minute slot within the doctor's schedule without a lunch break", () => {
+  it("returns every 15-minute slot within the doctor's schedule without a lunch break", () => {
     expect(getScheduledBookingTimeSlots(schedule)).toEqual([
-      "09:30", "10:00", "10:30", "11:00", "11:30", "12:00",
-      "12:30", "13:00", "13:30", "14:00", "14:30"
+      "09:30", "09:45", "10:00", "10:15", "10:30", "10:45",
+      "11:00", "11:15", "11:30", "11:45", "12:00", "12:15",
+      "12:30", "12:45", "13:00", "13:15", "13:30", "13:45",
+      "14:00", "14:15", "14:30", "14:45"
     ]);
   });
 
-  it("aligns slots to the next half hour and returns none when no slot fits", () => {
-    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "08:15", endTime: "08:45" })).toEqual(["08:30"]);
-    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "08:15", endTime: "08:29" })).toEqual([]);
+  it("aligns slots to the next quarter hour", () => {
+    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "08:08", endTime: "08:45" })).toEqual([
+      "08:15", "08:30"
+    ]);
+    expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "08:15", endTime: "08:29" })).toEqual(["08:15"]);
   });
 
   it("normalizes database time values that include seconds", () => {
     expect(getScheduledBookingTimeSlots({ ...schedule, startTime: "09:00:00", endTime: "11:00:00" })).toEqual([
-      "09:00", "09:30", "10:00", "10:30"
+      "09:00", "09:15", "09:30", "09:45", "10:00", "10:15", "10:30", "10:45"
     ]);
   });
 
@@ -50,20 +54,39 @@ describe("patient portal booking time slots", () => {
       { ...schedule, endTime: "17:30" },
       replacementShift
     ], 60)).toEqual([
-      "09:30", "10:00", "10:30", "11:00", "11:30", "12:00",
-      "12:30", "13:00", "13:30", "14:00", "14:30", "15:00",
-      "15:30", "16:00", "16:30", "17:00", "17:30", "18:00",
-      "18:30", "19:00", "19:30", "20:00", "20:30"
+      "09:30", "09:45", "10:00", "10:15", "10:30", "10:45",
+      "11:00", "11:15", "11:30", "11:45", "12:00", "12:15",
+      "12:30", "12:45", "13:00", "13:15", "13:30", "13:45",
+      "14:00", "14:15", "14:30", "14:45", "15:00", "15:15",
+      "15:30", "15:45", "16:00", "16:15", "16:30",
+      "17:00", "17:15", "17:30", "17:45", "18:00", "18:15",
+      "18:30", "18:45", "19:00", "19:15", "19:30", "19:45",
+      "20:00", "20:15", "20:30"
     ]);
   });
 
   it("generates regular default slots from 08:00 to 20:00", () => {
     expect(getScheduledBookingTimeSlots()).toEqual([
-      "08:00", "08:30", "09:00", "09:30", "10:00", "10:30",
-      "11:00", "11:30", "12:00", "12:30", "13:00", "13:30",
-      "14:00", "14:30", "15:00", "15:30", "16:00", "16:30",
-      "17:00", "17:30", "18:00", "18:30", "19:00", "19:30"
+      "08:00", "08:15", "08:30", "08:45", "09:00", "09:15",
+      "09:30", "09:45", "10:00", "10:15", "10:30", "10:45",
+      "11:00", "11:15", "11:30", "11:45", "12:00", "12:15",
+      "12:30", "12:45", "13:00", "13:15", "13:30", "13:45",
+      "14:00", "14:15", "14:30", "14:45", "15:00", "15:15",
+      "15:30", "15:45", "16:00", "16:15", "16:30", "16:45",
+      "17:00", "17:15", "17:30", "17:45", "18:00", "18:15",
+      "18:30", "18:45", "19:00", "19:15", "19:30", "19:45"
     ]);
+  });
+
+  it("uses 15-minute slot starts in the database availability RPC while retaining 30-minute default occupancy", () => {
+    const migration = fs.readFileSync(path.resolve(
+      process.cwd(),
+      "supabase/migrations/20270224000000_booking_slots_every_15_minutes.sql"
+    ), "utf8");
+
+    expect(migration).toContain("first_slot_minute := CEIL(EXTRACT(EPOCH FROM doctor_schedule.start_time) / 60 / 15)::INTEGER * 15");
+    expect(migration).toContain("SELECT generate_series(first_slot_minute, schedule_end_minute - 30, 15)");
+    expect(migration).toContain("slot_end_at := slot_start_at + INTERVAL '30 minutes'");
   });
 
   it("restricts patient inserts to their own pending booking on a valid schedule", () => {
