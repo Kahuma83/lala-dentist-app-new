@@ -61,6 +61,7 @@ import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { getCheckInCancellationBlockReason } from "../utils/bookingCancellation";
 import { WalkInBookingDemo } from "../components/WalkInBookingDemo";
 import { getBookingDoctorDisplayName } from "../utils/doctorNameUtils";
+import { limitBookingPatientSearchResults } from "../utils/bookingPatientSearch";
 
 const addCalendarDays = (date: string, days: number) => {
   const value = new Date(`${date}T12:00:00Z`);
@@ -169,15 +170,16 @@ export const BookingManagement: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [patientSearch, setPatientSearch] = useState<string>("");
   const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(null);
-  const [branchBookingPatientResults, setBranchBookingPatientResults] = useState<PatientProfile[] | null>(null);
-  const [branchBookingPatientError, setBranchBookingPatientError] = useState<string | null>(null);
-  const [isBranchBookingPatientLoading, setIsBranchBookingPatientLoading] = useState(false);
+  const [bookingPatientSearchResults, setBookingPatientSearchResults] = useState<PatientProfile[] | null>(null);
+  const [bookingPatientSearchTotal, setBookingPatientSearchTotal] = useState(0);
+  const [bookingPatientSearchError, setBookingPatientSearchError] = useState<string | null>(null);
+  const [isBookingPatientSearchLoading, setIsBookingPatientSearchLoading] = useState(false);
   const [formBranchId, setFormBranchId] = useState<string>("");
   const [formDoctorId, setFormDoctorId] = useState<string>("");
   const [formExternalDoctorId, setFormExternalDoctorId] = useState<string>("");
   const [formDate, setFormDate] = useState<string>(getTomorrowDateString());
   const [walkInExternalDoctors, setWalkInExternalDoctors] = useState<WalkInExternalDoctorOption[]>([]);
-  const branchBookingPatientRequestRef = useRef(0);
+  const bookingPatientSearchRequestRef = useRef(0);
   const [isLoadingWalkInExternalDoctors, setIsLoadingWalkInExternalDoctors] = useState(false);
   const [walkInExternalDoctorError, setWalkInExternalDoctorError] = useState<string | null>(null);
   const [formTimeSlot, setFormTimeSlot] = useState<string>("");
@@ -902,10 +904,18 @@ export const BookingManagement: React.FC = () => {
 
   // Filtered patients for booking creation search
   const searchedPatients = useMemo(() => {
-    const patientSource = branchBookingPatientResults ?? patients;
-    if (!patientSearch.trim()) return patientSource.slice(0, 5);
+    if (
+      patientSearch.trim() &&
+      (currentUser?.role === UserRole.BRANCH_ADMIN || currentUser?.role === UserRole.SUPER_ADMIN) &&
+      bookingPatientSearchResults === null
+    ) return [];
+
+    const patientSource = bookingPatientSearchResults ?? patients;
+    if (!patientSearch.trim()) {
+      return limitBookingPatientSearchResults(patientSource, patientSearch, currentUser?.role);
+    }
     const q = patientSearch.toLowerCase();
-    return patientSource.filter(
+    const matches = patientSource.filter(
       (p) =>
         (p.fullName || p.name || "").toLowerCase().includes(q) ||
         (canViewPatientPhoneNumber && (p.phone || "").includes(q)) ||
@@ -916,8 +926,9 @@ export const BookingManagement: React.FC = () => {
           `${record.branchCode || ""}-${record.medicalRecordNumber}`.toLowerCase().includes(q) ||
           record.medicalRecordNumber.toLowerCase().includes(q)
         )
-    ).slice(0, 5);
-  }, [patientSearch, patients, branchBookingPatientResults, canViewPatientPhoneNumber, formBranchId, effectiveBranchId]);
+    );
+    return limitBookingPatientSearchResults(matches, patientSearch, currentUser?.role);
+  }, [patientSearch, patients, bookingPatientSearchResults, canViewPatientPhoneNumber, formBranchId, effectiveBranchId, currentUser?.role]);
 
   const getPatientBranchIdentifiers = (patient: PatientProfile) =>
     (patient.branchMedicalRecordNumbers || []).map((record) => {
@@ -930,41 +941,46 @@ export const BookingManagement: React.FC = () => {
   useEffect(() => {
     if (
       !isModalOpen ||
-      currentUser?.role !== UserRole.BRANCH_ADMIN ||
+      (currentUser?.role !== UserRole.BRANCH_ADMIN && currentUser?.role !== UserRole.SUPER_ADMIN) ||
       patientSearch.trim().length < 2
     ) {
-      setBranchBookingPatientResults(null);
-      setBranchBookingPatientError(null);
-      setIsBranchBookingPatientLoading(false);
+      bookingPatientSearchRequestRef.current += 1;
+      setBookingPatientSearchResults(null);
+      setBookingPatientSearchTotal(0);
+      setBookingPatientSearchError(null);
+      setIsBookingPatientSearchLoading(false);
       return;
     }
 
-    const requestId = ++branchBookingPatientRequestRef.current;
+    const requestId = ++bookingPatientSearchRequestRef.current;
     let active = true;
-    setBranchBookingPatientResults(null);
-    setBranchBookingPatientError(null);
-    setIsBranchBookingPatientLoading(true);
+    setBookingPatientSearchResults(null);
+    setBookingPatientSearchTotal(0);
+    setBookingPatientSearchError(null);
+    setIsBookingPatientSearchLoading(true);
+    const pageSize = currentUser.role === UserRole.SUPER_ADMIN ? 50 : 10;
     const timer = window.setTimeout(() => {
       void repos.patient.searchPatientsPage(
         patientSearch,
         currentUser.role,
         currentUser.assignedBranchId,
         0,
-        10
+        pageSize
       ).then((result) => {
-        if (active && requestId === branchBookingPatientRequestRef.current) {
-          setBranchBookingPatientResults(result.patients);
+        if (active && requestId === bookingPatientSearchRequestRef.current) {
+          setBookingPatientSearchResults(result.patients);
+          setBookingPatientSearchTotal(result.totalCount);
         }
       }).catch((error: unknown) => {
-        if (active && requestId === branchBookingPatientRequestRef.current) {
-          setBranchBookingPatientResults([]);
-          setBranchBookingPatientError(
+        if (active && requestId === bookingPatientSearchRequestRef.current) {
+          setBookingPatientSearchResults([]);
+          setBookingPatientSearchError(
             error instanceof Error ? error.message : "Gagal mencari pasien untuk booking."
           );
         }
       }).finally(() => {
-        if (active && requestId === branchBookingPatientRequestRef.current) {
-          setIsBranchBookingPatientLoading(false);
+        if (active && requestId === bookingPatientSearchRequestRef.current) {
+          setIsBookingPatientSearchLoading(false);
         }
       });
     }, 250);
@@ -974,6 +990,42 @@ export const BookingManagement: React.FC = () => {
       window.clearTimeout(timer);
     };
   }, [isModalOpen, patientSearch, currentUser?.role, currentUser?.assignedBranchId, repos.patient]);
+
+  const loadMoreBookingPatients = async () => {
+    if (
+      currentUser?.role !== UserRole.SUPER_ADMIN ||
+      !bookingPatientSearchResults ||
+      bookingPatientSearchResults.length >= bookingPatientSearchTotal ||
+      isBookingPatientSearchLoading
+    ) return;
+
+    const requestId = ++bookingPatientSearchRequestRef.current;
+    setIsBookingPatientSearchLoading(true);
+    setBookingPatientSearchError(null);
+    try {
+      const result = await repos.patient.searchPatientsPage(
+        patientSearch,
+        currentUser.role,
+        currentUser.assignedBranchId,
+        bookingPatientSearchResults.length,
+        50
+      );
+      if (requestId === bookingPatientSearchRequestRef.current) {
+        setBookingPatientSearchResults((current) => [...(current || []), ...result.patients]);
+        setBookingPatientSearchTotal(result.totalCount);
+      }
+    } catch (error: unknown) {
+      if (requestId === bookingPatientSearchRequestRef.current) {
+        setBookingPatientSearchError(
+          error instanceof Error ? error.message : "Gagal memuat hasil pasien lainnya."
+        );
+      }
+    } finally {
+      if (requestId === bookingPatientSearchRequestRef.current) {
+        setIsBookingPatientSearchLoading(false);
+      }
+    }
+  };
 
   const handleCreatePatientForSchedule = async () => {
     const fullName = newPatientForm.fullName.trim();
@@ -2636,8 +2688,11 @@ export const BookingManagement: React.FC = () => {
                       className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       id="input-modal-patient-search"
                     />
-                    {branchBookingPatientError && (
-                      <p className="text-[11px] text-rose-600">{branchBookingPatientError}</p>
+                    {bookingPatientSearchError && (
+                      <p className="text-[11px] text-rose-600">{bookingPatientSearchError}</p>
+                    )}
+                    {patientSearch.trim().length === 1 && (
+                      <p className="text-[11px] text-slate-500">Masukkan minimal 2 karakter untuk mencari pasien.</p>
                     )}
                     <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-36 overflow-y-auto bg-slate-50/50">
                       {searchedPatients.map((p) => (
@@ -2663,13 +2718,27 @@ export const BookingManagement: React.FC = () => {
                           </span>
                         </div>
                       ))}
-                      {isBranchBookingPatientLoading && (
+                      {isBookingPatientSearchLoading && (
                         <p className="p-3 text-[11px] text-slate-500">Mencari pasien...</p>
                       )}
-                      {!isBranchBookingPatientLoading && !branchBookingPatientError && searchedPatients.length === 0 && patientSearch.trim() && (
+                      {!isBookingPatientSearchLoading && !bookingPatientSearchError && searchedPatients.length === 0 && patientSearch.trim().length >= 2 && (
                         <p className="p-3 text-[11px] text-slate-500">Pasien tidak ditemukan. Tambahkan pasien baru untuk melanjutkan.</p>
                       )}
                     </div>
+                    {currentUser?.role === UserRole.SUPER_ADMIN &&
+                      bookingPatientSearchResults &&
+                      bookingPatientSearchResults.length < bookingPatientSearchTotal && (
+                        <button
+                          type="button"
+                          onClick={() => void loadMoreBookingPatients()}
+                          disabled={isBookingPatientSearchLoading}
+                          className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isBookingPatientSearchLoading
+                            ? "Memuat pasien..."
+                            : `Muat pasien lainnya (${bookingPatientSearchTotal - bookingPatientSearchResults.length} tersisa)`}
+                        </button>
+                      )}
                     <button
                       type="button"
                       onClick={() => {
