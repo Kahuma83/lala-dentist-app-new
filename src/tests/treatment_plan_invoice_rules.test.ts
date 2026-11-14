@@ -5,7 +5,7 @@ import {
   MockTreatmentRepository,
   MockVisitRepository
 } from "../repositories/mockRepositories";
-import { TreatmentJobStatus, UserRole, VisitType } from "../types/domain";
+import { InvoiceStatus, TreatmentJobStatus, UserRole, VisitType } from "../types/domain";
 import { AppClock } from "../utils/clock";
 import { getOperationalDateString, isValidCalendarDateString } from "../utils/dateUtils";
 
@@ -138,6 +138,150 @@ describe("Treatment plan invoice rules", () => {
         serviceId: cancelledPlan.serviceId,
         descriptionSnapshot: cancelledPlan.serviceNameSnapshot
       }]
-    })).rejects.toThrow("seluruh tindakan selesai");
+    })).rejects.toThrow("sudah memiliki invoice aktif");
+  });
+
+  it("allows cancellation of an unbilled legacy plan after a different treatment was invoiced", async () => {
+    const visitRepo = new MockVisitRepository();
+    const treatmentRepo = new MockTreatmentRepository();
+    const invoiceRepo = new MockInvoiceRepository();
+    const database = MockDatabase.getInstance();
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const billedTreatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+    const alternateService = database.services.find(
+      (service) => service.id !== billedTreatment.serviceId && service.isActive
+    );
+    if (!alternateService) throw new Error("Fixture requires a second active treatment service");
+    const unbilledTreatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: alternateService.id,
+      doctorId: "doc-syafira"
+    });
+    await treatmentRepo.startTreatmentJob(billedTreatment.id);
+    await treatmentRepo.completeTreatmentJob(billedTreatment.id);
+    await treatmentRepo.cancelTreatmentJob(unbilledTreatment.id, "Pasien menunda tindakan");
+
+    const invoice = await invoiceRepo.createInvoice({
+      visitId: visit.id,
+      patientId: visit.patientId,
+      branchId: visit.branchId,
+      items: [{
+        treatmentJobId: billedTreatment.id,
+        serviceId: billedTreatment.serviceId,
+        descriptionSnapshot: billedTreatment.serviceNameSnapshot,
+        unitPriceSnapshot: billedTreatment.priceSnapshot || 0,
+        quantity: 1
+      }]
+    });
+    const invoiceRecord = database.invoices.find((item) => item.id === invoice.id);
+    if (!invoiceRecord) throw new Error("Fixture invoice was not saved");
+    invoiceRecord.status = InvoiceStatus.PAID;
+    invoiceRecord.paidAmount = invoiceRecord.netAmount;
+    invoiceRecord.outstandingAmount = 0;
+
+    const legacyUnbilledTreatment = database.treatmentJobs.find((item) => item.id === unbilledTreatment.id);
+    if (!legacyUnbilledTreatment) throw new Error("Fixture treatment was not saved");
+    legacyUnbilledTreatment.status = TreatmentJobStatus.BELUM_DIMULAI;
+    legacyUnbilledTreatment.cancelledAt = undefined;
+    legacyUnbilledTreatment.cancelledBy = undefined;
+    legacyUnbilledTreatment.cancellationReason = undefined;
+
+    const cancelled = await treatmentRepo.cancelTreatmentJob(
+      unbilledTreatment.id,
+      "Rencana ini tidak jadi dilakukan",
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira"
+    );
+
+    expect(cancelled.status).toBe(TreatmentJobStatus.DIBATALKAN);
+    expect(invoiceRecord.status).toBe(InvoiceStatus.PAID);
+    expect((await invoiceRepo.getInvoiceItems(invoice.id)).map((item) => item.treatmentJobId))
+      .toEqual([billedTreatment.id]);
+  });
+
+  it("keeps cancellation blocked when an active legacy invoice has unlinked items", async () => {
+    const visitRepo = new MockVisitRepository();
+    const treatmentRepo = new MockTreatmentRepository();
+    const invoiceRepo = new MockInvoiceRepository();
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const treatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+    await invoiceRepo.createInvoice({
+      visitId: visit.id,
+      patientId: visit.patientId,
+      branchId: visit.branchId,
+      items: [{
+        serviceId: treatment.serviceId,
+        descriptionSnapshot: treatment.serviceNameSnapshot,
+        unitPriceSnapshot: treatment.priceSnapshot || 0,
+        quantity: 1
+      }]
+    });
+
+    await expect(treatmentRepo.cancelTreatmentJob(
+      treatment.id,
+      "Rencana ini tidak jadi dilakukan",
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira"
+    )).rejects.toThrow("setelah invoice diterbitkan");
+  });
+
+  it("does not allow adding a treatment to a visit that already has an active invoice", async () => {
+    const visitRepo = new MockVisitRepository();
+    const treatmentRepo = new MockTreatmentRepository();
+    const invoiceRepo = new MockInvoiceRepository();
+    const visit = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const completedTreatment = await treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-scaling",
+      doctorId: "doc-syafira"
+    });
+    await treatmentRepo.startTreatmentJob(completedTreatment.id);
+    await treatmentRepo.completeTreatmentJob(completedTreatment.id);
+    await invoiceRepo.createInvoice({
+      visitId: visit.id,
+      patientId: visit.patientId,
+      branchId: visit.branchId,
+      items: [{
+        treatmentJobId: completedTreatment.id,
+        serviceId: completedTreatment.serviceId,
+        descriptionSnapshot: completedTreatment.serviceNameSnapshot,
+        unitPriceSnapshot: completedTreatment.priceSnapshot || 0,
+        quantity: 1
+      }]
+    });
+
+    await expect(treatmentRepo.createTreatmentJob({
+      visitId: visit.id,
+      serviceId: "service-bracket-control-single",
+      doctorId: "doc-syafira"
+    })).rejects.toThrow("sudah memiliki invoice aktif");
   });
 });

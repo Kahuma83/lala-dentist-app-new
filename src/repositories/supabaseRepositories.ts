@@ -4789,6 +4789,18 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       .single();
     if (vErr || !visit) throw new Error("Visit tidak ditemukan");
 
+    const { data: activeInvoice, error: invoiceError } = await supabase
+      .from("invoices")
+      .select("id")
+      .eq("visit_id", data.visitId)
+      .neq("status", "CANCELLED")
+      .limit(1)
+      .maybeSingle();
+    if (invoiceError) throw new Error(`Gagal memeriksa invoice kunjungan: ${invoiceError.message}`);
+    if (activeInvoice) {
+      throw new Error("Kunjungan ini sudah memiliki invoice aktif. Buat tindakan pada kunjungan baru.");
+    }
+
     const branchToUse = data.branchId || visit.branch_id;
     const patientToUse = data.patientId || visit.patient_id;
     const externalDoctorId = data.externalDoctorId ?? visit.external_doctor_id ?? null;
