@@ -3962,6 +3962,11 @@ export class MockTreatmentRepository implements TreatmentRepository {
     if (!visit) {
       throw new Error("Visit tidak ditemukan");
     }
+    if (db.invoices.some((invoice) =>
+      invoice.visitId === visit.id && invoice.status !== InvoiceStatus.CANCELLED
+    )) {
+      throw new Error("Kunjungan ini sudah memiliki invoice aktif. Buat tindakan pada kunjungan baru.");
+    }
 
     // 2. Validate Branch Consistency
     if (data.branchId && data.branchId !== visit.branchId) {
@@ -4201,9 +4206,16 @@ export class MockTreatmentRepository implements TreatmentRepository {
         throw new Error("Item tidak dapat dibatalkan karena aktivitas tindakan selain mulai sudah tercatat.");
       }
     }
-    if (db.invoices.some((invoice) =>
+    const activeVisitInvoices = db.invoices.filter((invoice) =>
       invoice.visitId === job.visitId && invoice.status !== InvoiceStatus.CANCELLED
-    )) {
+    );
+    const invoiceBlocksCancellation = activeVisitInvoices.some((invoice) => {
+      const invoiceItems = db.invoiceItems.filter((item) => item.invoiceId === invoice.id);
+      return invoiceItems.length === 0 || invoiceItems.some((item) =>
+        !item.treatmentJobId || item.treatmentJobId === job.id
+      );
+    });
+    if (invoiceBlocksCancellation) {
       throw new Error("Rencana tindakan tidak dapat dibatalkan setelah invoice diterbitkan.");
     }
 
