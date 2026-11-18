@@ -14,6 +14,80 @@ import { MockDatabase } from "../data/mockData";
 import { MockTreatmentRepository } from "../repositories/mockRepositories";
 
 describe("visit assistant repository assignment", () => {
+  it("allows an active branch admin from the visit branch to persist as PIC", async () => {
+    const database = MockDatabase.getInstance();
+    const original = {
+      visits: database.visits,
+      treatmentJobs: database.treatmentJobs,
+      staff: database.staff,
+      assignments: database.visitAssistantAssignments
+    };
+    const visit: PatientVisit = {
+      id: "visit-branch-admin-assignment-test",
+      patientId: "patient-test",
+      branchId: "branch-1",
+      visitDateTime: "2027-02-12T03:00:00.000Z",
+      visitType: VisitType.BOOKING,
+      visitStatus: VisitStatus.WAITING,
+      bookingId: null,
+      createdAt: "2027-02-12T03:00:00.000Z",
+      updatedAt: "2027-02-12T03:00:00.000Z"
+    };
+    const treatment: TreatmentJob = {
+      id: "treatment-branch-admin-test",
+      visitId: visit.id,
+      patientId: visit.patientId,
+      branchId: visit.branchId,
+      doctorId: "doctor-test",
+      serviceId: "service-test",
+      status: TreatmentJobStatus.BELUM_DIMULAI,
+      serviceNameSnapshot: "Treatment",
+      doctorNameSnapshot: "Doctor",
+      priceSnapshot: 10000,
+      estimatedDurationMinutes: 30,
+      notes: "",
+      createdAt: "2027-02-12T03:00:00.000Z",
+      updatedAt: "2027-02-12T03:00:00.000Z"
+    };
+    const branchAdmin: Staff = {
+      id: "branch-admin-test",
+      employeeCode: "BA-TEST",
+      fullName: "Branch Admin Test",
+      phone: "",
+      position: StaffPosition.BRANCH_ADMIN,
+      employmentStatus: EmploymentStatus.ACTIVE,
+      joinDate: "2027-01-01",
+      active: true,
+      branchId: visit.branchId,
+      createdAt: "",
+      updatedAt: ""
+    };
+
+    try {
+      database.visits = [visit];
+      database.treatmentJobs = [treatment];
+      database.staff = [branchAdmin];
+      database.visitAssistantAssignments = [];
+      const repository = new MockTreatmentRepository();
+
+      await repository.assignAssistantToVisit(
+        visit.id,
+        branchAdmin.id,
+        UserRole.DOCTOR,
+        visit.branchId,
+        "doctor-test"
+      );
+
+      expect(database.treatmentJobs[0].picAssistantId).toBe(branchAdmin.id);
+      expect(database.visitAssistantAssignments[0].assistantStaffId).toBe(branchAdmin.id);
+    } finally {
+      database.visits = original.visits;
+      database.treatmentJobs = original.treatmentJobs;
+      database.staff = original.staff;
+      database.visitAssistantAssignments = original.assignments;
+    }
+  });
+
   it("applies one confirmed PIC to every treatment and locks it once treatment starts", async () => {
     const database = MockDatabase.getInstance();
     const original = {
