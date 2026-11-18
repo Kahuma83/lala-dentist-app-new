@@ -10,16 +10,20 @@ import {
 } from "../types/domain";
 import { getVisitAssistantCandidates } from "../utils/treatmentAssistantAssignment";
 
-const staff = (id: string): Staff => ({
+const staff = (
+  id: string,
+  position: StaffPosition = StaffPosition.ASSISTANT,
+  branchId: string | null = "branch-1"
+): Staff => ({
   id,
   employeeCode: id,
   fullName: id,
   phone: "",
-  position: StaffPosition.ASSISTANT,
+  position,
   employmentStatus: EmploymentStatus.ACTIVE,
   joinDate: "2027-01-01",
   active: true,
-  branchId: "branch-1",
+  branchId,
   createdAt: "",
   updatedAt: ""
 });
@@ -137,5 +141,47 @@ describe("visit assistant assignment defaults", () => {
 
     expect(result.defaultStaffId).toBe("morning-assistant");
     expect(result.candidates.map((item) => item.staffId)).toContain("afternoon-assistant");
+  });
+
+  it("allows an active branch admin assigned to the visit branch without requiring attendance", () => {
+    const branchAdmin = staff("branch-admin", StaffPosition.BRANCH_ADMIN);
+    const result = getCandidates({
+      assistants: [branchAdmin],
+      assignments: []
+    });
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        staffId: "branch-admin",
+        position: StaffPosition.BRANCH_ADMIN,
+        attendanceState: "NOT_RECORDED"
+      })
+    ]);
+    expect(result.defaultStaffId).toBeNull();
+  });
+
+  it("allows an active branch admin with an active assignment at the visit branch", () => {
+    const branchAdmin = staff("branch-admin", StaffPosition.BRANCH_ADMIN, "branch-2");
+    const result = getCandidates({
+      assistants: [branchAdmin],
+      assignments: [{
+        ...assignment("branch-admin", "morning"),
+        branchId: "branch-1"
+      }]
+    });
+
+    expect(result.candidates.map((item) => item.staffId)).toContain("branch-admin");
+    expect(result.defaultStaffId).toBeNull();
+  });
+
+  it("does not offer an inactive or unassigned admin from another branch", () => {
+    const inactiveAdmin = { ...staff("inactive-admin", StaffPosition.BRANCH_ADMIN), active: false };
+    const otherBranchAdmin = staff("other-branch-admin", StaffPosition.BRANCH_ADMIN, "branch-2");
+    const result = getCandidates({
+      assistants: [inactiveAdmin, otherBranchAdmin],
+      assignments: []
+    });
+
+    expect(result.candidates).toHaveLength(0);
   });
 });

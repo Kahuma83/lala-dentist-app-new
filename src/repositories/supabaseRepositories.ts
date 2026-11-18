@@ -4720,7 +4720,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       .from("treatment_visit_assistant_assignments")
       .select("visit_id, assistant_staff_id")
       .in("visit_id", validVisitIds);
-    if (error) throw new Error(`Gagal memuat PIC Asisten kunjungan: ${error.message}`);
+    if (error) throw new Error(`Gagal memuat PIC tindakan kunjungan: ${error.message}`);
     return Object.fromEntries((data || []).map((row) => [row.visit_id, row.assistant_staff_id]));
   }
 
@@ -4733,16 +4733,16 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
   ): Promise<void> {
     ensureSupabaseConnected();
     if (currentUserRole !== UserRole.DOCTOR) {
-      throw new Error("Hanya dokter yang dapat menetapkan Asisten untuk kunjungan.");
+      throw new Error("Hanya dokter yang dapat menetapkan PIC untuk kunjungan.");
     }
     if (!isValidUUID(visitId) || (assistantStaffId && !isValidUUID(assistantStaffId))) {
-      throw new Error("Data kunjungan atau Asisten tidak valid.");
+      throw new Error("Data kunjungan atau PIC tidak valid.");
     }
     const { error } = await supabase.rpc("assign_treatment_visit_assistant", {
       p_visit_id: visitId,
       p_assistant_staff_id: assistantStaffId
     });
-    if (error) throw new Error(`Gagal menetapkan Asisten kunjungan: ${error.message}`);
+    if (error) throw new Error(`Gagal menetapkan PIC kunjungan: ${error.message}`);
   }
 
   async listTreatmentsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null, currentUserId?: string | null): Promise<TreatmentJob[]> {

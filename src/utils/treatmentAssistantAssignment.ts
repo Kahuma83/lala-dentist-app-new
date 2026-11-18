@@ -14,6 +14,7 @@ export type AssistantAttendanceState = "PRESENT" | "NOT_PRESENT" | "NOT_RECORDED
 export interface VisitAssistantCandidate {
   staffId: string;
   fullName: string;
+  position: StaffPosition;
   isScheduledForBooking: boolean;
   attendanceState: AssistantAttendanceState;
 }
@@ -93,12 +94,12 @@ export const getVisitAssistantCandidates = ({
     return { candidates: [], defaultStaffId: null };
   }
 
-  const activeAssistants = staff.filter((item) =>
+  const eligibleStaff = staff.filter((item) =>
     item.active
     && item.employmentStatus === EmploymentStatus.ACTIVE
-    && item.position === StaffPosition.ASSISTANT
+    && (item.position === StaffPosition.ASSISTANT || item.position === StaffPosition.BRANCH_ADMIN)
   );
-  const staffById = new Map(activeAssistants.map((item) => [item.id, item]));
+  const staffById = new Map(eligibleStaff.map((item) => [item.id, item]));
   const dayAssignments = assignments.filter((item) =>
     item.active && item.branchId === branchId && item.date === scheduleDate && staffById.has(item.staffId)
   );
@@ -117,21 +118,30 @@ export const getVisitAssistantCandidates = ({
       .filter((attendance) => isAttendanceActiveAt(attendance, actionTimestamp))
       .map((item) => item.staffId)
   );
+  const eligiblePresentIds = [...presentIds].filter((staffId) => {
+    const candidate = staffById.get(staffId);
+    return candidate?.position === StaffPosition.ASSISTANT
+      || candidate?.branchId === branchId
+      || dayAssignments.some((assignment) => assignment.staffId === staffId);
+  });
   const candidateIds = new Set([
     ...dayAssignments.map((item) => item.staffId),
-    ...presentIds,
-    ...activeAssistants
+    ...eligiblePresentIds,
+    ...eligibleStaff
       .filter((item) => item.branchId === branchId)
       .map((item) => item.id)
   ].filter((id) => staffById.has(id)));
   const candidates = [...candidateIds]
-    .map((staffId): VisitAssistantCandidate => {
-      const attendance = attendanceByStaff.get(staffId);
+    .map((staffId) => staffById.get(staffId))
+    .filter((item): item is Staff => item !== undefined)
+    .map((candidate): VisitAssistantCandidate => {
+      const attendance = attendanceByStaff.get(candidate.id);
       return {
-        staffId,
-        fullName: staffById.get(staffId)?.fullName || staffId,
-        isScheduledForBooking: scheduledIds.has(staffId),
-        attendanceState: presentIds.has(staffId)
+        staffId: candidate.id,
+        fullName: candidate.fullName,
+        position: candidate.position,
+        isScheduledForBooking: scheduledIds.has(candidate.id),
+        attendanceState: presentIds.has(candidate.id)
           ? "PRESENT"
           : attendance
             ? "NOT_PRESENT"
@@ -143,7 +153,9 @@ export const getVisitAssistantCandidates = ({
       || left.fullName.localeCompare(right.fullName)
     );
 
-  const scheduledCandidates = candidates.filter((item) => item.isScheduledForBooking);
+  const scheduledCandidates = candidates.filter((item) =>
+    item.position === StaffPosition.ASSISTANT && item.isScheduledForBooking
+  );
   const scheduledPresent = scheduledCandidates.filter((item) => item.attendanceState === "PRESENT");
   const scheduledWithoutAttendance = scheduledCandidates.filter((item) => item.attendanceState === "NOT_RECORDED");
   const defaultCandidate = scheduledPresent.length === 1

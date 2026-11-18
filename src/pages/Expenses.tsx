@@ -126,9 +126,7 @@ export const Expenses: React.FC = () => {
         nameLower.includes("insentif") ||
         nameLower.includes("biaya dokter") ||
         nameLower.includes("jasa dokter");
-      const isManagedByRecurringAccrual = code === "5030" || code === "5070";
-
-      return !isPayrollOrComp && !isManagedByRecurringAccrual;
+      return !isPayrollOrComp;
     });
   }, [accounts]);
 
@@ -637,7 +635,7 @@ export const Expenses: React.FC = () => {
           <div>
             <h2 className="text-sm font-bold text-slate-900">Penyisihan Harian Otomatis</h2>
             <p className="text-[11px] text-slate-500 mt-1">
-              Sistem mengakru setiap hari dan membuat jurnal ringkasan bulanan. Uang belum dianggap dibayar sampai pembayaran dicatat.
+              Fitur ini mencatat beban harian dan kewajiban yang belum dibayar. Jika Sewa Gedung atau THR dicatat sebagai pengeluaran harian di bawah, nonaktifkan rencana akrual terkait agar beban tidak terhitung ganda.
             </p>
           </div>
           <button
@@ -970,7 +968,7 @@ export const Expenses: React.FC = () => {
             </div>
 
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600 my-3 leading-relaxed">
-              Catat pengeluaran setelah pembayaran dilakukan. Untuk honor Dokter pengganti eksternal yang dibayar pada hari praktik, pilih kategori <strong>Beban Dokter Pengganti</strong>. <strong>Sewa gedung dan THR tidak dicatat di sini</strong>; atur target penyisihannya di bagian Penyisihan Harian Otomatis.
+              Catat pengeluaran setelah pembayaran dilakukan. Pilih kategori khusus seperti Sewa Gedung, THR, Rekreasi, atau Beban Dokter Pengganti. Jika menggunakan pencatatan harian untuk Sewa/THR, nonaktifkan rencana akrual otomatis terkait agar beban tidak terhitung ganda.
             </div>
 
             <form onSubmit={handleCreateExpense} className="space-y-4 text-xs">
