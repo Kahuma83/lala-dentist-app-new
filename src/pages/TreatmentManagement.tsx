@@ -13,7 +13,8 @@ import {
   QueueItem,
   MasterService,
   DentalDoctor,
-  DentalBranch
+  DentalBranch,
+  StaffPosition
 } from "../types/domain";
 import {
   Stethoscope,
@@ -230,9 +231,9 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
           : item
       ));
       setAssistantEdit(null);
-      setSuccessMsg("PIC Asisten kunjungan berhasil diperbarui.");
+      setSuccessMsg("PIC tindakan berhasil diperbarui.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal mengubah PIC Asisten kunjungan.");
+      setError(err instanceof Error ? err.message : "Gagal mengubah PIC tindakan.");
     } finally {
       setProcessingVisitId(null);
     }
@@ -1669,7 +1670,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                                 <span>{completedCount} selesai{cancelledCount ? ` · ${cancelledCount} batal` : ""}</span>
                               </div>
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
-                                <span className="font-semibold text-slate-600">PIC Asisten:</span>
+                                <span className="font-semibold text-slate-600">PIC Tindakan:</span>
                                 {assistantEdit?.visitId === visitId ? (
                                   <>
                                     <select
@@ -1679,15 +1680,15 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                                         : current)}
                                       className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-800"
                                     >
-                                      <option value="">Tidak ada Asisten</option>
+                                      <option value="">Tidak ada PIC</option>
                                       {assistantEdit.candidates.map((candidate) => (
                                         <option key={candidate.staffId} value={candidate.staffId}>
-                                          {candidate.fullName}
+                                          {candidate.fullName} · {candidate.position === StaffPosition.BRANCH_ADMIN ? "Admin Cabang" : "Asisten"}
                                           {candidate.isScheduledForBooking
-                                            ? " · shift booking"
+                                            ? " · shift cabang"
                                             : candidate.attendanceState === "PRESENT"
                                               ? " · hadir"
-                                              : " · Asisten cabang"}
+                                              : ""}
                                         </option>
                                       ))}
                                     </select>

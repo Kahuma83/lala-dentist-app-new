@@ -3879,7 +3879,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
     if (assistantStaffId) {
       const assistant = db.staff.find((item) =>
         item.id === assistantStaffId
-        && item.position === StaffPosition.ASSISTANT
+        && (item.position === StaffPosition.ASSISTANT || item.position === StaffPosition.BRANCH_ADMIN)
         && item.active
         && item.employmentStatus === EmploymentStatus.ACTIVE
         && (
@@ -3892,7 +3892,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
           )
         )
       );
-      if (!assistant) throw new Error("Asisten yang dipilih tidak aktif, bukan Asisten, atau tidak ditugaskan di cabang kunjungan.");
+      if (!assistant) throw new Error("PIC yang dipilih tidak aktif, bukan Asisten atau Admin Cabang, atau tidak ditugaskan di cabang kunjungan.");
     }
 
     const visitTreatments = db.treatmentJobs.filter((item) => item.visitId === visitId);

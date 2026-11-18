@@ -14,7 +14,8 @@ import {
   JournalStatus,
   UserRole,
   AccountType,
-  PayrollStatus
+  PayrollStatus,
+  AccountCategory
 } from "../types/domain";
 import { MockDatabase } from "../data/mockData";
 
@@ -118,6 +119,17 @@ describe("PHASE 9D.1 — Branch Admin Financial UI & Operational Simplification 
     const hasReplacementDoctorFee = filteredExpenseAccounts.some((a) => a.code === "5080");
     expect(hasListrik).toBe(true);
     expect(hasReplacementDoctorFee).toBe(true);
+    expect(filteredExpenseAccounts.some((a) => a.code === "5030")).toBe(true);
+    expect(filteredExpenseAccounts.some((a) => a.code === "5070")).toBe(true);
+    expect(filteredExpenseAccounts.some((a) => a.code === "5100")).toBe(true);
+  });
+
+  it("assigns dedicated THR and recreation account categories", async () => {
+    const accounts = await accountingRepo.getAccounts();
+    expect(accounts.find((account) => account.code === "5070")?.accountCategory)
+      .toBe(AccountCategory.THR_EXPENSE);
+    expect(accounts.find((account) => account.code === "5100")?.accountCategory)
+      .toBe(AccountCategory.RECREATION_EXPENSE);
   });
 
   it("records same-day external doctor honor as a normal branch expense", async () => {

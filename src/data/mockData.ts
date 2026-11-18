@@ -1590,7 +1590,7 @@ export const MOCK_CHART_OF_ACCOUNTS: ChartOfAccount[] = [
   {
     id: "coa-5030",
     code: "5030",
-    name: "Beban Sewa Gedung & Tempat (Rent Expense)",
+    name: "Beban Sewa Gedung",
     accountType: AccountType.EXPENSE,
     accountCategory: AccountCategory.RENT_EXPENSE,
     normalBalance: NormalBalance.DEBIT,
@@ -1640,10 +1640,22 @@ export const MOCK_CHART_OF_ACCOUNTS: ChartOfAccount[] = [
     code: "5070",
     name: "Beban THR",
     accountType: AccountType.EXPENSE,
-    accountCategory: AccountCategory.OTHER_OPERATING_EXPENSE,
+    accountCategory: AccountCategory.THR_EXPENSE,
     normalBalance: NormalBalance.DEBIT,
     isActive: true,
     description: "Beban Tunjangan Hari Raya",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z"
+  },
+  {
+    id: "coa-5100",
+    code: "5100",
+    name: "Beban Rekreasi",
+    accountType: AccountType.EXPENSE,
+    accountCategory: AccountCategory.RECREATION_EXPENSE,
+    normalBalance: NormalBalance.DEBIT,
+    isActive: true,
+    description: "Beban kegiatan rekreasi dan kebersamaan karyawan",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z"
   },

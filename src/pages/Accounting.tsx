@@ -487,9 +487,11 @@ export const Accounting: React.FC = () => {
           { value: AccountCategory.DOCTOR_FEE_EXPENSE, label: "Beban Bagi Hasil Dokter" },
           { value: AccountCategory.INCENTIVE_EXPENSE, label: "Beban Insentif Staff" },
           { value: AccountCategory.RENT_EXPENSE, label: "Beban Sewa Gedung & Tempat" },
+          { value: AccountCategory.THR_EXPENSE, label: "Beban THR" },
           { value: AccountCategory.UTILITIES_EXPENSE, label: "Beban Listrik, Air & Internet" },
           { value: AccountCategory.SUPPLIES_EXPENSE, label: "Beban Bahan & Perlengkapan Medis" },
           { value: AccountCategory.MARKETING_EXPENSE, label: "Beban Pemasaran & Iklan" },
+          { value: AccountCategory.RECREATION_EXPENSE, label: "Beban Rekreasi" },
           { value: AccountCategory.OTHER_OPERATING_EXPENSE, label: "Beban Operasional Lainnya" }
         ];
       default:
