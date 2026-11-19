@@ -11,8 +11,16 @@ describe("Owner daily cash report migration", () => {
     path.resolve(process.cwd(), "supabase/manual-migrations/20270304000000_owner_daily_cash_report_cash_flow_fixes.sql"),
     "utf-8"
   );
+  const branchAdminFix = fs.readFileSync(
+    path.resolve(process.cwd(), "supabase/manual-migrations/20270305000000_branch_admin_keriting_cash_management.sql"),
+    "utf-8"
+  );
   const dashboard = fs.readFileSync(
     path.resolve(process.cwd(), "src/components/OwnerDailyCashReport.tsx"),
+    "utf-8"
+  );
+  const expensesPage = fs.readFileSync(
+    path.resolve(process.cwd(), "src/pages/Expenses.tsx"),
     "utf-8"
   );
 
@@ -57,5 +65,24 @@ describe("Owner daily cash report migration", () => {
     expect(cashFlowFix).toMatch(/journal\.source_type IN \('EXPENSE', 'MANUAL', 'ADJUSTMENT', 'REVERSAL'\)/i);
     expect(cashFlowFix).toMatch(/original\.source_type IN \('EXPENSE', 'MANUAL', 'ADJUSTMENT'\)/i);
     expect(cashFlowFix).toMatch(/HAVING bool_or\([\s\S]*?account\.account_category = 'CASH'/i);
+  });
+
+  it("limits branch-admin cash reports and entries to the assigned branch", () => {
+    expect(branchAdminFix).toMatch(/public\.get_user_role\(\) <> 'BRANCH_ADMIN'/i);
+    expect(branchAdminFix).toMatch(/NOT public\.user_can_access_branch\(p_branch_id\)/i);
+    expect(branchAdminFix).toMatch(/branch\.id = p_branch_id/i);
+    expect(branchAdminFix).toMatch(/public\.get_user_role\(\) = 'BRANCH_ADMIN'[\s\S]*?public\.user_can_access_branch\(p_branch_id\)/i);
+    expect(branchAdminFix).toMatch(/public\.get_branch_cash_rounding_report\(p_entry_date, p_branch_id\)/i);
+    expect(branchAdminFix).toMatch(/GRANT EXECUTE ON FUNCTION public\.get_branch_cash_rounding_report\(DATE, UUID\) TO authenticated/i);
+  });
+
+  it("shows the single-branch cash manager on Branch Admin expenses", () => {
+    expect(dashboard).toMatch(/get_branch_cash_rounding_report/);
+    expect(dashboard).toMatch(/p_branch_id: branchId/);
+    expect(dashboard).toMatch(/\[branchId, refreshKey, reportDate\]/);
+    expect(expensesPage).toMatch(/isBranchMatch\(userBranchId, branch\.id, branches\)/);
+    expect(expensesPage).toMatch(/<OwnerDailyCashReport branchId=\{cashReportBranchId\} refreshKey=\{cashReportRefreshKey\} \/>/);
+    expect(expensesPage).toMatch(/const refreshCashReport = \(\) => setCashReportRefreshKey\(\(key\) => key \+ 1\)/);
+    expect(expensesPage.match(/refreshCashReport\(\);/g)).toHaveLength(4);
   });
 });

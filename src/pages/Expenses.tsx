@@ -38,7 +38,9 @@ import {
   X
 } from "lucide-react";
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
+import { OwnerDailyCashReport } from "../components/OwnerDailyCashReport";
 import { formatShortAccountingReference } from "../utils/accountingDisplay";
+import { isBranchMatch } from "../utils/branchUtils";
 
 export const Expenses: React.FC = () => {
   const {
@@ -57,6 +59,9 @@ export const Expenses: React.FC = () => {
   const userBranchId = currentUser?.role === UserRole.BRANCH_ADMIN
     ? currentUser.assignedBranchId || currentUser.branchId
     : selectedBranchId;
+  const cashReportBranchId = currentUser?.role === UserRole.BRANCH_ADMIN && userBranchId
+    ? branches.find((branch) => isBranchMatch(userBranchId, branch.id, branches))?.id
+    : undefined;
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState("");
@@ -76,6 +81,7 @@ export const Expenses: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cashReportRefreshKey, setCashReportRefreshKey] = useState(0);
 
   // Form State
   const [formDate, setFormDate] = useState<string>(
@@ -288,6 +294,8 @@ export const Expenses: React.FC = () => {
     return a ? `${a.code} - ${a.name}` : accountId;
   };
 
+  const refreshCashReport = () => setCashReportRefreshKey((key) => key + 1);
+
   const handleOpenCreateModal = () => {
     setActionError(null);
     setSuccessMessage(null);
@@ -397,6 +405,7 @@ export const Expenses: React.FC = () => {
       setSelectedPlanForPayment(null);
       setSuccessMessage("Pembayaran kewajiban berhasil dicatat tanpa membebankan biaya dua kali.");
       await refreshData();
+      refreshCashReport();
       await loadRecurringPlans();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Gagal mencatat pembayaran akrual.");
@@ -448,6 +457,7 @@ export const Expenses: React.FC = () => {
       );
 
       await refreshData();
+      refreshCashReport();
       setIsCreateOpen(false);
       setSuccessMessage(
         `Pengeluaran berhasil dicatat & diposting ke Jurnal Umum (${formatShortAccountingReference(postedJournal.journalNumber)}) senilai Rp ${Number(formAmount).toLocaleString("id-ID")}`
@@ -488,6 +498,7 @@ export const Expenses: React.FC = () => {
       );
 
       await refreshData();
+      refreshCashReport();
       setIsReversalModalOpen(false);
       setSelectedExpenseJournal(null);
       setSuccessMessage(`Jurnal pembalik ${formatShortAccountingReference(reversal.journalNumber)} berhasil diposting. Jurnal asal tetap tersimpan sebagai jejak audit.`);
@@ -510,6 +521,7 @@ export const Expenses: React.FC = () => {
         currentUser?.role === UserRole.BRANCH_ADMIN ? (currentUser.assignedBranchId || currentUser.branchId) : null
       );
       await refreshData();
+      refreshCashReport();
       setSuccessMessage(`Transaksi pengeluaran ${formatShortAccountingReference(expenseToDelete.journalNumber)} berhasil dihapus dari sistem.`);
       setExpenseToDelete(null);
     } catch (err: any) {
@@ -568,6 +580,16 @@ export const Expenses: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {currentUser?.role === UserRole.BRANCH_ADMIN && cashReportBranchId && (
+        <OwnerDailyCashReport branchId={cashReportBranchId} refreshKey={cashReportRefreshKey} />
+      )}
+
+      {currentUser?.role === UserRole.BRANCH_ADMIN && branches.length > 0 && !cashReportBranchId && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+          Cabang akun Anda tidak dapat dicocokkan dengan data cabang. Hubungi administrator sebelum mengelola uang keriting.
+        </div>
+      )}
 
       {/* Notifications */}
       {successMessage && (

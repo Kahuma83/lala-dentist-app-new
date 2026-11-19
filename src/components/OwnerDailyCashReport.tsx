@@ -68,7 +68,12 @@ const formatMoney = (value: number) => new Intl.NumberFormat("id-ID", {
   maximumFractionDigits: 0
 }).format(value || 0);
 
-export const OwnerDailyCashReport: React.FC = () => {
+interface OwnerDailyCashReportProps {
+  branchId?: string;
+  refreshKey?: number;
+}
+
+export const OwnerDailyCashReport: React.FC<OwnerDailyCashReportProps> = ({ branchId, refreshKey = 0 }) => {
   const today = getTodayDateString();
   const [reportDate, setReportDate] = useState(today);
   const [report, setReport] = useState<OwnerCashReport | null>(null);
@@ -88,9 +93,14 @@ export const OwnerDailyCashReport: React.FC = () => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      const { data, error: rpcError } = await supabase.rpc("get_owner_daily_cash_report", {
-        p_date: reportDate
-      });
+      const { data, error: rpcError } = branchId
+        ? await supabase.rpc("get_branch_cash_rounding_report", {
+          p_date: reportDate,
+          p_branch_id: branchId
+        })
+        : await supabase.rpc("get_owner_daily_cash_report", {
+          p_date: reportDate
+        });
       if (rpcError) throw new Error(`Gagal memuat rekap setoran harian: ${rpcError.message}`);
       if (!isOwnerCashReport(data)) throw new Error("Format rekap setoran harian dari server tidak valid.");
       setReport(data);
@@ -101,7 +111,7 @@ export const OwnerDailyCashReport: React.FC = () => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [reportDate]);
+  }, [branchId, refreshKey, reportDate]);
 
   useEffect(() => {
     void loadReport();
@@ -161,9 +171,17 @@ export const OwnerDailyCashReport: React.FC = () => {
     <section aria-labelledby="owner-daily-cash-title" className="rounded-2xl border border-[#e9e3d4] bg-white p-4 shadow-sm sm:p-5">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#927638]">Tutup kas cabang</p>
-          <h2 id="owner-daily-cash-title" className="mt-1 text-base font-bold text-[#243c34]">Rekap Setoran Harian</h2>
-          <p className="mt-1 text-[11px] text-slate-500">Rekap pembayaran, pengeluaran kas, setoran, dan akumulasi uang keriting per cabang.</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#927638]">
+            {branchId ? "Kas cabang Anda" : "Tutup kas cabang"}
+          </p>
+          <h2 id="owner-daily-cash-title" className="mt-1 text-base font-bold text-[#243c34]">
+            {branchId ? "Pengelolaan Kas Harian" : "Rekap Setoran Harian"}
+          </h2>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {branchId
+              ? "Pantau saldo dan kelola uang keriting untuk cabang Anda."
+              : "Rekap pembayaran, pengeluaran kas, setoran, dan akumulasi uang keriting per cabang."}
+          </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <label className="text-[11px] font-semibold text-slate-600">
@@ -342,6 +360,11 @@ export const OwnerDailyCashReport: React.FC = () => {
                 required
                 className="mt-1.5 w-full rounded-lg border border-slate-200 p-2.5 font-normal"
               />
+              {entryType === "OPENING_BALANCE" && (
+                <span className="mt-1 block text-[10px] font-normal text-slate-500">
+                  Masukkan saldo pada awal tanggal ini, sebelum transaksi kas hari itu.
+                </span>
+              )}
             </label>
             <label className="block text-xs font-semibold text-slate-700">
               Nominal (Rp)
