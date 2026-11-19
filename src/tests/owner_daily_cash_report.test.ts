@@ -7,6 +7,10 @@ describe("Owner daily cash report migration", () => {
     path.resolve(process.cwd(), "supabase/manual-migrations/20270303000000_owner_daily_cash_report.sql"),
     "utf-8"
   );
+  const cashFlowFix = fs.readFileSync(
+    path.resolve(process.cwd(), "supabase/manual-migrations/20270304000000_owner_daily_cash_report_cash_flow_fixes.sql"),
+    "utf-8"
+  );
   const dashboard = fs.readFileSync(
     path.resolve(process.cwd(), "src/components/OwnerDailyCashReport.tsx"),
     "utf-8"
@@ -44,5 +48,14 @@ describe("Owner daily cash report migration", () => {
     expect(dashboard).toContain("Total yang harus dibawa");
     expect(dashboard).toContain("Uang keriting hari ini");
     expect(dashboard).toContain("Catat setoran uang keriting");
+  });
+
+  it("uses payment dates and actual cash-account movements for daily cash totals", () => {
+    expect(cashFlowFix).toMatch(/payment\.payment_date = p_date/i);
+    expect(cashFlowFix).toMatch(/payment\.payment_date BETWEEN opening\.entry_date AND p_date/i);
+    expect(cashFlowFix).toMatch(/account\.account_category = 'CASH' THEN line\.credit - line\.debit/i);
+    expect(cashFlowFix).toMatch(/journal\.source_type IN \('EXPENSE', 'MANUAL', 'ADJUSTMENT', 'REVERSAL'\)/i);
+    expect(cashFlowFix).toMatch(/original\.source_type IN \('EXPENSE', 'MANUAL', 'ADJUSTMENT'\)/i);
+    expect(cashFlowFix).toMatch(/HAVING bool_or\([\s\S]*?account\.account_category = 'CASH'/i);
   });
 });
