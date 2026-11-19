@@ -70,9 +70,10 @@ const formatMoney = (value: number) => new Intl.NumberFormat("id-ID", {
 
 interface OwnerDailyCashReportProps {
   branchId?: string;
+  refreshKey?: number;
 }
 
-export const OwnerDailyCashReport: React.FC<OwnerDailyCashReportProps> = ({ branchId }) => {
+export const OwnerDailyCashReport: React.FC<OwnerDailyCashReportProps> = ({ branchId, refreshKey = 0 }) => {
   const today = getTodayDateString();
   const [reportDate, setReportDate] = useState(today);
   const [report, setReport] = useState<OwnerCashReport | null>(null);
@@ -110,7 +111,7 @@ export const OwnerDailyCashReport: React.FC<OwnerDailyCashReportProps> = ({ bran
       setLoading(false);
       setRefreshing(false);
     }
-  }, [branchId, reportDate]);
+  }, [branchId, refreshKey, reportDate]);
 
   useEffect(() => {
     void loadReport();

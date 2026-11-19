@@ -79,7 +79,10 @@ describe("Owner daily cash report migration", () => {
   it("shows the single-branch cash manager on Branch Admin expenses", () => {
     expect(dashboard).toMatch(/get_branch_cash_rounding_report/);
     expect(dashboard).toMatch(/p_branch_id: branchId/);
+    expect(dashboard).toMatch(/\[branchId, refreshKey, reportDate\]/);
     expect(expensesPage).toMatch(/isBranchMatch\(userBranchId, branch\.id, branches\)/);
-    expect(expensesPage).toMatch(/<OwnerDailyCashReport branchId=\{cashReportBranchId\} \/>/);
+    expect(expensesPage).toMatch(/<OwnerDailyCashReport branchId=\{cashReportBranchId\} refreshKey=\{cashReportRefreshKey\} \/>/);
+    expect(expensesPage).toMatch(/const refreshCashReport = \(\) => setCashReportRefreshKey\(\(key\) => key \+ 1\)/);
+    expect(expensesPage.match(/refreshCashReport\(\);/g)).toHaveLength(4);
   });
 });
