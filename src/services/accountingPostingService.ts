@@ -1139,6 +1139,7 @@ export class AccountingPostingService {
       branchId: string;
       expenseAccountId: string;
       paymentAccountId: string;
+      cashSource?: "DAILY_CASH" | "KERITING";
       amount: number;
       date: string;
       description: string;
@@ -1175,6 +1176,9 @@ export class AccountingPostingService {
     if (paymentAccount.accountType !== AccountType.ASSET) {
       throw new Error("Akun pembayaran harus bertipe ASSET (Kas / Bank)");
     }
+    if (input.cashSource === "KERITING" && paymentAccount.accountCategory !== AccountCategory.CASH) {
+      throw new Error("Pengeluaran uang keriting harus dibayar dari akun kas tunai.");
+    }
 
     const expenseId = input.referenceNumber || `EXP-${Date.now()}`;
     const journalDate = input.date || AppClock.nowISO().slice(0, 10);
@@ -1188,6 +1192,9 @@ export class AccountingPostingService {
         description: journalDesc,
         sourceType: JournalSourceType.EXPENSE,
         sourceId: expenseId,
+        ...(paymentAccount.accountCategory === AccountCategory.CASH
+          ? { cashSource: input.cashSource || "DAILY_CASH" }
+          : {}),
         lines: [
           {
             accountId: expenseAccount.id,

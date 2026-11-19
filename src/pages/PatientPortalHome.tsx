@@ -143,7 +143,7 @@ const paymentMethodLabel: Record<PaymentMethod, string> = {
   [PaymentMethod.CASH]: "Tunai",
   [PaymentMethod.TRANSFER]: "Transfer",
   [PaymentMethod.QRIS]: "QRIS",
-  [PaymentMethod.OTHER]: "Lainnya"
+  [PaymentMethod.OTHER]: "EDC"
 };
 
 const formatCurrency = (amount: number): string =>

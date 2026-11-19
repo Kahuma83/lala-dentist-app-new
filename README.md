@@ -4,7 +4,9 @@ Aplikasi web klinik dengan Supabase sebagai database dan autentikasi.
 
 ## Deploy migration Supabase Production
 
-Workflow GitHub Actions `.github/workflows/deploy-supabase-migrations.yml` menjalankan `supabase db push` hanya ketika perubahan pada `supabase/migrations/` masuk ke branch `main`. Push ke branch lain tidak mengubah database Production. Perintah ini menerapkan migration yang belum tercatat; migration yang sudah diterapkan tidak dijalankan ulang.
+Workflow GitHub Actions `.github/workflows/deploy-supabase-migrations.yml` menjalankan `supabase db push` hanya ketika perubahan pada `supabase/migrations/` masuk ke branch `main`. Push ke branch lain tidak mengubah database Production. Supabase menentukan migration yang diterapkan berdasarkan tabel riwayat migration; jangan mengasumsikan sebuah migration sudah tercatat tanpa memeriksa tabel tersebut.
+
+Project Production saat ini belum memiliki tabel riwayat migration aplikasi `supabase_migrations.schema_migrations`, dan beberapa file migration memiliki timestamp duplikat. Jangan jalankan `supabase db push` atau menambahkan migration ke `supabase/migrations/` sampai riwayat Production direkonsiliasi. Migration yang perlu diterapkan manual disimpan di `supabase/manual-migrations/`; cadangkan database, jalankan hanya SQL yang ditinjau melalui SQL Editor, lalu verifikasi skema sebelum deploy aplikasi.
 
 Sebelum merge migration ke `main`, tambahkan secrets berikut di **GitHub → Settings → Secrets and variables → Actions → New repository secret**:
 

@@ -1091,6 +1091,7 @@ export interface JournalEntry {
   description: string;
   sourceType: JournalSourceType;
   sourceId?: string | null;
+  cashSource?: "DAILY_CASH" | "KERITING" | null;
   status: JournalStatus;
   totalDebit: number; // Sum of debits (integer rupiah)
   totalCredit: number; // Sum of credits (integer rupiah)

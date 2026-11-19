@@ -7067,6 +7067,7 @@ export class MockAccountingRepository implements AccountingRepository {
       description: data.description || "Jurnal Manual",
       sourceType: data.sourceType || JournalSourceType.MANUAL,
       sourceId: data.sourceId || null,
+      cashSource: data.cashSource || null,
       status: JournalStatus.DRAFT,
       totalDebit,
       totalCredit,
@@ -7300,6 +7301,7 @@ export class MockAccountingRepository implements AccountingRepository {
       postedBy: reversedBy,
       reversalOfJournalId: original.id,
       reversalReason: reason.trim(),
+      cashSource: original.cashSource || null,
       updatedAt: now
     };
     (db.journals || []).push(reversal);

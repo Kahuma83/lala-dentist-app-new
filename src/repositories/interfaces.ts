@@ -1108,6 +1108,7 @@ export interface CreateJournalInput {
   description: string;
   sourceType: JournalSourceType;
   sourceId?: string | null;
+  cashSource?: "DAILY_CASH" | "KERITING" | null;
   lines: CreateJournalLineInput[];
   event?: "ACCRUAL" | "PAYMENT";
 }

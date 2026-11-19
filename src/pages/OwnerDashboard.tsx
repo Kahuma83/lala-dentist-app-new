@@ -17,6 +17,7 @@ import { useRouter } from "../components/Router";
 import { supabase } from "../lib/supabase";
 import { getTodayDateString } from "../utils/dateUtils";
 import { AuthService } from "../services/authService";
+import { OwnerDailyCashReport } from "../components/OwnerDailyCashReport";
 
 type DashboardPeriod = "today" | "7days" | "month";
 
@@ -336,6 +337,8 @@ export const OwnerDashboard: React.FC = () => {
             </div>
           </article>
         </section>
+
+        <OwnerDailyCashReport />
 
         <section aria-label="Ringkasan operasional semua cabang" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {metricCards.map(({ label, value, icon: Icon, tone }) => (
