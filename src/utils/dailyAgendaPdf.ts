@@ -146,6 +146,11 @@ function drawTableHeader(pdf: jsPDF, y: number, columnWidths: number[], margin: 
     const textX = align === "center" ? x + columnWidths[index] / 2 : x + 3;
     pdf.text(header, textX, y + 5.2, { align });
     x += columnWidths[index];
+    if (index < headers.length - 1) {
+      pdf.setDrawColor(92, 108, 121);
+      pdf.setLineWidth(0.25);
+      pdf.line(x, y + 1, x, y + height - 1);
+    }
   });
 
   return y + height;
@@ -177,10 +182,10 @@ function drawFirstPageHeader(
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(7.5);
   pdf.setTextColor(...colors.muted);
-  const address = branch.address?.trim() || "Alamat cabang belum diatur pada profil cabang.";
-  pdf.text(pdf.splitTextToSize(address, 170).slice(0, 2), margin + 25, 24, { lineHeightFactor: 1.1 });
-
   const dateBoxX = margin + contentWidth - 73;
+  const address = branch.address?.trim() || "Alamat cabang belum diatur pada profil cabang.";
+  pdf.text(pdf.splitTextToSize(address, dateBoxX - margin - 29).slice(0, 2), margin + 25, 24, { lineHeightFactor: 1.1 });
+
   pdf.setFillColor(...colors.paleGold);
   pdf.roundedRect(dateBoxX, 7, 73, 21, 2, 2, "F");
   pdf.setDrawColor(...colors.gold);
@@ -246,13 +251,23 @@ function drawContinuationHeader(
 }
 
 function getAgendaRowLines(pdf: jsPDF, row: DailyAgendaRow, columnWidths: number[]) {
-  pdf.setFontSize(7.8);
-  pdf.setFont("helvetica", "bold");
-  const patientLines = pdf.splitTextToSize(row.patientName, columnWidths[2] - 6);
-  pdf.setFont("helvetica", "normal");
-  const treatmentLines = pdf.splitTextToSize(row.treatment, columnWidths[3] - 6);
-  const doctorLines = pdf.splitTextToSize(row.doctorName, columnWidths[4] - 6);
-  return { patientLines, treatmentLines, doctorLines };
+  const fitLines = (text: string, width: number, style: "bold" | "normal") => {
+    pdf.setFont("helvetica", style);
+    pdf.setFontSize(7.2);
+    const lines = pdf.splitTextToSize(text, width);
+    if (lines.length <= 2) return lines;
+
+    let lastLine = lines[1].trimEnd();
+    while (lastLine && pdf.getTextWidth(`${lastLine}...`) > width) {
+      lastLine = lastLine.slice(0, -1).trimEnd();
+    }
+    return [lines[0], `${lastLine}...`];
+  };
+  return {
+    patientLines: fitLines(row.patientName, columnWidths[2] - 6, "bold"),
+    treatmentLines: fitLines(row.treatment, columnWidths[3] - 6, "normal"),
+    doctorLines: fitLines(row.doctorName, columnWidths[4] - 6, "normal")
+  };
 }
 
 function drawAgendaRow(
@@ -269,14 +284,21 @@ function drawAgendaRow(
   pdf.setFillColor(rowColor[0], rowColor[1], rowColor[2]);
   pdf.rect(margin, y, tableWidth, rowHeight, "F");
   pdf.setDrawColor(...colors.line);
-  pdf.setLineWidth(0.2);
+  pdf.setLineWidth(0.25);
   pdf.line(margin, y + rowHeight, margin + tableWidth, y + rowHeight);
+  let gridX = margin;
+  for (let columnIndex = 0; columnIndex < columnWidths.length - 1; columnIndex += 1) {
+    gridX += columnWidths[columnIndex];
+    pdf.line(gridX, y, gridX, y + rowHeight);
+  }
+  pdf.line(margin, y, margin, y + rowHeight);
+  pdf.line(margin + tableWidth, y, margin + tableWidth, y + rowHeight);
 
   const { patientLines, treatmentLines, doctorLines } = getAgendaRowLines(pdf, row, columnWidths);
   const cells = [patientLines, treatmentLines, doctorLines];
 
   pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(7.8);
+  pdf.setFontSize(7.2);
   pdf.setTextColor(...colors.text);
   pdf.text(String(index + 1), margin + columnWidths[0] / 2, y + rowHeight / 2 + 1, { align: "center" });
   pdf.setFont("helvetica", "bold");
@@ -285,7 +307,8 @@ function drawAgendaRow(
   let x = margin + columnWidths[0] + columnWidths[1];
   cells.forEach((lines, indexInCells) => {
     pdf.setFont("helvetica", indexInCells === 0 ? "bold" : "normal");
-    pdf.text(lines, x + 3, y + 4.5, { lineHeightFactor: 1.1 });
+    const textY = y + (rowHeight - (lines.length - 1) * 3.5) / 2 + 1.5;
+    pdf.text(lines, x + 3, textY, { lineHeightFactor: 1.1 });
     x += columnWidths[indexInCells + 2];
   });
 
@@ -329,13 +352,13 @@ export async function createDailyAgendaPdf({
   rows: DailyAgendaRow[];
 }): Promise<jsPDF> {
   const logoDataUrl = await loadLogoDataUrl();
-  const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 12;
   const contentWidth = pageWidth - margin * 2;
   const footerY = pageHeight - 7;
-  const columnWidths = [10, 23, 48, 105, 54, 33];
+  const columnWidths = [9, 15, 38, 55, 34, 35];
   const doctorCount = new Set(rows.map((row) => row.doctorName)).size;
   const generatedAt = formatPrintDate(new Date());
 
@@ -367,9 +390,7 @@ export async function createDailyAgendaPdf({
   }
 
   rows.forEach((row, index) => {
-    const { patientLines, treatmentLines, doctorLines } = getAgendaRowLines(pdf, row, columnWidths);
-    const lineCount = Math.max(patientLines.length, treatmentLines.length, doctorLines.length, 1);
-    const rowHeight = Math.max(10, lineCount * 4.1 + 4);
+    const rowHeight = 14;
 
     if (y + rowHeight > footerY - 2) {
       pdf.addPage();

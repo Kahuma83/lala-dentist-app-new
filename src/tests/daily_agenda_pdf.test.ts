@@ -161,6 +161,7 @@ describe("daily agenda PDF data", () => {
       { name: "Cabang Gebang", branchCode: "GEB" },
       "2026-11-19"
     )).toBe("agenda-jadwal-geb-2026-11-19.pdf");
+    expect(pdf.internal.pageSize.getWidth()).toBeLessThan(pdf.internal.pageSize.getHeight());
     expect(pdf.getNumberOfPages()).toBeGreaterThan(1);
     expect(pdf.output("arraybuffer").byteLength).toBeGreaterThan(0);
   });
