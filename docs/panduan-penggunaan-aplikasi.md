@@ -183,6 +183,7 @@ OB menggunakan **Portal Pegawai** untuk melihat ringkasan kerja, melakukan absen
 7. Sehari sebelum jadwal, buka **Konfirmasi Booking H-1** pada bagian **Follow Up & Tindak Lanjut**. Hubungi pasien dan catat hasilnya: dihubungi, dikonfirmasi, perlu jadwal ulang, tidak merespons, atau batal.
 8. Jika pasien meminta waktu lain, buka jadwal pasien dan gunakan **Jadwal Ulang**. Pilih slot kosong; jangan sekadar mengubah catatan konfirmasi.
 9. Jika pasien membatalkan, gunakan tindakan pembatalan yang tersedia dan isi alasan bila diminta.
+10. Untuk membagikan agenda harian, buka tampilan kalender mingguan lalu pilih ikon unduh pada kolom tanggal yang diinginkan. PDF memuat jadwal aktif cabang pada tanggal tersebut, diurutkan berdasarkan jam, beserta nama pasien, rencana tindakan, dokter, dan status. Jadwal selesai, batal, dijadwalkan ulang, atau tidak hadir tidak disertakan. Unduh file lalu bagikan secara manual ke grup WhatsApp internal cabang; PDF tidak mencantumkan nomor telepon atau nomor rekam medis pasien.
 
 Status konfirmasi sehari sebelumnya hanya catatan tindak lanjut. Pasien tetap perlu check-in saat benar-benar datang.
 
