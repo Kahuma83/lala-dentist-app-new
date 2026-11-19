@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createPaidInvoiceForTreatment } from "./helpers/paidTreatmentInvoice";
 import {
+  AppClock,
   MockCompensationRepository,
   MockAccountingRepository,
   MockBranchRepository,
@@ -130,7 +131,12 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
 
       // Accrual for Root Canal (treatment-job-3, service-root-canal base price 400000):
       // Both global 5% (20000) and specific 30% (120000) should trigger = 140,000 total
-      await createPaidInvoiceForTreatment("treatment-job-3");
+      AppClock.setFixedTime("2026-09-18T11:10:00Z");
+      try {
+        await createPaidInvoiceForTreatment("treatment-job-3");
+      } finally {
+        AppClock.reset();
+      }
       const accrualsRootCanal = await compRepo.calculateAndAccrueForTreatment("treatment-job-3");
       const andiAccruals = accrualsRootCanal.filter((a) => a.staffId === "doc-syafira");
       expect(andiAccruals.length).toBe(2);
@@ -173,6 +179,7 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
       expect(postedJournal.branchId).toBe("branch-gebang");
       expect(postedJournal.totalDebit).toBe(450000);
       expect(postedJournal.totalCredit).toBe(450000);
+      expect(postedJournal.cashSource).toBe("DAILY_CASH");
 
       // Verify double-entry lines
       const debitLine = postedJournal.lines.find((l) => l.debit > 0);
@@ -185,6 +192,34 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
       expect(creditLine?.accountId).toBe(cashAcc.id);
       expect(creditLine?.credit).toBe(450000);
       expect(creditLine?.branchId).toBe("branch-gebang");
+    });
+
+    it("tracks keriting-funded cash expenses and rejects using the keriting source with a bank account", async () => {
+      const accounts = await accountingRepo.getAccounts();
+      const expenseAcc = accounts.find((account) => account.code === "5040")!;
+      const cashAcc = accounts.find((account) => account.code === "1000")!;
+      const bankAcc = accounts.find((account) => account.accountCategory === AccountCategory.BANK)!;
+
+      const keritingExpense = await postingService.postBranchExpense({
+        branchId: "branch-gebang",
+        expenseAccountId: expenseAcc.id,
+        paymentAccountId: cashAcc.id,
+        cashSource: "KERITING",
+        amount: 5000,
+        date: "2026-09-22",
+        description: "Cetak dokumen"
+      });
+
+      expect(keritingExpense.cashSource).toBe("KERITING");
+      await expect(postingService.postBranchExpense({
+        branchId: "branch-gebang",
+        expenseAccountId: expenseAcc.id,
+        paymentAccountId: bankAcc.id,
+        cashSource: "KERITING",
+        amount: 5000,
+        date: "2026-09-22",
+        description: "Pengeluaran tidak valid"
+      })).rejects.toThrow("harus dibayar dari akun kas tunai");
     });
 
     it("should reject posting when a non-expense account is passed for debit", async () => {

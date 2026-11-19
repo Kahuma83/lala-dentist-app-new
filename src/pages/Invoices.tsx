@@ -1369,8 +1369,8 @@ export const Invoices: React.FC = () => {
                 >
                   <option value={PaymentMethod.CASH}>Tunai (Cash)</option>
                   <option value={PaymentMethod.QRIS}>QRIS Statis / Dinamis</option>
-                  <option value={PaymentMethod.TRANSFER}>Transfer Bank / Kartu Debit</option>
-                  <option value={PaymentMethod.OTHER}>Asuransi / Lainnya</option>
+                  <option value={PaymentMethod.TRANSFER}>Transfer Bank</option>
+                  <option value={PaymentMethod.OTHER}>EDC</option>
                 </select>
               </div>
 

@@ -86,6 +86,7 @@ export const Expenses: React.FC = () => {
   );
   const [formExpenseAccountId, setFormExpenseAccountId] = useState<string>("");
   const [formPaymentAccountId, setFormPaymentAccountId] = useState<string>("");
+  const [cashExpenseSource, setCashExpenseSource] = useState<"DAILY_CASH" | "KERITING">("DAILY_CASH");
   const [formAmount, setFormAmount] = useState<number>(0);
   const [formDescription, setFormDescription] = useState<string>("");
   const [formRefNumber, setFormRefNumber] = useState<string>("");
@@ -138,6 +139,7 @@ export const Expenses: React.FC = () => {
         a.isActive
     );
   }, [accounts]);
+  const selectedPaymentAccount = paymentAccounts.find((account) => account.id === formPaymentAccountId);
 
   const loadRecurringPlans = async () => {
     setIsRecurringLoading(true);
@@ -298,6 +300,7 @@ export const Expenses: React.FC = () => {
     setFormAmount(0);
     setFormDescription("");
     setFormRefNumber("");
+    setCashExpenseSource("DAILY_CASH");
     setIsCreateOpen(true);
   };
 
@@ -431,6 +434,9 @@ export const Expenses: React.FC = () => {
           branchId: activeBranch,
           expenseAccountId: formExpenseAccountId,
           paymentAccountId: formPaymentAccountId,
+          cashSource: selectedPaymentAccount?.accountCategory === AccountCategory.CASH
+            ? cashExpenseSource
+            : undefined,
           amount: Number(formAmount),
           date: formDate,
           description: formDescription.trim(),
@@ -1048,7 +1054,10 @@ export const Expenses: React.FC = () => {
                 </label>
                 <select
                   value={formPaymentAccountId}
-                  onChange={(e) => setFormPaymentAccountId(e.target.value)}
+                  onChange={(e) => {
+                    setFormPaymentAccountId(e.target.value);
+                    setCashExpenseSource("DAILY_CASH");
+                  }}
                   required
                   className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-500"
                 >
@@ -1062,6 +1071,25 @@ export const Expenses: React.FC = () => {
                   Pilih uang tunai atau rekening yang digunakan untuk membayar.
                 </span>
               </div>
+
+              {selectedPaymentAccount?.accountCategory === AccountCategory.CASH && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                    Sumber Kas *
+                  </label>
+                  <select
+                    value={cashExpenseSource}
+                    onChange={(e) => setCashExpenseSource(e.target.value as "DAILY_CASH" | "KERITING")}
+                    className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  >
+                    <option value="DAILY_CASH">Kas harian</option>
+                    <option value="KERITING">Uang keriting</option>
+                  </select>
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Pengeluaran dari uang keriting mengurangi saldo pecahan yang terkumpul.
+                  </span>
+                </div>
+              )}
 
               {/* Jumlah */}
               <div>

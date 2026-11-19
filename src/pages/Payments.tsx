@@ -210,11 +210,12 @@ export const Payments: React.FC = () => {
   const cashCollected = successfulPayments
     .filter((p) => p.paymentMethod === PaymentMethod.CASH)
     .reduce((sum, p) => sum + p.amount, 0);
-  const cardCollected = successfulPayments
+  const transferCollected = successfulPayments
+    .filter((p) => p.paymentMethod === PaymentMethod.TRANSFER)
+    .reduce((sum, p) => sum + p.amount, 0);
+  const edcCollected = successfulPayments
     .filter(
-      (p) =>
-        p.paymentMethod === PaymentMethod.TRANSFER ||
-        p.paymentMethod === PaymentMethod.OTHER
+      (p) => p.paymentMethod === PaymentMethod.OTHER
     )
     .reduce((sum, p) => sum + p.amount, 0);
 
@@ -290,7 +291,7 @@ export const Payments: React.FC = () => {
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
             <TrendingUp className="w-5 h-5" />
@@ -332,9 +333,21 @@ export const Payments: React.FC = () => {
             <CreditCard className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Kartu & Transfer Bank</div>
+            <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Transfer Bank</div>
             <div className="text-base font-bold text-blue-700 mt-0.5">
-              Rp {cardCollected.toLocaleString("id-ID")}
+              Rp {transferCollected.toLocaleString("id-ID")}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center font-bold">
+            <Smartphone className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">EDC</div>
+            <div className="text-base font-bold text-violet-700 mt-0.5">
+              Rp {edcCollected.toLocaleString("id-ID")}
             </div>
           </div>
         </div>
@@ -377,8 +390,8 @@ export const Payments: React.FC = () => {
             <option value="ALL">Semua Metode Bayar</option>
             <option value={PaymentMethod.CASH}>Tunai (Cash)</option>
             <option value={PaymentMethod.QRIS}>QRIS</option>
-            <option value={PaymentMethod.TRANSFER}>Transfer / Kartu</option>
-            <option value={PaymentMethod.OTHER}>Lainnya / Asuransi</option>
+            <option value={PaymentMethod.TRANSFER}>Transfer Bank</option>
+            <option value={PaymentMethod.OTHER}>EDC</option>
           </select>
         </div>
       </div>
