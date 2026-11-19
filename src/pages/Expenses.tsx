@@ -38,7 +38,9 @@ import {
   X
 } from "lucide-react";
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
+import { OwnerDailyCashReport } from "../components/OwnerDailyCashReport";
 import { formatShortAccountingReference } from "../utils/accountingDisplay";
+import { isBranchMatch } from "../utils/branchUtils";
 
 export const Expenses: React.FC = () => {
   const {
@@ -57,6 +59,9 @@ export const Expenses: React.FC = () => {
   const userBranchId = currentUser?.role === UserRole.BRANCH_ADMIN
     ? currentUser.assignedBranchId || currentUser.branchId
     : selectedBranchId;
+  const cashReportBranchId = currentUser?.role === UserRole.BRANCH_ADMIN && userBranchId
+    ? branches.find((branch) => isBranchMatch(userBranchId, branch.id, branches))?.id
+    : undefined;
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState("");
@@ -568,6 +573,16 @@ export const Expenses: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {currentUser?.role === UserRole.BRANCH_ADMIN && cashReportBranchId && (
+        <OwnerDailyCashReport branchId={cashReportBranchId} />
+      )}
+
+      {currentUser?.role === UserRole.BRANCH_ADMIN && branches.length > 0 && !cashReportBranchId && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+          Cabang akun Anda tidak dapat dicocokkan dengan data cabang. Hubungi administrator sebelum mengelola uang keriting.
+        </div>
+      )}
 
       {/* Notifications */}
       {successMessage && (
