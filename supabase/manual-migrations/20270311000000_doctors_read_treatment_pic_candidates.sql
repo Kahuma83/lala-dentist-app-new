@@ -4,7 +4,7 @@ CREATE OR REPLACE FUNCTION public.get_treatment_pic_staff_candidates()
 RETURNS TABLE (
   id UUID,
   full_name TEXT,
-  position TEXT,
+  staff_position TEXT,
   employment_status TEXT,
   active BOOLEAN,
   branch_id UUID

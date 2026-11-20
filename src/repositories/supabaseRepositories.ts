@@ -7696,7 +7696,7 @@ export class SupabaseStaffRepository implements StaffRepository {
     return (data || []).map((row: any) => ({
       id: row.id,
       fullName: row.full_name,
-      position: row.position,
+      position: row.staff_position,
       employmentStatus: row.employment_status,
       active: row.active,
       branchId: row.branch_id

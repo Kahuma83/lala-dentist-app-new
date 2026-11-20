@@ -19,7 +19,7 @@ describe("Doctor treatment PIC staff candidates migration", () => {
 
   it("returns only active assistant and branch-admin fields needed for PIC selection", () => {
     expect(migration).toContain("full_name TEXT");
-    expect(migration).toContain("position TEXT");
+    expect(migration).toContain("staff_position TEXT");
     expect(migration).toContain("employment_status TEXT");
     expect(migration).toContain("staff.position IN ('ASSISTANT', 'BRANCH_ADMIN')");
     expect(migration).not.toContain("nik");
