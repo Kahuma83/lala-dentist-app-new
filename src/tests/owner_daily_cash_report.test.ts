@@ -85,4 +85,10 @@ describe("Owner daily cash report migration", () => {
     expect(expensesPage).toMatch(/const refreshCashReport = \(\) => setCashReportRefreshKey\(\(key\) => key \+ 1\)/);
     expect(expensesPage.match(/refreshCashReport\(\);/g)).toHaveLength(4);
   });
+
+  it("shows aggregate totals only on the Owner report and keeps branch details", () => {
+    expect(dashboard).toMatch(/\{!branchId && \([\s\S]*?report\.totals\.total/);
+    expect(dashboard).toContain('label="Total" value={branch.total}');
+    expect(dashboard).toContain('label="Saldo uang keriting"');
+  });
 });
