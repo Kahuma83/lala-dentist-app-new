@@ -15,6 +15,7 @@ import {
   DentalDoctor,
   DentalBranch,
   StaffPosition,
+  TreatmentPicStaffCandidate,
   VisitAssistantAssignment
 } from "../types/domain";
 import {
@@ -113,6 +114,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const [startingTreatmentId, setStartingTreatmentId] = useState<string | null>(null);
   const [processingVisitId, setProcessingVisitId] = useState<string | null>(null);
   const [visitAssistantAssignments, setVisitAssistantAssignments] = useState<Record<string, VisitAssistantAssignment>>({});
+  const [treatmentPicStaff, setTreatmentPicStaff] = useState<TreatmentPicStaffCandidate[]>([]);
   const [assistantEdit, setAssistantEdit] = useState<{
     visitId: string;
     selectedAssistantId: string;
@@ -187,7 +189,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       branchId: visit?.branchId || visitTreatments[0]?.branchId || "",
       scheduledAt: booking?.bookingDateTime || visit?.visitDateTime || visitTreatments[0]?.createdAt || "",
       actionStartedAt: new Date().toISOString(),
-      staff,
+      staff: currentUser?.role === UserRole.DOCTOR ? treatmentPicStaff : staff,
       assignments: staffShiftAssignments,
       shifts: workShifts,
       attendances
@@ -282,7 +284,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       }
 
       const branchId = currentUser.assignedBranchId || "branch-gebang";
-      const [trList, docList, queueList, externalDoctorResult] = await Promise.all([
+      const [trList, docList, queueList, externalDoctorResult, picStaffList] = await Promise.all([
         treatmentRepo.listTreatments(
           currentUser.role,
           currentUser.assignedBranchId,
@@ -301,7 +303,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             : repos.queue.getQueueByBranch(branchId, currentUser.role, currentUser.assignedBranchId),
         currentUser.role === UserRole.SUPER_ADMIN
           ? supabase.from("external_doctor_recipients").select("id,full_name").eq("active", true)
-          : Promise.resolve({ data: [], error: null })
+          : Promise.resolve({ data: [], error: null }),
+        currentUser.role === UserRole.DOCTOR
+          ? repos.staff.getTreatmentPicStaffCandidates()
+          : Promise.resolve<TreatmentPicStaffCandidate[]>([])
       ]);
       if (externalDoctorResult.error) {
         throw new Error(`Gagal memuat dokter eksternal: ${externalDoctorResult.error.message}`);
@@ -327,6 +332,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       );
 
       setDoctorsList(docList);
+      setTreatmentPicStaff(picStaffList);
       setExternalDoctors(externalDoctorResult.data || []);
       setTreatments(trList);
       setVisits(vList);
@@ -1704,7 +1710,8 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                     ? visitTreatments.find((treatment) => treatment.startedAt)?.picAssistantId
                       || visitTreatments.find((treatment) => treatment.picAssistantId)?.picAssistantId
                     : getDefaultAssistantId(visitId, visitTreatments);
-                  const assistantName = staff.find((item) => item.id === assistantId)?.fullName;
+                  const assistantName = (currentUser?.role === UserRole.DOCTOR ? treatmentPicStaff : staff)
+                    .find((item) => item.id === assistantId)?.fullName;
 
                   return (
                     <tr key={visitId}>
@@ -1748,6 +1755,11 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                                         </option>
                                       ))}
                                     </select>
+                                    {assistantEdit.candidates.length === 0 && (
+                                      <span role="status" className="text-rose-700">
+                                        Tidak ada Asisten/Admin Cabang aktif yang tersedia untuk cabang ini.
+                                      </span>
+                                    )}
                                     <button
                                       type="button"
                                       disabled={Boolean(processingVisitId || startingTreatmentId || !assistantEdit.selectedAssistantId)}

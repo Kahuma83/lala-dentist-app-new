@@ -32,6 +32,7 @@ import {
   BranchServiceTariff,
   DentalDoctor,
   Staff,
+  TreatmentPicStaffCandidate,
   StaffPosition,
   EmploymentStatus,
   DoctorBranchAssignment,
@@ -209,6 +210,7 @@ export interface StaffFilter {
 
 export interface StaffRepository {
   getStaff(filter?: StaffFilter, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Staff[]>;
+  getTreatmentPicStaffCandidates(): Promise<TreatmentPicStaffCandidate[]>;
   getStaffById(id: string): Promise<Staff | null>;
   getStaffByEmployeeCode(employeeCode: string): Promise<Staff | null>;
   createStaff(

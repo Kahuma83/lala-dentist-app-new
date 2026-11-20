@@ -5,6 +5,7 @@ import {
   Staff,
   StaffPosition,
   StaffShiftAssignment,
+  TreatmentPicStaffCandidate,
   VisitAssistantAssignment,
   WorkShift
 } from "../types/domain";
@@ -24,7 +25,7 @@ interface VisitAssistantCandidateInput {
   branchId: string;
   scheduledAt: string;
   actionStartedAt: string;
-  staff: Staff[];
+  staff: TreatmentPicStaffCandidate[];
   assignments: StaffShiftAssignment[];
   shifts: WorkShift[];
   attendances: Attendance[];
