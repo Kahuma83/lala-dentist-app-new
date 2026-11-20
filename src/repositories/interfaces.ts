@@ -905,8 +905,41 @@ export interface MedicalRecordRepository {
   ): Promise<MedicalRecord>;
 }
 
+export interface InvoicePageFilters {
+  startDate?: string | null;
+  endDate?: string | null;
+  status?: InvoiceStatus | "ALL" | "UNPAID";
+  branchId?: string | null;
+  search?: string;
+  offset: number;
+  limit: number;
+}
+
+export interface InvoiceBillingSummary {
+  totalInvoiced: number;
+  totalPaid: number;
+  totalOutstanding: number;
+  openCount: number;
+}
+
+export interface InvoicePage {
+  invoices: Invoice[];
+  totalCount: number;
+  summary: InvoiceBillingSummary;
+}
+
 export interface InvoiceRepository {
   getInvoices(currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice[]>;
+  getInvoicePage(
+    filters: InvoicePageFilters,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<InvoicePage>;
+  getActiveInvoiceVisitIds(
+    visitIds: string[],
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<string[]>;
   getInvoiceById(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice | null>;
   getInvoiceItems(invoiceId: string): Promise<InvoiceItem[]>;
   getInvoiceItemsByInvoices(invoiceIds: string[]): Promise<InvoiceItem[]>;

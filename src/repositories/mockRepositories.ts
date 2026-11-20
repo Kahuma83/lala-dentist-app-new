@@ -9,6 +9,9 @@ import {
   TreatmentRepository,
   TreatmentActivityRepository,
   InvoiceRepository,
+  InvoicePageFilters,
+  InvoicePage,
+  InvoiceBillingSummary,
   PaymentRepository,
   CompensationRepository,
   PayrollRepository,
@@ -4686,10 +4689,71 @@ export class MockTreatmentActivityRepository implements TreatmentActivityReposit
 
 export class MockInvoiceRepository implements InvoiceRepository {
   async getInvoices(currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice[]> {
-    if (currentUserRole === UserRole.BRANCH_ADMIN && userBranchId) {
+    if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
       return db.invoices.filter((i: Invoice) => i.branchId === userBranchId).map((i: Invoice) => ({ ...i }));
     }
     return db.invoices.map((i: Invoice) => ({ ...i }));
+  }
+
+  async getInvoicePage(
+    filters: InvoicePageFilters,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<InvoicePage> {
+    const accessibleInvoices = await this.getInvoices(currentUserRole, userBranchId);
+    const filtered = accessibleInvoices.filter((invoice) => {
+      const invoiceDate = invoice.invoiceDate || getOperationalDateString(invoice.createdAt);
+      const matchesDate = (!filters.startDate || invoiceDate >= filters.startDate)
+        && (!filters.endDate || invoiceDate <= filters.endDate);
+      const matchesStatus = !filters.status || filters.status === "ALL"
+        || (filters.status === "UNPAID"
+          ? invoice.status === InvoiceStatus.OPEN || invoice.status === InvoiceStatus.PARTIALLY_PAID
+          : invoice.status === filters.status);
+      const matchesBranch = !filters.branchId || invoice.branchId === filters.branchId;
+      const search = filters.search?.trim().toLowerCase();
+      const patient = search ? db.patients.find((item) => item.id === invoice.patientId) : undefined;
+      const matchesSearch = !search
+        || invoice.id.toLowerCase().includes(search)
+        || (invoice.invoiceNumber || "").toLowerCase().includes(search)
+        || (patient?.fullName || patient?.name || "").toLowerCase().includes(search);
+      return matchesDate && matchesStatus && matchesBranch && matchesSearch;
+    }).sort((left, right) => {
+      const dateOrder = (right.invoiceDate || getOperationalDateString(right.createdAt))
+        .localeCompare(left.invoiceDate || getOperationalDateString(left.createdAt));
+      return dateOrder || right.createdAt.localeCompare(left.createdAt);
+    });
+    const summary: InvoiceBillingSummary = {
+      totalInvoiced: filtered.reduce((sum, invoice) =>
+        sum + (invoice.status === InvoiceStatus.CANCELLED ? 0 : invoice.netAmount), 0),
+      totalPaid: filtered.reduce((sum, invoice) =>
+        sum + (invoice.status === InvoiceStatus.CANCELLED ? 0 : invoice.paidAmount), 0),
+      totalOutstanding: filtered.reduce((sum, invoice) =>
+        sum + (invoice.status === InvoiceStatus.CANCELLED ? 0 : invoice.outstandingAmount), 0),
+      openCount: filtered.filter((invoice) =>
+        invoice.status === InvoiceStatus.OPEN || invoice.status === InvoiceStatus.PARTIALLY_PAID
+      ).length
+    };
+
+    return {
+      invoices: filtered.slice(filters.offset, filters.offset + filters.limit).map((invoice) => ({ ...invoice })),
+      totalCount: filtered.length,
+      summary
+    };
+  }
+
+  async getActiveInvoiceVisitIds(
+    visitIds: string[],
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<string[]> {
+    if (visitIds.length === 0) return [];
+    const visitIdSet = new Set(visitIds);
+    const invoices = await this.getInvoices(currentUserRole, userBranchId);
+    return Array.from(new Set(invoices
+      .filter((invoice) =>
+        visitIdSet.has(invoice.visitId) && invoice.status !== InvoiceStatus.CANCELLED
+      )
+      .map((invoice) => invoice.visitId)));
   }
 
   async getInvoiceById(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice | null> {
