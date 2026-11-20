@@ -16,6 +16,8 @@ import {
   TreatmentActivityRepository,
   MedicalRecordRepository,
   InvoiceRepository,
+  InvoicePageFilters,
+  InvoicePage,
   PaymentRepository,
   DoctorRepository,
   ConfigurationRepository,
@@ -229,6 +231,7 @@ import { hasActiveQueueForPatientOnDate } from "../utils/bookingQueueGuards";
 import { calculateQueueEstimates } from "../utils/queueScheduleUtils";
 import {
   MOCK_BRANCHES,
+  MOCK_PATIENTS,
   MOCK_DOCTORS,
   MOCK_INVOICES,
   MOCK_INVOICE_ITEMS,
@@ -798,6 +801,50 @@ export class SupabasePatientRepository implements PatientRepository {
       }
     }
     return null;
+  }
+
+  async getPatientNamesByIds(
+    patientIds: string[],
+    _currentUserRole?: UserRole
+  ): Promise<Array<{ id: string; name?: string; fullName?: string }>> {
+    const uniqueIds = Array.from(new Set(patientIds.filter(Boolean)));
+    if (uniqueIds.length === 0) return [];
+
+    if (useRepositoryTestFallbacks()) {
+      const idSet = new Set(uniqueIds);
+      return MOCK_PATIENTS
+        .filter((patient) => idSet.has(patient.id))
+        .map(({ id, name, fullName }) => ({ id, name, fullName }));
+    }
+
+    ensureSupabaseConnected();
+    const profileResult = await supabase
+      .from("patient_profiles")
+      .select("id,name,full_name")
+      .in("id", uniqueIds);
+    if (!profileResult.error) {
+      return (profileResult.data || []).map((row: any) => ({
+        id: row.id,
+        name: row.name ?? undefined,
+        fullName: row.full_name ?? undefined
+      }));
+    }
+    if (!isMissingPatientProfilesTable(profileResult.error)) {
+      throw new Error(`Gagal membaca nama pasien invoice: ${profileResult.error.message}`);
+    }
+
+    const fallbackResult = await supabase
+      .from("patients")
+      .select("id,name,full_name")
+      .in("id", uniqueIds);
+    if (fallbackResult.error) {
+      throw new Error(`Gagal membaca nama pasien invoice: ${fallbackResult.error.message}`);
+    }
+    return (fallbackResult.data || []).map((row: any) => ({
+      id: row.id,
+      name: row.name ?? undefined,
+      fullName: row.full_name ?? undefined
+    }));
   }
 
   async getPatientPhoneForMedicalRecord(
@@ -5293,6 +5340,144 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
     const { data, error } = await q;
     if (error) return handleSupabaseReadError("invoices", error, []);
     return (data || []).map((row: any) => this.mapInvoiceFromDb(row));
+  }
+
+  async getInvoicePage(
+    filters: InvoicePageFilters,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<InvoicePage> {
+    if (!Number.isInteger(filters.offset) || filters.offset < 0
+      || !Number.isInteger(filters.limit) || filters.limit < 1 || filters.limit > 100) {
+      throw new Error("Rentang halaman invoice tidak valid.");
+    }
+
+    const branchId = currentUserRole === UserRole.BRANCH_ADMIN
+      || currentUserRole === UserRole.DOCTOR_ASSISTANT
+      ? userBranchId || null
+      : filters.branchId || null;
+
+    if (useRepositoryTestFallbacks()) {
+      const accessibleInvoices = await this.getInvoices(currentUserRole, userBranchId);
+      const search = filters.search?.trim().toLowerCase();
+      const filtered = accessibleInvoices.filter((invoice) => {
+        const invoiceDate = invoice.invoiceDate || getOperationalDateString(invoice.createdAt);
+        const matchesDate = (!filters.startDate || invoiceDate >= filters.startDate)
+          && (!filters.endDate || invoiceDate <= filters.endDate);
+        const matchesStatus = !filters.status || filters.status === "ALL"
+          || (filters.status === "UNPAID"
+            ? invoice.status === InvoiceStatus.OPEN || invoice.status === InvoiceStatus.PARTIALLY_PAID
+            : invoice.status === filters.status);
+        const matchesBranch = !branchId || invoice.branchId === branchId;
+        const patient = search ? MOCK_PATIENTS.find((item) => item.id === invoice.patientId) : undefined;
+        const matchesSearch = !search
+          || invoice.id.toLowerCase().includes(search)
+          || (invoice.invoiceNumber || "").toLowerCase().includes(search)
+          || (patient?.fullName || patient?.name || "").toLowerCase().includes(search);
+        return matchesDate && matchesStatus && matchesBranch && matchesSearch;
+      }).sort((left, right) => {
+        const dateOrder = (right.invoiceDate || getOperationalDateString(right.createdAt))
+          .localeCompare(left.invoiceDate || getOperationalDateString(left.createdAt));
+        return dateOrder || right.createdAt.localeCompare(left.createdAt);
+      });
+
+      return {
+        invoices: filtered.slice(filters.offset, filters.offset + filters.limit),
+        totalCount: filtered.length,
+        summary: {
+          totalInvoiced: filtered.reduce((sum, invoice) =>
+            sum + (invoice.status === InvoiceStatus.CANCELLED ? 0 : invoice.netAmount), 0),
+          totalPaid: filtered.reduce((sum, invoice) =>
+            sum + (invoice.status === InvoiceStatus.CANCELLED ? 0 : invoice.paidAmount), 0),
+          totalOutstanding: filtered.reduce((sum, invoice) =>
+            sum + (invoice.status === InvoiceStatus.CANCELLED ? 0 : invoice.outstandingAmount), 0),
+          openCount: filtered.filter((invoice) =>
+            invoice.status === InvoiceStatus.OPEN || invoice.status === InvoiceStatus.PARTIALLY_PAID
+          ).length
+        }
+      };
+    }
+
+    ensureSupabaseConnected();
+    const { data, error } = await supabase.rpc("get_invoice_billing_page", {
+      p_start_date: filters.startDate || null,
+      p_end_date: filters.endDate || null,
+      p_status: filters.status || "ALL",
+      p_branch_id: branchId,
+      p_search: filters.search?.trim() || null,
+      p_offset: filters.offset,
+      p_limit: filters.limit
+    });
+    if (error) {
+      throw new Error(`Gagal memuat halaman invoice: ${error.message}`);
+    }
+
+    const result = data as {
+      items?: any[];
+      totalCount?: number;
+      summary?: {
+        totalInvoiced?: number;
+        totalPaid?: number;
+        totalOutstanding?: number;
+        openCount?: number;
+      };
+    } | null;
+    if (!result || !Array.isArray(result.items) || !result.summary) {
+      throw new Error("Respons halaman invoice dari server tidak valid.");
+    }
+
+    return {
+      invoices: result.items.map((row) => this.mapInvoiceFromDb(row)),
+      totalCount: Number(result.totalCount || 0),
+      summary: {
+        totalInvoiced: Number(result.summary.totalInvoiced || 0),
+        totalPaid: Number(result.summary.totalPaid || 0),
+        totalOutstanding: Number(result.summary.totalOutstanding || 0),
+        openCount: Number(result.summary.openCount || 0)
+      }
+    };
+  }
+
+  async getActiveInvoiceVisitIds(
+    visitIds: string[],
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<string[]> {
+    if (visitIds.length === 0) return [];
+
+    const visitIdSet = new Set(visitIds);
+    if (useRepositoryTestFallbacks()) {
+      const invoices = await this.getInvoices(currentUserRole, userBranchId);
+      return Array.from(new Set(invoices
+        .filter((invoice) =>
+          visitIdSet.has(invoice.visitId) && invoice.status !== InvoiceStatus.CANCELLED
+        )
+        .map((invoice) => invoice.visitId)));
+    }
+
+    ensureSupabaseConnected();
+    const visitBatches: string[][] = [];
+    for (let index = 0; index < visitIds.length; index += 100) {
+      visitBatches.push(visitIds.slice(index, index + 100));
+    }
+
+    const results = await Promise.all(visitBatches.map(async (visitBatch) => {
+      let query = supabase
+        .from("invoices")
+        .select("visit_id")
+        .in("visit_id", visitBatch)
+        .neq("status", InvoiceStatus.CANCELLED);
+      if ((currentUserRole === UserRole.BRANCH_ADMIN || currentUserRole === UserRole.DOCTOR_ASSISTANT) && userBranchId) {
+        query = query.eq("branch_id", userBranchId);
+      }
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Gagal memeriksa invoice tindakan: ${error.message}`);
+      }
+      return (data || []).map((row: any) => row.visit_id as string);
+    }));
+
+    return Array.from(new Set(results.flat()));
   }
 
   async getInvoiceById(id: string, currentUserRole?: UserRole, userBranchId?: string | null): Promise<Invoice | null> {

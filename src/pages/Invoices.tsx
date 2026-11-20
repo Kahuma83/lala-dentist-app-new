@@ -88,15 +88,34 @@ export const Invoices: React.FC = () => {
 
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [patients, setPatients] = useState<PatientProfile[]>([]);
+  const [invoicePatientNames, setInvoicePatientNames] = useState<Record<string, string>>({});
   const [branches, setBranches] = useState<any[]>([]);
   const [services, setServices] = useState<any[]>([]);
   const [treatments, setTreatments] = useState<TreatmentJob[]>([]);
   const [branding, setBranding] = useState<ClinicBranding>(DEFAULT_CLINIC_BRANDING);
-  const [loading, setLoading] = useState(true);
+  const [supportingDataLoading, setSupportingDataLoading] = useState(true);
+  const [invoicePageLoading, setInvoicePageLoading] = useState(true);
+  const loading = supportingDataLoading || invoicePageLoading;
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [dateFilter, setDateFilter] = useState<"TODAY" | "DATE" | "ALL">("TODAY");
+  const [selectedInvoiceDate, setSelectedInvoiceDate] = useState(getTodayDateString());
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [branchFilter, setBranchFilter] = useState<string>("ALL");
+  const [invoicePageIndex, setInvoicePageIndex] = useState(0);
+  const [invoiceTotalCount, setInvoiceTotalCount] = useState(0);
+  const [invoiceSummary, setInvoiceSummary] = useState({
+    totalInvoiced: 0,
+    totalPaid: 0,
+    totalOutstanding: 0,
+    openCount: 0
+  });
+  const [invoiceListError, setInvoiceListError] = useState("");
+  const [supportingDataError, setSupportingDataError] = useState("");
+  const [activeInvoiceVisitIds, setActiveInvoiceVisitIds] = useState<Set<string>>(new Set());
+  const [invoiceRefreshKey, setInvoiceRefreshKey] = useState(0);
   const [showPreviousMonthReadyVisits, setShowPreviousMonthReadyVisits] = useState(false);
+  const invoicePageSize = 50;
 
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -153,10 +172,10 @@ export const Invoices: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const loadData = async () => {
-    setLoading(true);
+    setSupportingDataLoading(true);
+    setSupportingDataError("");
     try {
       const results = await Promise.allSettled([
-        invoiceRepo.getInvoices(currentUser?.role, currentUser?.branchId),
         patientRepo.getPatients(currentUser?.role, currentUser?.assignedBranchId),
         branchRepo.getBranches(),
         configRepo.getServices(),
@@ -164,23 +183,30 @@ export const Invoices: React.FC = () => {
         treatmentRepo.listTreatments(currentUser?.role, currentUser?.branchId)
       ]);
 
-      const [invRes, patRes, bRes, sRes, brandRes, trRes] = results;
-      const loadedInvoices = invRes.status === "fulfilled" ? invRes.value : [];
+      const [patRes, bRes, sRes, brandRes, trRes] = results;
       const loadedPatients = patRes.status === "fulfilled" ? patRes.value : [];
       const loadedTreatments = trRes.status === "fulfilled" ? trRes.value : [];
-      if (invRes.status === "fulfilled") setInvoices(loadedInvoices);
       if (patRes.status === "fulfilled") setPatients(loadedPatients);
       if (bRes.status === "fulfilled") setBranches(bRes.value);
       if (sRes.status === "fulfilled") setServices(sRes.value);
       if (brandRes.status === "fulfilled" && brandRes.value) setBranding(brandRes.value);
       if (trRes.status === "fulfilled" && trRes.value) setTreatments(trRes.value);
 
-      const knownPatientIds = new Set(loadedPatients.map((patient) => patient.id));
-      const activeInvoicedVisitIds = new Set(
-        loadedInvoices
-          .filter((invoice) => invoice.status !== InvoiceStatus.CANCELLED)
-          .map((invoice) => invoice.visitId)
+      const billableVisitIds = Array.from(new Set(loadedTreatments
+        .filter((treatment) =>
+          treatment.status === TreatmentJobStatus.SELESAI
+          || treatment.status === TreatmentJobStatus.DISERAHKAN
+        )
+        .map((treatment) => treatment.visitId)));
+      const activeVisitIds = await invoiceRepo.getActiveInvoiceVisitIds(
+        billableVisitIds,
+        currentUser?.role,
+        currentUser?.branchId
       );
+      const activeVisitIdSet = new Set(activeVisitIds);
+      setActiveInvoiceVisitIds(activeVisitIdSet);
+
+      const knownPatientIds = new Set(loadedPatients.map((patient) => patient.id));
       const treatmentGroups = loadedTreatments.reduce((groups, treatment) => {
         const group = groups.get(treatment.visitId) || [];
         group.push(treatment);
@@ -189,7 +215,7 @@ export const Invoices: React.FC = () => {
       }, new Map<string, TreatmentJob[]>());
       const billablePatientIds = Array.from(treatmentGroups.entries())
         .filter(([visitId, visitTreatments]) =>
-          !activeInvoicedVisitIds.has(visitId)
+          !activeVisitIdSet.has(visitId)
           && visitTreatments.some((treatment) =>
             treatment.status === TreatmentJobStatus.SELESAI
             || treatment.status === TreatmentJobStatus.DISERAHKAN
@@ -209,9 +235,6 @@ export const Invoices: React.FC = () => {
             .map((treatment) => treatment.patientId)
         );
       const missingPatientIds = Array.from(new Set([
-        ...loadedInvoices
-          .filter((invoice) => invoice.status !== InvoiceStatus.CANCELLED)
-          .map((invoice) => invoice.patientId),
         ...billablePatientIds,
         ...loadedTreatments
           .filter((treatment) =>
@@ -258,10 +281,17 @@ export const Invoices: React.FC = () => {
         setPatientLookupError("");
       }
     } catch (err: any) {
-      console.error("Error loading invoice data:", err);
+      const message = err instanceof Error ? err.message : "Gagal memuat data pendukung invoice.";
+      setSupportingDataError(message);
+      console.error("Error loading invoice supporting data:", err);
     } finally {
-      setLoading(false);
+      setSupportingDataLoading(false);
     }
+  };
+
+  const refreshInvoiceData = async () => {
+    await loadData();
+    setInvoiceRefreshKey((key) => key + 1);
   };
 
   const getDoctorNameForInvoice = (inv: Invoice | null) => {
@@ -274,7 +304,7 @@ export const Invoices: React.FC = () => {
     setDeleteInvoiceError(null);
     try {
       await invoiceRepo.deleteInvoice(invoiceToDelete.id, currentUser?.role, currentUser?.branchId);
-      await loadData();
+      await refreshInvoiceData();
       if (selectedInvoice?.id === invoiceToDelete.id) {
         setShowDetailModal(false);
         setSelectedInvoice(null);
@@ -291,7 +321,97 @@ export const Invoices: React.FC = () => {
     loadData();
   }, [currentUser]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    const unpaidAllDates = statusFilter === "UNPAID";
+    const startDate = unpaidAllDates
+      ? null
+      : dateFilter === "TODAY"
+        ? getTodayDateString()
+        : dateFilter === "DATE"
+          ? selectedInvoiceDate || getTodayDateString()
+          : null;
+    const endDate = startDate;
+
+    setInvoicePageLoading(true);
+    setInvoiceListError("");
+    invoiceRepo.getInvoicePage({
+      startDate,
+      endDate,
+      status: statusFilter as InvoiceStatus | "ALL" | "UNPAID",
+      branchId: branchFilter === "ALL" ? null : branchFilter,
+      search: debouncedSearchQuery,
+      offset: invoicePageIndex * invoicePageSize,
+      limit: invoicePageSize
+    }, currentUser.role, currentUser.branchId)
+      .then(async (page) => {
+        let patientNames: Array<{ id: string; name?: string; fullName?: string }> = [];
+        try {
+          patientNames = await patientRepo.getPatientNamesByIds(
+            page.invoices.map((invoice) => invoice.patientId),
+            currentUser.role
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? ` ${error.message}` : "";
+          setPatientLookupError(`Gagal memuat nama pasien pada halaman invoice.${detail}`);
+          console.error("[Invoices] Failed to load patient names for invoice page:", error);
+        }
+        if (cancelled) return;
+        setInvoices(page.invoices);
+        setInvoicePatientNames(Object.fromEntries(patientNames.map((patient) => [
+          patient.id,
+          patient.fullName || patient.name || ""
+        ])));
+        setInvoiceTotalCount(page.totalCount);
+        setInvoiceSummary(page.summary);
+        if (invoicePageIndex > 0 && invoicePageIndex * invoicePageSize >= page.totalCount) {
+          setInvoicePageIndex(Math.max(0, Math.ceil(page.totalCount / invoicePageSize) - 1));
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : "Gagal memuat daftar invoice.";
+        setInvoiceListError(message);
+        setInvoices([]);
+        setInvoiceTotalCount(0);
+        setInvoiceSummary({
+          totalInvoiced: 0,
+          totalPaid: 0,
+          totalOutstanding: 0,
+          openCount: 0
+        });
+        console.error("[Invoices] Failed to load invoice page:", error);
+      })
+      .finally(() => {
+        if (!cancelled) setInvoicePageLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentUser,
+    invoiceRepo,
+    patientRepo,
+    dateFilter,
+    selectedInvoiceDate,
+    statusFilter,
+    branchFilter,
+    debouncedSearchQuery,
+    invoicePageIndex,
+    invoiceRefreshKey
+  ]);
+
   const getPatientName = (patientId: string) => {
+    if (invoicePatientNames[patientId]) return invoicePatientNames[patientId];
     const p = patients.find((pat) => pat.id === patientId);
     if (p?.fullName || p?.name) return p.fullName || p.name;
     return loading ? "Memuat nama pasien..." : "Nama pasien tidak tersedia";
@@ -341,22 +461,6 @@ export const Invoices: React.FC = () => {
     return b ? b.name : branchId;
   };
 
-  // Summary Metrics
-  const totalInvoiced = invoices.reduce((sum, i) => sum + (i.status !== InvoiceStatus.CANCELLED ? i.netAmount : 0), 0);
-  const totalPaid = invoices.reduce((sum, i) => sum + (i.status !== InvoiceStatus.CANCELLED ? i.paidAmount : 0), 0);
-  const totalOutstanding = invoices.reduce((sum, i) => sum + (i.status !== InvoiceStatus.CANCELLED ? i.outstandingAmount : 0), 0);
-  const openCount = invoices.filter((i) => i.status === InvoiceStatus.OPEN || i.status === InvoiceStatus.PARTIALLY_PAID).length;
-
-  const filteredInvoices = invoices.filter((inv) => {
-    const patName = getPatientName(inv.patientId).toLowerCase();
-    const invIdMatch = inv.id.toLowerCase().includes(searchQuery.toLowerCase());
-    const invNumMatch = inv.invoiceNumber ? inv.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) : false;
-    const matchesSearch = invIdMatch || invNumMatch || patName.includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "ALL" || inv.status === statusFilter;
-    const matchesBranch = branchFilter === "ALL" || inv.branchId === branchFilter;
-    return matchesSearch && matchesStatus && matchesBranch;
-  });
-
   const allInvoiceReadyVisits = Array.from(
     treatments.reduce((grouped, treatment) => {
       const current = grouped.get(treatment.visitId) || [];
@@ -375,9 +479,7 @@ export const Invoices: React.FC = () => {
       || treatment.status === TreatmentJobStatus.DISERAHKAN
       || treatment.status === TreatmentJobStatus.DIBATALKAN
     )
-    && !invoices.some((invoice) =>
-      invoice.visitId === visitId && invoice.status !== InvoiceStatus.CANCELLED
-    )
+    && !activeInvoiceVisitIds.has(visitId)
   );
   const currentMonthStart = `${getTodayDateString().slice(0, 7)}-01`;
   const previousMonthReadyVisits = allInvoiceReadyVisits.filter(([, visitTreatments]) =>
@@ -476,7 +578,7 @@ export const Invoices: React.FC = () => {
       );
       setTreatmentToReturn(null);
       setReturnReason("");
-      await loadData();
+      await refreshInvoiceData();
     } catch (err: any) {
       setReturnTreatmentError(err.message || "Gagal mengembalikan tindakan ke dokter");
     } finally {
@@ -615,7 +717,7 @@ export const Invoices: React.FC = () => {
 
       setShowCreateModal(false);
       setFormVisitId("");
-      await loadData();
+      await refreshInvoiceData();
       await refreshData();
     } catch (err: any) {
       setFormError(err.message || "Gagal membuat invoice");
@@ -708,7 +810,7 @@ export const Invoices: React.FC = () => {
         );
       }
       setShowPaymentModal(false);
-      await loadData();
+      await refreshInvoiceData();
       await refreshData();
     } catch (err: any) {
       setPayError(err.message || "Gagal memproses pembayaran");
@@ -738,7 +840,7 @@ export const Invoices: React.FC = () => {
         currentUser?.branchId,
         currentUser?.id
       );
-      await loadData();
+      await refreshInvoiceData();
       setInvoiceToCancel(null);
       setShowDetailModal(false);
     } catch (err: any) {
@@ -759,6 +861,16 @@ export const Invoices: React.FC = () => {
       {patientLookupError && (
         <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {patientLookupError}
+        </div>
+      )}
+      {supportingDataError && (
+        <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          Gagal memuat data tindakan/pasien: {supportingDataError}
+        </div>
+      )}
+      {invoiceListError && (
+        <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          Gagal memuat daftar invoice: {invoiceListError}
         </div>
       )}
 
@@ -960,7 +1072,7 @@ export const Invoices: React.FC = () => {
           <div>
             <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Tagihan (Net)</div>
             <div className="text-base font-bold text-slate-900 mt-0.5">
-              Rp {totalInvoiced.toLocaleString("id-ID")}
+              Rp {invoiceSummary.totalInvoiced.toLocaleString("id-ID")}
             </div>
           </div>
         </div>
@@ -972,7 +1084,7 @@ export const Invoices: React.FC = () => {
           <div>
             <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Terbayar</div>
             <div className="text-base font-bold text-teal-700 mt-0.5">
-              Rp {totalPaid.toLocaleString("id-ID")}
+              Rp {invoiceSummary.totalPaid.toLocaleString("id-ID")}
             </div>
           </div>
         </div>
@@ -984,7 +1096,7 @@ export const Invoices: React.FC = () => {
           <div>
             <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Sisa Piutang Pasien</div>
             <div className="text-base font-bold text-amber-700 mt-0.5">
-              Rp {totalOutstanding.toLocaleString("id-ID")}
+              Rp {invoiceSummary.totalOutstanding.toLocaleString("id-ID")}
             </div>
           </div>
         </div>
@@ -996,11 +1108,14 @@ export const Invoices: React.FC = () => {
           <div>
             <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Invoice Belum Lunas</div>
             <div className="text-base font-bold text-slate-900 mt-0.5">
-              {openCount} Faktur
+              {invoiceSummary.openCount} Faktur
             </div>
           </div>
         </div>
       </div>
+      <p className="-mt-4 text-xs text-slate-500">
+        Ringkasan mengikuti filter yang dipilih. Daftar dibuka pada invoice hari ini dan ditampilkan maksimal 50 baris per halaman.
+      </p>
 
       {/* Filter & Search Bar */}
       <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -1010,16 +1125,49 @@ export const Invoices: React.FC = () => {
             type="text"
             placeholder="Cari no invoice atau nama pasien..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setInvoicePageIndex(0);
+            }}
             className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
           />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <select
+            aria-label="Filter tanggal invoice"
+            value={dateFilter}
+            disabled={statusFilter === "UNPAID"}
+            onChange={(e) => {
+              setDateFilter(e.target.value as "TODAY" | "DATE" | "ALL");
+              setInvoicePageIndex(0);
+            }}
+            className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+          >
+            <option value="TODAY">Hari ini</option>
+            <option value="DATE">Pilih tanggal</option>
+            <option value="ALL">Semua tanggal</option>
+          </select>
+          {dateFilter === "DATE" && statusFilter !== "UNPAID" && (
+            <input
+              aria-label="Tanggal invoice"
+              type="date"
+              value={selectedInvoiceDate}
+              max={getTodayDateString()}
+              onChange={(e) => {
+                setSelectedInvoiceDate(e.target.value);
+                setInvoicePageIndex(0);
+              }}
+              className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          )}
           {currentUser?.role === UserRole.SUPER_ADMIN && (
             <select
               value={branchFilter}
-              onChange={(e) => setBranchFilter(e.target.value)}
+              onChange={(e) => {
+                setBranchFilter(e.target.value);
+                setInvoicePageIndex(0);
+              }}
               className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
               <option value="ALL">Semua Cabang Klinik</option>
@@ -1033,10 +1181,14 @@ export const Invoices: React.FC = () => {
 
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setInvoicePageIndex(0);
+            }}
             className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           >
             <option value="ALL">Semua Status</option>
+            <option value="UNPAID">Belum lunas (semua tanggal)</option>
             <option value={InvoiceStatus.OPEN}>OPEN (Belum Bayar)</option>
             <option value={InvoiceStatus.PARTIALLY_PAID}>PARTIALLY PAID (Cicil)</option>
             <option value={InvoiceStatus.PAID}>PAID (Lunas)</option>
@@ -1068,14 +1220,14 @@ export const Invoices: React.FC = () => {
                     Memuat daftar faktur...
                   </td>
                 </tr>
-              ) : filteredInvoices.length === 0 ? (
+              ) : invoices.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-slate-400">
                     Tidak ada faktur invoice yang cocok dengan kriteria filter.
                   </td>
                 </tr>
               ) : (
-                filteredInvoices.map((inv) => (
+                invoices.map((inv) => (
                   <tr key={inv.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3.5 px-4 font-mono font-medium text-slate-900">
                       <div>{inv.invoiceNumber || "Nomor belum tersedia"}</div>
@@ -1168,6 +1320,34 @@ export const Invoices: React.FC = () => {
               )}
             </tbody>
           </table>
+        </div>
+        <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Menampilkan {invoiceTotalCount === 0 ? 0 : invoicePageIndex * invoicePageSize + 1}
+            {"–"}
+            {Math.min((invoicePageIndex + 1) * invoicePageSize, invoiceTotalCount)}
+            {" dari "}
+            {invoiceTotalCount} invoice
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setInvoicePageIndex((page) => Math.max(0, page - 1))}
+              disabled={invoicePageIndex === 0 || invoicePageLoading}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Sebelumnya
+            </button>
+            <span>Halaman {invoicePageIndex + 1} dari {Math.max(1, Math.ceil(invoiceTotalCount / invoicePageSize))}</span>
+            <button
+              type="button"
+              onClick={() => setInvoicePageIndex((page) => page + 1)}
+              disabled={(invoicePageIndex + 1) * invoicePageSize >= invoiceTotalCount || invoicePageLoading}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Berikutnya
+            </button>
+          </div>
         </div>
       </div>
 

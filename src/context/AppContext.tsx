@@ -702,7 +702,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setTreatmentJobs(await treatmentRepo.getTreatmentJobs());
             return;
           case "invoices":
-            setInvoices(await invoiceRepo.getInvoices(userRole, userBranchId));
+            setInvoices([]);
             return;
           case "payment_transactions":
             setPayments(await paymentRepo.getPayments(userRole, userBranchId));
@@ -767,7 +767,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getUserVisits(),
         queueRepo.getOperationalQueueItems(),
         treatmentRepo.getTreatmentJobs(),
-        invoiceRepo.getInvoices(),
+        Promise.resolve([]),
         paymentRepo.getPayments(),
         payrollRepo.getPayrolls(),
         configRepo.getServices(),
