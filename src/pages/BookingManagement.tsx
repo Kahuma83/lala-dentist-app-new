@@ -44,7 +44,8 @@ import {
   UserCheck,
   RefreshCw,
   FileText,
-  ChevronRight
+  ChevronRight,
+  Download
 } from "lucide-react";
 import { useRouter } from "../components/Router";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
@@ -58,6 +59,7 @@ import {
 } from "../utils/bookingScheduleUtils";
 import { hasActiveBookingForPatientOnDate, hasActiveQueueForPatientOnDate, isActiveQueueStatus } from "../utils/bookingQueueGuards";
 import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
+import { buildDailyAgendaRows, downloadDailyAgendaPdf } from "../utils/dailyAgendaPdf";
 import { getCheckInCancellationBlockReason } from "../utils/bookingCancellation";
 import { WalkInBookingDemo } from "../components/WalkInBookingDemo";
 import { getBookingDoctorDisplayName } from "../utils/doctorNameUtils";
@@ -142,6 +144,8 @@ export const BookingManagement: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [agendaPdfDate, setAgendaPdfDate] = useState<string | null>(null);
+  const [agendaPdfError, setAgendaPdfError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("ACTIVE");
   const [branchFilter, setBranchFilter] = useState<string>("ALL");
@@ -250,6 +254,13 @@ export const BookingManagement: React.FC = () => {
   const [bookingCloseFeedback, setBookingCloseFeedback] = useState<{ bookingId: string; message: string } | null>(null);
 
   const effectiveBranchId = currentUser?.role === UserRole.BRANCH_ADMIN ? currentUser.assignedBranchId : (branchFilter !== "ALL" ? branchFilter : selectedBranchId);
+  const agendaBranch = useMemo(() => {
+    const branchId = currentUser?.role === UserRole.BRANCH_ADMIN
+      ? currentUser.assignedBranchId || currentUser.branchId
+      : effectiveBranchId;
+    if (!branchId || branchId === "ALL") return null;
+    return branches.find((branch) => isBranchMatch(branch.id, branchId, branches)) || null;
+  }, [branches, currentUser?.role, currentUser?.assignedBranchId, currentUser?.branchId, effectiveBranchId]);
   const selectedReferringStaff = referralStaffOptions.find((employee) => employee.id === formReferringStaffId);
   const availableReferringStaff = useMemo(() => {
     const query = referringStaffSearch.trim().toLocaleLowerCase("id");
@@ -1298,6 +1309,37 @@ export const BookingManagement: React.FC = () => {
     };
   }, [filteredBookings, calendarWeekStart, calendarDates, completedBookingIds, checkedInBookingIds]);
 
+  const handleDownloadDailyAgendaPdf = async (date: string) => {
+    setAgendaPdfError(null);
+    if (!agendaBranch) {
+      setAgendaPdfError("Pilih satu cabang untuk mengunduh agenda PDF.");
+      return;
+    }
+
+    setAgendaPdfDate(date);
+    try {
+      const branchBookings = bookings.filter((booking) =>
+        isBranchMatch(booking.branchId, agendaBranch.id, branches)
+      );
+      const rows = buildDailyAgendaRows({
+        bookings: branchBookings,
+        agendaDate: date,
+        doctors: doctorsList,
+        patients,
+        checkedInBookingIds,
+        completedBookingIds
+      });
+      await downloadDailyAgendaPdf({ branch: agendaBranch, agendaDate: date, rows });
+    } catch (error: unknown) {
+      console.error("Gagal membuat PDF agenda harian:", error);
+      setAgendaPdfError(
+        error instanceof Error ? error.message : "Gagal mengunduh PDF agenda harian."
+      );
+    } finally {
+      setAgendaPdfDate(null);
+    }
+  };
+
   const handleCreateBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -1997,6 +2039,12 @@ export const BookingManagement: React.FC = () => {
         </button>
       </div>
 
+      {agendaPdfError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-800">
+          {agendaPdfError}
+        </div>
+      )}
+
       {/* Weekly overview */}
       <section aria-label="Ringkasan jadwal mingguan" className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         {[
@@ -2300,15 +2348,29 @@ export const BookingManagement: React.FC = () => {
                         <div className="mt-0 text-[10px] font-semibold leading-tight text-white/90 drop-shadow-sm">{formatCalendarDate(date, { month: "long", year: "numeric" })}</div>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenNewBooking(date)}
-                      aria-label={`Tambah jadwal ${formatCalendarDate(date, { weekday: "long", day: "numeric", month: "long" })}`}
-                      title="Tambah jadwal"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/70 bg-white/80 text-[#76551a] shadow-sm transition-all hover:border-white hover:bg-white hover:text-[#4f3811]"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void handleDownloadDailyAgendaPdf(date)}
+                        disabled={agendaPdfDate !== null}
+                        aria-label={`Unduh agenda PDF ${formatCalendarDate(date, { weekday: "long", day: "numeric", month: "long" })}`}
+                        title={agendaPdfDate === date ? "Menyiapkan PDF..." : "Unduh agenda PDF"}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/80 text-[#76551a] shadow-sm transition-all hover:border-white hover:bg-white hover:text-[#4f3811] disabled:cursor-wait disabled:opacity-70"
+                      >
+                        {agendaPdfDate === date
+                          ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          : <Download className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenNewBooking(date)}
+                        aria-label={`Tambah jadwal ${formatCalendarDate(date, { weekday: "long", day: "numeric", month: "long" })}`}
+                        title="Tambah jadwal"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/80 text-[#76551a] shadow-sm transition-all hover:border-white hover:bg-white hover:text-[#4f3811]"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                   <div className="relative z-10 mt-1.5 flex items-center justify-between">
                     <span className="text-[10px] font-bold leading-tight text-white drop-shadow-sm">
