@@ -4779,7 +4779,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
 
   async assignAssistantToVisit(
     visitId: string,
-    assistantStaffId: string | null,
+    assistantStaffId: string,
     currentUserRole?: UserRole,
     _userBranchId?: string | null,
     _currentUserId?: string | null
@@ -4788,7 +4788,7 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     if (currentUserRole !== UserRole.DOCTOR) {
       throw new Error("Hanya dokter yang dapat menetapkan PIC untuk kunjungan.");
     }
-    if (!isValidUUID(visitId) || (assistantStaffId && !isValidUUID(assistantStaffId))) {
+    if (!isValidUUID(visitId) || !isValidUUID(assistantStaffId)) {
       throw new Error("Data kunjungan atau PIC tidak valid.");
     }
     const { error } = await supabase.rpc("assign_treatment_visit_assistant", {

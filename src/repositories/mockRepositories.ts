@@ -3882,7 +3882,7 @@ export class MockTreatmentRepository implements TreatmentRepository {
 
   async assignAssistantToVisit(
     visitId: string,
-    assistantStaffId: string | null,
+    assistantStaffId: string,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null
@@ -3890,29 +3890,28 @@ export class MockTreatmentRepository implements TreatmentRepository {
     if (currentUserRole !== UserRole.DOCTOR) {
       throw new Error("Hanya dokter yang dapat menetapkan Asisten untuk kunjungan.");
     }
+    if (!assistantStaffId) throw new Error("PIC kunjungan wajib diisi.");
     const visit = db.visits.find((item) => item.id === visitId);
     if (!visit) throw new Error("Kunjungan tidak ditemukan.");
     if (userBranchId && !isBranchMatch(visit.branchId, userBranchId, db.branches)) {
       throw new Error("Dokter tidak memiliki akses ke cabang kunjungan ini.");
     }
-    if (assistantStaffId) {
-      const assistant = db.staff.find((item) =>
-        item.id === assistantStaffId
-        && (item.position === StaffPosition.ASSISTANT || item.position === StaffPosition.BRANCH_ADMIN)
-        && item.active
-        && item.employmentStatus === EmploymentStatus.ACTIVE
-        && (
-          isBranchMatch(item.branchId, visit.branchId, db.branches)
-          || db.staffShiftAssignments.some((assignment) =>
-            assignment.staffId === item.id
-            && isBranchMatch(assignment.branchId, visit.branchId, db.branches)
-            && assignment.date === getOperationalDateString(visit.visitDateTime)
-            && assignment.active
-          )
+    const assistant = db.staff.find((item) =>
+      item.id === assistantStaffId
+      && (item.position === StaffPosition.ASSISTANT || item.position === StaffPosition.BRANCH_ADMIN)
+      && item.active
+      && item.employmentStatus === EmploymentStatus.ACTIVE
+      && (
+        isBranchMatch(item.branchId, visit.branchId, db.branches)
+        || db.staffShiftAssignments.some((assignment) =>
+          assignment.staffId === item.id
+          && isBranchMatch(assignment.branchId, visit.branchId, db.branches)
+          && assignment.date === getOperationalDateString(visit.visitDateTime)
+          && assignment.active
         )
-      );
-      if (!assistant) throw new Error("PIC yang dipilih tidak aktif, bukan Asisten atau Admin Cabang, atau tidak ditugaskan di cabang kunjungan.");
-    }
+      )
+    );
+    if (!assistant) throw new Error("PIC yang dipilih tidak aktif, bukan Asisten atau Admin Cabang, atau tidak ditugaskan di cabang kunjungan.");
 
     const visitTreatments = db.treatmentJobs.filter((item) => item.visitId === visitId);
     const startedTreatments = visitTreatments.filter((item) =>
