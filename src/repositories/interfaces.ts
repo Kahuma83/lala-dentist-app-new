@@ -7,6 +7,7 @@ import {
   BookingConfirmationH1,
   PatientVisit,
   PatientVisitAnalyticsRecord,
+  VisitAssistantAssignment,
   QueueItem,
   QueueStatus,
   LiveQueueSnapshot,
@@ -684,7 +685,7 @@ export interface TreatmentRepository {
     userBranchId?: string | null,
     currentUserId?: string | null
   ): Promise<TreatmentJob[]>;
-  getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, string | null>>;
+  getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, VisitAssistantAssignment>>;
   assignAssistantToVisit(
     visitId: string,
     assistantStaffId: string | null,

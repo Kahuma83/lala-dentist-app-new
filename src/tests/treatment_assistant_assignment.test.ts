@@ -8,7 +8,10 @@ import {
   type StaffShiftAssignment,
   type WorkShift
 } from "../types/domain";
-import { getVisitAssistantCandidates } from "../utils/treatmentAssistantAssignment";
+import {
+  getVisitAssistantCandidates,
+  resolveDefaultVisitAssistantId
+} from "../utils/treatmentAssistantAssignment";
 
 const staff = (
   id: string,
@@ -75,6 +78,45 @@ const getCandidates = (options: {
 });
 
 describe("visit assistant assignment defaults", () => {
+  it("uses the queue claim when an unconfirmed assignment has no PIC", () => {
+    expect(resolveDefaultVisitAssistantId({
+      assignment: { assistantStaffId: null, confirmedBy: null },
+      queueAssistantId: "claimed-assistant",
+      scheduledDefaultStaffId: "scheduled-assistant"
+    })).toBe("claimed-assistant");
+  });
+
+  it("falls back to the scheduled default when no PIC is confirmed or claimed", () => {
+    expect(resolveDefaultVisitAssistantId({
+      assignment: { assistantStaffId: null, confirmedBy: null },
+      scheduledDefaultStaffId: "scheduled-assistant"
+    })).toBe("scheduled-assistant");
+  });
+
+  it("preserves an explicitly confirmed no-PIC choice", () => {
+    expect(resolveDefaultVisitAssistantId({
+      assignment: { assistantStaffId: null, confirmedBy: "doctor-user" },
+      queueAssistantId: "claimed-assistant",
+      scheduledDefaultStaffId: "scheduled-assistant"
+    })).toBeNull();
+  });
+
+  it("prefers an explicitly confirmed PIC over queue and schedule defaults", () => {
+    expect(resolveDefaultVisitAssistantId({
+      assignment: { assistantStaffId: "confirmed-pic", confirmedBy: "doctor-user" },
+      queueAssistantId: "claimed-assistant",
+      scheduledDefaultStaffId: "scheduled-assistant"
+    })).toBe("confirmed-pic");
+  });
+
+  it("prefers an existing treatment PIC over a queue claim", () => {
+    expect(resolveDefaultVisitAssistantId({
+      treatmentAssistantId: "existing-pic",
+      queueAssistantId: "claimed-assistant",
+      scheduledDefaultStaffId: "scheduled-assistant"
+    })).toBe("existing-pic");
+  });
+
   it("defaults to the assistant scheduled for the booking shift when present", () => {
     const result = getCandidates({
       assistants: [staff("morning-assistant"), staff("afternoon-assistant")],

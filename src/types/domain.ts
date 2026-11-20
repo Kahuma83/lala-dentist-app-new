@@ -622,6 +622,11 @@ export interface PatientVisit {
   updatedAt: string;
 }
 
+export interface VisitAssistantAssignment {
+  assistantStaffId: string | null;
+  confirmedBy: string | null;
+}
+
 export type PatientVisitAnalyticsRecord = Pick<
   PatientVisit,
   "patientId" | "branchId" | "visitDateTime" | "visitStatus"

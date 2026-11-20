@@ -62,6 +62,7 @@ import {
   BookingConfirmationH1,
   PatientVisit,
   PatientVisitAnalyticsRecord,
+  VisitAssistantAssignment,
   QueueItem,
   LiveQueueSnapshot,
   TreatmentJob,
@@ -4761,16 +4762,19 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     return this.getTreatmentsByVisit(visitId);
   }
 
-  async getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, string | null>> {
+  async getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, VisitAssistantAssignment>> {
     ensureSupabaseConnected();
     const validVisitIds = [...new Set(visitIds.filter(isValidUUID))];
     if (!validVisitIds.length) return {};
     const { data, error } = await supabase
       .from("treatment_visit_assistant_assignments")
-      .select("visit_id, assistant_staff_id")
+      .select("visit_id, assistant_staff_id, confirmed_by")
       .in("visit_id", validVisitIds);
     if (error) throw new Error(`Gagal memuat PIC tindakan kunjungan: ${error.message}`);
-    return Object.fromEntries((data || []).map((row) => [row.visit_id, row.assistant_staff_id]));
+    return Object.fromEntries((data || []).map((row) => [row.visit_id, {
+      assistantStaffId: row.assistant_staff_id,
+      confirmedBy: row.confirmed_by
+    }]));
   }
 
   async assignAssistantToVisit(

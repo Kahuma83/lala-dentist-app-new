@@ -5,6 +5,7 @@ import {
   Staff,
   StaffPosition,
   StaffShiftAssignment,
+  VisitAssistantAssignment,
   WorkShift
 } from "../types/domain";
 import { getOperationalDateString, getOperationalTimeString } from "./dateUtils";
@@ -28,6 +29,25 @@ interface VisitAssistantCandidateInput {
   shifts: WorkShift[];
   attendances: Attendance[];
 }
+
+export const resolveDefaultVisitAssistantId = ({
+  assignment,
+  treatmentAssistantId,
+  queueAssistantId,
+  scheduledDefaultStaffId
+}: {
+  assignment?: VisitAssistantAssignment;
+  treatmentAssistantId?: string | null;
+  queueAssistantId?: string | null;
+  scheduledDefaultStaffId?: string | null;
+}): string | null => {
+  if (assignment?.assistantStaffId) return assignment.assistantStaffId;
+  if (assignment?.confirmedBy) return null;
+  return treatmentAssistantId
+    || queueAssistantId
+    || scheduledDefaultStaffId
+    || null;
+};
 
 const timeToMinutes = (value: string | null | undefined): number | null => {
   const match = value?.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
