@@ -88,7 +88,10 @@ describe("Owner daily cash report migration", () => {
 
   it("shows aggregate totals only on the Owner report and keeps branch details", () => {
     expect(dashboard).toMatch(/\{!branchId && \([\s\S]*?report\.totals\.total/);
-    expect(dashboard).toContain('label="Total" value={branch.total}');
+    expect(dashboard).toContain('label="Total pembayaran" value={branch.total}');
     expect(dashboard).toContain('label="Saldo uang keriting"');
+    expect(dashboard).toContain("Pembayaran diterima");
+    expect(dashboard).toContain("Kas dan uang keriting");
+    expect(dashboard).toContain('label="Transfer bank"');
   });
 });

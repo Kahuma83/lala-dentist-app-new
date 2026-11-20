@@ -264,10 +264,10 @@ export const OwnerDailyCashReport: React.FC<OwnerDailyCashReportProps> = ({ bran
               <article key={branch.id} className="rounded-xl border border-slate-200 p-3.5">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <Banknote className="h-4 w-4 text-[#927638]" />
-                    <h3 className="text-sm font-bold">{branch.name}</h3>
+                    <Banknote className="h-5 w-5 text-[#927638]" />
+                    <h3 className="text-base font-bold">{branch.name}</h3>
                     {(!branch.openingConfigured || branch.roundingBalance === null) && (
-                      <span className="rounded-full bg-amber-50 px-2 py-1 text-[9px] font-semibold text-amber-800">
+                      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
                         {branch.openingConfigured ? "Saldo belum tersedia pada tanggal laporan" : "Saldo awal belum diatur"}
                       </span>
                     )}
@@ -277,7 +277,7 @@ export const OwnerDailyCashReport: React.FC<OwnerDailyCashReportProps> = ({ bran
                       <button
                         type="button"
                         onClick={() => openEntry("OPENING_BALANCE", branch)}
-                        className="rounded-lg bg-[#173d35] px-3 py-2 text-[10px] font-semibold text-white hover:bg-[#245347]"
+                        className="rounded-lg bg-[#173d35] px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-[#245347]"
                       >
                         Atur saldo awal
                       </button>
@@ -286,37 +286,47 @@ export const OwnerDailyCashReport: React.FC<OwnerDailyCashReportProps> = ({ bran
                         type="button"
                         onClick={() => openEntry("SETTLEMENT", branch)}
                         disabled={!branch.roundingBalance || branch.roundingBalance < 50000}
-                        className="rounded-lg border border-[#d1bd8c] px-3 py-2 text-[10px] font-semibold text-[#68572f] hover:bg-[#fcfaf4] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg border border-[#d1bd8c] px-3.5 py-2.5 text-xs font-semibold text-[#68572f] hover:bg-[#fcfaf4] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Catat setoran uang keriting
                       </button>
                     )}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-2.5 text-xs sm:grid-cols-4">
-                  <BranchCashMetric label="Total" value={branch.total} />
-                  <BranchCashMetric label="QR" value={branch.qris} />
-                  <BranchCashMetric label="EDC" value={branch.edc} />
-                  <BranchCashMetric label="TF" value={branch.transfer} />
-                  <BranchCashMetric label="Pengeluaran kas harian" value={branch.expenses} />
-                  <BranchCashMetric label="Pengeluaran uang keriting" value={branch.keritingExpenses} />
-                  <BranchCashMetric label="Total Cash" value={branch.cash} />
-                  <BranchCashMetric label="Yang harus dibawa" value={branch.amountToBring} />
-                  <BranchCashMetric label="Uang keriting hari ini" value={branch.roundingToday} />
-                  <BranchCashMetric
-                    label="Saldo uang keriting"
-                    value={branch.roundingBalance}
-                    unavailable={!branch.openingConfigured || branch.roundingBalance === null}
-                  />
-                  {branch.cashShortfall > 0 && (
-                    <BranchCashMetric label="Kekurangan kas" value={branch.cashShortfall} />
-                  )}
+                <div className="space-y-4">
+                  <section aria-label={`Pembayaran diterima ${branch.name}`}>
+                    <h4 className="mb-2 text-sm font-semibold text-slate-700">Pembayaran diterima</h4>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <BranchCashMetric label="Total pembayaran" value={branch.total} />
+                      <BranchCashMetric label="QRIS" value={branch.qris} />
+                      <BranchCashMetric label="EDC" value={branch.edc} />
+                      <BranchCashMetric label="Transfer bank" value={branch.transfer} />
+                    </div>
+                  </section>
+                  <section aria-label={`Kas dan uang keriting ${branch.name}`}>
+                    <h4 className="mb-2 text-sm font-semibold text-slate-700">Kas dan uang keriting</h4>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                      <BranchCashMetric label="Pengeluaran kas harian" value={branch.expenses} />
+                      <BranchCashMetric label="Pengeluaran uang keriting" value={branch.keritingExpenses} />
+                      <BranchCashMetric label="Sisa kas tunai" value={branch.cash} />
+                      <BranchCashMetric label="Setoran tunai disarankan" value={branch.amountToBring} />
+                      <BranchCashMetric label="Uang keriting hari ini" value={branch.roundingToday} />
+                      <BranchCashMetric
+                        label="Saldo uang keriting"
+                        value={branch.roundingBalance}
+                        unavailable={!branch.openingConfigured || branch.roundingBalance === null}
+                      />
+                      {branch.cashShortfall > 0 && (
+                        <BranchCashMetric label="Kekurangan kas" value={branch.cashShortfall} />
+                      )}
+                    </div>
+                  </section>
                 </div>
               </article>
             ))}
           </div>
-          <p className="mt-3 text-[10px] leading-4 text-slate-500">
-            Total adalah seluruh pembayaran sukses. Total Cash dihitung setelah pengeluaran dari kas harian; nominal yang dibawa dibulatkan turun per cabang ke kelipatan Rp50.000. Pengeluaran dari uang keriting mengurangi saldo akumulasi, bukan setoran kas harian.
+          <p className="mt-3 text-xs leading-5 text-slate-600">
+            Total pembayaran mencakup semua pembayaran sukses. Sisa kas tunai dihitung setelah pengeluaran kas harian. Setoran tunai disarankan dibulatkan turun ke kelipatan Rp50.000. Pengeluaran dari uang keriting mengurangi saldo akumulasi, bukan setoran harian.
           </p>
         </>
       ) : null}
@@ -434,8 +444,8 @@ const CashMetric: React.FC<{ label: string; value: number; tone: string; promine
   prominent = false
 }) => (
   <article className={`rounded-xl border p-3 ${prominent ? "border-[#d1bd8c]/60 bg-[#fcfaf4]" : "border-slate-200 bg-white"}`}>
-    <p className="text-[10px] font-medium text-slate-500">{label}</p>
-    <p className={`mt-1 break-words text-sm font-bold sm:text-base ${tone}`}>{formatMoney(value)}</p>
+    <p className="text-xs font-medium text-slate-600">{label}</p>
+    <p className={`mt-1 break-words text-base font-bold sm:text-lg ${tone}`}>{formatMoney(value)}</p>
   </article>
 );
 
@@ -444,9 +454,9 @@ const BranchCashMetric: React.FC<{ label: string; value: number | null; unavaila
   value,
   unavailable = false
 }) => (
-  <div>
-    <p className="text-[10px] text-slate-500">{label}</p>
-    <p className="mt-0.5 break-words font-bold text-slate-800">
+  <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3">
+    <p className="text-xs font-medium leading-5 text-slate-600">{label}</p>
+    <p className="mt-1 break-words text-base font-bold leading-6 text-slate-900 sm:text-lg">
       {unavailable || value === null ? "-" : formatMoney(value)}
     </p>
   </div>
