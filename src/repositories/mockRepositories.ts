@@ -68,6 +68,7 @@ import {
   PlannedTreatment,
   BookingConfirmationH1,
   PatientVisit,
+  VisitAssistantAssignment,
   QueueItem,
   LiveQueueSnapshot,
   TreatmentJob,
@@ -3867,12 +3868,15 @@ export class MockTreatmentRepository implements TreatmentRepository {
     return list.map((t) => ({ ...t }));
   }
 
-  async getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, string | null>> {
+  async getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, VisitAssistantAssignment>> {
     const visitIdSet = new Set(visitIds);
     return Object.fromEntries(
       db.visitAssistantAssignments
         .filter((item) => visitIdSet.has(item.visitId))
-        .map((item) => [item.visitId, item.assistantStaffId])
+        .map((item) => [item.visitId, {
+          assistantStaffId: item.assistantStaffId,
+          confirmedBy: item.confirmedBy
+        }])
     );
   }
 

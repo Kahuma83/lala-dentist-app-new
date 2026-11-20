@@ -14,7 +14,8 @@ import {
   MasterService,
   DentalDoctor,
   DentalBranch,
-  StaffPosition
+  StaffPosition,
+  VisitAssistantAssignment
 } from "../types/domain";
 import {
   Stethoscope,
@@ -42,6 +43,7 @@ import { getPatientMedicalRecordNumber } from "../utils/rmUtils";
 import { isActiveQueueStatus } from "../utils/bookingQueueGuards";
 import {
   getVisitAssistantCandidates,
+  resolveDefaultVisitAssistantId,
   VisitAssistantCandidate
 } from "../utils/treatmentAssistantAssignment";
 import {
@@ -110,7 +112,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [startingTreatmentId, setStartingTreatmentId] = useState<string | null>(null);
   const [processingVisitId, setProcessingVisitId] = useState<string | null>(null);
-  const [visitAssistantAssignments, setVisitAssistantAssignments] = useState<Record<string, string | null>>({});
+  const [visitAssistantAssignments, setVisitAssistantAssignments] = useState<Record<string, VisitAssistantAssignment>>({});
   const [assistantEdit, setAssistantEdit] = useState<{
     visitId: string;
     selectedAssistantId: string;
@@ -193,10 +195,16 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   };
 
   const getDefaultAssistantId = (visitId: string, visitTreatments: TreatmentJob[]): string | null => {
-    if (Object.prototype.hasOwnProperty.call(visitAssistantAssignments, visitId)) {
-      return visitAssistantAssignments[visitId];
-    }
-    return getAssistantCandidatesForVisit(visitId, visitTreatments).defaultStaffId;
+    const queueAssistantId = queueItems.find((item) =>
+      item.visitId === visitId && item.assistantStaffId
+    )?.assistantStaffId;
+    const treatmentAssistantId = visitTreatments.find((item) => item.picAssistantId)?.picAssistantId;
+    return resolveDefaultVisitAssistantId({
+      assignment: visitAssistantAssignments[visitId],
+      treatmentAssistantId,
+      queueAssistantId,
+      scheduledDefaultStaffId: getAssistantCandidatesForVisit(visitId, visitTreatments).defaultStaffId
+    });
   };
 
   const handleEditVisitAssistant = (visitId: string, visitTreatments: TreatmentJob[]) => {
@@ -223,7 +231,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       );
       setVisitAssistantAssignments((current) => ({
         ...current,
-        [assistantEdit.visitId]: selectedAssistantId
+        [assistantEdit.visitId]: {
+          assistantStaffId: selectedAssistantId,
+          confirmedBy: currentUser.id
+        }
       }));
       setTreatments((current) => current.map((item) =>
         item.visitId === assistantEdit.visitId && item.status !== TreatmentJobStatus.DIBATALKAN
@@ -528,7 +539,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
         );
         setVisitAssistantAssignments((current) => ({
           ...current,
-          [visitId]: assistantStaffId
+          [visitId]: {
+            assistantStaffId,
+            confirmedBy: currentUser.id
+          }
         }));
       }
       for (const treatment of pending) {
