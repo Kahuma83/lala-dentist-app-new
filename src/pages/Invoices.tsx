@@ -88,6 +88,7 @@ export const Invoices: React.FC = () => {
 
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [patients, setPatients] = useState<PatientProfile[]>([]);
+  const [invoicePatientNames, setInvoicePatientNames] = useState<Record<string, string>>({});
   const [branches, setBranches] = useState<any[]>([]);
   const [services, setServices] = useState<any[]>([]);
   const [treatments, setTreatments] = useState<TreatmentJob[]>([]);
@@ -351,9 +352,24 @@ export const Invoices: React.FC = () => {
       offset: invoicePageIndex * invoicePageSize,
       limit: invoicePageSize
     }, currentUser.role, currentUser.branchId)
-      .then((page) => {
+      .then(async (page) => {
+        let patientNames: Array<{ id: string; name?: string; fullName?: string }> = [];
+        try {
+          patientNames = await patientRepo.getPatientNamesByIds(
+            page.invoices.map((invoice) => invoice.patientId),
+            currentUser.role
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? ` ${error.message}` : "";
+          setPatientLookupError(`Gagal memuat nama pasien pada halaman invoice.${detail}`);
+          console.error("[Invoices] Failed to load patient names for invoice page:", error);
+        }
         if (cancelled) return;
         setInvoices(page.invoices);
+        setInvoicePatientNames(Object.fromEntries(patientNames.map((patient) => [
+          patient.id,
+          patient.fullName || patient.name || ""
+        ])));
         setInvoiceTotalCount(page.totalCount);
         setInvoiceSummary(page.summary);
         if (invoicePageIndex > 0 && invoicePageIndex * invoicePageSize >= page.totalCount) {
@@ -384,6 +400,7 @@ export const Invoices: React.FC = () => {
   }, [
     currentUser,
     invoiceRepo,
+    patientRepo,
     dateFilter,
     selectedInvoiceDate,
     statusFilter,
@@ -394,6 +411,7 @@ export const Invoices: React.FC = () => {
   ]);
 
   const getPatientName = (patientId: string) => {
+    if (invoicePatientNames[patientId]) return invoicePatientNames[patientId];
     const p = patients.find((pat) => pat.id === patientId);
     if (p?.fullName || p?.name) return p.fullName || p.name;
     return loading ? "Memuat nama pasien..." : "Nama pasien tidak tersedia";

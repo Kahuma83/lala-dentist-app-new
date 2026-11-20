@@ -803,6 +803,50 @@ export class SupabasePatientRepository implements PatientRepository {
     return null;
   }
 
+  async getPatientNamesByIds(
+    patientIds: string[],
+    _currentUserRole?: UserRole
+  ): Promise<Array<{ id: string; name?: string; fullName?: string }>> {
+    const uniqueIds = Array.from(new Set(patientIds.filter(Boolean)));
+    if (uniqueIds.length === 0) return [];
+
+    if (useRepositoryTestFallbacks()) {
+      const idSet = new Set(uniqueIds);
+      return MOCK_PATIENTS
+        .filter((patient) => idSet.has(patient.id))
+        .map(({ id, name, fullName }) => ({ id, name, fullName }));
+    }
+
+    ensureSupabaseConnected();
+    const profileResult = await supabase
+      .from("patient_profiles")
+      .select("id,name,full_name")
+      .in("id", uniqueIds);
+    if (!profileResult.error) {
+      return (profileResult.data || []).map((row: any) => ({
+        id: row.id,
+        name: row.name ?? undefined,
+        fullName: row.full_name ?? undefined
+      }));
+    }
+    if (!isMissingPatientProfilesTable(profileResult.error)) {
+      throw new Error(`Gagal membaca nama pasien invoice: ${profileResult.error.message}`);
+    }
+
+    const fallbackResult = await supabase
+      .from("patients")
+      .select("id,name,full_name")
+      .in("id", uniqueIds);
+    if (fallbackResult.error) {
+      throw new Error(`Gagal membaca nama pasien invoice: ${fallbackResult.error.message}`);
+    }
+    return (fallbackResult.data || []).map((row: any) => ({
+      id: row.id,
+      name: row.name ?? undefined,
+      fullName: row.full_name ?? undefined
+    }));
+  }
+
   async getPatientPhoneForMedicalRecord(
     patientId: string,
     branchId: string,

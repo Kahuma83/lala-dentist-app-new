@@ -123,6 +123,10 @@ export interface PatientRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<PatientProfile | null>;
+  getPatientNamesByIds(
+    patientIds: string[],
+    currentUserRole?: UserRole
+  ): Promise<Array<{ id: string; name?: string; fullName?: string }>>;
   getPatientPhoneForMedicalRecord(
     patientId: string,
     branchId: string,

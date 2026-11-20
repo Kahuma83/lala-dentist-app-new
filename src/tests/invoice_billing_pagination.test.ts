@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { MockInvoiceRepository } from "../repositories/mockRepositories";
+import { MockInvoiceRepository, MockPatientRepository } from "../repositories/mockRepositories";
 import { InvoiceStatus } from "../types/domain";
 import { MockDatabase } from "../data/mockData";
 
@@ -58,6 +58,20 @@ describe("invoice billing pagination", () => {
     });
 
     expect(result.invoices.some((item) => item.id === invoice?.id)).toBe(true);
+  });
+
+  it("loads names for patient IDs independently of the full patient directory", async () => {
+    const database = MockDatabase.getInstance();
+    const patient = database.patients[0];
+    expect(patient).toBeDefined();
+
+    const [result] = await new MockPatientRepository().getPatientNamesByIds([patient.id]);
+
+    expect(result).toEqual({
+      id: patient.id,
+      name: patient.name,
+      fullName: patient.fullName
+    });
   });
 
   it("uses a security-invoker RPC with server-side filtering and paging", () => {

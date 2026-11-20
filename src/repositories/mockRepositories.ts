@@ -245,6 +245,16 @@ export class MockPatientRepository implements PatientRepository {
     );
   }
 
+  async getPatientNamesByIds(
+    patientIds: string[],
+    _currentUserRole?: UserRole
+  ): Promise<Array<{ id: string; name?: string; fullName?: string }>> {
+    const patientIdSet = new Set(patientIds);
+    return db.patients
+      .filter((patient) => patientIdSet.has(patient.id))
+      .map(({ id, name, fullName }) => ({ id, name, fullName }));
+  }
+
   async getPatientPhoneForMedicalRecord(
     patientId: string,
     branchId: string,
