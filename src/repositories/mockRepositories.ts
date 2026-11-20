@@ -92,6 +92,7 @@ import {
   BranchServiceTariff,
   DentalDoctor,
   Staff,
+  TreatmentPicStaffCandidate,
   StaffPosition,
   EmploymentStatus,
   DoctorBranchAssignment,
@@ -1407,6 +1408,23 @@ export class MockStaffRepository implements StaffRepository {
         return true;
       })
       .map((s: Staff) => ({ ...s }));
+  }
+
+  async getTreatmentPicStaffCandidates(): Promise<TreatmentPicStaffCandidate[]> {
+    return db.staff
+      .filter((item: Staff) =>
+        item.active
+        && item.employmentStatus === EmploymentStatus.ACTIVE
+        && (item.position === StaffPosition.ASSISTANT || item.position === StaffPosition.BRANCH_ADMIN)
+      )
+      .map((item: Staff) => ({
+        id: item.id,
+        fullName: item.fullName,
+        position: item.position,
+        employmentStatus: item.employmentStatus,
+        active: item.active,
+        branchId: item.branchId || null
+      }));
   }
 
   async getStaffById(id: string): Promise<Staff | null> {

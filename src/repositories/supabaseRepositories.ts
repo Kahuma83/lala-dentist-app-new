@@ -87,6 +87,7 @@ import {
   ChartOfAccount,
   JournalEntry,
   Staff,
+  TreatmentPicStaffCandidate,
   Attendance,
   DoctorSchedule,
   DoctorBranchAssignment,
@@ -7686,6 +7687,20 @@ export class SupabaseStaffRepository implements StaffRepository {
     const { data, error } = await q;
     if (error) return handleSupabaseReadError("staff", error, []);
     return (data || []).map(this.mapStaffFromDb);
+  }
+
+  async getTreatmentPicStaffCandidates(): Promise<TreatmentPicStaffCandidate[]> {
+    ensureSupabaseConnected();
+    const { data, error } = await supabase.rpc("get_treatment_pic_staff_candidates");
+    if (error) throw new Error(`Gagal memuat kandidat PIC tindakan: ${error.message}`);
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      fullName: row.full_name,
+      position: row.staff_position,
+      employmentStatus: row.employment_status,
+      active: row.active,
+      branchId: row.branch_id
+    }));
   }
 
   async getStaffById(id: string): Promise<Staff | null> {

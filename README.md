@@ -10,6 +10,8 @@ Project Production saat ini belum memiliki tabel riwayat migration aplikasi `sup
 
 Untuk memperbaiki daftar PIC shift pada akun Dokter, terapkan `supabase/manual-migrations/20270310000000_doctors_read_treatment_shifts.sql` melalui SQL Editor setelah mencadangkan database. Migration ini hanya memberi Dokter akses baca jadwal pada cabang yang dapat dikelolanya; verifikasi kebijakan RLS sebelum deploy frontend terkait.
 
+Sebelum deploy fitur daftar kandidat PIC untuk Dokter, terapkan `supabase/manual-migrations/20270311000000_doctors_read_treatment_pic_candidates.sql`. RPC ini hanya mengembalikan nama, jabatan, status, dan ID staf aktif yang berada di cabang kelolaan Dokter atau ditugaskan ke shift cabang tersebut; RPC tidak membuka akses baca langsung ke seluruh tabel `staff`.
+
 Laporan uang keriting Owner mencakup semua cabang. Admin Cabang hanya dapat melihat dan mencatat saldo awal, setoran, serta pengeluaran untuk cabang yang menjadi kewenangannya; akses ini tetap divalidasi oleh fungsi database.
 
 Sebelum merge migration ke `main`, tambahkan secrets berikut di **GitHub → Settings → Secrets and variables → Actions → New repository secret**:

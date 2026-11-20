@@ -370,6 +370,15 @@ export interface Staff {
   updatedAt: string;
 }
 
+export interface TreatmentPicStaffCandidate {
+  id: string;
+  fullName: string;
+  position: StaffPosition;
+  employmentStatus: EmploymentStatus;
+  active: boolean;
+  branchId?: string | null;
+}
+
 export interface DoctorBranchAssignment {
   id: string;
   doctorId: string;
