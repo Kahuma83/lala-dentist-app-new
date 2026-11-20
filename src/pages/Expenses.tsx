@@ -9,7 +9,9 @@ import {
   ChartOfAccount,
   JournalEntry,
   DentalBranch,
-  UserRole
+  UserRole,
+  ExpenseCashSource,
+  PaymentMethod
 } from "../types/domain";
 import {
   ArrowDownRight,
@@ -39,6 +41,16 @@ import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { OwnerDailyCashReport } from "../components/OwnerDailyCashReport";
 import { formatShortAccountingReference } from "../utils/accountingDisplay";
 import { isBranchMatch } from "../utils/branchUtils";
+
+const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
+  { value: PaymentMethod.CASH, label: "Tunai (Cash)" },
+  { value: PaymentMethod.QRIS, label: "QRIS" },
+  { value: PaymentMethod.OTHER, label: "EDC / Lainnya" },
+  { value: PaymentMethod.TRANSFER, label: "Transfer" }
+];
+
+const getPaymentMethodLabel = (method?: PaymentMethod | null) =>
+  PAYMENT_METHOD_OPTIONS.find((option) => option.value === method)?.label;
 
 export const Expenses: React.FC = () => {
   const {
@@ -71,11 +83,17 @@ export const Expenses: React.FC = () => {
   // Modals
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedExpenseJournal, setSelectedExpenseJournal] = useState<JournalEntry | null>(null);
-  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false);
+  const [isCorrectionModalOpen, setIsCorrectionModalOpen] = useState(false);
   const [expenseToDelete, setExpenseToDelete] = useState<JournalEntry | null>(null);
   const [isDeletingExpense, setIsDeletingExpense] = useState(false);
-  const [reversalReason, setReversalReason] = useState("");
-  const [reversalDate, setReversalDate] = useState(new Date().toISOString().slice(0, 10));
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionDate, setCorrectionDate] = useState("");
+  const [correctionExpenseAccountId, setCorrectionExpenseAccountId] = useState("");
+  const [correctionPaymentAccountId, setCorrectionPaymentAccountId] = useState("");
+  const [correctionPaymentMethod, setCorrectionPaymentMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
+  const [correctionCashSource, setCorrectionCashSource] = useState<ExpenseCashSource>("DAILY_CASH");
+  const [correctionAmount, setCorrectionAmount] = useState<number>(0);
+  const [correctionDescription, setCorrectionDescription] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -90,7 +108,8 @@ export const Expenses: React.FC = () => {
   );
   const [formExpenseAccountId, setFormExpenseAccountId] = useState<string>("");
   const [formPaymentAccountId, setFormPaymentAccountId] = useState<string>("");
-  const [cashExpenseSource, setCashExpenseSource] = useState<"DAILY_CASH" | "KERITING">("DAILY_CASH");
+  const [formPaymentMethod, setFormPaymentMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
+  const [cashExpenseSource, setCashExpenseSource] = useState<ExpenseCashSource>("DAILY_CASH");
   const [formAmount, setFormAmount] = useState<number>(0);
   const [formDescription, setFormDescription] = useState<string>("");
   const [formRefNumber, setFormRefNumber] = useState<string>("");
@@ -126,7 +145,22 @@ export const Expenses: React.FC = () => {
         a.isActive
     );
   }, [accounts]);
-  const selectedPaymentAccount = paymentAccounts.find((account) => account.id === formPaymentAccountId);
+  const formPaymentAccounts = useMemo(
+    () => paymentAccounts.filter((account) =>
+      account.accountCategory === (formPaymentMethod === PaymentMethod.CASH ? AccountCategory.CASH : AccountCategory.BANK)
+    ),
+    [paymentAccounts, formPaymentMethod]
+  );
+  const correctionPaymentAccounts = useMemo(
+    () => paymentAccounts.filter((account) =>
+      account.accountCategory === (correctionPaymentMethod === PaymentMethod.CASH ? AccountCategory.CASH : AccountCategory.BANK)
+    ),
+    [paymentAccounts, correctionPaymentMethod]
+  );
+  const selectedPaymentAccount = formPaymentAccounts.find((account) => account.id === formPaymentAccountId);
+  const selectedCorrectionPaymentAccount = correctionPaymentAccounts.find(
+    (account) => account.id === correctionPaymentAccountId
+  );
 
   // Set default accounts when form opens
   useEffect(() => {
@@ -135,12 +169,25 @@ export const Expenses: React.FC = () => {
       const defaultExp = expenseAccounts.find((a) => a.code === "5040") || expenseAccounts[0];
       setFormExpenseAccountId(defaultExp.id);
     }
-    if (paymentAccounts.length > 0 && !formPaymentAccountId) {
-      // Default to Kas (1000) or Bank BCA (1010)
-      const defaultPay = paymentAccounts.find((a) => a.code === "1000") || paymentAccounts[0];
+    if (
+      formPaymentAccounts.length > 0 &&
+      !formPaymentAccounts.some((account) => account.id === formPaymentAccountId)
+    ) {
+      // Default to Kas (1000) or the first active bank/settlement account.
+      const defaultPay = formPaymentAccounts.find((a) => formPaymentMethod === PaymentMethod.CASH && a.code === "1000")
+        || formPaymentAccounts[0];
       setFormPaymentAccountId(defaultPay.id);
     }
-  }, [expenseAccounts, paymentAccounts, formExpenseAccountId, formPaymentAccountId]);
+  }, [expenseAccounts, formPaymentAccounts, formPaymentMethod, formExpenseAccountId, formPaymentAccountId]);
+
+  useEffect(() => {
+    if (
+      correctionPaymentAccounts.length > 0 &&
+      !correctionPaymentAccounts.some((account) => account.id === correctionPaymentAccountId)
+    ) {
+      setCorrectionPaymentAccountId(correctionPaymentAccounts[0].id);
+    }
+  }, [correctionPaymentAccounts, correctionPaymentAccountId]);
 
   // Sync Branch ID for Branch Admin
   useEffect(() => {
@@ -270,6 +317,7 @@ export const Expenses: React.FC = () => {
           branchId: activeBranch,
           expenseAccountId: formExpenseAccountId,
           paymentAccountId: formPaymentAccountId,
+          paymentMethod: formPaymentMethod,
           cashSource: selectedPaymentAccount?.accountCategory === AccountCategory.CASH
             ? cashExpenseSource
             : undefined,
@@ -296,41 +344,99 @@ export const Expenses: React.FC = () => {
     }
   };
 
-  const handleOpenReversalModal = (journal: JournalEntry) => {
-    setSelectedExpenseJournal(journal);
-    setReversalReason("");
-    setReversalDate(new Date().toISOString().slice(0, 10));
+  const handleOpenCorrectionModal = async (journal: JournalEntry) => {
     setActionError(null);
-    setIsReversalModalOpen(true);
+    try {
+      const fullJournal = await accountingRepo.getJournalById(
+        journal.id,
+        currentUser?.role,
+        currentUser?.role === UserRole.BRANCH_ADMIN
+          ? currentUser.assignedBranchId || currentUser.branchId
+          : null
+      );
+      if (!fullJournal) throw new Error("Detail jurnal tidak ditemukan.");
+      const expenseLines = fullJournal.lines.filter((line) =>
+        line.debit > 0 &&
+        accounts.find((account) => account.id === line.accountId)?.accountType === AccountType.EXPENSE
+      );
+      const paymentLines = fullJournal.lines.filter((line) => {
+        const account = accounts.find((item) => item.id === line.accountId);
+        return line.credit > 0 &&
+          account?.accountType === AccountType.ASSET &&
+          [AccountCategory.CASH, AccountCategory.BANK].includes(account.accountCategory);
+      });
+      if (expenseLines.length !== 1 || paymentLines.length !== 1) {
+        throw new Error("Jurnal ini tidak memiliki satu akun beban dan satu akun pembayaran. Koreksi melalui Jurnal Umum.");
+      }
+
+      const expenseLine = expenseLines[0];
+      const paymentAccount = accounts.find((account) => account.id === paymentLines[0].accountId);
+      if (!paymentAccount) throw new Error("Akun pembayaran jurnal asal tidak ditemukan.");
+      const paymentMethod = fullJournal.paymentMethod || (
+        paymentAccount.accountCategory === AccountCategory.CASH
+          ? PaymentMethod.CASH
+          : PaymentMethod.TRANSFER
+      );
+      setSelectedExpenseJournal(fullJournal);
+      setCorrectionReason("");
+      setCorrectionDate(fullJournal.journalDate);
+      setCorrectionExpenseAccountId(expenseLine.accountId);
+      setCorrectionPaymentMethod(paymentMethod);
+      setCorrectionPaymentAccountId(paymentLines[0].accountId);
+      setCorrectionCashSource(fullJournal.cashSource || "DAILY_CASH");
+      setCorrectionAmount(expenseLine.debit);
+      setCorrectionDescription(expenseLine.description || fullJournal.description);
+      setIsCorrectionModalOpen(true);
+    } catch (error: unknown) {
+      setActionError(error instanceof Error ? error.message : "Gagal memuat detail jurnal untuk koreksi.");
+    }
   };
 
-  const handleReverseExpense = async (e: React.FormEvent) => {
+  const handleCorrectExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedExpenseJournal) return;
-    if (reversalReason.trim().length < 5) {
+    if (correctionReason.trim().length < 5) {
       setActionError("Alasan koreksi minimal 5 karakter.");
+      return;
+    }
+    if (!Number.isSafeInteger(correctionAmount) || correctionAmount <= 0) {
+      setActionError("Nominal koreksi harus berupa rupiah bulat lebih besar dari 0.");
       return;
     }
 
     setIsSubmitting(true);
     setActionError(null);
     try {
-      const reversal = await accountingRepo.reversePostedJournal(
-        selectedExpenseJournal.id,
-        reversalReason.trim(),
-        reversalDate,
-        currentUser?.name || "Admin",
+      const result = await accountingPostingService.correctPostedExpense(
+        {
+          journalId: selectedExpenseJournal.id,
+          correctionDate,
+          reason: correctionReason.trim(),
+          expenseAccountId: correctionExpenseAccountId,
+          paymentAccountId: correctionPaymentAccountId,
+          paymentMethod: correctionPaymentMethod,
+          cashSource: selectedCorrectionPaymentAccount?.accountCategory === AccountCategory.CASH
+            ? correctionCashSource
+            : undefined,
+          amount: correctionAmount,
+          description: correctionDescription.trim()
+        },
         currentUser?.role,
-        currentUser?.role === UserRole.BRANCH_ADMIN ? (currentUser.assignedBranchId || currentUser.branchId) : null
+        currentUser?.role === UserRole.BRANCH_ADMIN
+          ? currentUser.assignedBranchId || currentUser.branchId
+          : null,
+        currentUser?.name || "Admin",
       );
 
       await refreshData();
       refreshCashReport();
-      setIsReversalModalOpen(false);
+      setIsCorrectionModalOpen(false);
       setSelectedExpenseJournal(null);
-      setSuccessMessage(`Jurnal pembalik ${formatShortAccountingReference(reversal.journalNumber)} berhasil diposting. Jurnal asal tetap tersimpan sebagai jejak audit.`);
-    } catch (err: any) {
-      setActionError(err.message || "Gagal membatalkan transaksi pengeluaran");
+      setSuccessMessage(
+        `Koreksi berhasil. Pembalik ${formatShortAccountingReference(result.reversal.journalNumber)} dan pengganti ${formatShortAccountingReference(result.replacement.journalNumber)} telah diposting.`
+      );
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Gagal mengoreksi transaksi pengeluaran.");
     } finally {
       setIsSubmitting(false);
     }
@@ -587,6 +693,10 @@ export const Expenses: React.FC = () => {
                   const isVoid = j.status === JournalStatus.VOID;
                   const reversal = journals.find((entry) => entry.reversalOfJournalId === j.id);
                   const isReversed = Boolean(reversal);
+                  const correctedEntry = journals.find((entry) => entry.correctsJournalId === j.id);
+                  const correctedJournal = j.correctsJournalId
+                    ? journals.find((entry) => entry.id === j.correctsJournalId)
+                    : null;
 
                   return (
                     <tr
@@ -627,6 +737,22 @@ export const Expenses: React.FC = () => {
                             Dibalik oleh <span title={reversal.journalNumber}>{formatShortAccountingReference(reversal.journalNumber)}</span>: {reversal.reversalReason}
                           </div>
                         )}
+                        {correctedEntry && (
+                          <div className="text-[10px] text-amber-700 mt-0.5">
+                            Diganti oleh <span title={correctedEntry.journalNumber}>{formatShortAccountingReference(correctedEntry.journalNumber)}</span>: {correctedEntry.correctionReason}
+                          </div>
+                        )}
+                        {j.correctsJournalId && (
+                          <div className="text-[10px] text-indigo-700 mt-0.5">
+                            Jurnal pengganti untuk{" "}
+                            <span title={correctedJournal?.journalNumber || j.correctsJournalId}>
+                              {correctedJournal
+                                ? formatShortAccountingReference(correctedJournal.journalNumber)
+                                : formatShortAccountingReference(j.correctsJournalId)}
+                            </span>
+                            {j.correctionReason ? `: ${j.correctionReason}` : ""}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 text-[11px]">
                         {debitLine && (
@@ -640,6 +766,16 @@ export const Expenses: React.FC = () => {
                             <span className="text-blue-700 font-bold">{isSuper ? "CR:" : "Sumber:"}</span>{" "}
                             {getAccountName(creditLine.accountId)}
                           </div>
+                        )}
+                        {j.paymentMethod && (
+                          <span className="mt-1 inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
+                            {getPaymentMethodLabel(j.paymentMethod)}
+                          </span>
+                        )}
+                        {j.cashSource === "CENTRAL" && (
+                          <span className="mt-1 inline-flex rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                            Dana Pusat
+                          </span>
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-right font-bold font-mono text-sm">
@@ -679,9 +815,9 @@ export const Expenses: React.FC = () => {
                           {j.status === JournalStatus.POSTED && !isReversed && !j.sourceId?.startsWith("RECURRING_SETTLEMENT:") && (
                             <button
                               type="button"
-                              onClick={() => handleOpenReversalModal(j)}
+                              onClick={() => void handleOpenCorrectionModal(j)}
                               className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 rounded transition-colors"
-                              title="Buat jurnal pembalik dan pertahankan jurnal asal"
+                              title="Buat jurnal pembalik dan jurnal pengganti"
                             >
                               <RotateCcw className="w-3 h-3" />
                               Koreksi
@@ -802,7 +938,27 @@ export const Expenses: React.FC = () => {
               {/* Dibayar Menggunakan */}
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                  Dibayar Menggunakan *
+                  Cara Pembayaran *
+                </label>
+                <select
+                  value={formPaymentMethod}
+                  onChange={(event) => {
+                    setFormPaymentMethod(event.target.value as PaymentMethod);
+                    setFormPaymentAccountId("");
+                    setCashExpenseSource("DAILY_CASH");
+                  }}
+                  required
+                  className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                >
+                  {PAYMENT_METHOD_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Akun Pembayar *
                 </label>
                 <select
                   value={formPaymentAccountId}
@@ -813,32 +969,38 @@ export const Expenses: React.FC = () => {
                   required
                   className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-500"
                 >
-                  {paymentAccounts.map((a) => (
+                  {formPaymentAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}
                     </option>
                   ))}
                 </select>
                 <span className="text-[10px] text-slate-400 mt-0.5 block">
-                  Pilih uang tunai atau rekening yang digunakan untuk membayar.
+                  Pilih akun kas, bank, atau settlement yang benar-benar digunakan membayar.
                 </span>
               </div>
 
-              {selectedPaymentAccount?.accountCategory === AccountCategory.CASH && (
+              {formPaymentMethod === PaymentMethod.CASH &&
+                selectedPaymentAccount?.accountCategory === AccountCategory.CASH && (
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
                     Sumber Kas *
                   </label>
                   <select
                     value={cashExpenseSource}
-                    onChange={(e) => setCashExpenseSource(e.target.value as "DAILY_CASH" | "KERITING")}
+                    onChange={(e) => setCashExpenseSource(e.target.value as ExpenseCashSource)}
                     className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-500"
                   >
                     <option value="DAILY_CASH">Kas harian</option>
                     <option value="KERITING">Uang keriting</option>
+                    <option value="CENTRAL">Dana Pusat (setoran klinik dikelola Owner)</option>
                   </select>
                   <span className="text-[10px] text-slate-400 mt-0.5 block">
-                    Pengeluaran dari uang keriting mengurangi saldo pecahan yang terkumpul.
+                    {cashExpenseSource === "KERITING"
+                      ? "Pengeluaran dari uang keriting mengurangi saldo pecahan yang terkumpul."
+                      : cashExpenseSource === "CENTRAL"
+                      ? "Pilih akun Kas Pusat sebagai akun pembayaran. Pengeluaran ini tidak mengurangi kas harian cabang."
+                      : "Pengeluaran ini mengurangi kas harian cabang."}
                   </span>
                 </div>
               )}
@@ -910,18 +1072,18 @@ export const Expenses: React.FC = () => {
         </div>
       )}
 
-      {/* Modal: Reverse Posted Expense */}
-      {isReversalModalOpen && selectedExpenseJournal && (
+      {/* Modal: Correct Posted Expense */}
+      {isCorrectionModalOpen && selectedExpenseJournal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-md w-full p-6">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="text-base font-bold text-amber-800 flex items-center gap-2">
                 <RotateCcw className="w-5 h-5 text-rose-600" />
-                Koreksi dengan Jurnal Pembalik
+                Koreksi Jurnal Pengeluaran
               </h3>
               <button
                 type="button"
-                onClick={() => setIsReversalModalOpen(false)}
+                onClick={() => setIsCorrectionModalOpen(false)}
                 className="text-slate-400 hover:text-slate-600"
                 aria-label="Tutup koreksi jurnal"
               >
@@ -929,14 +1091,14 @@ export const Expenses: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={(event) => void handleReverseExpense(event)} className="space-y-4 mt-4 text-xs">
+            <form onSubmit={(event) => void handleCorrectExpense(event)} className="space-y-4 mt-4 text-xs">
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 space-y-1">
                 <div className="font-bold flex items-center gap-1">
                   <AlertCircle className="w-4 h-4 text-amber-600" />
-                  Jurnal asal tidak akan dihapus
+                  Jurnal asal dipertahankan sebagai jejak audit
                 </div>
                 <p className="text-[11px]">
-                  Sistem membuat jurnal baru dengan debit dan kredit terbalik, lalu mem-postingnya. Jurnal asal tetap tersimpan. Untuk memperbaiki kategori, catat ulang pengeluaran dengan kategori yang benar setelah pembalikan.
+                  Dalam satu proses, sistem mem-posting jurnal pembalik dan jurnal pengganti. Periksa kembali akun, nominal, sumber dana, serta tanggal efektif sebelum melanjutkan.
                 </p>
               </div>
 
@@ -959,19 +1121,123 @@ export const Expenses: React.FC = () => {
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
-                  Tanggal Jurnal Pembalik *
+                  Tanggal Efektif Koreksi *
                 </label>
                 <input
                   type="date"
-                  value={reversalDate}
-                  min={selectedExpenseJournal.journalDate}
-                  onChange={(event) => setReversalDate(event.target.value)}
+                  value={correctionDate}
+                  disabled
                   required
                   className="w-full border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
                 <p className="text-[10px] text-slate-500 mt-1">
-                  Koreksi akan memengaruhi laporan pada tanggal ini.
+                  Tanggal mengikuti jurnal asal agar saldo kas pada periode tersebut dihitung ulang dengan benar.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Jenis Pengeluaran *
+                </label>
+                <select
+                  value={correctionExpenseAccountId}
+                  onChange={(event) => setCorrectionExpenseAccountId(event.target.value)}
+                  required
+                  className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  {expenseAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>{account.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Cara Pembayaran *
+                </label>
+                <select
+                  value={correctionPaymentMethod}
+                  onChange={(event) => {
+                    setCorrectionPaymentMethod(event.target.value as PaymentMethod);
+                    setCorrectionPaymentAccountId("");
+                    setCorrectionCashSource("DAILY_CASH");
+                  }}
+                  required
+                  className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  {PAYMENT_METHOD_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Akun Pembayar *
+                </label>
+                <select
+                  value={correctionPaymentAccountId}
+                  onChange={(event) => {
+                    setCorrectionPaymentAccountId(event.target.value);
+                    setCorrectionCashSource("DAILY_CASH");
+                  }}
+                  required
+                  className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  {correctionPaymentAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>{account.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {correctionPaymentMethod === PaymentMethod.CASH &&
+                selectedCorrectionPaymentAccount?.accountCategory === AccountCategory.CASH && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                    Sumber Kas *
+                  </label>
+                  <select
+                    value={correctionCashSource}
+                    onChange={(event) => setCorrectionCashSource(event.target.value as ExpenseCashSource)}
+                    className="w-full border border-slate-200 rounded-lg p-2 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="DAILY_CASH">Kas harian cabang</option>
+                    <option value="KERITING">Uang keriting</option>
+                    <option value="CENTRAL">Dana Pusat (setoran klinik dikelola Owner)</option>
+                  </select>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Untuk Dana Pusat, pilih akun Kas Pusat yang terpisah dari kas cabang.
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Jumlah yang benar (Rp) *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={correctionAmount || ""}
+                  onChange={(event) => setCorrectionAmount(Number.parseInt(event.target.value, 10) || 0)}
+                  required
+                  className="w-full border border-slate-200 rounded-lg p-2 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">
+                  Keterangan yang benar *
+                </label>
+                <textarea
+                  rows={2}
+                  value={correctionDescription}
+                  onChange={(event) => setCorrectionDescription(event.target.value)}
+                  maxLength={500}
+                  required
+                  className="w-full border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
               </div>
 
               <div>
@@ -979,12 +1245,12 @@ export const Expenses: React.FC = () => {
                   Alasan Koreksi (Wajib Diisi) *
                 </label>
                 <textarea
-                  rows={3}
-                  value={reversalReason}
-                  onChange={(e) => setReversalReason(e.target.value)}
+                  rows={2}
+                  value={correctionReason}
+                  onChange={(event) => setCorrectionReason(event.target.value)}
                   minLength={5}
                   maxLength={500}
-                  placeholder="Contoh: kategori pengeluaran pada jurnal asal keliru"
+                  placeholder="Contoh: belanja dibayar dari dana klinik yang dikelola owner, bukan kas harian cabang"
                   required
                   className="w-full border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
@@ -993,17 +1259,24 @@ export const Expenses: React.FC = () => {
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setIsReversalModalOpen(false)}
+                  onClick={() => setIsCorrectionModalOpen(false)}
                   className="px-4 py-2 border border-slate-200 rounded-lg font-semibold text-slate-600 hover:bg-slate-50"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || reversalReason.trim().length < 5}
+                  disabled={
+                    isSubmitting ||
+                    correctionReason.trim().length < 5 ||
+                    !Number.isSafeInteger(correctionAmount) ||
+                    correctionAmount <= 0 ||
+                    !correctionExpenseAccountId ||
+                    !correctionPaymentAccountId
+                  }
                   className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg font-semibold shadow-xs disabled:opacity-50"
                 >
-                  {isSubmitting ? "Membuat jurnal..." : "Buat Jurnal Pembalik"}
+                  {isSubmitting ? "Memproses koreksi..." : "Posting Pembalik + Pengganti"}
                 </button>
               </div>
             </form>

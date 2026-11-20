@@ -39,6 +39,8 @@ import {
   CreateAccountInput,
   UpdateAccountInput,
   CreateJournalInput,
+  CorrectPostedExpenseInput,
+  CorrectPostedExpenseResult,
   AttendanceFilter,
   CheckInInput,
   CheckOutInput,
@@ -8903,10 +8905,13 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: row.description,
       sourceType: row.source_type,
       sourceId: row.source_id,
+      paymentMethod: row.payment_method || null,
       cashSource: row.cash_source || null,
       event: row.event,
       reversalOfJournalId: row.reversal_of_journal_id,
       reversalReason: row.reversal_reason,
+      correctsJournalId: row.corrects_journal_id,
+      correctionReason: row.correction_reason,
       status: row.status,
       totalDebit: Number(row.total_debit || 0),
       totalCredit: Number(row.total_credit || 0),
@@ -8936,10 +8941,13 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: data.description,
       sourceType: data.source_type,
       sourceId: data.source_id,
+      paymentMethod: data.payment_method || null,
       cashSource: data.cash_source || null,
       event: data.event,
       reversalOfJournalId: data.reversal_of_journal_id,
       reversalReason: data.reversal_reason,
+      correctsJournalId: data.corrects_journal_id,
+      correctionReason: data.correction_reason,
       status: data.status,
       lines: (lineRows || []).map((line: any) => ({
         id: line.id,
@@ -8971,10 +8979,13 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: row.description,
       sourceType: row.source_type,
       sourceId: row.source_id,
+      paymentMethod: row.payment_method || null,
       cashSource: row.cash_source || null,
       event: row.event,
       reversalOfJournalId: row.reversal_of_journal_id,
       reversalReason: row.reversal_reason,
+      correctsJournalId: row.corrects_journal_id,
+      correctionReason: row.correction_reason,
       status: row.status,
       totalDebit: Number(row.total_debit || 0),
       totalCredit: Number(row.total_credit || 0),
@@ -9009,6 +9020,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: data.description,
       source_type: data.sourceType,
       source_id: data.sourceId,
+      ...(data.paymentMethod !== undefined ? { payment_method: data.paymentMethod } : {}),
       ...(data.cashSource !== undefined ? { cash_source: data.cashSource } : {}),
       event: data.event || null,
       status: "DRAFT",
@@ -9078,6 +9090,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: inserted.description,
       sourceType: inserted.source_type,
       sourceId: inserted.source_id,
+      paymentMethod: inserted.payment_method || null,
       cashSource: inserted.cash_source || null,
       event: inserted.event,
       status: inserted.status,
@@ -9105,6 +9118,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: updated.description,
       sourceType: updated.source_type,
       sourceId: updated.source_id,
+      paymentMethod: updated.payment_method || null,
       cashSource: updated.cash_source || null,
       status: updated.status,
       lines: [],
@@ -9132,6 +9146,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: data.description,
       sourceType: data.source_type,
       sourceId: data.source_id,
+      paymentMethod: data.payment_method || null,
       cashSource: data.cash_source || null,
       event: data.event,
       status: data.status,
@@ -9189,6 +9204,51 @@ export class SupabaseAccountingRepository implements AccountingRepository {
     }
     return reversal;
   }
+  async correctPostedExpense(
+    input: CorrectPostedExpenseInput,
+    correctedBy: string,
+    _currentUserRole?: UserRole,
+    _userBranchId?: string | null
+  ): Promise<CorrectPostedExpenseResult> {
+    ensureSupabaseConnected();
+    const { data, error } = await supabase.rpc("correct_posted_expense", {
+      p_journal_id: input.journalId,
+      p_correction_date: input.correctionDate,
+      p_reason: input.reason.trim(),
+      p_expense_account_id: input.expenseAccountId,
+      p_payment_account_id: input.paymentAccountId,
+      p_payment_method: input.paymentMethod,
+      p_cash_source: input.cashSource || null,
+      p_amount: input.amount,
+      p_description: input.description.trim(),
+      p_corrected_by: correctedBy.trim()
+    });
+    if (error) {
+      if (error.code === "PGRST202") {
+        throw new Error(
+          "Fitur koreksi jurnal belum tersedia di server. Terapkan migration 20270307000000_central_funds_expense_correction.sql, lalu muat ulang halaman."
+        );
+      }
+      throw new Error(`Gagal mengoreksi jurnal pengeluaran: ${error.message}`);
+    }
+
+    const rawResult: unknown = Array.isArray(data) ? data[0] : data;
+    if (!rawResult || typeof rawResult !== "object") {
+      throw new Error("Server tidak mengembalikan jurnal pembalik dan pengganti yang valid.");
+    }
+    const result = rawResult as Record<string, unknown>;
+    if (typeof result.reversal_id !== "string" || typeof result.replacement_id !== "string") {
+      throw new Error("Server tidak mengembalikan jurnal pembalik dan pengganti yang valid.");
+    }
+    const [reversal, replacement] = await Promise.all([
+      this.getJournalById(result.reversal_id),
+      this.getJournalById(result.replacement_id)
+    ]);
+    if (!reversal || !replacement) {
+      throw new Error("Koreksi berhasil diposting, tetapi detail jurnal belum termuat. Muat ulang jurnal sebelum mencoba lagi.");
+    }
+    return { reversal, replacement };
+  }
   async deleteDraftJournal(id: string): Promise<boolean> {
     ensureSupabaseConnected();
     const { error: lineError } = await supabase.from("journal_lines").delete().eq("journal_entry_id", id);
@@ -9231,6 +9291,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: row.description,
       sourceType: row.source_type,
       sourceId: row.source_id,
+      paymentMethod: row.payment_method || null,
       cashSource: row.cash_source || null,
       status: row.status,
       totalDebit: Number(row.total_debit || 0),
@@ -9257,6 +9318,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       description: row.description,
       sourceType: row.source_type,
       sourceId: row.source_id,
+      paymentMethod: row.payment_method || null,
       cashSource: row.cash_source || null,
       status: row.status,
       totalDebit: Number(row.total_debit || 0),
