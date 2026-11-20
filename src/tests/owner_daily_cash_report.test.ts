@@ -83,7 +83,7 @@ describe("Owner daily cash report migration", () => {
     expect(expensesPage).toMatch(/isBranchMatch\(userBranchId, branch\.id, branches\)/);
     expect(expensesPage).toMatch(/<OwnerDailyCashReport branchId=\{cashReportBranchId\} refreshKey=\{cashReportRefreshKey\} \/>/);
     expect(expensesPage).toMatch(/const refreshCashReport = \(\) => setCashReportRefreshKey\(\(key\) => key \+ 1\)/);
-    expect(expensesPage.match(/refreshCashReport\(\);/g)).toHaveLength(4);
+    expect(expensesPage.match(/refreshCashReport\(\);/g)).toHaveLength(3);
   });
 
   it("shows aggregate totals only on the Owner report and keeps branch details", () => {

@@ -1083,6 +1083,8 @@ export interface JournalLine {
   description?: string;
 }
 
+export type ExpenseCashSource = "DAILY_CASH" | "KERITING" | "CENTRAL";
+
 export interface JournalEntry {
   id: string;
   journalNumber: string; // Unique, e.g. "JRN-GEB-20260921-0001"
@@ -1091,7 +1093,8 @@ export interface JournalEntry {
   description: string;
   sourceType: JournalSourceType;
   sourceId?: string | null;
-  cashSource?: "DAILY_CASH" | "KERITING" | null;
+  paymentMethod?: PaymentMethod | null;
+  cashSource?: ExpenseCashSource | null;
   status: JournalStatus;
   totalDebit: number; // Sum of debits (integer rupiah)
   totalCredit: number; // Sum of credits (integer rupiah)
@@ -1105,6 +1108,8 @@ export interface JournalEntry {
   voidReason?: string | null;
   reversalOfJournalId?: string | null;
   reversalReason?: string | null;
+  correctsJournalId?: string | null;
+  correctionReason?: string | null;
   updatedAt?: string;
   event?: "ACCRUAL" | "PAYMENT";
 }

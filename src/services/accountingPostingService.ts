@@ -6,7 +6,9 @@ import {
   PayrollRepository,
   TreatmentRepository,
   DoctorRepository,
-  StaffRepository
+  StaffRepository,
+  CorrectPostedExpenseInput,
+  CorrectPostedExpenseResult
 } from "../repositories/interfaces";
 import {
   MockAccountingRepository,
@@ -20,6 +22,7 @@ import {
 } from "../repositories/mockRepositories";
 import {
   ChartOfAccount,
+  ExpenseCashSource,
   JournalEntry,
   JournalSourceType,
   JournalStatus,
@@ -1139,7 +1142,8 @@ export class AccountingPostingService {
       branchId: string;
       expenseAccountId: string;
       paymentAccountId: string;
-      cashSource?: "DAILY_CASH" | "KERITING";
+      paymentMethod?: PaymentMethod;
+      cashSource?: ExpenseCashSource;
       amount: number;
       date: string;
       description: string;
@@ -1176,8 +1180,22 @@ export class AccountingPostingService {
     if (paymentAccount.accountType !== AccountType.ASSET) {
       throw new Error("Akun pembayaran harus bertipe ASSET (Kas / Bank)");
     }
-    if (input.cashSource === "KERITING" && paymentAccount.accountCategory !== AccountCategory.CASH) {
-      throw new Error("Pengeluaran uang keriting harus dibayar dari akun kas tunai.");
+    if (
+      (input.cashSource === "KERITING" || input.cashSource === "CENTRAL") &&
+      paymentAccount.accountCategory !== AccountCategory.CASH
+    ) {
+      throw new Error("Sumber dana tunai harus dibayar dari akun kas tunai.");
+    }
+    const paymentMethod = input.paymentMethod || (
+      paymentAccount.accountCategory === AccountCategory.CASH
+        ? PaymentMethod.CASH
+        : PaymentMethod.TRANSFER
+    );
+    if (paymentMethod === PaymentMethod.CASH && paymentAccount.accountCategory !== AccountCategory.CASH) {
+      throw new Error("Metode tunai harus menggunakan akun kas.");
+    }
+    if (paymentMethod !== PaymentMethod.CASH && paymentAccount.accountCategory !== AccountCategory.BANK) {
+      throw new Error("Metode QRIS, EDC, dan transfer harus menggunakan akun bank/settlement.");
     }
 
     const expenseId = input.referenceNumber || `EXP-${Date.now()}`;
@@ -1192,6 +1210,7 @@ export class AccountingPostingService {
         description: journalDesc,
         sourceType: JournalSourceType.EXPENSE,
         sourceId: expenseId,
+        paymentMethod,
         ...(paymentAccount.accountCategory === AccountCategory.CASH
           ? { cashSource: input.cashSource || "DAILY_CASH" }
           : {}),
@@ -1226,6 +1245,90 @@ export class AccountingPostingService {
     );
 
     return postedJournal;
+  }
+
+  async correctPostedExpense(
+    input: CorrectPostedExpenseInput,
+    currentUserRole: UserRole = UserRole.SUPER_ADMIN,
+    userBranchId: string | null = null,
+    correctedBy: string = "Staff Admin"
+  ): Promise<CorrectPostedExpenseResult> {
+    const reason = input.reason.trim();
+    const description = input.description.trim();
+    if (reason.length < 5 || reason.length > 500) {
+      throw new Error("Alasan koreksi wajib diisi 5 sampai 500 karakter.");
+    }
+    if (!Number.isSafeInteger(input.amount) || input.amount <= 0) {
+      throw new Error("Nominal pengeluaran harus berupa rupiah bulat lebih besar dari 0.");
+    }
+    if (!description || description.length > 500) {
+      throw new Error("Keterangan pengeluaran wajib diisi maksimal 500 karakter.");
+    }
+
+    const original = await this.accountingRepo.getJournalById(
+      input.journalId,
+      currentUserRole,
+      userBranchId
+    );
+    if (!original) throw new Error("Jurnal asal tidak ditemukan.");
+    if (currentUserRole === UserRole.BRANCH_ADMIN && (!userBranchId || original.branchId !== userBranchId)) {
+      throw new Error("Akses ditolak: jurnal berada di luar cabang yang dapat diakses.");
+    }
+    if (original.sourceType !== JournalSourceType.EXPENSE || original.status !== JournalStatus.POSTED) {
+      throw new Error("Hanya jurnal pengeluaran POSTED yang dapat dikoreksi melalui alur ini.");
+    }
+    if (original.sourceId?.startsWith("RECURRING_SETTLEMENT:")) {
+      throw new Error("Pembayaran penyisihan berulang harus dikoreksi melalui alur rencana akrual.");
+    }
+    if (input.correctionDate !== original.journalDate) {
+      throw new Error("Tanggal jurnal pembalik dan pengganti harus sama dengan tanggal jurnal asal.");
+    }
+
+    const expenseAccount = await this.accountingRepo.getAccountById(input.expenseAccountId);
+    if (!expenseAccount?.isActive || expenseAccount.accountType !== AccountType.EXPENSE) {
+      throw new Error("Akun beban/pengeluaran tidak valid atau nonaktif.");
+    }
+    const paymentAccount = await this.accountingRepo.getAccountById(input.paymentAccountId);
+    if (
+      !paymentAccount?.isActive ||
+      paymentAccount.accountType !== AccountType.ASSET ||
+      ![AccountCategory.CASH, AccountCategory.BANK].includes(paymentAccount.accountCategory)
+    ) {
+      throw new Error("Akun pembayaran harus berupa akun kas atau bank yang aktif.");
+    }
+    if (input.paymentMethod === PaymentMethod.CASH && paymentAccount.accountCategory !== AccountCategory.CASH) {
+      throw new Error("Metode tunai harus menggunakan akun kas.");
+    }
+    if (input.paymentMethod !== PaymentMethod.CASH && paymentAccount.accountCategory !== AccountCategory.BANK) {
+      throw new Error("Metode QRIS, EDC, dan transfer harus menggunakan akun bank/settlement.");
+    }
+    if (
+      input.cashSource &&
+      paymentAccount.accountCategory !== AccountCategory.CASH
+    ) {
+      throw new Error("Sumber kas hanya dapat dipilih untuk akun kas tunai.");
+    }
+    if (
+      (input.cashSource === "KERITING" || input.cashSource === "CENTRAL") &&
+      paymentAccount.accountCategory !== AccountCategory.CASH
+    ) {
+      throw new Error("Sumber dana ini harus dibayar dari akun kas tunai.");
+    }
+
+    return this.accountingRepo.correctPostedExpense(
+      {
+        ...input,
+        reason,
+        description,
+        paymentMethod: input.paymentMethod,
+        cashSource: paymentAccount.accountCategory === AccountCategory.CASH
+          ? input.cashSource || "DAILY_CASH"
+          : null
+      },
+      correctedBy,
+      currentUserRole,
+      userBranchId
+    );
   }
 
   async postRecurringExpenseSettlement(

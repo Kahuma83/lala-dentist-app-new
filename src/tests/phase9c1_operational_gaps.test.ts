@@ -17,7 +17,8 @@ import {
   JournalSourceType,
   AccountType,
   AccountCategory,
-  StaffPosition
+  StaffPosition,
+  PaymentMethod
 } from "../types/domain";
 
 describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
@@ -222,6 +223,56 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
       })).rejects.toThrow("harus dibayar dari akun kas tunai");
     });
 
+    it("tracks central-fund cash expenses separately from branch daily cash", async () => {
+      const accounts = await accountingRepo.getAccounts();
+      const expenseAcc = accounts.find((account) => account.code === "5040")!;
+      const cashAcc = accounts.find((account) => account.code === "1000")!;
+
+      const centralExpense = await postingService.postBranchExpense({
+        branchId: "branch-gebang",
+        expenseAccountId: expenseAcc.id,
+        paymentAccountId: cashAcc.id,
+        paymentMethod: PaymentMethod.CASH,
+        cashSource: "CENTRAL",
+        amount: 125000,
+        date: "2026-09-22",
+        description: "Belanja dibayar dari dana klinik di owner"
+      });
+
+      expect(centralExpense.cashSource).toBe("CENTRAL");
+      expect(centralExpense.totalDebit).toBe(125000);
+      expect(centralExpense.totalCredit).toBe(125000);
+    });
+
+    it("records QRIS expenses against a bank/settlement account", async () => {
+      const accounts = await accountingRepo.getAccounts();
+      const expenseAcc = accounts.find((account) => account.code === "5040")!;
+      const cashAcc = accounts.find((account) => account.code === "1000")!;
+      const bankAcc = accounts.find((account) => account.accountCategory === AccountCategory.BANK)!;
+
+      const qrisExpense = await postingService.postBranchExpense({
+        branchId: "branch-gebang",
+        expenseAccountId: expenseAcc.id,
+        paymentAccountId: bankAcc.id,
+        paymentMethod: PaymentMethod.QRIS,
+        amount: 80000,
+        date: "2026-09-22",
+        description: "Belanja dibayar dengan QRIS"
+      });
+
+      expect(qrisExpense.paymentMethod).toBe(PaymentMethod.QRIS);
+      expect(qrisExpense.cashSource).toBeNull();
+      await expect(postingService.postBranchExpense({
+        branchId: "branch-gebang",
+        expenseAccountId: expenseAcc.id,
+        paymentAccountId: cashAcc.id,
+        paymentMethod: PaymentMethod.QRIS,
+        amount: 80000,
+        date: "2026-09-22",
+        description: "QRIS tidak boleh memakai akun kas"
+      })).rejects.toThrow(/akun bank\/settlement/i);
+    });
+
     it("should reject posting when a non-expense account is passed for debit", async () => {
       const accounts = await accountingRepo.getAccounts();
       const revenueAcc = accounts.find((a) => a.accountType === AccountType.REVENUE)!;
@@ -369,6 +420,85 @@ describe("Phase 9C.1 Operational Gaps & Financial Completeness Tests", () => {
         "branch-gebang"
       )).rejects.toThrow(/sudah memiliki jurnal pembalik/i);
       expect((await accountingRepo.getJournalById(original.id))?.status).toBe(JournalStatus.POSTED);
+    });
+
+    it("atomically reverses a posted expense and posts its corrected replacement", async () => {
+      const accounts = await accountingRepo.getAccounts();
+      const expenseAcc = accounts.find((account) => account.code === "5040")!;
+      const cashAcc = accounts.find((account) => account.code === "1000")!;
+      const original = await postingService.postBranchExpense(
+        {
+          branchId: "branch-gebang",
+          expenseAccountId: expenseAcc.id,
+          paymentAccountId: cashAcc.id,
+          cashSource: "DAILY_CASH",
+          amount: 300000,
+          date: "2026-09-22",
+          description: "Belanja salah sumber dana"
+        },
+        UserRole.BRANCH_ADMIN,
+        "branch-gebang",
+        "Admin Gebang"
+      );
+
+      const result = await postingService.correctPostedExpense(
+        {
+          journalId: original.id,
+          correctionDate: "2026-09-22",
+          reason: "Dibayar dari dana klinik pusat",
+          expenseAccountId: expenseAcc.id,
+          paymentAccountId: cashAcc.id,
+          paymentMethod: PaymentMethod.CASH,
+          cashSource: "CENTRAL",
+          amount: 300000,
+          description: "Belanja dari dana pusat"
+        },
+        UserRole.BRANCH_ADMIN,
+        "branch-gebang",
+        "Admin Gebang"
+      );
+
+      expect(original.status).toBe(JournalStatus.POSTED);
+      expect(result.reversal.reversalOfJournalId).toBe(original.id);
+      expect(result.reversal.totalDebit).toBe(original.totalCredit);
+      expect(result.replacement.status).toBe(JournalStatus.POSTED);
+      expect(result.replacement.correctsJournalId).toBe(original.id);
+      expect(result.replacement.correctionReason).toBe("Dibayar dari dana klinik pusat");
+      expect(result.replacement.cashSource).toBe("CENTRAL");
+      expect(result.replacement.totalDebit).toBe(300000);
+      expect(result.replacement.totalCredit).toBe(300000);
+      await expect(postingService.correctPostedExpense(
+        {
+          journalId: original.id,
+          correctionDate: "2026-09-23",
+          reason: "Tanggal tidak sama dengan jurnal",
+          expenseAccountId: expenseAcc.id,
+          paymentAccountId: cashAcc.id,
+          paymentMethod: PaymentMethod.CASH,
+          cashSource: "CENTRAL",
+          amount: 300000,
+          description: "Tanggal koreksi tidak valid"
+        },
+        UserRole.BRANCH_ADMIN,
+        "branch-gebang",
+        "Admin Gebang"
+      )).rejects.toThrow(/harus sama dengan tanggal jurnal asal/i);
+      await expect(postingService.correctPostedExpense(
+        {
+          journalId: original.id,
+          correctionDate: "2026-09-22",
+          reason: "Koreksi kedua",
+          expenseAccountId: expenseAcc.id,
+          paymentAccountId: cashAcc.id,
+          paymentMethod: PaymentMethod.CASH,
+          cashSource: "CENTRAL",
+          amount: 300000,
+          description: "Koreksi ganda"
+        },
+        UserRole.BRANCH_ADMIN,
+        "branch-gebang",
+        "Admin Gebang"
+      )).rejects.toThrow(/sudah memiliki jurnal pembalik/i);
     });
   });
 });

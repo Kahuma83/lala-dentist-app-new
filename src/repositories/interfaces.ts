@@ -53,6 +53,7 @@ import {
   ChartOfAccount,
   JournalLine,
   JournalEntry,
+  ExpenseCashSource,
   RecurringExpensePlan,
   RecurringExpenseType,
   GeneralLedgerEntry,
@@ -1145,7 +1146,8 @@ export interface CreateJournalInput {
   description: string;
   sourceType: JournalSourceType;
   sourceId?: string | null;
-  cashSource?: "DAILY_CASH" | "KERITING" | null;
+  paymentMethod?: PaymentMethod | null;
+  cashSource?: ExpenseCashSource | null;
   lines: CreateJournalLineInput[];
   event?: "ACCRUAL" | "PAYMENT";
 }
@@ -1167,6 +1169,23 @@ export interface JournalFilter {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
+}
+
+export interface CorrectPostedExpenseInput {
+  journalId: string;
+  correctionDate: string;
+  reason: string;
+  expenseAccountId: string;
+  paymentAccountId: string;
+  paymentMethod: PaymentMethod;
+  cashSource?: ExpenseCashSource | null;
+  amount: number;
+  description: string;
+}
+
+export interface CorrectPostedExpenseResult {
+  reversal: JournalEntry;
+  replacement: JournalEntry;
 }
 
 export interface LedgerQuery {
@@ -1272,6 +1291,12 @@ export interface AccountingRepository {
     currentUserRole?: UserRole,
     userBranchId?: string | null
   ): Promise<JournalEntry>;
+  correctPostedExpense(
+    input: CorrectPostedExpenseInput,
+    correctedBy: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<CorrectPostedExpenseResult>;
   deleteDraftJournal(
     id: string,
     currentUserRole?: UserRole,

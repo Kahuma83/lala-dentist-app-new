@@ -30,6 +30,8 @@ import {
   CreateJournalInput,
   UpdateJournalInput,
   JournalFilter,
+  CorrectPostedExpenseInput,
+  CorrectPostedExpenseResult,
   LedgerQuery,
   AccountBalanceResult,
   DuplicateCheckResult,
@@ -7141,6 +7143,7 @@ export class MockAccountingRepository implements AccountingRepository {
       description: data.description || "Jurnal Manual",
       sourceType: data.sourceType || JournalSourceType.MANUAL,
       sourceId: data.sourceId || null,
+      paymentMethod: data.paymentMethod || null,
       cashSource: data.cashSource || null,
       status: JournalStatus.DRAFT,
       totalDebit,
@@ -7375,12 +7378,153 @@ export class MockAccountingRepository implements AccountingRepository {
       postedBy: reversedBy,
       reversalOfJournalId: original.id,
       reversalReason: reason.trim(),
+      paymentMethod: original.paymentMethod || null,
       cashSource: original.cashSource || null,
       updatedAt: now
     };
     (db.journals || []).push(reversal);
     db.saveToStorage();
     return JSON.parse(JSON.stringify(reversal));
+  }
+
+  async correctPostedExpense(
+    input: CorrectPostedExpenseInput,
+    correctedBy: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null
+  ): Promise<CorrectPostedExpenseResult> {
+    const original = (db.journals || []).find((journal: JournalEntry) => journal.id === input.journalId);
+    if (!original) throw new Error("Jurnal asal tidak ditemukan.");
+    if (currentUserRole !== UserRole.SUPER_ADMIN && currentUserRole !== UserRole.BRANCH_ADMIN) {
+      throw new Error("Hanya Super Admin atau Admin Cabang yang dapat mengoreksi jurnal.");
+    }
+    if (currentUserRole === UserRole.BRANCH_ADMIN && (!userBranchId || original.branchId !== userBranchId)) {
+      throw new Error("Akses ditolak: jurnal berada di luar cabang yang dapat diakses.");
+    }
+    if (original.status !== JournalStatus.POSTED || original.sourceType !== JournalSourceType.EXPENSE) {
+      throw new Error("Hanya jurnal pengeluaran POSTED yang dapat dikoreksi melalui alur ini.");
+    }
+    if (original.sourceId?.startsWith("RECURRING_SETTLEMENT:")) {
+      throw new Error("Pembayaran penyisihan berulang harus dikoreksi melalui alur rencana akrual.");
+    }
+    if (input.correctionDate !== original.journalDate) {
+      throw new Error("Tanggal jurnal pembalik dan pengganti harus sama dengan tanggal jurnal asal.");
+    }
+    const reason = input.reason.trim();
+    const description = input.description.trim();
+    if (reason.length < 5 || reason.length > 500) {
+      throw new Error("Alasan koreksi wajib diisi 5 sampai 500 karakter.");
+    }
+    if (!description || description.length > 500) {
+      throw new Error("Keterangan pengeluaran wajib diisi maksimal 500 karakter.");
+    }
+    if (!Number.isSafeInteger(input.amount) || input.amount <= 0) {
+      throw new Error("Nominal pengeluaran harus berupa rupiah bulat lebih besar dari 0.");
+    }
+    if (original.lines.length < 2) throw new Error("Baris jurnal asal tidak ditemukan.");
+    if ((db.journals || []).some((journal: JournalEntry) => journal.reversalOfJournalId === original.id)) {
+      throw new Error("Jurnal ini sudah memiliki jurnal pembalik.");
+    }
+
+    const expenseAccount = (db.accounts || []).find((account: ChartOfAccount) =>
+      account.id === input.expenseAccountId && account.isActive && account.accountType === AccountType.EXPENSE
+    );
+    if (!expenseAccount) throw new Error("Akun beban/pengeluaran tidak valid atau nonaktif.");
+    const paymentAccount = (db.accounts || []).find((account: ChartOfAccount) =>
+      account.id === input.paymentAccountId &&
+      account.isActive &&
+      account.accountType === AccountType.ASSET &&
+      [AccountCategory.CASH, AccountCategory.BANK].includes(account.accountCategory)
+    );
+    if (!paymentAccount) throw new Error("Akun pembayaran harus berupa akun kas atau bank yang aktif.");
+    if (input.cashSource && paymentAccount.accountCategory !== AccountCategory.CASH) {
+      throw new Error("Sumber kas hanya dapat dipilih untuk akun kas tunai.");
+    }
+
+    const now = AppClock.nowISO();
+    const reversalId = `journal-reversal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const correctionId = `journal-correction-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const reversalLines: JournalLine[] = original.lines.map((line, index) => ({
+      id: `${reversalId}-line-${index + 1}`,
+      journalEntryId: reversalId,
+      accountId: line.accountId,
+      branchId: original.branchId,
+      debit: line.credit,
+      credit: line.debit,
+      description: line.description ? `Pembalik: ${line.description}` : "Jurnal pembalik"
+    }));
+    const reversal: JournalEntry = {
+      id: reversalId,
+      journalNumber: generateJournalNumber(original.branchId, input.correctionDate),
+      journalDate: input.correctionDate,
+      branchId: original.branchId,
+      description: `Pembalik ${original.journalNumber}: ${reason}`,
+      sourceType: JournalSourceType.REVERSAL,
+      sourceId: original.id,
+      status: JournalStatus.POSTED,
+      totalDebit: original.totalCredit,
+      totalCredit: original.totalDebit,
+      lines: reversalLines,
+      createdBy: correctedBy,
+      createdAt: now,
+      postedAt: now,
+      postedBy: correctedBy,
+      reversalOfJournalId: original.id,
+      reversalReason: reason,
+      paymentMethod: original.paymentMethod || null,
+      cashSource: original.cashSource || null,
+      updatedAt: now
+    };
+    const replacement: JournalEntry = {
+      id: correctionId,
+      journalNumber: `${reversal.journalNumber}-KOR`,
+      journalDate: input.correctionDate,
+      branchId: original.branchId,
+      description: `Koreksi ${original.journalNumber}: Pengeluaran Cabang: ${description} [${expenseAccount.name}]`,
+      sourceType: JournalSourceType.EXPENSE,
+      sourceId: `EXP-CORR:${correctionId}`,
+      paymentMethod: input.paymentMethod,
+      cashSource: paymentAccount.accountCategory === AccountCategory.CASH
+        ? input.cashSource || "DAILY_CASH"
+        : null,
+      status: JournalStatus.POSTED,
+      totalDebit: input.amount,
+      totalCredit: input.amount,
+      lines: [
+        {
+          id: `${correctionId}-line-1`,
+          journalEntryId: correctionId,
+          accountId: expenseAccount.id,
+          debit: input.amount,
+          credit: 0,
+          branchId: original.branchId,
+          description
+        },
+        {
+          id: `${correctionId}-line-2`,
+          journalEntryId: correctionId,
+          accountId: paymentAccount.id,
+          debit: 0,
+          credit: input.amount,
+          branchId: original.branchId,
+          description: `Pembayaran via ${paymentAccount.name}`
+        }
+      ],
+      createdBy: correctedBy,
+      createdAt: now,
+      postedAt: now,
+      postedBy: correctedBy,
+      correctsJournalId: original.id,
+      correctionReason: reason,
+      updatedAt: now
+    };
+
+    (db.journals || []).push(reversal, replacement);
+    db.saveToStorage();
+    return {
+      reversal: JSON.parse(JSON.stringify(reversal)),
+      replacement: JSON.parse(JSON.stringify(replacement))
+    };
   }
 
   async deleteDraftJournal(
