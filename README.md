@@ -8,6 +8,8 @@ Workflow GitHub Actions `.github/workflows/deploy-supabase-migrations.yml` menja
 
 Project Production saat ini belum memiliki tabel riwayat migration aplikasi `supabase_migrations.schema_migrations`, dan beberapa file migration memiliki timestamp duplikat. Jangan jalankan `supabase db push` atau menambahkan migration ke `supabase/migrations/` sampai riwayat Production direkonsiliasi. Migration yang perlu diterapkan manual disimpan di `supabase/manual-migrations/`; cadangkan database, jalankan hanya SQL yang ditinjau melalui SQL Editor, lalu verifikasi skema sebelum deploy aplikasi.
 
+Untuk memperbaiki daftar PIC shift pada akun Dokter, terapkan `supabase/manual-migrations/20270310000000_doctors_read_treatment_shifts.sql` melalui SQL Editor setelah mencadangkan database. Migration ini hanya memberi Dokter akses baca jadwal pada cabang yang dapat dikelolanya; verifikasi kebijakan RLS sebelum deploy frontend terkait.
+
 Laporan uang keriting Owner mencakup semua cabang. Admin Cabang hanya dapat melihat dan mencatat saldo awal, setoran, serta pengeluaran untuk cabang yang menjadi kewenangannya; akses ini tetap divalidasi oleh fungsi database.
 
 Sebelum merge migration ke `main`, tambahkan secrets berikut di **GitHub → Settings → Secrets and variables → Actions → New repository secret**:

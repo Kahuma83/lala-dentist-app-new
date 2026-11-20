@@ -136,11 +136,17 @@ describe("visit assistant repository assignment", () => {
       createdAt: "",
       updatedAt: ""
     };
+    const otherAssistant: Staff = {
+      ...assistant,
+      id: "other-assistant-test",
+      employeeCode: "AS-OTHER",
+      fullName: "Other Assistant"
+    };
 
     try {
       database.visits = [visit];
       database.treatmentJobs = [createTreatment("treatment-test-1"), createTreatment("treatment-test-2")];
-      database.staff = [assistant];
+      database.staff = [assistant, otherAssistant];
       database.visitAssistantAssignments = [];
       const repository = new MockTreatmentRepository();
 
@@ -161,12 +167,55 @@ describe("visit assistant repository assignment", () => {
       );
       await expect(repository.assignAssistantToVisit(
         visit.id,
-        null,
+        otherAssistant.id,
         UserRole.DOCTOR,
         visit.branchId,
         "doctor-test"
       )).rejects.toThrow("sudah terkunci");
       expect(database.treatmentJobs[1].picAssistantId).toBe(assistant.id);
+    } finally {
+      database.visits = original.visits;
+      database.treatmentJobs = original.treatmentJobs;
+      database.staff = original.staff;
+      database.visitAssistantAssignments = original.assignments;
+    }
+  });
+
+  it("rejects an empty PIC before persisting a visit assignment", async () => {
+    const database = MockDatabase.getInstance();
+    const original = {
+      visits: database.visits,
+      treatmentJobs: database.treatmentJobs,
+      staff: database.staff,
+      assignments: database.visitAssistantAssignments
+    };
+    const visit: PatientVisit = {
+      id: "visit-empty-pic-assignment-test",
+      patientId: "patient-test",
+      branchId: "branch-1",
+      visitDateTime: "2027-02-12T03:00:00.000Z",
+      visitType: VisitType.BOOKING,
+      visitStatus: VisitStatus.WAITING,
+      bookingId: null,
+      createdAt: "2027-02-12T03:00:00.000Z",
+      updatedAt: "2027-02-12T03:00:00.000Z"
+    };
+
+    try {
+      database.visits = [visit];
+      database.treatmentJobs = [];
+      database.staff = [];
+      database.visitAssistantAssignments = [];
+      const repository = new MockTreatmentRepository();
+
+      await expect(repository.assignAssistantToVisit(
+        visit.id,
+        "",
+        UserRole.DOCTOR,
+        visit.branchId,
+        "doctor-test"
+      )).rejects.toThrow("PIC kunjungan wajib diisi");
+      expect(database.visitAssistantAssignments).toHaveLength(0);
     } finally {
       database.visits = original.visits;
       database.treatmentJobs = original.treatmentJobs;

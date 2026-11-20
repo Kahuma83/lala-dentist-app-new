@@ -42,7 +42,6 @@ export const resolveDefaultVisitAssistantId = ({
   scheduledDefaultStaffId?: string | null;
 }): string | null => {
   if (assignment?.assistantStaffId) return assignment.assistantStaffId;
-  if (assignment?.confirmedBy) return null;
   return treatmentAssistantId
     || queueAssistantId
     || scheduledDefaultStaffId
@@ -176,13 +175,9 @@ export const getVisitAssistantCandidates = ({
   const scheduledCandidates = candidates.filter((item) =>
     item.position === StaffPosition.ASSISTANT && item.isScheduledForBooking
   );
-  const scheduledPresent = scheduledCandidates.filter((item) => item.attendanceState === "PRESENT");
-  const scheduledWithoutAttendance = scheduledCandidates.filter((item) => item.attendanceState === "NOT_RECORDED");
-  const defaultCandidate = scheduledPresent.length === 1
-    ? scheduledPresent[0]
-    : scheduledPresent.length === 0 && scheduledWithoutAttendance.length === 1
-      ? scheduledWithoutAttendance[0]
-      : null;
+  const defaultCandidate = scheduledCandidates.length === 1
+    ? scheduledCandidates[0]
+    : null;
 
   return { candidates, defaultStaffId: defaultCandidate?.staffId || null };
 };

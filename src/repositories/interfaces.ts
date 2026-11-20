@@ -688,7 +688,7 @@ export interface TreatmentRepository {
   getAssistantAssignmentsForVisits(visitIds: string[]): Promise<Record<string, VisitAssistantAssignment>>;
   assignAssistantToVisit(
     visitId: string,
-    assistantStaffId: string | null,
+    assistantStaffId: string,
     currentUserRole?: UserRole,
     userBranchId?: string | null,
     currentUserId?: string | null

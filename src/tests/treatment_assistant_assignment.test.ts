@@ -93,11 +93,17 @@ describe("visit assistant assignment defaults", () => {
     })).toBe("scheduled-assistant");
   });
 
-  it("preserves an explicitly confirmed no-PIC choice", () => {
+  it("falls back to a queue claim when an old confirmed assignment has no PIC", () => {
     expect(resolveDefaultVisitAssistantId({
       assignment: { assistantStaffId: null, confirmedBy: "doctor-user" },
       queueAssistantId: "claimed-assistant",
       scheduledDefaultStaffId: "scheduled-assistant"
+    })).toBe("claimed-assistant");
+  });
+
+  it("returns no default when no PIC source is available", () => {
+    expect(resolveDefaultVisitAssistantId({
+      assignment: { assistantStaffId: null, confirmedBy: "doctor-user" }
     })).toBeNull();
   });
 
@@ -153,14 +159,14 @@ describe("visit assistant assignment defaults", () => {
     expect(result.defaultStaffId).toBe("morning-assistant");
   });
 
-  it("does not default an assistant who has already checked out", () => {
+  it("defaults the only scheduled assistant even when they have already checked out", () => {
     const result = getCandidates({
       assistants: [staff("morning-assistant")],
       assignments: [assignment("morning-assistant", "morning")],
       attendances: [attendance("morning-assistant", "16:30")]
     });
 
-    expect(result.defaultStaffId).toBeNull();
+    expect(result.defaultStaffId).toBe("morning-assistant");
     expect(result.candidates[0]?.attendanceState).toBe("NOT_PRESENT");
   });
 
@@ -214,6 +220,24 @@ describe("visit assistant assignment defaults", () => {
 
     expect(result.candidates.map((item) => item.staffId)).toContain("branch-admin");
     expect(result.defaultStaffId).toBeNull();
+  });
+
+  it("offers shifted assistants and branch admins but defaults only the assistant", () => {
+    const shiftedAssistant = staff("shifted-assistant", StaffPosition.ASSISTANT, "branch-2");
+    const shiftedAdmin = staff("shifted-admin", StaffPosition.BRANCH_ADMIN, "branch-2");
+    const result = getCandidates({
+      assistants: [shiftedAssistant, shiftedAdmin],
+      assignments: [
+        { ...assignment(shiftedAssistant.id, "morning"), branchId: "branch-1" },
+        { ...assignment(shiftedAdmin.id, "morning"), branchId: "branch-1" }
+      ]
+    });
+
+    expect(result.candidates.map((candidate) => candidate.staffId)).toEqual([
+      shiftedAdmin.id,
+      shiftedAssistant.id
+    ]);
+    expect(result.defaultStaffId).toBe(shiftedAssistant.id);
   });
 
   it("does not offer an inactive or unassigned admin from another branch", () => {

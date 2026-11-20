@@ -218,10 +218,17 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
 
   const handleSaveVisitAssistant = async () => {
     if (!assistantEdit || currentUser?.role !== UserRole.DOCTOR || startingTreatmentId || processingVisitId) return;
+    if (
+      !assistantEdit.selectedAssistantId
+      || !assistantEdit.candidates.some((candidate) => candidate.staffId === assistantEdit.selectedAssistantId)
+    ) {
+      setError("PIC wajib dipilih sebelum disimpan.");
+      return;
+    }
     setProcessingVisitId(assistantEdit.visitId);
     setError(null);
     try {
-      const selectedAssistantId = assistantEdit.selectedAssistantId || null;
+      const selectedAssistantId = assistantEdit.selectedAssistantId;
       await treatmentRepo.assignAssistantToVisit(
         assistantEdit.visitId,
         selectedAssistantId,
@@ -484,9 +491,13 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     }
   };
 
-  const handleStartTreatment = async (id: string) => {
+  const handleStartTreatment = async (id: string, assignedAssistantId?: string | null) => {
     const treatment = treatments.find((item) => item.id === id);
     if (!treatment || !canStartTreatment(treatment) || startingTreatmentId) return false;
+    if (!treatment.picAssistantId && !assignedAssistantId) {
+      setError("PIC wajib ditetapkan sebelum tindakan dapat dimulai.");
+      return false;
+    }
     setStartingTreatmentId(id);
     setError(null);
     try {
@@ -524,12 +535,38 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       treatment.status === TreatmentJobStatus.BELUM_DIMULAI
     );
     if (!pending.length || pending.some((treatment) => !canStartTreatment(treatment))) return;
+    let assistantStaffId = visitAssistantAssignments[visitId]?.assistantStaffId
+      || visitTreatments.find((treatment) => treatment.picAssistantId)?.picAssistantId
+      || null;
+    const doctorCanSetVisitPic = currentUser?.role === UserRole.DOCTOR && !startedTreatment;
+    if (doctorCanSetVisitPic) {
+      assistantStaffId = getDefaultAssistantId(visitId, visitTreatments);
+      if (!assistantStaffId) {
+        const { candidates } = getAssistantCandidatesForVisit(visitId, visitTreatments);
+        setAssistantEdit({
+          visitId,
+          selectedAssistantId: "",
+          candidates
+        });
+        setError(candidates.length
+          ? "Pilih PIC tindakan terlebih dahulu; sistem tidak menemukan satu default yang pasti."
+          : "PIC wajib ada, tetapi tidak ada Asisten/Admin Cabang yang dapat dipilih. Periksa data staf dan jadwal.");
+        return;
+      }
+    }
+    if (!assistantStaffId) {
+      setError("PIC wajib ditetapkan oleh Dokter sebelum tindakan dapat dimulai.");
+      return;
+    }
+    if (!doctorCanSetVisitPic && pending.some((treatment) => !treatment.picAssistantId)) {
+      setError("PIC belum tersimpan pada semua tindakan. Minta Dokter memperbarui PIC sebelum memulai.");
+      return;
+    }
     setProcessingVisitId(visitId);
     setError(null);
     let startedCount = 0;
     try {
-      if (currentUser?.role === UserRole.DOCTOR && !startedTreatment) {
-        const assistantStaffId = getDefaultAssistantId(visitId, visitTreatments);
+      if (doctorCanSetVisitPic) {
         await treatmentRepo.assignAssistantToVisit(
           visitId,
           assistantStaffId,
@@ -544,9 +581,14 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             confirmedBy: currentUser.id
           }
         }));
+        setTreatments((current) => current.map((treatment) =>
+          treatment.visitId === visitId && treatment.status !== TreatmentJobStatus.DIBATALKAN
+            ? { ...treatment, picAssistantId: assistantStaffId }
+            : treatment
+        ));
       }
       for (const treatment of pending) {
-        const started = await handleStartTreatment(treatment.id);
+        const started = await handleStartTreatment(treatment.id, assistantStaffId);
         if (!started) {
           setError(`Rencana baru dimulai sebagian (${startedCount} dari ${pending.length} tindakan). Periksa status tiap tindakan sebelum mencoba lagi.`);
           return;
@@ -1694,7 +1736,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                                         : current)}
                                       className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-800"
                                     >
-                                      <option value="">Tidak ada PIC</option>
+                                      <option value="" disabled>Pilih Asisten/PIC</option>
                                       {assistantEdit.candidates.map((candidate) => (
                                         <option key={candidate.staffId} value={candidate.staffId}>
                                           {candidate.fullName} · {candidate.position === StaffPosition.BRANCH_ADMIN ? "Admin Cabang" : "Asisten"}
@@ -1708,7 +1750,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                                     </select>
                                     <button
                                       type="button"
-                                      disabled={Boolean(processingVisitId || startingTreatmentId)}
+                                      disabled={Boolean(processingVisitId || startingTreatmentId || !assistantEdit.selectedAssistantId)}
                                       onClick={() => void handleSaveVisitAssistant()}
                                       className="rounded-md bg-teal-700 px-2 py-1 font-semibold text-white disabled:opacity-50"
                                     >
@@ -1741,7 +1783,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                               </div>
                               {currentUser?.role === UserRole.DOCTOR && !visitHasStarted && (
                                 <p className="mt-1 text-[10px] text-slate-400">
-                                  Default tersimpan otomatis saat tindakan dimulai.
+                                  PIC wajib dipilih sebelum tindakan dimulai.
                                 </p>
                               )}
                             </div>

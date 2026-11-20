@@ -1068,7 +1068,7 @@ export interface PayrollItem {
 export interface ChartOfAccount {
   id: string;
   code: string; // Unique, e.g. "1000"
-  name: string; // e.g. "Kas (Cash)"
+  name: string; // e.g. "Kas Tunai Cabang"
   accountType: AccountType;
   accountCategory: AccountCategory;
   normalBalance: NormalBalance;
