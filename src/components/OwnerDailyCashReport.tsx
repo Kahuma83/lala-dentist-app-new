@@ -220,42 +220,46 @@ export const OwnerDailyCashReport: React.FC<OwnerDailyCashReportProps> = ({ bran
         <div className="h-36 animate-pulse rounded-xl bg-slate-100" aria-label="Memuat rekap setoran harian" />
       ) : report ? (
         <>
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-            <CashMetric label="Total" value={report.totals.total} tone="text-slate-900" />
-            <CashMetric label="Total QR" value={report.totals.qris} tone="text-emerald-700" />
-            <CashMetric label="Total EDC" value={report.totals.edc} tone="text-violet-700" />
-            <CashMetric label="Total TF" value={report.totals.transfer} tone="text-blue-700" />
-            <CashMetric label="Pengeluaran kas harian" value={report.totals.expenses} tone="text-rose-700" />
-            <CashMetric label="Total Cash" value={report.totals.cash} tone="text-amber-700" />
-            <CashMetric label="Total yang harus dibawa" value={report.totals.amountToBring} tone="text-[#173d35]" prominent />
-            <CashMetric label="Uang keriting hari ini" value={report.totals.roundingToday} tone="text-[#927638]" />
-          </div>
+          {!branchId && (
+            <>
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                <CashMetric label="Total" value={report.totals.total} tone="text-slate-900" />
+                <CashMetric label="Total QR" value={report.totals.qris} tone="text-emerald-700" />
+                <CashMetric label="Total EDC" value={report.totals.edc} tone="text-violet-700" />
+                <CashMetric label="Total TF" value={report.totals.transfer} tone="text-blue-700" />
+                <CashMetric label="Pengeluaran kas harian" value={report.totals.expenses} tone="text-rose-700" />
+                <CashMetric label="Total Cash" value={report.totals.cash} tone="text-amber-700" />
+                <CashMetric label="Total yang harus dibawa" value={report.totals.amountToBring} tone="text-[#173d35]" prominent />
+                <CashMetric label="Uang keriting hari ini" value={report.totals.roundingToday} tone="text-[#927638]" />
+              </div>
 
-          {report.totals.cashShortfall > 0 && (
-            <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-800">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>
-                Pengeluaran kas harian melebihi uang cash yang diterima sebesar {formatMoney(report.totals.cashShortfall)}. Periksa transaksi cabang sebelum mencatat setoran.
-              </span>
-            </div>
+              {report.totals.cashShortfall > 0 && (
+                <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-800">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    Pengeluaran kas harian melebihi uang cash yang diterima sebesar {formatMoney(report.totals.cashShortfall)}. Periksa transaksi cabang sebelum mencatat setoran.
+                  </span>
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#e8dfc8] bg-[#fcfaf4] px-3.5 py-3">
+                <div className="flex items-center gap-2">
+                  <Wallet className="h-4 w-4 text-[#927638]" />
+                  <div>
+                    <p className="text-[11px] font-semibold text-slate-700">Saldo uang keriting terkumpul</p>
+                    <p className="text-sm font-bold text-[#173d35]">
+                      {report.totals.allBranchesConfigured ? formatMoney(report.totals.roundingBalance) : "Belum lengkap"}
+                    </p>
+                  </div>
+                </div>
+                {!report.totals.allBranchesConfigured && (
+                  <p className="text-[10px] text-amber-800">Saldo akumulasi belum lengkap untuk tanggal ini. Periksa saldo awal dan tanggal mulainya di setiap cabang.</p>
+                )}
+              </div>
+            </>
           )}
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#e8dfc8] bg-[#fcfaf4] px-3.5 py-3">
-            <div className="flex items-center gap-2">
-              <Wallet className="h-4 w-4 text-[#927638]" />
-              <div>
-                <p className="text-[11px] font-semibold text-slate-700">Saldo uang keriting terkumpul</p>
-                <p className="text-sm font-bold text-[#173d35]">
-                  {report.totals.allBranchesConfigured ? formatMoney(report.totals.roundingBalance) : "Belum lengkap"}
-                </p>
-              </div>
-            </div>
-            {!report.totals.allBranchesConfigured && (
-              <p className="text-[10px] text-amber-800">Saldo akumulasi belum lengkap untuk tanggal ini. Periksa saldo awal dan tanggal mulainya di setiap cabang.</p>
-            )}
-          </div>
-
-          <div className="mt-4 space-y-3">
+          <div className={`${branchId ? "" : "mt-4"} space-y-3`}>
             {report.branches.map((branch) => (
               <article key={branch.id} className="rounded-xl border border-slate-200 p-3.5">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
