@@ -431,6 +431,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     visit: visitRepo,
     queue: queueRepo,
     treatment: treatmentRepo,
+    lab: suite.lab,
     treatmentActivity: treatmentActivityRepo,
     invoice: invoiceRepo,
     payment: paymentRepo,

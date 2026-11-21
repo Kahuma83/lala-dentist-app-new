@@ -12,6 +12,8 @@ import {
   QueueItem,
   LiveQueueSnapshot,
   TreatmentJob,
+  LabOrder,
+  LabOrderPayment,
   TreatmentActivity,
   TreatmentActivityType,
   TreatmentIncentive,
@@ -3650,6 +3652,8 @@ export class MockDatabase {
   visits: PatientVisit[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_VISITS)) : [];
   queueItems: QueueItem[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_QUEUE_ITEMS)) : [];
   treatmentJobs: TreatmentJob[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_TREATMENT_JOBS)) : [];
+  labOrders: LabOrder[] = [];
+  labOrderPayments: LabOrderPayment[] = [];
   visitAssistantAssignments: { visitId: string; assistantStaffId: string | null; confirmedBy: string | null; confirmedAt: string }[] = [];
   treatmentActivities: TreatmentActivity[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_TREATMENT_ACTIVITIES)) : [];
   invoices: Invoice[] = useMockSeedData ? JSON.parse(JSON.stringify(MOCK_INVOICES)) : [];

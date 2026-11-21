@@ -19,6 +19,7 @@ import {
   VisitRepository,
   QueueRepository,
   TreatmentRepository,
+  LabRepository,
   TreatmentActivityRepository,
   InvoiceRepository,
   PaymentRepository,
@@ -47,6 +48,7 @@ import {
   MockVisitRepository,
   MockQueueRepository,
   MockTreatmentRepository,
+  MockLabRepository,
   MockTreatmentActivityRepository,
   MockInvoiceRepository,
   MockPaymentRepository,
@@ -75,6 +77,7 @@ import {
   SupabaseVisitRepository,
   SupabaseQueueRepository,
   SupabaseTreatmentRepository,
+  SupabaseLabRepository,
   SupabaseTreatmentActivityRepository,
   SupabaseInvoiceRepository,
   SupabasePaymentRepository,
@@ -103,6 +106,7 @@ export interface RepositoryContainer {
   visit: VisitRepository;
   queue: QueueRepository;
   treatment: TreatmentRepository;
+  lab: LabRepository;
   treatmentActivity: TreatmentActivityRepository;
   invoice: InvoiceRepository;
   payment: PaymentRepository;
@@ -164,6 +168,7 @@ export function createRepositorySuite(forceMock = false): RepositoryContainer {
       visit: new MockVisitRepository(),
       queue: new MockQueueRepository(),
       treatment: new MockTreatmentRepository(),
+      lab: new MockLabRepository(),
       treatmentActivity: new MockTreatmentActivityRepository(),
       invoice: new MockInvoiceRepository(),
       payment: new MockPaymentRepository(),
@@ -194,6 +199,7 @@ export function createRepositorySuite(forceMock = false): RepositoryContainer {
     visit: new SupabaseVisitRepository(),
     queue: new SupabaseQueueRepository(),
     treatment: new SupabaseTreatmentRepository(),
+    lab: new SupabaseLabRepository(),
     treatmentActivity: new SupabaseTreatmentActivityRepository(),
     invoice: new SupabaseInvoiceRepository(),
     payment: new SupabasePaymentRepository(),

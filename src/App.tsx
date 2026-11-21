@@ -16,6 +16,7 @@ import { Compensation } from "./pages/Compensation";
 import { StaffIncome } from "./pages/StaffIncome";
 import { Payroll } from "./pages/Payroll";
 import { Expenses } from "./pages/Expenses";
+import { LabManagement } from "./pages/LabManagement";
 import { Configuration } from "./pages/Configuration";
 import { Accounting } from "./pages/Accounting";
 import { PatientAnalytics } from "./pages/PatientAnalytics";
@@ -196,6 +197,8 @@ const AppContent: React.FC = () => {
       view = <Payments />;
     } else if (path === "/super-admin/expenses") {
       view = <Expenses />;
+    } else if (path === "/super-admin/lab") {
+      view = <LabManagement />;
     } else if (path === "/super-admin/compensation") {
       view = <Compensation />;
     } else if (path === "/super-admin/hr/income") {
@@ -256,6 +259,8 @@ const AppContent: React.FC = () => {
       view = <Payments />;
     } else if (path === "/branch-admin/expenses") {
       view = <Expenses />;
+    } else if (path === "/branch-admin/lab") {
+      view = <LabManagement />;
     } else if (path === "/branch-admin/accounting") {
       view = <Accounting />;
     } else if (path.startsWith("/branch-admin/hr")) {

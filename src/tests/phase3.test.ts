@@ -5,7 +5,8 @@ import {
   MockBranchRepository,
   MockBookingRepository,
   MockVisitRepository,
-  MockQueueRepository
+  MockQueueRepository,
+  MockTreatmentRepository
 } from "../repositories/mockRepositories";
 import {
   UserRole,
@@ -579,7 +580,89 @@ describe("Lala Dentist Web Admin - Phase 3 Live Queue & Scheduling Engine Tests"
     );
   });
 
-  it("19d. should not allow skipping a patient already in the treatment room", async () => {
+  it("19d. should free the doctor queue after a treatment enters MENUNGGU_LAB", async () => {
+    const visit1 = await visitRepo.createVisit({
+      patientId: "patient-1",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const visit2 = await visitRepo.createVisit({
+      patientId: "patient-2",
+      branchId: "branch-gebang",
+      visitType: VisitType.WALK_IN,
+      bookingId: null,
+      doctorId: "doc-syafira"
+    });
+    const item1 = await queueRepo.checkInVisitToQueue(visit1.id);
+    const item2 = await queueRepo.checkInVisitToQueue(visit2.id);
+    const now = AppClock.nowISO();
+    const treatmentId = "treatment-waiting-for-lab";
+    MockDatabase.getInstance().treatmentJobs.push({
+      id: treatmentId,
+      visitId: visit1.id,
+      patientId: visit1.patientId,
+      branchId: visit1.branchId,
+      doctorId: "doc-syafira",
+      serviceId: "service-gipal-insertion",
+      status: TreatmentJobStatus.DALAM_PROSES,
+      serviceNameSnapshot: "Gigi tiruan",
+      doctorNameSnapshot: "drg. Syafira",
+      startedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    MockDatabase.getInstance().labOrders.push({
+      id: "lab-order-waiting",
+      treatmentJobId: treatmentId,
+      branchId: "branch-gebang",
+      labName: "Lab Gigi",
+      status: "ORDERED",
+      createdAt: now,
+      updatedAt: now
+    });
+
+    await queueRepo.prepareQueuePatient(item1.id);
+    await queueRepo.startService(item1.id);
+    const treatmentRepo = new MockTreatmentRepository();
+    const waitingTreatment = await treatmentRepo.markTreatmentWaitingForLab(
+      treatmentId,
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira"
+    );
+
+    expect(waitingTreatment.status).toBe(TreatmentJobStatus.MENUNGGU_LAB);
+    expect(waitingTreatment.completedAt).toBeUndefined();
+    await expect(treatmentRepo.completeTreatmentJob(
+      treatmentId,
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira",
+      undefined,
+      { finalPriceSnapshot: 500000, patientApprovalConfirmed: true }
+    )).rejects.toThrow("nota lab");
+    await queueRepo.finishService(item1.id, UserRole.DOCTOR, "branch-gebang", "doc-syafira");
+    const nextPatient = await queueRepo.prepareQueuePatient(item2.id);
+    expect(nextPatient.status).toBe(QueueStatus.IN_PREPARATION);
+
+    const labOrder = MockDatabase.getInstance().labOrders[0];
+    labOrder.status = "RECEIVED";
+    labOrder.invoiceReceivedAt = now;
+    labOrder.invoiceAmount = 100000;
+    const completedTreatment = await treatmentRepo.completeTreatmentJob(
+      treatmentId,
+      UserRole.DOCTOR,
+      "branch-gebang",
+      "doc-syafira",
+      undefined,
+      { finalPriceSnapshot: 500000, patientApprovalConfirmed: true }
+    );
+    expect(completedTreatment.status).toBe(TreatmentJobStatus.SELESAI);
+  });
+
+  it("19e. should not allow skipping a patient already in the treatment room", async () => {
     const visit = await visitRepo.createVisit({
       patientId: "patient-1",
       branchId: "branch-gebang",

@@ -6,6 +6,7 @@ import { supabase } from "../lib/supabase";
 import {
   TreatmentJob,
   TreatmentJobStatus,
+  LabOrder,
   TreatmentActivity,
   TreatmentActivityType,
   UserRole,
@@ -83,6 +84,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const plannedTariffRequestId = useRef(0);
 
   const [treatments, setTreatments] = useState<TreatmentJob[]>([]);
+  const [labOrders, setLabOrders] = useState<LabOrder[]>([]);
   const [visits, setVisits] = useState<PatientVisit[]>([]);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [doctorsList, setDoctorsList] = useState<DentalDoctor[]>([]);
@@ -145,6 +147,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const [submittingRevision, setSubmittingRevision] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [completingTreatment, setCompletingTreatment] = useState(false);
+  const [treatmentAwaitingLab, setTreatmentAwaitingLab] = useState<TreatmentJob | null>(null);
   const [approvedRecipeMaterials, setApprovedRecipeMaterials] = useState<InventoryRecipeLine[] | null>(null);
   const canManageTreatment = currentUser?.role === UserRole.DOCTOR
     || currentUser?.role === UserRole.DOCTOR_ASSISTANT;
@@ -172,6 +175,21 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     canFinalizeTreatment(treatment)
     || (Boolean(treatment.externalDoctorId)
       && (currentUser?.role === UserRole.DOCTOR_ASSISTANT || currentUser?.role === UserRole.SUPER_ADMIN));
+  const hasReceivedLabInvoice = (treatment: TreatmentJob) => labOrders.some((order) =>
+    order.treatmentJobId === treatment.id
+    && order.status === "RECEIVED"
+    && Boolean(order.invoiceReceivedAt)
+    && Number.isSafeInteger(order.invoiceAmount)
+    && Number(order.invoiceAmount) > 0
+  );
+  const canCompleteNow = (treatment: TreatmentJob) =>
+    treatment.status === TreatmentJobStatus.DALAM_PROSES
+    || (treatment.status === TreatmentJobStatus.MENUNGGU_LAB && hasReceivedLabInvoice(treatment));
+  const closesVisitForQueue = (treatment: TreatmentJob) =>
+    treatment.status === TreatmentJobStatus.SELESAI
+    || treatment.status === TreatmentJobStatus.DISERAHKAN
+    || treatment.status === TreatmentJobStatus.MENUNGGU_LAB
+    || treatment.status === TreatmentJobStatus.DIBATALKAN;
   const canReviseTreatment = (treatment: TreatmentJob) =>
     treatment.status === TreatmentJobStatus.PERLU_REVISI && canFinalizeTreatment(treatment);
 
@@ -311,12 +329,17 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       if (externalDoctorResult.error) {
         throw new Error(`Gagal memuat dokter eksternal: ${externalDoctorResult.error.message}`);
       }
+      const labOrderList = currentUser.role === UserRole.BRANCH_ADMIN
+        || currentUser.role === UserRole.DOCTOR_ASSISTANT
+        ? await repos.lab.getLabOrders(branchId)
+        : await repos.lab.getLabOrders();
       const vList = currentUser.role === UserRole.DOCTOR
         ? await visitRepo.getVisitsByIds([...new Set([
             ...queueList.map((item) => item.visitId),
             ...trList
               .filter((treatment) =>
-                treatment.status === TreatmentJobStatus.PERLU_REVISI
+                (treatment.status === TreatmentJobStatus.PERLU_REVISI
+                  || treatment.status === TreatmentJobStatus.MENUNGGU_LAB)
                 && !treatment.externalDoctorId
                 && (treatment.assignedDoctorId || treatment.doctorId) === currentUser.doctorId
               )
@@ -332,6 +355,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       );
 
       setDoctorsList(docList);
+      setLabOrders(labOrderList);
       setTreatmentPicStaff(picStaffList);
       setExternalDoctors(externalDoctorResult.data || []);
       setTreatments(trList);
@@ -647,11 +671,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       setCancellationNotPerformedConfirmed(false);
 
       const visitTreatments = await treatmentRepo.getTreatmentsByVisit(cancelledTreatment.visitId);
-      const allPlansClosed = visitTreatments.every((item) =>
-        item.status === TreatmentJobStatus.SELESAI
-        || item.status === TreatmentJobStatus.DISERAHKAN
-        || item.status === TreatmentJobStatus.DIBATALKAN
-      );
+      const allPlansClosed = visitTreatments.every(closesVisitForQueue);
       if (allPlansClosed) {
         const freshQueueItems = await repos.queue.getQueueByBranch(
           cancelledTreatment.branchId,
@@ -693,11 +713,105 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     }
   };
 
+  const handleMarkTreatmentWaitingForLab = async (treatment: TreatmentJob) => {
+    if (
+      !currentUser
+      || treatment.status !== TreatmentJobStatus.DALAM_PROSES
+      || !canCompleteTreatment(treatment)
+      || submitting
+    ) return;
+    if (!queueItems.some((item) =>
+      item.visitId === treatment.visitId && item.status === "IN_CONSULTATION"
+    )) {
+      setError("Tindakan hanya dapat ditandai Menunggu Lab saat kunjungan ini sedang berlangsung di ruang konsultasi.");
+      setTreatmentAwaitingLab(null);
+      return;
+    }
+    if (!labOrders.some((order) =>
+      order.treatmentJobId === treatment.id && order.status !== "CANCELLED"
+    )) {
+      setError("Admin Cabang harus membuat order lab aktif untuk tindakan ini terlebih dahulu.");
+      setTreatmentAwaitingLab(null);
+      return;
+    }
+    setSubmitting(true);
+    setTreatmentAwaitingLab(null);
+    setError(null);
+    let statusSaved = false;
+    try {
+      const waitingTreatment = await treatmentRepo.markTreatmentWaitingForLab(
+        treatment.id,
+        currentUser.role,
+        currentUser.assignedBranchId,
+        currentUser.role === UserRole.DOCTOR ? currentUser.doctorId : currentUser.id,
+        {
+          actorId: currentUser.id,
+          actorRole: currentUser.role,
+          actorNameSnapshot: currentUser.name || "Petugas Klinik",
+          notes: "Sesi klinis selesai; tindakan menunggu hasil laboratorium."
+        }
+      );
+      statusSaved = true;
+      setTreatments((current) => current.map((item) =>
+        item.id === waitingTreatment.id ? waitingTreatment : item
+      ));
+      setSelectedTreatment(waitingTreatment);
+
+      const visitTreatments = await treatmentRepo.getTreatmentsByVisit(waitingTreatment.visitId);
+      const allPlansClosed = visitTreatments.every(closesVisitForQueue);
+      if (allPlansClosed) {
+        const freshQueueItems = await repos.queue.getQueueByBranch(
+          waitingTreatment.branchId,
+          currentUser.role,
+          currentUser.assignedBranchId
+        );
+        const visitQueue = freshQueueItems.find((item) =>
+          item.visitId === waitingTreatment.visitId
+        );
+        if (visitQueue?.status === "IN_CONSULTATION") {
+          await repos.queue.finishService(
+            visitQueue.id,
+            currentUser.role,
+            currentUser.assignedBranchId,
+            currentUser.id
+          );
+        } else if (visitQueue?.status !== "COMPLETED") {
+          throw new Error("Status Menunggu Lab tersimpan, tetapi antrean kunjungan aktif tidak ditemukan.");
+        }
+      }
+
+      const message = allPlansClosed
+        ? "Sesi ditutup dan tindakan menunggu lab. Dokter dapat memanggil pasien berikutnya; tindakan ini belum dapat ditagihkan."
+        : "Tindakan menunggu lab. Selesaikan tindakan lain pada kunjungan ini sebelum memanggil pasien berikutnya.";
+      setSuccessMsg(message);
+      await loadData();
+      if (allPlansClosed) onVisitFinished?.(message);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Gagal menandai tindakan menunggu lab.";
+      setError(statusSaved
+        ? `${message} Status Menunggu Lab sudah tersimpan; periksa atau akhiri antrean kunjungan.`
+        : message);
+      if (statusSaved) await loadData();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleCompleteTreatment = async (
     treatment: TreatmentJob,
     finalPriceSnapshot?: number
   ): Promise<boolean> => {
-    if (!canCompleteTreatment(treatment) || completingTreatment) return false;
+    if (!canCompleteTreatment(treatment) || !canCompleteNow(treatment) || completingTreatment) return false;
+    const completingLabWait = treatment.status === TreatmentJobStatus.MENUNGGU_LAB;
+    if (completingLabWait && !queueItems.some((item) =>
+      item.patientId === treatment.patientId
+      && item.branchId === treatment.branchId
+      && item.doctorId === (treatment.assignedDoctorId || treatment.doctorId)
+      && item.status === "IN_CONSULTATION"
+    )) {
+      setError("Panggil pasien kembali dan mulai konsultasi sebelum menuntaskan tindakan yang menunggu lab.");
+      return false;
+    }
     setCompletingTreatment(true);
     setError(null);
     let treatmentCompleted = false;
@@ -778,29 +892,55 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
         accrualError = err.message || "Gagal mencatat akrual kompensasi.";
       }
       const visitTreatments = await treatmentRepo.getTreatmentsByVisit(completedTreatment.visitId);
-      const unfinishedTreatments = visitTreatments.filter((treatment) =>
-        treatment.status !== TreatmentJobStatus.SELESAI
-        && treatment.status !== TreatmentJobStatus.DISERAHKAN
-        && treatment.status !== TreatmentJobStatus.DIBATALKAN
+      let unfinishedTreatments = visitTreatments.filter((item) => !closesVisitForQueue(item));
+      const activeVisitQueue = queueItems.find((item) =>
+        item.status === "IN_CONSULTATION"
+        && (item.visitId === completedTreatment.visitId
+          || (completingLabWait
+            && item.patientId === completedTreatment.patientId
+            && item.branchId === completedTreatment.branchId
+            && item.doctorId === (completedTreatment.assignedDoctorId || completedTreatment.doctorId)))
       );
-      if (unfinishedTreatments.length === 0) {
-        const activeVisitQueue = queueItems.find((item) =>
-          item.visitId === completedTreatment.visitId
-          && item.status === "IN_CONSULTATION"
+      if (activeVisitQueue) {
+        const currentVisitTreatments = activeVisitQueue.visitId === completedTreatment.visitId
+          ? visitTreatments
+          : await treatmentRepo.getTreatmentsByVisit(activeVisitQueue.visitId);
+        const unfinishedInVisit = currentVisitTreatments.filter((item) => !closesVisitForQueue(item));
+        const queueDoctorId = activeVisitQueue.doctorId
+          || completedTreatment.assignedDoctorId
+          || completedTreatment.doctorId;
+        const readyLabTreatments = treatments.filter((item) =>
+          item.id !== completedTreatment.id
+          && item.patientId === activeVisitQueue.patientId
+          && item.branchId === activeVisitQueue.branchId
+          && item.status === TreatmentJobStatus.MENUNGGU_LAB
+          && (item.assignedDoctorId || item.doctorId) === queueDoctorId
+          && canCompleteTreatment(item)
+          && hasReceivedLabInvoice(item)
         );
-        if (activeVisitQueue) {
+        unfinishedTreatments = [
+          ...unfinishedInVisit,
+          ...readyLabTreatments.filter((item) =>
+            !unfinishedInVisit.some((unfinished) => unfinished.id === item.id)
+          )
+        ];
+        if (unfinishedTreatments.length === 0) {
           await repos.queue.finishService(
             activeVisitQueue.id,
             currentUser?.role,
             currentUser?.assignedBranchId,
             currentUser?.id
           );
-        } else if (!queueItems.some((item) =>
-          item.visitId === completedTreatment.visitId
-          && item.status === "COMPLETED"
-        )) {
-          throw new Error("Antrean aktif untuk kunjungan ini tidak ditemukan.");
         }
+      } else if (completingLabWait) {
+        throw new Error("Tindakan selesai, tetapi antrean aktif pasien yang kembali tidak ditemukan.");
+      } else if (
+        unfinishedTreatments.length === 0
+        && !queueItems.some((item) =>
+          item.visitId === completedTreatment.visitId && item.status === "COMPLETED"
+        )
+      ) {
+        throw new Error("Antrean aktif untuk kunjungan ini tidak ditemukan.");
       }
       const shortageWarning = stockShortages.length
         ? ` Peringatan: stok resep kurang — ${stockShortages.map((shortage) =>
@@ -812,7 +952,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
         : "";
       const completionMessage = unfinishedTreatments.length === 0
         ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.${shortageWarning}${inventoryWarning}`
-        : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.${shortageWarning}${inventoryWarning}`;
+        : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan tindakan lain yang siap dituntaskan sebelum antrean ditutup.${shortageWarning}${inventoryWarning}`;
       setSuccessMsg(completionMessage);
       await loadData();
       if (accrualError) {
@@ -845,18 +985,13 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
 
   const handleCompleteVisitPlan = (visitId: string, visitTreatments: TreatmentJob[]) => {
     if (processingVisitId || completingTreatment) return;
-    const inProgress = visitTreatments.filter((treatment) =>
-      treatment.status === TreatmentJobStatus.DALAM_PROSES
-    );
+    const completable = visitTreatments.filter(canCompleteNow);
     const canFinishTogether = visitTreatments.every((treatment) =>
-      treatment.status === TreatmentJobStatus.DALAM_PROSES
-      || treatment.status === TreatmentJobStatus.SELESAI
-      || treatment.status === TreatmentJobStatus.DISERAHKAN
-      || treatment.status === TreatmentJobStatus.DIBATALKAN
+      canCompleteNow(treatment) || closesVisitForQueue(treatment)
     );
-    if (!inProgress.length || !canFinishTogether || inProgress.some((treatment) => !canCompleteTreatment(treatment))) return;
+    if (!completable.length || !canFinishTogether || completable.some((treatment) => !canCompleteTreatment(treatment))) return;
     setError(null);
-    setFinalTreatmentPrices(Object.fromEntries(inProgress
+    setFinalTreatmentPrices(Object.fromEntries(completable
       .filter((treatment) => canFinalizeTreatment(treatment))
       .map((treatment) => [treatment.id, String(treatment.priceSnapshot ?? 0)])));
     setFinalPricePatientApprovalConfirmed(false);
@@ -864,7 +999,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   };
 
   const requestCompleteTreatment = (treatment: TreatmentJob) => {
-    if (!canCompleteTreatment(treatment) || treatment.status !== TreatmentJobStatus.DALAM_PROSES) return;
+    if (!canCompleteTreatment(treatment) || !canCompleteNow(treatment)) return;
     setError(null);
     setFinalTreatmentPrices(canFinalizeTreatment(treatment)
       ? { [treatment.id]: String(treatment.priceSnapshot ?? 0) }
@@ -876,10 +1011,8 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
   const confirmCompleteVisitPlan = async () => {
     if (!planAwaitingCompletion || processingVisitId || completingTreatment) return;
     const { visitId, treatments: visitTreatments } = planAwaitingCompletion;
-    const inProgress = visitTreatments.filter((treatment) =>
-      treatment.status === TreatmentJobStatus.DALAM_PROSES
-    );
-    const doctorTreatments = inProgress.filter((treatment) => canFinalizeTreatment(treatment));
+    const completable = visitTreatments.filter(canCompleteNow);
+    const doctorTreatments = completable.filter((treatment) => canFinalizeTreatment(treatment));
     if (doctorTreatments.length > 0 && !finalPricePatientApprovalConfirmed) {
       setError("Konfirmasi persetujuan pasien atas harga final sebelum tindakan wajib dicatat.");
       return;
@@ -900,10 +1033,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     setProcessingVisitId(visitId);
     let completedCount = 0;
     try {
-      for (const treatment of inProgress) {
+      for (const treatment of completable) {
         const completed = await handleCompleteTreatment(treatment, finalPrices.get(treatment.id));
         if (!completed) {
-          setError(`Tindakan selesai sebagian (${completedCount} dari ${inProgress.length}). Periksa status dan stok tiap tindakan sebelum mencoba lagi.`);
+          setError(`Tindakan selesai sebagian (${completedCount} dari ${completable.length}). Periksa status dan stok tiap tindakan sebelum mencoba lagi.`);
           return;
         }
         completedCount += 1;
@@ -922,13 +1055,9 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     setError(null);
     try {
       const visitTreatments = await treatmentRepo.getTreatmentsByVisit(embeddedVisitId);
-      const unfinishedTreatments = visitTreatments.filter((treatment) =>
-        treatment.status !== TreatmentJobStatus.SELESAI
-        && treatment.status !== TreatmentJobStatus.DISERAHKAN
-        && treatment.status !== TreatmentJobStatus.DIBATALKAN
-      );
+      const unfinishedTreatments = visitTreatments.filter((treatment) => !closesVisitForQueue(treatment));
       if (unfinishedTreatments.length > 0) {
-        throw new Error("Selesaikan atau batalkan semua tindakan dalam rencana sebelum mengakhiri pemeriksaan.");
+        throw new Error("Selesaikan, batalkan, atau tandai Menunggu Lab untuk semua tindakan sebelum mengakhiri pemeriksaan.");
       }
 
       const activeQueueItem = queueItems.find((item) =>
@@ -1276,7 +1405,11 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       getTreatmentPatientName(tr).toLowerCase().includes(q) ||
       (tr.notes && tr.notes.toLowerCase().includes(q));
 
-    return matchStatus && matchQuery && (!embeddedVisitId || tr.visitId === embeddedVisitId);
+    const embeddedPatientId = visits.find((visit) => visit.id === embeddedVisitId)?.patientId;
+    const matchesEmbeddedVisit = !embeddedVisitId
+      || tr.visitId === embeddedVisitId
+      || (tr.status === TreatmentJobStatus.MENUNGGU_LAB && tr.patientId === embeddedPatientId);
+    return matchStatus && matchQuery && matchesEmbeddedVisit;
   });
   const matchedTreatmentIds = new Set(filteredTreatments.map((treatment) => treatment.id));
   const filteredTreatmentGroups = Array.from(
@@ -1323,6 +1456,14 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
             <Play className="w-3 h-3 mr-1 text-amber-600 animate-pulse" />
             DALAM PROSES
+          </span>
+        );
+      case TreatmentJobStatus.MENUNGGU_LAB:
+      case "MENUNGGU_LAB":
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-200">
+            <Clock className="w-3 h-3 mr-1 text-violet-600" />
+            MENUNGGU LAB
           </span>
         );
       case TreatmentJobStatus.SELESAI:
@@ -1633,6 +1774,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
             <option value="ACTIVE">Tindakan Aktif</option>
             <option value={TreatmentJobStatus.BELUM_DIMULAI}>BELUM DIMULAI</option>
             <option value={TreatmentJobStatus.DALAM_PROSES}>DALAM PROSES</option>
+            <option value={TreatmentJobStatus.MENUNGGU_LAB}>MENUNGGU LAB</option>
             <option value={TreatmentJobStatus.SELESAI}>SELESAI</option>
             <option value={TreatmentJobStatus.PERLU_REVISI}>PERLU REVISI</option>
             <option value={TreatmentJobStatus.DIBATALKAN}>DIBATALKAN</option>
@@ -1682,6 +1824,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                     && visitTreatments.every((treatment) =>
                       treatment.status === TreatmentJobStatus.BELUM_DIMULAI
                       || treatment.status === TreatmentJobStatus.DALAM_PROSES
+                      || treatment.status === TreatmentJobStatus.MENUNGGU_LAB
                       || treatment.status === TreatmentJobStatus.DIBATALKAN
                     )
                     && pending.every(canStartTreatment);
@@ -1690,6 +1833,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                       treatment.status === TreatmentJobStatus.DALAM_PROSES
                       || treatment.status === TreatmentJobStatus.SELESAI
                       || treatment.status === TreatmentJobStatus.DISERAHKAN
+                      || treatment.status === TreatmentJobStatus.MENUNGGU_LAB
                       || treatment.status === TreatmentJobStatus.DIBATALKAN
                     )
                     && inProgress.every(canCompleteTreatment);
@@ -1699,6 +1843,9 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                   ).length;
                   const cancelledCount = visitTreatments.filter((treatment) =>
                     treatment.status === TreatmentJobStatus.DIBATALKAN
+                  ).length;
+                  const waitingLabCount = visitTreatments.filter((treatment) =>
+                    treatment.status === TreatmentJobStatus.MENUNGGU_LAB
                   ).length;
                   const groupBusy = processingVisitId === visitId;
                   const visitHasStarted = visitTreatments.some((treatment) =>
@@ -1730,7 +1877,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                                 <span>Kunjungan: {formatActivityDateTime(visit?.visitDateTime)}</span>
                                 <span>{branches.find((branch) => isBranchMatch(branch.id, firstTreatment.branchId, branches))?.name || "Cabang"}</span>
                                 <span>{firstTreatment.doctorNameSnapshot}</span>
-                                <span>{completedCount} selesai{cancelledCount ? ` · ${cancelledCount} batal` : ""}</span>
+                                <span>{completedCount} selesai{waitingLabCount ? ` · ${waitingLabCount} menunggu lab` : ""}{cancelledCount ? ` · ${cancelledCount} batal` : ""}</span>
                               </div>
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
                                 <span className="font-semibold text-slate-600">PIC Tindakan:</span>
@@ -1915,12 +2062,12 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                   <>
                     <p>
                       Catat penyelesaian {planAwaitingCompletion.treatments.filter((treatment) =>
-                        treatment.status === TreatmentJobStatus.DALAM_PROSES
+                        canCompleteNow(treatment)
                       ).length} tindakan untuk {getTreatmentPatientName(planAwaitingCompletion.treatments[0])}.
                     </p>
                     {planAwaitingCompletion.treatments
                       .filter((treatment) =>
-                        treatment.status === TreatmentJobStatus.DALAM_PROSES
+                        canCompleteNow(treatment)
                         && canFinalizeTreatment(treatment)
                       )
                       .map((treatment) => (
@@ -1945,7 +2092,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                         </label>
                       ))}
                     {planAwaitingCompletion.treatments.some((treatment) =>
-                      treatment.status === TreatmentJobStatus.DALAM_PROSES
+                      canCompleteNow(treatment)
                       && canFinalizeTreatment(treatment)
                     ) && (
                       <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-950">
@@ -1973,7 +2120,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                   <>
                     <p>Yakin ingin mengakhiri pemeriksaan pasien ini?</p>
                     <p className="rounded-lg border border-[#eadbb9] bg-[#faf6ec] p-3 text-[#735b20]">
-                      Konsultasi tanpa tindakan tetap dapat diakhiri. Jika ada tindakan, semuanya harus selesai atau dibatalkan terlebih dahulu. Invoice tetap diproses Admin/Kasir.
+                      Konsultasi tanpa tindakan tetap dapat diakhiri. Tindakan harus selesai, dibatalkan, atau berstatus Menunggu Lab. Tindakan Menunggu Lab belum dapat ditagihkan.
                     </p>
                   </>
                 )}
@@ -2004,11 +2151,11 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                   }}
                   disabled={confirmingWorkflowAction || Boolean(planAwaitingCompletion && (
                     (planAwaitingCompletion.treatments.some((treatment) =>
-                      treatment.status === TreatmentJobStatus.DALAM_PROSES
+                      canCompleteNow(treatment)
                       && canFinalizeTreatment(treatment)
                     ) && !finalPricePatientApprovalConfirmed)
                     || planAwaitingCompletion.treatments.some((treatment) =>
-                      treatment.status === TreatmentJobStatus.DALAM_PROSES
+                      canCompleteNow(treatment)
                       && canFinalizeTreatment(treatment)
                       && (finalTreatmentPrices[treatment.id]?.trim() === ""
                         || !Number.isSafeInteger(Number(finalTreatmentPrices[treatment.id]))
@@ -2022,7 +2169,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                     ? "Memproses..."
                     : planAwaitingCompletion
                       ? planAwaitingCompletion.treatments.some((treatment) =>
-                        treatment.status === TreatmentJobStatus.DALAM_PROSES
+                        canCompleteNow(treatment)
                         && canFinalizeTreatment(treatment)
                       )
                         ? "Catat Harga & Selesaikan"
@@ -2039,7 +2186,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
           <div>
             <h2 className="text-sm font-bold text-slate-800">Pemeriksaan sudah selesai?</h2>
             <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-slate-600">
-              Akhiri kunjungan setelah konsultasi selesai dan semua tindakan sudah diselesaikan atau dibatalkan. Invoice tetap diproses Admin/Kasir.
+              Akhiri kunjungan setelah konsultasi selesai dan semua tindakan selesai, dibatalkan, atau menunggu lab. Kasus yang menunggu lab tetap terbuka dan belum dapat ditagihkan.
             </p>
           </div>
           <button
@@ -2539,6 +2686,36 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                   </div>
                 )}
 
+                {selectedTreatment.status === TreatmentJobStatus.MENUNGGU_LAB && (
+                  <div className="space-y-2 rounded-xl border border-violet-200 bg-violet-50/70 p-3 text-[11px] text-violet-900">
+                    <div className="font-bold">Kasus menunggu hasil laboratorium</div>
+                    <p>
+                      Kunjungan awal sudah dapat ditutup, tetapi tindakan belum selesai dan belum dapat ditagihkan.
+                      Setelah lab mengirim hasil, Admin Cabang mencatat penerimaan serta nota di Kontrol Laboratorium.
+                    </p>
+                    {!hasReceivedLabInvoice(selectedTreatment) && (
+                      <p className="text-violet-700">Penyelesaian tersedia setelah order diterima dan biaya nota lab dicatat.</p>
+                    )}
+                  </div>
+                )}
+
+                {selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && canCompleteTreatment(selectedTreatment) && (
+                  <div className="rounded-xl border border-violet-200 bg-violet-50/70 p-3">
+                    <div className="text-[11px] font-bold text-violet-900">Tindakan dikirim ke laboratorium?</div>
+                    <p className="mt-1 text-[10px] leading-relaxed text-violet-800">
+                      Admin Cabang harus membuat order lab terlebih dahulu. Menandai Menunggu Lab menutup sesi ini setelah tindakan lain pada kunjungan selesai, tanpa menandai tindakan medis selesai.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setTreatmentAwaitingLab(selectedTreatment)}
+                      disabled={submitting || processingVisitId === selectedTreatment.visitId}
+                      className="mt-2 rounded-lg border border-violet-300 bg-white px-3 py-2 text-[11px] font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50"
+                    >
+                      Tandai Menunggu Lab
+                    </button>
+                  </div>
+                )}
+
                 {selectedTreatment.patientApprovedAt && (
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-[11px] text-emerald-800">
                     Persetujuan lisan pasien dicatat pada {formatActivityDateTime(selectedTreatment.patientApprovedAt)}.
@@ -2812,7 +2989,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                 >
                   Tutup
                 </button>
-                {canCompleteTreatment(selectedTreatment) && selectedTreatment.status === TreatmentJobStatus.DALAM_PROSES && (
+                {canCompleteTreatment(selectedTreatment) && canCompleteNow(selectedTreatment) && (
                   <button
                     onClick={() => requestCompleteTreatment(selectedTreatment)}
                       disabled={completingTreatment}
@@ -2821,6 +2998,8 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     {completingTreatment
                       ? "Menyelesaikan..."
+                      : selectedTreatment.status === TreatmentJobStatus.MENUNGGU_LAB
+                        ? "Selesaikan Setelah Lab Kembali"
                       : canFinalizeTreatment(selectedTreatment)
                         ? "Selesaikan & Catat Harga Final"
                         : "Selesaikan & Kurangi Stok"}
@@ -2857,6 +3036,48 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
               </div>
             </div>
           </div>
+        </div>
+      )}
+      {treatmentAwaitingLab && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="waiting-lab-confirm-title"
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-violet-200 bg-white shadow-2xl"
+          >
+            <header className="border-b border-violet-100 bg-violet-50 px-5 py-4">
+              <h2 id="waiting-lab-confirm-title" className="text-sm font-bold text-violet-950">Tandai Menunggu Lab?</h2>
+            </header>
+            <div className="space-y-3 p-5 text-xs leading-relaxed text-slate-700">
+              <p>
+                Tindakan {treatmentAwaitingLab.serviceNameSnapshot} tetap terbuka dan tidak dapat ditagihkan.
+                Kunjungan saat ini akan ditutup setelah tindakan lain selesai, sehingga dokter dapat melanjutkan antrean.
+              </p>
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                Pastikan Admin Cabang sudah membuat order lab untuk tindakan ini.
+              </p>
+              {error && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-700">{error}</div>}
+            </div>
+            <footer className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setTreatmentAwaitingLab(null)}
+                disabled={submitting}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleMarkTreatmentWaitingForLab(treatmentAwaitingLab)}
+                disabled={submitting}
+                className="rounded-lg bg-violet-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+              >
+                {submitting ? "Menyimpan..." : "Ya, Menunggu Lab"}
+              </button>
+            </footer>
+          </section>
         </div>
       )}
     </div>

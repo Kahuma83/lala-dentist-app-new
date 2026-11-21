@@ -13,6 +13,7 @@ import {
   VisitRepository,
   QueueRepository,
   TreatmentRepository,
+  LabRepository,
   TreatmentActivityRepository,
   MedicalRecordRepository,
   InvoiceRepository,
@@ -66,6 +67,8 @@ import {
   QueueItem,
   LiveQueueSnapshot,
   TreatmentJob,
+  LabOrder,
+  LabOrderPayment,
   TreatmentJobStatus,
   TreatmentActivity,
   TreatmentActivityType,
@@ -141,6 +144,7 @@ import {
   AccountBalanceResult
 } from "./interfaces";
 import { AppClock } from "../utils/clock";
+import { getDoctorShareBaseAmount } from "../utils/labCompensation";
 import {
   getOperationalDateString,
   getOperationalTimeString,
@@ -4992,6 +4996,24 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     return this.mapTreatmentFromDb(data);
   }
 
+  async markTreatmentWaitingForLab(
+    id: string,
+    _currentUserRole?: UserRole,
+    _userBranchId?: string | null,
+    _currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
+  ): Promise<TreatmentJob> {
+    ensureSupabaseConnected();
+    const { data, error } = await supabase.rpc("mark_treatment_waiting_lab_secure", {
+      p_treatment_id: id,
+      p_notes: actorData?.notes || "Menutup sesi tindakan sementara menunggu hasil laboratorium."
+    });
+    if (error) throw new Error(`Gagal menandai tindakan menunggu lab: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Gagal menandai tindakan menunggu lab: data tidak ditemukan");
+    return this.mapTreatmentFromDb(row);
+  }
+
   async cancelTreatmentJob(
     id: string,
     reason: string,
@@ -5647,11 +5669,12 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
         throw new Error(`Gagal memeriksa status rencana tindakan sebelum invoice: ${treatmentError.message}`);
       }
 
-      const completedTreatments = (visitTreatments || []).filter((treatment: any) =>
+      const invoiceableTreatments = (visitTreatments || []).filter((treatment: any) =>
         treatment.status === TreatmentJobStatus.SELESAI
         || treatment.status === TreatmentJobStatus.DISERAHKAN
+        || treatment.status === TreatmentJobStatus.MENUNGGU_LAB
       );
-      const lastTreatmentDate = completedTreatments
+      const lastTreatmentDate = invoiceableTreatments
         .map((treatment: any) => getOperationalDateString(
           treatment.completed_at || treatment.handed_over_at || treatment.updated_at || treatment.created_at
         ))
@@ -5667,15 +5690,16 @@ export class SupabaseInvoiceRepository implements InvoiceRepository {
       const allPlansClosed = (visitTreatments || []).every((treatment: any) =>
         treatment.status === TreatmentJobStatus.SELESAI
         || treatment.status === TreatmentJobStatus.DISERAHKAN
+        || treatment.status === TreatmentJobStatus.MENUNGGU_LAB
         || treatment.status === TreatmentJobStatus.DIBATALKAN
       );
       const linkedIds = new Set(linkedTreatmentIds);
-      if (!allPlansClosed || completedTreatments.length === 0) {
-        throw new Error("Invoice hanya dapat dibuat setelah semua rencana selesai atau dibatalkan dan ada tindakan yang selesai.");
+      if (!allPlansClosed || invoiceableTreatments.length === 0) {
+        throw new Error("Invoice hanya dapat dibuat setelah semua rencana selesai, menunggu lab, atau dibatalkan dan ada tindakan yang dapat ditagihkan.");
       }
-      if (linkedIds.size !== completedTreatments.length
-        || completedTreatments.some((treatment: any) => !linkedIds.has(treatment.id))) {
-        throw new Error("Invoice harus memuat seluruh tindakan selesai dan tidak boleh memuat rencana yang dibatalkan.");
+      if (linkedIds.size !== invoiceableTreatments.length
+        || invoiceableTreatments.some((treatment: any) => !linkedIds.has(treatment.id))) {
+        throw new Error("Invoice harus memuat seluruh tindakan selesai atau menunggu lab dan tidak boleh memuat rencana yang dibatalkan.");
       }
     }
 
@@ -6981,6 +7005,7 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
       requiresConsent: Boolean(row.requires_consent),
       isMultiStage: Boolean(row.is_multi_stage),
       tracksMaterialLots: Boolean(row.tracks_material_lots),
+      requiresLab: Boolean(row.requires_lab),
       icd9cmCode: row.icd9cm_code || undefined,
       isActive: row.is_active ?? true,
       createdAt: row.created_at,
@@ -7010,6 +7035,7 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
       requires_consent: data.requiresConsent ?? false,
       is_multi_stage: data.isMultiStage ?? false,
       tracks_material_lots: data.tracksMaterialLots ?? false,
+      requires_lab: data.requiresLab ?? false,
       icd9cm_code: data.icd9cmCode || null,
       is_active: data.isActive ?? true
     };
@@ -7032,6 +7058,7 @@ export class SupabaseConfigurationRepository implements ConfigurationRepository 
     if (updates.requiresConsent !== undefined) payload.requires_consent = updates.requiresConsent;
     if (updates.isMultiStage !== undefined) payload.is_multi_stage = updates.isMultiStage;
     if (updates.tracksMaterialLots !== undefined) payload.tracks_material_lots = updates.tracksMaterialLots;
+    if (updates.requiresLab !== undefined) payload.requires_lab = updates.requiresLab;
     if (updates.icd9cmCode !== undefined) payload.icd9cm_code = updates.icd9cmCode || null;
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
 
@@ -8178,6 +8205,26 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       Math.max(0, (Number(invoice.total_amount) || 0) - (Number(invoice.discount_amount) || 0))
     );
     const baseAmount = allocations.get(linkedItems[0].id) || 0;
+    const { data: service, error: serviceError } = await supabase
+      .from("master_services")
+      .select("requires_lab")
+      .eq("id", job.service_id)
+      .single();
+    if (serviceError || !service) {
+      throw new Error(`Gagal memeriksa kebutuhan lab layanan untuk kompensasi: ${serviceError?.message || "data layanan tidak ditemukan"}`);
+    }
+    const { data: labOrder, error: labOrderError } = await supabase
+      .from("lab_orders")
+      .select("status, invoice_received_at, invoice_amount")
+      .eq("treatment_job_id", treatmentJobId)
+      .maybeSingle();
+    if (labOrderError) throw new Error(`Gagal memeriksa nota laboratorium untuk kompensasi: ${labOrderError.message}`);
+    const requiresLab = Boolean(service.requires_lab || (labOrder && labOrder.status !== "CANCELLED"));
+    let labInvoiceAmount: number | null = null;
+    if (labOrder?.invoice_received_at && labOrder.invoice_amount != null) {
+      labInvoiceAmount = Number(labOrder.invoice_amount);
+    }
+    const doctorShareBaseAmount = getDoctorShareBaseAmount(baseAmount, requiresLab, labInvoiceAmount);
 
     let doctorStaffId: string | null = null;
     if (job.doctor_id) {
@@ -8225,9 +8272,14 @@ export class SupabaseCompensationRepository implements CompensationRepository {
       const staffId = rule.staffId;
       const key = `${staffId}:${rule.id}`;
       if (existingKeys.has(key)) return [];
+      const isDoctorRule = Boolean(doctorStaffId && staffId === doctorStaffId);
+      if (isDoctorRule && requiresLab && doctorShareBaseAmount === null) return [];
+      const ruleBaseAmount = isDoctorRule && requiresLab
+        ? (doctorShareBaseAmount ?? 0)
+        : baseAmount;
       const value = Number(rule.valueSnapshot) || 0;
       const amount = rule.ruleTypeSnapshot === "PERCENTAGE"
-        ? Math.round((baseAmount * value) / 100)
+        ? Math.round((ruleBaseAmount * value) / 100)
         : rule.ruleTypeSnapshot === "FIXED_PER_TREATMENT"
           ? Math.round(value)
           : 0;
@@ -8238,7 +8290,7 @@ export class SupabaseCompensationRepository implements CompensationRepository {
         rule_id_snapshot: rule.id,
         rule_type_snapshot: rule.ruleTypeSnapshot,
         value_snapshot: value,
-        base_amount_snapshot: baseAmount,
+        base_amount_snapshot: ruleBaseAmount,
         amount,
         source_id: treatmentJobId,
         accrued_at: accruedAt
@@ -10400,5 +10452,134 @@ export class SupabaseBackupRepository implements BackupRepository {
       storageUsageBytes: 0,
       recentJobs: jobs
     };
+  }
+}
+
+export class SupabaseLabRepository implements LabRepository {
+  private mapLabOrder(row: any): LabOrder {
+    return {
+      id: row.id,
+      treatmentJobId: row.treatment_job_id,
+      branchId: row.branch_id,
+      labName: row.lab_name,
+      status: row.status,
+      expectedAt: row.expected_at || null,
+      sentAt: row.sent_at || null,
+      receivedAt: row.received_at || null,
+      invoiceReceivedAt: row.invoice_received_at || null,
+      invoiceNumber: row.invoice_number || null,
+      invoiceDate: row.invoice_date || null,
+      invoiceAmount: row.invoice_amount == null ? null : Number(row.invoice_amount),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  private mapLabOrderPayment(row: any): LabOrderPayment {
+    return {
+      id: row.id,
+      labOrderId: row.lab_order_id,
+      branchId: row.branch_id,
+      amount: Number(row.amount),
+      paidAt: row.paid_at,
+      expenseAccountId: row.expense_account_id,
+      paymentAccountId: row.payment_account_id,
+      status: row.status,
+      journalId: row.journal_id || null,
+      createdAt: row.created_at
+    };
+  }
+
+  async getLabOrders(branchId?: string | null): Promise<LabOrder[]> {
+    ensureSupabaseConnected();
+    let query = supabase.from("lab_orders").select("*").order("updated_at", { ascending: false });
+    if (branchId) query = query.eq("branch_id", branchId);
+    const { data, error } = await query;
+    if (error) throw new Error(`Gagal memuat order laboratorium: ${error.message}`);
+    return (data || []).map((row: any) => this.mapLabOrder(row));
+  }
+
+  async getLabOrderPayments(orderIds?: string[]): Promise<LabOrderPayment[]> {
+    ensureSupabaseConnected();
+    if (orderIds && orderIds.length === 0) return [];
+    let query = supabase.from("lab_order_payments").select("*").order("paid_at", { ascending: false });
+    if (orderIds) query = query.in("lab_order_id", orderIds);
+    const { data, error } = await query;
+    if (error) throw new Error(`Gagal memuat pembayaran laboratorium: ${error.message}`);
+    return (data || []).map((row: any) => this.mapLabOrderPayment(row));
+  }
+
+  async createLabOrder(data: {
+    treatmentJobId: string;
+    branchId: string;
+    labName: string;
+    expectedAt?: string | null;
+    createdBy?: string;
+  }): Promise<LabOrder> {
+    ensureSupabaseConnected();
+    const { data: row, error } = await supabase.from("lab_orders").insert({
+      treatment_job_id: data.treatmentJobId,
+      branch_id: data.branchId,
+      lab_name: data.labName.trim(),
+      expected_at: data.expectedAt || null,
+      created_by: data.createdBy || null
+    }).select("*").single();
+    if (error) throw new Error(`Gagal membuat order laboratorium: ${error.message}`);
+    return this.mapLabOrder(row);
+  }
+
+  async updateLabOrder(
+    id: string,
+    updates: Partial<Pick<LabOrder, "labName" | "status" | "expectedAt" | "sentAt" | "receivedAt" | "invoiceReceivedAt" | "invoiceNumber" | "invoiceDate" | "invoiceAmount">>
+  ): Promise<LabOrder> {
+    ensureSupabaseConnected();
+    const payload: Record<string, unknown> = {};
+    if (updates.labName !== undefined) payload.lab_name = updates.labName.trim();
+    if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.expectedAt !== undefined) payload.expected_at = updates.expectedAt || null;
+    if (updates.sentAt !== undefined) payload.sent_at = updates.sentAt || null;
+    if (updates.receivedAt !== undefined) payload.received_at = updates.receivedAt || null;
+    if (updates.invoiceReceivedAt !== undefined) payload.invoice_received_at = updates.invoiceReceivedAt || null;
+    if (updates.invoiceNumber !== undefined) payload.invoice_number = updates.invoiceNumber || null;
+    if (updates.invoiceDate !== undefined) payload.invoice_date = updates.invoiceDate || null;
+    if (updates.invoiceAmount !== undefined) payload.invoice_amount = updates.invoiceAmount;
+
+    const { data, error } = await supabase.from("lab_orders").update(payload).eq("id", id).select("*").single();
+    if (error) throw new Error(`Gagal memperbarui order laboratorium: ${error.message}`);
+    return this.mapLabOrder(data);
+  }
+
+  async createLabOrderPayment(data: {
+    labOrderId: string;
+    branchId: string;
+    amount: number;
+    paidAt: string;
+    expenseAccountId: string;
+    paymentAccountId: string;
+    createdBy: string;
+  }): Promise<LabOrderPayment> {
+    ensureSupabaseConnected();
+    const { data: row, error } = await supabase.from("lab_order_payments").insert({
+      lab_order_id: data.labOrderId,
+      branch_id: data.branchId,
+      amount: data.amount,
+      paid_at: data.paidAt,
+      expense_account_id: data.expenseAccountId,
+      payment_account_id: data.paymentAccountId,
+      created_by: data.createdBy
+    }).select("*").single();
+    if (error) throw new Error(`Gagal menyiapkan pembayaran laboratorium: ${error.message}`);
+    return this.mapLabOrderPayment(row);
+  }
+
+  async markLabOrderPaymentPosted(id: string, journalId: string): Promise<void> {
+    ensureSupabaseConnected();
+    const { data, error } = await supabase.from("lab_order_payments")
+      .update({ status: "POSTED", journal_id: journalId })
+      .eq("id", id)
+      .select("id")
+      .single();
+    if (error) throw new Error(`Jurnal pengeluaran sudah diposting, tetapi status pembayaran lab gagal diperbarui: ${error.message}`);
+    if (!data) throw new Error("Jurnal pengeluaran sudah diposting, tetapi pembayaran lab tidak ditemukan.");
   }
 }

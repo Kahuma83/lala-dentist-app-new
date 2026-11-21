@@ -69,6 +69,7 @@ export enum QueueStatus {
 export enum TreatmentJobStatus {
   BELUM_DIMULAI = "BELUM_DIMULAI",
   DALAM_PROSES = "DALAM_PROSES",
+  MENUNGGU_LAB = "MENUNGGU_LAB",
   SELESAI = "SELESAI",
   DISERAHKAN = "DISERAHKAN",
   PERLU_REVISI = "PERLU_REVISI",
@@ -78,6 +79,7 @@ export enum TreatmentJobStatus {
 export enum TreatmentActivityType {
   STARTED = "STARTED",
   CONTINUED = "CONTINUED",
+  WAITING_FOR_LAB = "WAITING_FOR_LAB",
   PROGRESS = "PROGRESS",
   COMPLETED = "COMPLETED",
   HANDED_OVER = "HANDED_OVER",
@@ -528,6 +530,7 @@ export interface MasterService {
   requiresConsent?: boolean;
   isMultiStage?: boolean;
   tracksMaterialLots?: boolean;
+  requiresLab?: boolean;
   icd9cmCode?: string;
   displayOrder?: number;
   isActive: boolean;
@@ -727,6 +730,38 @@ export interface TreatmentJob {
   // Backward compatibility & future phase fields
   assignedDoctorId?: string;
   picAssistantId?: string;
+}
+
+export type LabOrderStatus = "ORDERED" | "SENT" | "IN_PROGRESS" | "RECEIVED" | "CANCELLED";
+
+export interface LabOrder {
+  id: string;
+  treatmentJobId: string;
+  branchId: string;
+  labName: string;
+  status: LabOrderStatus;
+  expectedAt?: string | null;
+  sentAt?: string | null;
+  receivedAt?: string | null;
+  invoiceReceivedAt?: string | null;
+  invoiceNumber?: string | null;
+  invoiceDate?: string | null;
+  invoiceAmount?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LabOrderPayment {
+  id: string;
+  labOrderId: string;
+  branchId: string;
+  amount: number;
+  paidAt: string;
+  expenseAccountId: string;
+  paymentAccountId: string;
+  status: "PENDING" | "POSTED";
+  journalId?: string | null;
+  createdAt: string;
 }
 
 export interface TreatmentJobClinicalDetails {

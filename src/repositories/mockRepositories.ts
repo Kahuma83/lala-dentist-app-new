@@ -42,6 +42,7 @@ import {
   CreateAbsenceInput,
   OvertimeRepository,
   OvertimeSummary,
+  LabRepository,
   MediaStorageRepository,
   MedicalRecordRepository,
   PromotionRepository,
@@ -56,6 +57,7 @@ import {
   getStoredBranchRMFormat
 } from "../utils/branchRMSettings";
 import { calculatePayrollTax } from "../utils/payrollTax";
+import { getDoctorShareBaseAmount } from "../utils/labCompensation";
 import {
   getOperationalDateString,
   isValidCalendarDateString,
@@ -72,6 +74,8 @@ import {
   QueueItem,
   LiveQueueSnapshot,
   TreatmentJob,
+  LabOrder,
+  LabOrderPayment,
   TreatmentActivity,
   TreatmentActivityType,
   Invoice,
@@ -3578,6 +3582,7 @@ export class MockQueueRepository implements QueueRepository {
       treatment.visitId === occupiedQueue.visitId
       && treatment.status !== TreatmentJobStatus.SELESAI
       && treatment.status !== TreatmentJobStatus.DISERAHKAN
+      && treatment.status !== TreatmentJobStatus.MENUNGGU_LAB
       && treatment.status !== TreatmentJobStatus.DIBATALKAN
     );
     if (unfinishedTreatment) {
@@ -4191,6 +4196,52 @@ export class MockTreatmentRepository implements TreatmentRepository {
     return { ...job };
   }
 
+  async markTreatmentWaitingForLab(
+    id: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
+  ): Promise<TreatmentJob> {
+    const job = db.treatmentJobs.find((treatment) => treatment.id === id);
+    if (!job) throw new Error("TreatmentJob tidak ditemukan");
+    if (job.status !== TreatmentJobStatus.DALAM_PROSES) {
+      throw new Error("Hanya tindakan dalam proses yang dapat ditandai menunggu lab.");
+    }
+
+    if (currentUserRole === UserRole.DOCTOR) {
+      if (!currentUserId || (job.assignedDoctorId || job.doctorId) !== currentUserId) {
+        throw new Error("Dokter tidak ditugaskan pada tindakan ini.");
+      }
+    } else if (
+      !(job.externalDoctorId
+        && (currentUserRole === UserRole.DOCTOR_ASSISTANT || currentUserRole === UserRole.SUPER_ADMIN))
+    ) {
+      throw new Error("Hanya Dokter atau petugas berwenang pada tindakan dokter eksternal yang dapat menandai Menunggu Lab.");
+    }
+    if (currentUserRole === UserRole.DOCTOR_ASSISTANT && userBranchId !== job.branchId) {
+      throw new Error("Asisten tidak memiliki izin tindakan di cabang ini.");
+    }
+
+    const labOrder = db.labOrders.find((order) =>
+      order.treatmentJobId === id && order.status !== "CANCELLED"
+    );
+    if (!labOrder) throw new Error("Buat order lab aktif untuk tindakan ini sebelum menandainya Menunggu Lab.");
+
+    const now = AppClock.nowISO();
+    job.status = TreatmentJobStatus.MENUNGGU_LAB;
+    job.updatedAt = now;
+    await new MockTreatmentActivityRepository().addActivity({
+      treatmentId: job.id,
+      actorId: actorData?.actorId || currentUserId || job.doctorId || "actor-system",
+      actorRole: actorData?.actorRole || currentUserRole || UserRole.DOCTOR,
+      actorNameSnapshot: actorData?.actorNameSnapshot || job.doctorNameSnapshot,
+      activityType: TreatmentActivityType.WAITING_FOR_LAB,
+      notes: actorData?.notes || "Kunjungan ditutup sementara; tindakan menunggu hasil laboratorium."
+    }, currentUserRole, userBranchId, currentUserId);
+    return { ...job };
+  }
+
   async cancelTreatmentJob(
     id: string,
     reason: string,
@@ -4308,9 +4359,16 @@ export class MockTreatmentRepository implements TreatmentRepository {
       throw new Error("Asisten tidak memiliki izin tindakan di cabang ini");
     }
 
-    // State Transition Check: MUST be DALAM_PROSES
-    if (job.status !== TreatmentJobStatus.DALAM_PROSES) {
-      throw new Error("Transisi status tidak valid: Treatment hanya dapat diselesaikan dari status DALAM_PROSES");
+    const waitingLabOrder = job.status === TreatmentJobStatus.MENUNGGU_LAB
+      ? db.labOrders.find((order) =>
+        order.treatmentJobId === id
+        && order.status === "RECEIVED"
+        && Boolean(order.invoiceReceivedAt)
+        && order.invoiceAmount != null
+      )
+      : null;
+    if (job.status !== TreatmentJobStatus.DALAM_PROSES && !waitingLabOrder) {
+      throw new Error("Tindakan Menunggu Lab baru dapat diselesaikan setelah order diterima dan nota lab dicatat.");
     }
     if (!job.startedAt) {
       throw new Error("Treatment tidak dapat diselesaikan tanpa startedAt");
@@ -4326,6 +4384,18 @@ export class MockTreatmentRepository implements TreatmentRepository {
         || completionData.finalPriceSnapshot < 0
         || completionData.finalPriceSnapshot > Number.MAX_SAFE_INTEGER) {
         throw new Error("Harga final harus berupa angka Rupiah bulat dan tidak boleh negatif.");
+      }
+      const billedTreatmentItem = db.invoiceItems.find((item) =>
+        item.treatmentJobId === id
+        && db.invoices.some((invoice) =>
+          invoice.id === item.invoiceId && invoice.status !== InvoiceStatus.CANCELLED
+        )
+      );
+      if (
+        billedTreatmentItem
+        && billedTreatmentItem.unitPriceSnapshot !== completionData.finalPriceSnapshot
+      ) {
+        throw new Error("Harga final tidak boleh berbeda dari invoice aktif. Koreksi invoice terlebih dahulu.");
       }
     }
 
@@ -4874,11 +4944,12 @@ export class MockInvoiceRepository implements InvoiceRepository {
     }
 
     const visitTreatments = db.treatmentJobs.filter((treatment) => treatment.visitId === data.visitId);
-    const completedTreatments = visitTreatments.filter((treatment) =>
+    const invoiceableTreatments = visitTreatments.filter((treatment) =>
       treatment.status === TreatmentJobStatus.SELESAI
       || treatment.status === TreatmentJobStatus.DISERAHKAN
+      || treatment.status === TreatmentJobStatus.MENUNGGU_LAB
     );
-    const lastTreatmentDate = completedTreatments
+    const lastTreatmentDate = invoiceableTreatments
       .map((treatment) => treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt)
       .map(getOperationalDateString)
       .filter(Boolean)
@@ -4905,15 +4976,16 @@ export class MockInvoiceRepository implements InvoiceRepository {
       const planIsClosed = visitTreatments.every((treatment) =>
         treatment.status === TreatmentJobStatus.SELESAI
         || treatment.status === TreatmentJobStatus.DISERAHKAN
+        || treatment.status === TreatmentJobStatus.MENUNGGU_LAB
         || treatment.status === TreatmentJobStatus.DIBATALKAN
       );
       const linkedIds = new Set(linkedTreatmentIds);
-      if (!planIsClosed || completedTreatments.length === 0) {
-        throw new Error("Invoice hanya dapat dibuat setelah semua rencana selesai atau dibatalkan dan ada tindakan yang selesai.");
+      if (!planIsClosed || invoiceableTreatments.length === 0) {
+        throw new Error("Invoice hanya dapat dibuat setelah semua rencana selesai, menunggu lab, atau dibatalkan dan ada tindakan yang dapat ditagihkan.");
       }
-      if (linkedIds.size !== completedTreatments.length
-        || completedTreatments.some((treatment) => !linkedIds.has(treatment.id))) {
-        throw new Error("Invoice harus memuat seluruh tindakan selesai dan tidak boleh memuat rencana yang dibatalkan.");
+      if (linkedIds.size !== invoiceableTreatments.length
+        || invoiceableTreatments.some((treatment) => !linkedIds.has(treatment.id))) {
+        throw new Error("Invoice harus memuat seluruh tindakan selesai atau menunggu lab dan tidak boleh memuat rencana yang dibatalkan.");
       }
     }
 
@@ -5706,6 +5778,16 @@ export class MockCompensationRepository implements CompensationRepository {
     const existingAccruals = db.accruals.filter((accrual: CompensationAccrual) => accrual.sourceId === job.id);
     const existingRuleKeys = new Set(existingAccruals.map((accrual) => `${accrual.staffId}:${accrual.ruleIdSnapshot}`));
     const createdAccruals: CompensationAccrual[] = [...existingAccruals];
+    const service = db.services.find((item: MasterService) => item.id === job.serviceId);
+    if (!service) throw new Error("Layanan tindakan tidak ditemukan saat menghitung kompensasi.");
+    const labOrder = db.labOrders.find((order) =>
+      order.treatmentJobId === treatmentJobId && order.status !== "CANCELLED"
+    );
+    const requiresLab = Boolean(service.requiresLab || labOrder);
+    const labInvoiceAmount = labOrder?.invoiceReceivedAt && labOrder.invoiceAmount != null
+      ? labOrder.invoiceAmount
+      : null;
+    const doctorShareBaseAmount = getDoctorShareBaseAmount(baseAmount, requiresLab, labInvoiceAmount);
 
     const isRuleEffectiveOnDate = (rule: StaffCompensationRule, dateStr: string) => {
       if (!rule.isActive) return false;
@@ -5729,12 +5811,15 @@ export class MockCompensationRepository implements CompensationRepository {
     );
     for (const rule of doctorRules) {
       if (rule.ruleTypeSnapshot === "BASE_SALARY" || rule.ruleTypeSnapshot === "DOCTOR_SITTING_FEE" || rule.ruleTypeSnapshot === "TAX_PERCENTAGE") continue;
+      if (requiresLab && doctorShareBaseAmount === null) continue;
       if (rule.serviceId && rule.serviceId !== job.serviceId) continue;
       if (existingRuleKeys.has(`${job.doctorId}:${rule.id}`)) continue;
+      const ruleBaseAmount = requiresLab ? doctorShareBaseAmount : baseAmount;
+      if (ruleBaseAmount === null) continue;
 
       let amount = 0;
       if (rule.ruleTypeSnapshot === "PERCENTAGE") {
-        amount = Math.round((baseAmount * rule.valueSnapshot) / 100);
+        amount = Math.round((ruleBaseAmount * rule.valueSnapshot) / 100);
       } else if (rule.ruleTypeSnapshot === "FIXED_PER_TREATMENT") {
         amount = rule.valueSnapshot;
       }
@@ -5746,7 +5831,7 @@ export class MockCompensationRepository implements CompensationRepository {
         ruleIdSnapshot: rule.id,
         ruleTypeSnapshot: rule.ruleTypeSnapshot,
         valueSnapshot: rule.valueSnapshot,
-        baseAmountSnapshot: baseAmount,
+        baseAmountSnapshot: ruleBaseAmount,
         amount,
         sourceId: job.id,
         accruedAt: now
@@ -6550,6 +6635,7 @@ export class MockConfigurationRepository implements ConfigurationRepository {
       basePrice: data.basePrice,
       estimatedDurationMinutes: data.estimatedDurationMinutes,
       category: data.category,
+      requiresLab: data.requiresLab ?? false,
       displayOrder: data.displayOrder || db.services.length + 1,
       isActive: data.isActive !== undefined ? data.isActive : true,
       createdAt: now,
@@ -9621,5 +9707,93 @@ export class MockBackupRepository implements BackupRepository {
       storageUsageBytes: storageUsage,
       recentJobs: jobs.slice(0, 10)
     };
+  }
+}
+
+export class MockLabRepository implements LabRepository {
+  async getLabOrders(branchId?: string | null): Promise<LabOrder[]> {
+    return db.labOrders
+      .filter((order) => !branchId || order.branchId === branchId)
+      .map((order) => ({ ...order }));
+  }
+
+  async getLabOrderPayments(orderIds?: string[]): Promise<LabOrderPayment[]> {
+    return db.labOrderPayments
+      .filter((payment) => !orderIds || orderIds.includes(payment.labOrderId))
+      .map((payment) => ({ ...payment }));
+  }
+
+  async createLabOrder(data: {
+    treatmentJobId: string;
+    branchId: string;
+    labName: string;
+    expectedAt?: string | null;
+    createdBy?: string;
+  }): Promise<LabOrder> {
+    if (db.labOrders.some((order) => order.treatmentJobId === data.treatmentJobId)) {
+      throw new Error("Tindakan ini sudah memiliki order laboratorium.");
+    }
+    const now = AppClock.nowISO();
+    const order: LabOrder = {
+      id: `lab-order-${Date.now()}`,
+      treatmentJobId: data.treatmentJobId,
+      branchId: data.branchId,
+      labName: data.labName.trim(),
+      status: "ORDERED",
+      expectedAt: data.expectedAt || null,
+      createdAt: now,
+      updatedAt: now
+    };
+    db.labOrders = [order, ...db.labOrders];
+    return { ...order };
+  }
+
+  async updateLabOrder(
+    id: string,
+    updates: Partial<Pick<LabOrder, "labName" | "status" | "expectedAt" | "sentAt" | "receivedAt" | "invoiceReceivedAt" | "invoiceNumber" | "invoiceDate" | "invoiceAmount">>
+  ): Promise<LabOrder> {
+    const order = db.labOrders.find((item) => item.id === id);
+    if (!order) throw new Error("Order laboratorium tidak ditemukan.");
+    if (order.invoiceReceivedAt && (
+      updates.invoiceReceivedAt !== undefined
+      || updates.invoiceNumber !== undefined
+      || updates.invoiceDate !== undefined
+      || updates.invoiceAmount !== undefined
+    )) {
+      throw new Error("Nota lab yang sudah dicatat tidak dapat diubah.");
+    }
+    Object.assign(order, updates, { updatedAt: AppClock.nowISO() });
+    return { ...order };
+  }
+
+  async createLabOrderPayment(data: {
+    labOrderId: string;
+    branchId: string;
+    amount: number;
+    paidAt: string;
+    expenseAccountId: string;
+    paymentAccountId: string;
+    createdBy: string;
+  }): Promise<LabOrderPayment> {
+    const payment: LabOrderPayment = {
+      id: `lab-payment-${Date.now()}`,
+      labOrderId: data.labOrderId,
+      branchId: data.branchId,
+      amount: data.amount,
+      paidAt: data.paidAt,
+      expenseAccountId: data.expenseAccountId,
+      paymentAccountId: data.paymentAccountId,
+      status: "PENDING",
+      createdAt: AppClock.nowISO()
+    };
+    db.labOrderPayments = [payment, ...db.labOrderPayments];
+    return { ...payment };
+  }
+
+  async markLabOrderPaymentPosted(id: string, journalId: string): Promise<void> {
+    const payment = db.labOrderPayments.find((item) => item.id === id);
+    if (!payment) throw new Error("Pembayaran laboratorium tidak ditemukan.");
+    payment.status = "POSTED";
+    payment.journalId = journalId;
   }
 }

@@ -355,6 +355,9 @@ export const Expenses: React.FC = () => {
           : null
       );
       if (!fullJournal) throw new Error("Detail jurnal tidak ditemukan.");
+      if (fullJournal.sourceId?.startsWith("LAB_PAYMENT:")) {
+        throw new Error("Pembayaran nota lab tidak dapat dikoreksi melalui Pengeluaran umum karena akan merusak saldo nota lab.");
+      }
       const expenseLines = fullJournal.lines.filter((line) =>
         line.debit > 0 &&
         accounts.find((account) => account.id === line.accountId)?.accountType === AccountType.EXPENSE
@@ -812,7 +815,7 @@ export const Expenses: React.FC = () => {
                             <BookOpen className="w-3.5 h-3.5" />
                           </button>
 
-                          {j.status === JournalStatus.POSTED && !isReversed && !j.sourceId?.startsWith("RECURRING_SETTLEMENT:") && (
+                          {j.status === JournalStatus.POSTED && !isReversed && !j.sourceId?.startsWith("RECURRING_SETTLEMENT:") && !j.sourceId?.startsWith("LAB_PAYMENT:") && (
                             <button
                               type="button"
                               onClick={() => void handleOpenCorrectionModal(j)}

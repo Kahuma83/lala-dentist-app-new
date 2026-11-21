@@ -1148,6 +1148,7 @@ export class AccountingPostingService {
       date: string;
       description: string;
       referenceNumber?: string;
+      event?: "ACCRUAL" | "PAYMENT";
     },
     currentUserRole: UserRole = UserRole.SUPER_ADMIN,
     userBranchId: string | null = null,
@@ -1210,6 +1211,7 @@ export class AccountingPostingService {
         description: journalDesc,
         sourceType: JournalSourceType.EXPENSE,
         sourceId: expenseId,
+        event: input.event,
         paymentMethod,
         ...(paymentAccount.accountCategory === AccountCategory.CASH
           ? { cashSource: input.cashSource || "DAILY_CASH" }
@@ -1279,6 +1281,9 @@ export class AccountingPostingService {
     }
     if (original.sourceId?.startsWith("RECURRING_SETTLEMENT:")) {
       throw new Error("Pembayaran penyisihan berulang harus dikoreksi melalui alur rencana akrual.");
+    }
+    if (original.sourceId?.startsWith("LAB_PAYMENT:")) {
+      throw new Error("Pembayaran nota lab tidak dapat dikoreksi melalui Pengeluaran umum karena akan merusak saldo nota lab.");
     }
     if (input.correctionDate !== original.journalDate) {
       throw new Error("Tanggal jurnal pembalik dan pengganti harus sama dengan tanggal jurnal asal.");
