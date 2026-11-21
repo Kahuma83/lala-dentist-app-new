@@ -173,6 +173,7 @@ export const Configuration: React.FC = () => {
   const [formPrice, setFormPrice] = useState<number>(150000);
   const [formDuration, setFormDuration] = useState<number>(30);
   const [formCategory, setFormCategory] = useState("Pencegahan & Estetika");
+  const [formRequiresLab, setFormRequiresLab] = useState(false);
   const [formServiceId, setFormServiceId] = useState<string | null>(null);
 
   // Tariff form state
@@ -1244,7 +1245,8 @@ export const Configuration: React.FC = () => {
           description: formDesc,
           basePrice: Number(formPrice),
           estimatedDurationMinutes: Number(formDuration),
-          category: formCategory
+          category: formCategory,
+          requiresLab: formRequiresLab
         });
       } else {
         await configRepo.createService({
@@ -1253,6 +1255,7 @@ export const Configuration: React.FC = () => {
           basePrice: Number(formPrice),
           estimatedDurationMinutes: Number(formDuration),
           category: formCategory,
+          requiresLab: formRequiresLab,
           isActive: true
         });
       }
@@ -1447,6 +1450,7 @@ export const Configuration: React.FC = () => {
                   setFormDesc("");
                   setFormPrice(200000);
                   setFormDuration(30);
+                  setFormRequiresLab(false);
                   setErrorMsg("");
                   setShowServiceModal(true);
                 }}
@@ -2608,6 +2612,11 @@ export const Configuration: React.FC = () => {
                       <span className="inline-block mt-0.5 px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded font-medium">
                         {s.category}
                       </span>
+                      {s.requiresLab && (
+                        <span className="ml-1 inline-block mt-0.5 px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] rounded font-medium">
+                          Perlu lab
+                        </span>
+                      )}
                     </td>
                     <td className="py-3.5 px-4 text-slate-500 max-w-xs truncate">
                       {s.description || "-"}
@@ -2636,6 +2645,7 @@ export const Configuration: React.FC = () => {
                             setFormPrice(s.basePrice);
                             setFormDuration(s.estimatedDurationMinutes);
                             setFormCategory(s.category);
+                            setFormRequiresLab(s.requiresLab ?? false);
                             setErrorMsg("");
                             setShowServiceModal(true);
                           }}
@@ -3450,6 +3460,19 @@ export const Configuration: React.FC = () => {
                   />
                 </div>
               </div>
+
+              <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={formRequiresLab}
+                  onChange={(event) => setFormRequiresLab(event.target.checked)}
+                  className="mt-0.5 accent-amber-600"
+                />
+                <span>
+                  <strong className="block">Tindakan memerlukan laboratorium</strong>
+                  Centang hanya untuk layanan gigi palsu yang memakai lab. Jasa Dokter menunggu nota lab dan dihitung dari nilai tindakan setelah dikurangi biaya lab.
+                </span>
+              </label>
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 uppercase mb-1">

@@ -1148,6 +1148,7 @@ export class AccountingPostingService {
       date: string;
       description: string;
       referenceNumber?: string;
+      event?: "ACCRUAL" | "PAYMENT";
     },
     currentUserRole: UserRole = UserRole.SUPER_ADMIN,
     userBranchId: string | null = null,
@@ -1210,6 +1211,7 @@ export class AccountingPostingService {
         description: journalDesc,
         sourceType: JournalSourceType.EXPENSE,
         sourceId: expenseId,
+        event: input.event,
         paymentMethod,
         ...(paymentAccount.accountCategory === AccountCategory.CASH
           ? { cashSource: input.cashSource || "DAILY_CASH" }

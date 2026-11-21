@@ -51,12 +51,26 @@ import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
 import { getInvoiceDoctorName } from "../utils/receiptUtils";
 import { getOperationalDateString, getTodayDateString } from "../utils/dateUtils";
 
-const formatTreatmentCompletionDateTime = (treatment: TreatmentJob): string => {
-  const timestamp = treatment.completedAt || treatment.handedOverAt;
-  if (!timestamp) return "Waktu selesai tidak tercatat";
+const isInvoiceableTreatment = (treatment: TreatmentJob): boolean =>
+  treatment.status === TreatmentJobStatus.SELESAI
+  || treatment.status === TreatmentJobStatus.DISERAHKAN
+  || treatment.status === TreatmentJobStatus.MENUNGGU_LAB;
+
+const isClosedTreatmentPlan = (treatment: TreatmentJob): boolean =>
+  isInvoiceableTreatment(treatment)
+  || treatment.status === TreatmentJobStatus.DIBATALKAN;
+
+const getInvoiceableTreatmentTimestamp = (treatment: TreatmentJob): string | undefined =>
+  treatment.status === TreatmentJobStatus.MENUNGGU_LAB
+    ? treatment.updatedAt || treatment.createdAt
+    : treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt;
+
+const formatInvoiceableTreatmentDateTime = (treatment: TreatmentJob): string => {
+  const timestamp = getInvoiceableTreatmentTimestamp(treatment);
+  if (!timestamp) return "Waktu tindakan tidak tercatat";
 
   const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return "Waktu selesai tidak valid";
+  if (Number.isNaN(date.getTime())) return "Waktu tindakan tidak valid";
 
   return `${new Intl.DateTimeFormat("id-ID", {
     timeZone: "Asia/Jakarta",
@@ -193,10 +207,7 @@ export const Invoices: React.FC = () => {
       if (trRes.status === "fulfilled" && trRes.value) setTreatments(trRes.value);
 
       const billableVisitIds = Array.from(new Set(loadedTreatments
-        .filter((treatment) =>
-          treatment.status === TreatmentJobStatus.SELESAI
-          || treatment.status === TreatmentJobStatus.DISERAHKAN
-        )
+        .filter(isInvoiceableTreatment)
         .map((treatment) => treatment.visitId)));
       const activeVisitIds = await invoiceRepo.getActiveInvoiceVisitIds(
         billableVisitIds,
@@ -216,22 +227,12 @@ export const Invoices: React.FC = () => {
       const billablePatientIds = Array.from(treatmentGroups.entries())
         .filter(([visitId, visitTreatments]) =>
           !activeVisitIdSet.has(visitId)
-          && visitTreatments.some((treatment) =>
-            treatment.status === TreatmentJobStatus.SELESAI
-            || treatment.status === TreatmentJobStatus.DISERAHKAN
-          )
-          && visitTreatments.every((treatment) =>
-            treatment.status === TreatmentJobStatus.SELESAI
-            || treatment.status === TreatmentJobStatus.DISERAHKAN
-            || treatment.status === TreatmentJobStatus.DIBATALKAN
-          )
+          && visitTreatments.some(isInvoiceableTreatment)
+          && visitTreatments.every(isClosedTreatmentPlan)
         )
         .flatMap(([, visitTreatments]) =>
           visitTreatments
-            .filter((treatment) =>
-              treatment.status === TreatmentJobStatus.SELESAI
-              || treatment.status === TreatmentJobStatus.DISERAHKAN
-            )
+            .filter(isInvoiceableTreatment)
             .map((treatment) => treatment.patientId)
         );
       const missingPatientIds = Array.from(new Set([
@@ -470,45 +471,28 @@ export const Invoices: React.FC = () => {
     }, new Map<string, TreatmentJob[]>()).entries()
   ).filter(([visitId, visitTreatments]) =>
     visitTreatments.length > 0
-    && visitTreatments.some((treatment) =>
-      treatment.status === TreatmentJobStatus.SELESAI
-      || treatment.status === TreatmentJobStatus.DISERAHKAN
-    )
-    && visitTreatments.every((treatment) =>
-      treatment.status === TreatmentJobStatus.SELESAI
-      || treatment.status === TreatmentJobStatus.DISERAHKAN
-      || treatment.status === TreatmentJobStatus.DIBATALKAN
-    )
+    && visitTreatments.some(isInvoiceableTreatment)
+    && visitTreatments.every(isClosedTreatmentPlan)
     && !activeInvoiceVisitIds.has(visitId)
   );
   const currentMonthStart = `${getTodayDateString().slice(0, 7)}-01`;
   const previousMonthReadyVisits = allInvoiceReadyVisits.filter(([, visitTreatments]) =>
     visitTreatments.some((treatment) =>
-      (treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
-      && getOperationalDateString(
-        treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt
-      ) < currentMonthStart
+      isInvoiceableTreatment(treatment)
+      && getOperationalDateString(getInvoiceableTreatmentTimestamp(treatment)) < currentMonthStart
     )
   );
   const invoiceReadyVisits = showPreviousMonthReadyVisits
     ? allInvoiceReadyVisits
     : allInvoiceReadyVisits.filter(([, visitTreatments]) =>
       visitTreatments.every((treatment) =>
-        treatment.status !== TreatmentJobStatus.SELESAI
-        && treatment.status !== TreatmentJobStatus.DISERAHKAN
-        || getOperationalDateString(
-          treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt
-        ) >= currentMonthStart
+        !isInvoiceableTreatment(treatment)
+        || getOperationalDateString(getInvoiceableTreatmentTimestamp(treatment)) >= currentMonthStart
       )
     );
   const formInvoiceDateMax = treatments
-    .filter((treatment) =>
-      treatment.visitId === formVisitId
-      && (treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
-    )
-    .map((treatment) => getOperationalDateString(
-      treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt
-    ))
+    .filter((treatment) => treatment.visitId === formVisitId && isInvoiceableTreatment(treatment))
+    .map((treatment) => getOperationalDateString(getInvoiceableTreatmentTimestamp(treatment)))
     .filter(Boolean)
     .sort()
     .at(-1) || getTodayDateString();
@@ -516,15 +500,12 @@ export const Invoices: React.FC = () => {
   const handlePrepareTreatmentInvoice = (visitId: string, visitTreatments: TreatmentJob[]) => {
     const isReadyVisit = invoiceReadyVisits.some(([readyVisitId]) => readyVisitId === visitId);
     if (!isReadyVisit || visitTreatments.length === 0) {
-      setTreatmentInvoiceError("Invoice hanya dapat dibuat setelah seluruh tindakan dalam kunjungan selesai.");
+      setTreatmentInvoiceError("Invoice hanya dapat dibuat setelah seluruh tindakan selesai, menunggu lab, atau dibatalkan.");
       return;
     }
 
-    const completedTreatments = visitTreatments.filter((treatment) =>
-      treatment.status === TreatmentJobStatus.SELESAI
-      || treatment.status === TreatmentJobStatus.DISERAHKAN
-    );
-    const items = completedTreatments.map((treatment) => {
+    const invoiceableTreatments = visitTreatments.filter(isInvoiceableTreatment);
+    const items = invoiceableTreatments.map((treatment) => {
       const service = services.find((item) => item.id === treatment.serviceId);
       if (!service) return null;
       return {
@@ -541,16 +522,14 @@ export const Invoices: React.FC = () => {
     }
 
     setTreatmentInvoiceError("");
-    setFormPatientId(completedTreatments[0]?.patientId || "");
-    setFormBranchId(completedTreatments[0]?.branchId || formBranchId);
+    setFormPatientId(invoiceableTreatments[0]?.patientId || "");
+    setFormBranchId(invoiceableTreatments[0]?.branchId || formBranchId);
     setFormVisitId(visitId);
-    const completedDates = completedTreatments
-      .map((treatment) => getOperationalDateString(
-        treatment.completedAt || treatment.handedOverAt || treatment.updatedAt || treatment.createdAt
-      ))
+    const invoiceableDates = invoiceableTreatments
+      .map((treatment) => getOperationalDateString(getInvoiceableTreatmentTimestamp(treatment)))
       .filter(Boolean)
       .sort();
-    setFormInvoiceDate(completedDates.at(-1) || getTodayDateString());
+    setFormInvoiceDate(invoiceableDates.at(-1) || getTodayDateString());
     setFormItems(items.filter((item): item is NonNullable<typeof item> => item !== null));
     setFormDiscount(0);
     setFormTax(0);
@@ -661,7 +640,7 @@ export const Invoices: React.FC = () => {
     e.preventDefault();
     const readyVisit = invoiceReadyVisits.find(([visitId]) => visitId === formVisitId);
     if (!readyVisit || !formVisitId || readyVisit[1][0]?.patientId !== formPatientId) {
-      setFormError("Kunjungan ini tidak lagi siap ditagihkan. Perbarui data dan pastikan seluruh tindakannya sudah selesai.");
+      setFormError("Kunjungan ini tidak lagi siap ditagihkan. Perbarui data dan pastikan setiap tindakan selesai, menunggu lab, atau dibatalkan.");
       return;
     }
     if (formItems.length === 0) {
@@ -704,6 +683,7 @@ export const Invoices: React.FC = () => {
           createdInv.id,
           invoiceRepo,
           compRepo,
+          treatmentRepo,
           currentUser?.role,
           currentUser?.branchId
         );
@@ -796,6 +776,7 @@ export const Invoices: React.FC = () => {
           selectedInvoice.id,
           invoiceRepo,
           compRepo,
+          treatmentRepo,
           currentUser?.role,
           currentUser?.branchId
         );
@@ -947,7 +928,7 @@ export const Invoices: React.FC = () => {
             <div className="bg-white border border-amber-100 rounded-lg px-3 py-3 text-xs text-slate-500">
               {allInvoiceReadyVisits.length > 0
                 ? "Tidak ada tindakan bulan ini yang menunggu invoice."
-                : "Belum ada tindakan selesai yang menunggu invoice."}
+                : "Belum ada tindakan selesai atau menunggu lab yang menunggu invoice."}
             </div>
           ) : (
             <div className="space-y-2">
@@ -955,18 +936,18 @@ export const Invoices: React.FC = () => {
                 <div key={visitId} className="bg-white border border-amber-100 rounded-lg px-3 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="text-xs">
                     <div className="font-semibold text-slate-800">
-                      {getPatientName(visitTreatments.find((treatment) => treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)?.patientId || "")}
-                      <span className="font-normal text-slate-500"> · {getBranchName(visitTreatments.find((treatment) => treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)?.branchId || "")}</span>
+                      {getPatientName(visitTreatments.find(isInvoiceableTreatment)?.patientId || "")}
+                      <span className="font-normal text-slate-500"> · {getBranchName(visitTreatments.find(isInvoiceableTreatment)?.branchId || "")}</span>
                     </div>
                     <div className="text-slate-500 mt-0.5">
                       {visitTreatments
-                        .filter((treatment) => treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)
+                        .filter(isInvoiceableTreatment)
                         .map((treatment) => (
                         <div key={treatment.id} className="mt-1 flex flex-wrap items-center gap-2">
                           <span>
                             {treatment.serviceNameSnapshot}
                             <span className="ml-1 text-[10px] text-slate-500">
-                              · Selesai {formatTreatmentCompletionDateTime(treatment)}
+                              · {treatment.status === TreatmentJobStatus.MENUNGGU_LAB ? "Menunggu lab sejak" : "Selesai"} {formatInvoiceableTreatmentDateTime(treatment)}
                             </span>
                           </span>
                           {(treatment.status === TreatmentJobStatus.SELESAI || treatment.status === TreatmentJobStatus.DISERAHKAN)

@@ -47,6 +47,7 @@ import {
   Plus,
   Pill,
   Clock3,
+  FlaskConical,
   type LucideIcon
 } from "lucide-react";
 
@@ -155,7 +156,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       items: [
         { name: "Invoice & Tagihan", path: "/super-admin/invoices", icon: Receipt },
         { name: "Riwayat Pembayaran & Kwitansi", path: "/super-admin/payments", icon: CreditCard },
-        { name: "Pengeluaran", path: "/super-admin/expenses", icon: ArrowDownRight }
+        { name: "Pengeluaran", path: "/super-admin/expenses", icon: ArrowDownRight },
+        { name: "Kontrol Laboratorium", path: "/super-admin/lab", icon: FlaskConical }
       ]
     },
     {
@@ -252,7 +254,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       items: [
         { name: "Invoice & Tagihan", path: "/branch-admin/invoices", icon: Receipt },
         { name: "Riwayat Pembayaran & Kwitansi", path: "/branch-admin/payments", icon: CreditCard },
-        { name: "Pengeluaran", path: "/branch-admin/expenses", icon: ArrowDownRight }
+        { name: "Pengeluaran", path: "/branch-admin/expenses", icon: ArrowDownRight },
+        { name: "Kontrol Laboratorium", path: "/branch-admin/lab", icon: FlaskConical }
       ]
     },
     {

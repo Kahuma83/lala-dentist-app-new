@@ -12,6 +12,8 @@ import {
   QueueStatus,
   LiveQueueSnapshot,
   TreatmentJob,
+  LabOrder,
+  LabOrderPayment,
   TreatmentActivity,
   TreatmentActivityType,
   Invoice,
@@ -726,6 +728,13 @@ export interface TreatmentRepository {
     currentUserId?: string | null,
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
   ): Promise<TreatmentJob>;
+  markTreatmentWaitingForLab(
+    id: string,
+    currentUserRole?: UserRole,
+    userBranchId?: string | null,
+    currentUserId?: string | null,
+    actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string; notes?: string }
+  ): Promise<TreatmentJob>;
   cancelTreatmentJob(
     id: string,
     reason: string,
@@ -769,6 +778,32 @@ export interface TreatmentRepository {
     currentUserId?: string | null,
     actorData?: { actorId?: string; actorRole?: UserRole; actorNameSnapshot?: string }
   ): Promise<TreatmentJob>;
+}
+
+export interface LabRepository {
+  getLabOrders(branchId?: string | null): Promise<LabOrder[]>;
+  getLabOrderPayments(orderIds?: string[]): Promise<LabOrderPayment[]>;
+  createLabOrder(data: {
+    treatmentJobId: string;
+    branchId: string;
+    labName: string;
+    expectedAt?: string | null;
+    createdBy?: string;
+  }): Promise<LabOrder>;
+  updateLabOrder(
+    id: string,
+    updates: Partial<Pick<LabOrder, "labName" | "status" | "expectedAt" | "sentAt" | "receivedAt" | "invoiceReceivedAt" | "invoiceNumber" | "invoiceDate" | "invoiceAmount">>
+  ): Promise<LabOrder>;
+  createLabOrderPayment(data: {
+    labOrderId: string;
+    branchId: string;
+    amount: number;
+    paidAt: string;
+    expenseAccountId: string;
+    paymentAccountId: string;
+    createdBy: string;
+  }): Promise<LabOrderPayment>;
+  markLabOrderPaymentPosted(id: string, journalId: string): Promise<void>;
 }
 
 export interface TreatmentActivityRepository {

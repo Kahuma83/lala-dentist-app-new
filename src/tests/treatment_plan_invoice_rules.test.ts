@@ -118,7 +118,7 @@ describe("Treatment plan invoice rules", () => {
     };
 
     await expect(invoiceRepo.createInvoice(invoiceInput)).rejects.toThrow(
-      "semua rencana selesai atau dibatalkan"
+      "semua rencana selesai, menunggu lab, atau dibatalkan"
     );
 
     await treatmentRepo.cancelTreatmentJob(cancelledPlan.id, "Pasien menunda tindakan");
