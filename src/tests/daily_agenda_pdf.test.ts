@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
-import { Booking, BookingStatus } from "../types/domain";
+import { Booking, BookingStatus, DoctorSchedule, ScheduleStatus } from "../types/domain";
 import {
   buildDailyAgendaRows,
   createDailyAgendaPdf,
@@ -24,6 +24,24 @@ const makeBooking = ({
   doctorId: "doctor-1",
   bookingDateTime,
   status: BookingStatus.PENDING,
+  createdAt: "2026-11-18T00:00:00.000Z",
+  updatedAt: "2026-11-18T00:00:00.000Z",
+  ...overrides
+});
+
+const makeSchedule = ({
+  doctorId = "doctor-1",
+  startTime = "09:00",
+  endTime = "10:00",
+  ...overrides
+}: Partial<DoctorSchedule> = {}): DoctorSchedule => ({
+  id: `schedule-${doctorId}`,
+  doctorId,
+  branchId: "branch-gebang",
+  date: "2026-11-19",
+  startTime,
+  endTime,
+  status: ScheduleStatus.ACTIVE,
   createdAt: "2026-11-18T00:00:00.000Z",
   updatedAt: "2026-11-18T00:00:00.000Z",
   ...overrides
@@ -120,6 +138,105 @@ describe("daily agenda PDF data", () => {
       patientName: "Pasien Lama",
       doctorName: "drg. Dokter Lama"
     });
+  });
+
+  it("prints every available 15-minute slot alongside the booked appointment", () => {
+    const rows = buildDailyAgendaRows({
+      bookings: [
+        makeBooking({
+          id: "booked",
+          bookingDateTime: "2026-11-19T02:15:00.000Z",
+          status: BookingStatus.CONFIRMED,
+          patientNameSnapshot: "Ani",
+          plannedTreatments: [
+            { serviceId: "service-1", serviceNameSnapshot: "Konsultasi", estimatedDurationMinutes: 15 }
+          ]
+        })
+      ],
+      schedules: [makeSchedule()],
+      agendaDate: "2026-11-19",
+      doctors: [{ id: "doctor-1", name: "drg. Sari" }],
+      patients: [],
+      checkedInBookingIds: new Set(),
+      completedBookingIds: new Set()
+    });
+
+    expect(rows.map(({ time, patientName, doctorName, status, kind }) => ({
+      time,
+      patientName,
+      doctorName,
+      status,
+      kind
+    }))).toEqual([
+      { time: "09:00", patientName: "", doctorName: "drg. Sari", status: "Tersedia", kind: "AVAILABLE" },
+      { time: "09:15", patientName: "Ani", doctorName: "drg. Sari", status: "Dikonfirmasi", kind: undefined },
+      { time: "09:30", patientName: "", doctorName: "drg. Sari", status: "Tersedia", kind: "AVAILABLE" },
+      { time: "09:45", patientName: "", doctorName: "drg. Sari", status: "Tersedia", kind: "AVAILABLE" }
+    ]);
+  });
+
+  it("does not mark 15-minute slots covered by a longer booking as available", () => {
+    const rows = buildDailyAgendaRows({
+      bookings: [
+        makeBooking({
+          id: "long-booking",
+          bookingDateTime: "2026-11-19T02:00:00.000Z",
+          plannedTreatments: [
+            { serviceId: "service-1", serviceNameSnapshot: "Konsultasi", estimatedDurationMinutes: 30 }
+          ]
+        })
+      ],
+      schedules: [makeSchedule()],
+      agendaDate: "2026-11-19",
+      doctors: [{ id: "doctor-1", name: "drg. Sari" }],
+      patients: [],
+      checkedInBookingIds: new Set(),
+      completedBookingIds: new Set()
+    });
+
+    expect(rows.map(({ time, status, kind }) => ({ time, status, kind }))).toEqual([
+      { time: "09:00", status: "Terjadwal", kind: undefined },
+      { time: "09:15", status: "Terpakai", kind: "BLOCKED" },
+      { time: "09:30", status: "Tersedia", kind: "AVAILABLE" },
+      { time: "09:45", status: "Tersedia", kind: "AVAILABLE" }
+    ]);
+  });
+
+  it("shows availability for another doctor scheduled during an occupied time", () => {
+    const rows = buildDailyAgendaRows({
+      bookings: [
+        makeBooking({
+          id: "doctor-one-booking",
+          bookingDateTime: "2026-11-19T02:00:00.000Z",
+          doctorId: "doctor-1",
+          plannedTreatments: [
+            { serviceId: "service-1", serviceNameSnapshot: "Konsultasi", estimatedDurationMinutes: 15 }
+          ]
+        })
+      ],
+      schedules: [
+        makeSchedule({ doctorId: "doctor-1", endTime: "09:15" }),
+        makeSchedule({ doctorId: "doctor-2", endTime: "09:15" })
+      ],
+      agendaDate: "2026-11-19",
+      doctors: [
+        { id: "doctor-1", name: "drg. Sari" },
+        { id: "doctor-2", name: "drg. Budi" }
+      ],
+      patients: [],
+      checkedInBookingIds: new Set(),
+      completedBookingIds: new Set()
+    });
+
+    expect(rows.map(({ time, patientName, doctorName, status }) => ({
+      time,
+      patientName,
+      doctorName,
+      status
+    }))).toEqual([
+      { time: "09:00", patientName: "Pasien", doctorName: "drg. Sari", status: "Terjadwal" },
+      { time: "09:00", patientName: "", doctorName: "drg. Budi", status: "Tersedia" }
+    ]);
   });
 
   it("creates a multi-page PDF with a branch-and-date filename", async () => {

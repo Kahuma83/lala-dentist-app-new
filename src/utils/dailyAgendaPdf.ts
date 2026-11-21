@@ -4,11 +4,14 @@ import {
   BookingStatus,
   DentalBranch,
   DentalDoctor,
-  PatientProfile
+  DoctorSchedule,
+  PatientProfile,
+  ScheduleStatus
 } from "../types/domain";
 import { getOperationalDateString, getOperationalTimeString } from "./dateUtils";
 import { getBookingDoctorDisplayName } from "./doctorNameUtils";
-import { getPlannedTreatmentSummary } from "./plannedTreatmentUtils";
+import { getPlannedTreatmentDurationMinutes, getPlannedTreatmentSummary } from "./plannedTreatmentUtils";
+import { getScheduledBookingTimeSlots } from "./bookingScheduleUtils";
 
 export interface DailyAgendaRow {
   time: string;
@@ -16,28 +19,48 @@ export interface DailyAgendaRow {
   treatment: string;
   doctorName: string;
   status: string;
+  kind?: "AVAILABLE" | "BLOCKED";
 }
 
 interface BuildDailyAgendaRowsInput {
   bookings: readonly Booking[];
   agendaDate: string;
-  doctors: readonly Pick<DentalDoctor, "id" | "name">[];
+  schedules?: readonly DoctorSchedule[];
+  doctors: readonly Pick<DentalDoctor, "id" | "name" | "doctorCode">[];
   patients: readonly Pick<PatientProfile, "id" | "fullName" | "name">[];
   checkedInBookingIds: ReadonlySet<string>;
   completedBookingIds: ReadonlySet<string>;
 }
 
+const normalizeDoctorId = (doctorId: string) => doctorId.toLowerCase().replace(/^doc-/, "");
+
+const getDoctorForSchedule = (
+  doctorId: string,
+  doctors: readonly Pick<DentalDoctor, "id" | "name" | "doctorCode">[]
+) => doctors.find((doctor) =>
+  doctor.id === doctorId
+  || normalizeDoctorId(doctor.id) === normalizeDoctorId(doctorId)
+  || (!!doctor.doctorCode && doctor.doctorCode.toLowerCase() === doctorId.toLowerCase())
+);
+
+const getTimeInMinutes = (time: string): number | null => {
+  const match = time.match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  return hours > 23 ? null : hours * 60 + Number(match[2]);
+};
+
 export function buildDailyAgendaRows({
   bookings,
   agendaDate,
+  schedules = [],
   doctors,
   patients,
   checkedInBookingIds,
   completedBookingIds
 }: BuildDailyAgendaRowsInput): DailyAgendaRow[] {
   const patientNames = new Map(patients.map((patient) => [patient.id, patient.fullName || patient.name]));
-
-  return bookings
+  const activeBookings = bookings
     .filter((booking) =>
       getOperationalDateString(booking.bookingDateTime) === agendaDate &&
       booking.status !== BookingStatus.CANCELLED &&
@@ -48,19 +71,94 @@ export function buildDailyAgendaRows({
     )
     .map((booking) => {
       const operationalTime = getOperationalTimeString(booking.bookingDateTime);
+      const time = operationalTime !== "--:--" ? operationalTime : booking.timeSlot || "--:--";
+      const startMinutes = getTimeInMinutes(time);
+      const doctor = getDoctorForSchedule(booking.doctorId, doctors);
       return {
-        time: operationalTime !== "--:--" ? operationalTime : booking.timeSlot || "--:--",
-        patientName: booking.patientNameSnapshot?.trim() || patientNames.get(booking.patientId) || "Pasien",
-        treatment: getPlannedTreatmentSummary(booking.plannedTreatments),
-        doctorName: getBookingDoctorDisplayName(booking, doctors),
-        status: checkedInBookingIds.has(booking.id)
-          ? "Check-in"
-          : booking.status === BookingStatus.CONFIRMED
-            ? "Dikonfirmasi"
-            : "Terjadwal"
+        booking,
+        time,
+        startMinutes,
+        endMinutes: startMinutes === null
+          ? null
+          : startMinutes + getPlannedTreatmentDurationMinutes(booking.plannedTreatments, 30),
+        doctorKey: normalizeDoctorId(doctor?.id || booking.doctorId),
+        row: {
+          time,
+          patientName: booking.patientNameSnapshot?.trim() || patientNames.get(booking.patientId) || "Pasien",
+          treatment: getPlannedTreatmentSummary(booking.plannedTreatments),
+          doctorName: getBookingDoctorDisplayName(booking, doctors),
+          status: checkedInBookingIds.has(booking.id)
+            ? "Check-in"
+            : booking.status === BookingStatus.CONFIRMED
+              ? "Dikonfirmasi"
+              : "Terjadwal"
+        }
       };
-    })
-    .sort((left, right) => left.time.localeCompare(right.time));
+    });
+
+  const rows: DailyAgendaRow[] = activeBookings.map((entry) => entry.row);
+  const scheduleSlotsByDoctor = new Map<string, { doctorName: string; slots: Set<string> }>();
+
+  schedules
+    .filter((schedule) => schedule.date === agendaDate && schedule.status === ScheduleStatus.ACTIVE)
+    .forEach((schedule) => {
+      const doctor = getDoctorForSchedule(schedule.doctorId, doctors);
+      const doctorKey = normalizeDoctorId(doctor?.id || schedule.doctorId);
+      const scheduleSlots = scheduleSlotsByDoctor.get(doctorKey) || {
+        doctorName: doctor?.name?.trim() || "Dokter",
+        slots: new Set<string>()
+      };
+      getScheduledBookingTimeSlots(schedule).forEach((slot) => scheduleSlots.slots.add(slot));
+      scheduleSlotsByDoctor.set(doctorKey, scheduleSlots);
+    });
+
+  scheduleSlotsByDoctor.forEach(({ doctorName, slots }, doctorKey) => {
+    [...slots].sort().forEach((time) => {
+      const slotStart = getTimeInMinutes(time);
+      if (slotStart === null) return;
+
+      const bookingStartsHere = activeBookings.some((entry) =>
+        entry.doctorKey === doctorKey && entry.startMinutes === slotStart
+      );
+      if (bookingStartsHere) return;
+
+      const overlappingBooking = activeBookings.find((entry) =>
+        entry.doctorKey === doctorKey
+        && entry.startMinutes !== null
+        && entry.endMinutes !== null
+        && entry.startMinutes < slotStart + 15
+        && slotStart < entry.endMinutes
+      );
+
+      if (overlappingBooking) {
+        rows.push({
+          time,
+          patientName: "",
+          treatment: `Terpakai dari ${overlappingBooking.time}`,
+          doctorName,
+          status: "Terpakai",
+          kind: "BLOCKED"
+        });
+        return;
+      }
+
+      rows.push({
+        time,
+        patientName: "",
+        treatment: "",
+        doctorName,
+        status: "Tersedia",
+        kind: "AVAILABLE"
+      });
+    });
+  });
+
+  return rows.sort((left, right) =>
+    left.time.localeCompare(right.time)
+    || Number(left.kind === "AVAILABLE") - Number(right.kind === "AVAILABLE")
+    || left.doctorName.localeCompare(right.doctorName)
+    || (left.kind || "").localeCompare(right.kind || "")
+  );
 }
 
 const colors = {
@@ -315,18 +413,24 @@ function drawAgendaRow(
   const statusX = margin + tableWidth - columnWidths[5];
   const statusColor = row.status === "Check-in"
     ? colors.violet
-    : row.status === "Dikonfirmasi"
-      ? colors.blue
-      : colors.amber;
-  const pillWidth = Math.min(columnWidths[5] - 4, Math.max(19, pdf.getTextWidth(row.status) + 7));
-  const pillX = statusX + (columnWidths[5] - pillWidth) / 2;
-  const pillY = y + (rowHeight - 6) / 2;
-  pdf.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
-  pdf.roundedRect(pillX, pillY, pillWidth, 6, 2, 2, "F");
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(6.2);
-  pdf.setTextColor(255, 255, 255);
-  pdf.text(row.status, statusX + columnWidths[5] / 2, pillY + 4, { align: "center" });
+    : row.kind === "AVAILABLE"
+      ? [38, 132, 90] as const
+      : row.kind === "BLOCKED"
+        ? colors.muted
+        : row.status === "Dikonfirmasi"
+          ? colors.blue
+          : colors.amber;
+  if (row.status) {
+    const pillWidth = Math.min(columnWidths[5] - 4, Math.max(19, pdf.getTextWidth(row.status) + 7));
+    const pillX = statusX + (columnWidths[5] - pillWidth) / 2;
+    const pillY = y + (rowHeight - 6) / 2;
+    pdf.setFillColor(statusColor[0], statusColor[1], statusColor[2]);
+    pdf.roundedRect(pillX, pillY, pillWidth, 6, 2, 2, "F");
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(6.2);
+    pdf.setTextColor(255, 255, 255);
+    pdf.text(row.status, statusX + columnWidths[5] / 2, pillY + 4, { align: "center" });
+  }
 }
 
 export function getDailyAgendaPdfFileName(
@@ -359,7 +463,8 @@ export async function createDailyAgendaPdf({
   const contentWidth = pageWidth - margin * 2;
   const footerY = pageHeight - 7;
   const columnWidths = [9, 15, 38, 55, 34, 35];
-  const doctorCount = new Set(rows.map((row) => row.doctorName)).size;
+  const doctorCount = new Set(rows.map((row) => row.doctorName).filter(Boolean)).size;
+  const bookingCount = rows.filter((row) => row.kind !== "AVAILABLE" && row.kind !== "BLOCKED").length;
   const generatedAt = formatPrintDate(new Date());
 
   pdf.setProperties({
@@ -373,7 +478,7 @@ export async function createDailyAgendaPdf({
     logoDataUrl,
     branch,
     agendaDate,
-    rows.length,
+    bookingCount,
     doctorCount,
     margin,
     contentWidth

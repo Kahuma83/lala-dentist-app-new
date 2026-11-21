@@ -90,6 +90,43 @@ type WalkInExternalDoctorOption = {
   end_time: string;
 };
 
+const getDoctorSchedulesWithReplacements = async (
+  schedules: DoctorSchedule[],
+  branchId: string,
+  date: string,
+  doctors: readonly DentalDoctor[]
+): Promise<DoctorSchedule[]> => {
+  if (!isSupabaseConfigured || !supabase || schedules.length === 0) return schedules;
+
+  const { data: assignments, error } = await supabase
+    .from("staff_replacement_assignments")
+    .select("id, absent_staff_id, replacement_staff_id, covered_date, branch_id")
+    .eq("covered_date", date)
+    .eq("branch_id", branchId);
+  if (error) throw new Error(`Gagal memuat jadwal pengganti dokter: ${error.message}`);
+
+  const replacementSchedules = (assignments || []).flatMap((assignment) => {
+    const absentDoctor = doctors.find((doctor) => doctor.staffId === assignment.absent_staff_id);
+    const replacementDoctor = doctors.find((doctor) => doctor.staffId === assignment.replacement_staff_id);
+    if (!absentDoctor || !replacementDoctor || !replacementDoctor.active) return [];
+
+    return schedules
+      .filter((schedule) =>
+        schedule.doctorId === absentDoctor.id &&
+        schedule.branchId === assignment.branch_id &&
+        schedule.date === assignment.covered_date &&
+        schedule.status === ScheduleStatus.ACTIVE
+      )
+      .map((schedule) => ({
+        ...schedule,
+        id: `replacement-${assignment.id}`,
+        doctorId: replacementDoctor.id
+      }));
+  });
+
+  return [...schedules, ...replacementSchedules];
+};
+
 const isBookingReferralStaffOption = (value: unknown): value is {
   id: string;
   full_name: string;
@@ -481,38 +518,13 @@ export const BookingManagement: React.FC = () => {
         currentUser?.assignedBranchId,
         currentUser?.doctorId
       );
-      if (!isSupabaseConfigured || !supabase || schedules.length === 0) {
-        if (active) setSchedulesList(schedules);
-        return;
-      }
-
-      const { data: assignments, error } = await supabase
-        .from("staff_replacement_assignments")
-        .select("id, absent_staff_id, replacement_staff_id, covered_date, branch_id")
-        .eq("covered_date", formDate)
-        .eq("branch_id", formBranchId);
-      if (error) throw new Error(`Gagal memuat jadwal pengganti dokter: ${error.message}`);
-
-      const replacementSchedules = (assignments || []).flatMap((assignment) => {
-        const absentDoctor = doctorsList.find((doctor) => doctor.staffId === assignment.absent_staff_id);
-        const replacementDoctor = doctorsList.find((doctor) => doctor.staffId === assignment.replacement_staff_id);
-        if (!absentDoctor || !replacementDoctor || !replacementDoctor.active) return [];
-
-        return schedules
-          .filter((schedule) =>
-            schedule.doctorId === absentDoctor.id &&
-            schedule.branchId === assignment.branch_id &&
-            schedule.date === assignment.covered_date &&
-            schedule.status === ScheduleStatus.ACTIVE
-          )
-          .map((schedule) => ({
-            ...schedule,
-            id: `replacement-${assignment.id}`,
-            doctorId: replacementDoctor.id
-          }));
-      });
-
-      if (active) setSchedulesList([...schedules, ...replacementSchedules]);
+      const schedulesWithReplacements = await getDoctorSchedulesWithReplacements(
+        schedules,
+        formBranchId,
+        formDate,
+        doctorsList
+      );
+      if (active) setSchedulesList(schedulesWithReplacements);
     };
 
     loadBookingSchedules().catch((error: unknown) => {
@@ -1318,12 +1330,33 @@ export const BookingManagement: React.FC = () => {
 
     setAgendaPdfDate(date);
     try {
+      const schedules = await repos.doctorSchedule.getSchedules(
+        { branchId: agendaBranch.id, date, status: ScheduleStatus.ACTIVE },
+        currentUser?.role,
+        currentUser?.assignedBranchId,
+        currentUser?.doctorId
+      );
+      const schedulesWithReplacements = await getDoctorSchedulesWithReplacements(
+        schedules,
+        agendaBranch.id,
+        date,
+        doctorsList
+      );
+      const branchSchedules = schedulesWithReplacements.filter((schedule) =>
+        isBranchMatch(schedule.branchId, agendaBranch.id, branches)
+      );
+      if (branchSchedules.length === 0) {
+        throw new Error(
+          `Jadwal dokter aktif untuk ${agendaBranch.name} pada ${date} tidak ditemukan. Slot kosong tidak dapat dicetak; pastikan jadwal dokter tanggal tersebut sudah aktif.`
+        );
+      }
       const branchBookings = bookings.filter((booking) =>
         isBranchMatch(booking.branchId, agendaBranch.id, branches)
       );
       const rows = buildDailyAgendaRows({
         bookings: branchBookings,
         agendaDate: date,
+        schedules: branchSchedules,
         doctors: doctorsList,
         patients,
         checkedInBookingIds,
