@@ -4385,6 +4385,18 @@ export class MockTreatmentRepository implements TreatmentRepository {
         || completionData.finalPriceSnapshot > Number.MAX_SAFE_INTEGER) {
         throw new Error("Harga final harus berupa angka Rupiah bulat dan tidak boleh negatif.");
       }
+      const billedTreatmentItem = db.invoiceItems.find((item) =>
+        item.treatmentJobId === id
+        && db.invoices.some((invoice) =>
+          invoice.id === item.invoiceId && invoice.status !== InvoiceStatus.CANCELLED
+        )
+      );
+      if (
+        billedTreatmentItem
+        && billedTreatmentItem.unitPriceSnapshot !== completionData.finalPriceSnapshot
+      ) {
+        throw new Error("Harga final tidak boleh berbeda dari invoice aktif. Koreksi invoice terlebih dahulu.");
+      }
     }
 
     const now = AppClock.nowISO();

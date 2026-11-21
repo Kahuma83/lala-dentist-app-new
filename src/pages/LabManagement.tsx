@@ -14,6 +14,7 @@ import { isLabOrderCandidateService } from "../utils/labOrderEligibility";
 import {
   AccountCategory,
   AccountType,
+  Invoice,
   InvoiceStatus,
   LabOrder,
   LabOrderPayment,
@@ -48,7 +49,8 @@ export const LabManagement: React.FC = () => {
     patients,
     visits,
     treatmentJobs,
-    invoices,
+    invoices: contextInvoices,
+    payments: contextPayments,
     services,
     accounts,
     accountingPostingService,
@@ -62,6 +64,7 @@ export const LabManagement: React.FC = () => {
     : null;
   const branchFilter = branchAdminBranchId || selectedBranchId;
   const [orders, setOrders] = useState<LabOrder[]>([]);
+  const [labInvoices, setLabInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<LabOrderPayment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -91,18 +94,23 @@ export const LabManagement: React.FC = () => {
     try {
       const loadedOrders = await repos.lab.getLabOrders(branchFilter);
       const loadedPayments = await repos.lab.getLabOrderPayments(loadedOrders.map((order) => order.id));
+      const branchIds = [...new Set(loadedOrders.map((order) => order.branchId))];
+      const invoiceGroups = await Promise.all(branchIds.map((branchId) =>
+        repos.invoice.getInvoicesByBranch(branchId, currentUser?.role, branchAdminBranchId)
+      ));
       setOrders(loadedOrders);
+      setLabInvoices(invoiceGroups.flat());
       setPayments(loadedPayments);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Gagal memuat data laboratorium.");
     } finally {
       setIsLoading(false);
     }
-  }, [repos.lab, branchFilter]);
+  }, [repos.lab, repos.invoice, branchFilter, currentUser?.role, branchAdminBranchId]);
 
   useEffect(() => {
     void loadOrders();
-  }, [loadOrders]);
+  }, [loadOrders, contextInvoices, contextPayments]);
 
   const treatmentById = useMemo(
     () => new Map(treatmentJobs.map((treatment) => [treatment.id, treatment])),
@@ -126,8 +134,12 @@ export const LabManagement: React.FC = () => {
     [treatmentJobs, serviceById, orderTreatmentIds, branchFilter]
   );
 
-  const activeExpenseAccounts = useMemo(
-    () => accounts.filter((account) => account.accountType === AccountType.EXPENSE && account.isActive),
+  const labExpenseAccounts = useMemo(
+    () => accounts.filter((account) =>
+      account.accountType === AccountType.EXPENSE
+      && account.isActive
+      && (account.code === "5095" || /lab|laboratorium/i.test(account.name))
+    ),
     [accounts]
   );
   const bankAccounts = useMemo(
@@ -151,12 +163,12 @@ export const LabManagement: React.FC = () => {
 
   const patientOutstandingByVisit = useMemo(() => {
     const balances = new Map<string, number>();
-    for (const invoice of invoices) {
+    for (const invoice of labInvoices) {
       if (invoice.status === InvoiceStatus.CANCELLED) continue;
       balances.set(invoice.visitId, (balances.get(invoice.visitId) || 0) + invoice.outstandingAmount);
     }
     return balances;
-  }, [invoices]);
+  }, [labInvoices]);
 
   const filteredOrders = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("id-ID");
@@ -299,6 +311,10 @@ export const LabManagement: React.FC = () => {
 
   const openPaymentForm = (order: LabOrder) => {
     if (!order.invoiceAmount) return;
+    if (labExpenseAccounts.length === 0) {
+      setActionError("Akun Beban Laboratorium belum tersedia. Tambahkan akun beban khusus Lab pada Bagan Akun sebelum mencatat pembayaran.");
+      return;
+    }
     const totals = paymentTotals(order.id);
     const remaining = Math.max(0, order.invoiceAmount - totals.posted - totals.pending);
     setActionError(null);
@@ -306,8 +322,7 @@ export const LabManagement: React.FC = () => {
     setPaymentAmount(remaining);
     setPaymentDate(today());
     setExpenseAccountId(
-      activeExpenseAccounts.find((account) => account.code === "5095")?.id
-      || activeExpenseAccounts[0]?.id
+      labExpenseAccounts.find((account) => account.code === "5095")?.id
       || ""
     );
     setPaymentAccountId(
@@ -396,10 +411,10 @@ export const LabManagement: React.FC = () => {
 
   const patientBalanceTotal = useMemo(() => {
     const visitIds = new Set(orders.map((order) => treatmentById.get(order.treatmentJobId)?.visitId).filter(Boolean));
-    return invoices
+    return labInvoices
       .filter((invoice) => visitIds.has(invoice.visitId) && invoice.status !== InvoiceStatus.CANCELLED)
       .reduce((total, invoice) => total + invoice.outstandingAmount, 0);
-  }, [orders, treatmentById, invoices]);
+  }, [orders, treatmentById, labInvoices]);
 
   const labPayableTotal = orders.reduce((total, order) => {
     if (!order.invoiceAmount) return total;
@@ -714,7 +729,8 @@ export const LabManagement: React.FC = () => {
             <label className="block text-xs font-semibold text-slate-700">
               Kategori Pengeluaran
               <select value={expenseAccountId} onChange={(event) => setExpenseAccountId(event.target.value)} required className="mt-1 w-full rounded-lg border border-slate-200 p-2 font-normal">
-                {activeExpenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.code} - {account.name}</option>)}
+                <option value="">Pilih akun beban laboratorium</option>
+                {labExpenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.code} - {account.name}</option>)}
               </select>
             </label>
             <label className="block text-xs font-semibold text-slate-700">
@@ -728,13 +744,13 @@ export const LabManagement: React.FC = () => {
             </p>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setPaymentOrder(null)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">Batal</button>
-              <button disabled={isSubmitting || !bankAccounts.length || !activeExpenseAccounts.length} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{isSubmitting ? "Memproses..." : "Catat & Bayar"}</button>
+              <button disabled={isSubmitting || !bankAccounts.length || !expenseAccountId} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{isSubmitting ? "Memproses..." : "Catat & Bayar"}</button>
             </div>
           </form>
         </div>
       )}
       {!bankAccounts.length && <p className="text-[11px] text-amber-700">Belum ada akun rekening bank aktif di Bagan Akun; pembayaran lab belum dapat diposting.</p>}
-      {!activeExpenseAccounts.length && <p className="text-[11px] text-amber-700">Belum ada akun beban aktif; pembayaran lab belum dapat diposting.</p>}
+      {!labExpenseAccounts.length && <p className="text-[11px] text-amber-700">Akun Beban Laboratorium belum tersedia; pembayaran lab belum dapat diposting dengan aman.</p>}
       {orders.length === 0 && eligibleTreatments.length > 0 && !isLoading && (
         <p className="flex items-start gap-2 text-[11px] text-slate-500"><Clock3 className="h-4 w-4 shrink-0" />Ada {eligibleTreatments.length} tindakan layanan lab yang belum dibuatkan order.</p>
       )}

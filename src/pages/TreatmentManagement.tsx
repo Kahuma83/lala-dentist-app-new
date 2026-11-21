@@ -302,7 +302,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
       }
 
       const branchId = currentUser.assignedBranchId || "branch-gebang";
-      const [trList, docList, queueList, externalDoctorResult, picStaffList, labOrderList] = await Promise.all([
+      const [trList, docList, queueList, externalDoctorResult, picStaffList] = await Promise.all([
         treatmentRepo.listTreatments(
           currentUser.role,
           currentUser.assignedBranchId,
@@ -324,14 +324,15 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
           : Promise.resolve({ data: [], error: null }),
         currentUser.role === UserRole.DOCTOR
           ? repos.staff.getTreatmentPicStaffCandidates()
-          : Promise.resolve<TreatmentPicStaffCandidate[]>([]),
-        currentUser.role === UserRole.SUPER_ADMIN
-          ? repos.lab.getLabOrders()
-          : repos.lab.getLabOrders(branchId)
+          : Promise.resolve<TreatmentPicStaffCandidate[]>([])
       ]);
       if (externalDoctorResult.error) {
         throw new Error(`Gagal memuat dokter eksternal: ${externalDoctorResult.error.message}`);
       }
+      const labOrderList = currentUser.role === UserRole.BRANCH_ADMIN
+        || currentUser.role === UserRole.DOCTOR_ASSISTANT
+        ? await repos.lab.getLabOrders(branchId)
+        : await repos.lab.getLabOrders();
       const vList = currentUser.role === UserRole.DOCTOR
         ? await visitRepo.getVisitsByIds([...new Set([
             ...queueList.map((item) => item.visitId),
@@ -904,7 +905,25 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
         const currentVisitTreatments = activeVisitQueue.visitId === completedTreatment.visitId
           ? visitTreatments
           : await treatmentRepo.getTreatmentsByVisit(activeVisitQueue.visitId);
-        unfinishedTreatments = currentVisitTreatments.filter((item) => !closesVisitForQueue(item));
+        const unfinishedInVisit = currentVisitTreatments.filter((item) => !closesVisitForQueue(item));
+        const queueDoctorId = activeVisitQueue.doctorId
+          || completedTreatment.assignedDoctorId
+          || completedTreatment.doctorId;
+        const readyLabTreatments = treatments.filter((item) =>
+          item.id !== completedTreatment.id
+          && item.patientId === activeVisitQueue.patientId
+          && item.branchId === activeVisitQueue.branchId
+          && item.status === TreatmentJobStatus.MENUNGGU_LAB
+          && (item.assignedDoctorId || item.doctorId) === queueDoctorId
+          && canCompleteTreatment(item)
+          && hasReceivedLabInvoice(item)
+        );
+        unfinishedTreatments = [
+          ...unfinishedInVisit,
+          ...readyLabTreatments.filter((item) =>
+            !unfinishedInVisit.some((unfinished) => unfinished.id === item.id)
+          )
+        ];
         if (unfinishedTreatments.length === 0) {
           await repos.queue.finishService(
             activeVisitQueue.id,
@@ -933,7 +952,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
         : "";
       const completionMessage = unfinishedTreatments.length === 0
         ? `Treatment selesai dan antrean ditutup. ${accrualCount} akrual kompensasi dicatat. Tagihan dapat diproses admin.${shortageWarning}${inventoryWarning}`
-        : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan treatment lain pada kunjungan ini sebelum antrean ditutup.${shortageWarning}${inventoryWarning}`;
+        : `Treatment selesai. ${accrualCount} akrual kompensasi dicatat. Selesaikan tindakan lain yang siap dituntaskan sebelum antrean ditutup.${shortageWarning}${inventoryWarning}`;
       setSuccessMsg(completionMessage);
       await loadData();
       if (accrualError) {
