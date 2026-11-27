@@ -91,6 +91,7 @@ import {
   JournalEntry,
   Staff,
   TreatmentPicStaffCandidate,
+  TreatmentPicCorrectionResult,
   Attendance,
   DoctorSchedule,
   DoctorBranchAssignment,
@@ -4801,6 +4802,53 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
       p_assistant_staff_id: assistantStaffId
     });
     if (error) throw new Error(`Gagal menetapkan PIC kunjungan: ${error.message}`);
+  }
+
+  async correctVisitAssistantPic(
+    visitId: string,
+    assistantStaffId: string,
+    reason: string,
+    currentUserRole?: UserRole
+  ): Promise<TreatmentPicCorrectionResult> {
+    ensureSupabaseConnected();
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat mengoreksi PIC tindakan.");
+    }
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 500) {
+      throw new Error("Alasan koreksi PIC wajib diisi 5 sampai 500 karakter.");
+    }
+    if (!isValidUUID(visitId) || !isValidUUID(assistantStaffId)) {
+      throw new Error("ID kunjungan atau PIC pengganti tidak valid.");
+    }
+
+    const { data, error } = await supabase.rpc("correct_treatment_visit_assistant_pic", {
+      p_visit_id: visitId,
+      p_assistant_staff_id: assistantStaffId,
+      p_reason: cleanReason
+    });
+    if (error) throw new Error(`Gagal mengoreksi PIC tindakan: ${error.message}`);
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (
+      !result
+      || typeof result !== "object"
+      || typeof result.updated_treatment_count !== "number"
+      || typeof result.removed_accrual_count !== "number"
+      || result.visit_id !== visitId
+      || result.assistant_staff_id !== assistantStaffId
+      || (result.previous_assistant_staff_id !== null
+        && typeof result.previous_assistant_staff_id !== "string")
+    ) {
+      throw new Error("Server tidak mengembalikan hasil koreksi PIC yang valid.");
+    }
+    return {
+      visitId: result.visit_id,
+      previousAssistantStaffId: result.previous_assistant_staff_id,
+      assistantStaffId: result.assistant_staff_id,
+      updatedTreatmentCount: result.updated_treatment_count,
+      removedAccrualCount: result.removed_accrual_count
+    };
   }
 
   async listTreatmentsByBranch(branchId: string, currentUserRole?: UserRole, userBranchId?: string | null, currentUserId?: string | null): Promise<TreatmentJob[]> {

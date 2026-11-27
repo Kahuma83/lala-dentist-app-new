@@ -12,6 +12,8 @@ Untuk memperbaiki daftar PIC shift pada akun Dokter, terapkan `supabase/manual-m
 
 Sebelum deploy fitur daftar kandidat PIC untuk Dokter, terapkan `supabase/manual-migrations/20270311000000_doctors_read_treatment_pic_candidates.sql`. RPC ini hanya mengembalikan nama, jabatan, status, dan ID staf aktif yang berada di cabang kelolaan Dokter atau ditugaskan ke shift cabang tersebut; RPC tidak membuka akses baca langsung ke seluruh tabel `staff`.
 
+Sebelum deploy koreksi PIC oleh Super Admin, pastikan migration PIC/insentif sebelumnya sudah diterapkan (`20270212000000_doctor_confirms_visit_assistant.sql`, `supabase/manual-migrations/20270226000000_allow_branch_admin_treatment_pic.sql`, dan `supabase/manual-migrations/20270311000000_doctors_read_treatment_pic_candidates.sql`). Lalu cadangkan database dan terapkan `supabase/manual-migrations/20270313000000_super_admin_correct_treatment_pic.sql` melalui SQL Editor. Migration baru ini membuka daftar kandidat PIC untuk Super Admin, menambah RPC koreksi yang memblokir insentif yang sudah terkait payroll/jurnal, dan menyimpan audit koreksi.
+
 Laporan uang keriting Owner mencakup semua cabang. Admin Cabang hanya dapat melihat dan mencatat saldo awal, setoran, serta pengeluaran untuk cabang yang menjadi kewenangannya; akses ini tetap divalidasi oleh fungsi database.
 
 Sebelum merge migration ke `main`, tambahkan secrets berikut di **GitHub → Settings → Secrets and variables → Actions → New repository secret**:
