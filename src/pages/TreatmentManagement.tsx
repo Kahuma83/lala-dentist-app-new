@@ -418,11 +418,16 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
               )
               .map((treatment) => treatment.visitId)
           ])])
-        : await visitRepo.getVisitsByBranch(
-            branchId,
-            currentUser.role,
-            currentUser.assignedBranchId
-          );
+        : currentUser.role === UserRole.SUPER_ADMIN
+          ? await visitRepo.getVisitsByIds([...new Set([
+              ...queueList.map((item) => item.visitId),
+              ...trList.map((treatment) => treatment.visitId)
+            ])])
+          : await visitRepo.getVisitsByBranch(
+              branchId,
+              currentUser.role,
+              currentUser.assignedBranchId
+            );
       const assistantAssignments = await treatmentRepo.getAssistantAssignmentsForVisits(
         [...new Set(trList.map((item) => item.visitId))]
       );
