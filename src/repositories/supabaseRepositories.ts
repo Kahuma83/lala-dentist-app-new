@@ -4772,12 +4772,21 @@ export class SupabaseTreatmentRepository implements TreatmentRepository {
     ensureSupabaseConnected();
     const validVisitIds = [...new Set(visitIds.filter(isValidUUID))];
     if (!validVisitIds.length) return {};
-    const { data, error } = await supabase
-      .from("treatment_visit_assistant_assignments")
-      .select("visit_id, assistant_staff_id, confirmed_by")
-      .in("visit_id", validVisitIds);
-    if (error) throw new Error(`Gagal memuat PIC tindakan kunjungan: ${error.message}`);
-    return Object.fromEntries((data || []).map((row) => [row.visit_id, {
+    const pageSize = 100;
+    const batches: string[][] = [];
+    for (let offset = 0; offset < validVisitIds.length; offset += pageSize) {
+      batches.push(validVisitIds.slice(offset, offset + pageSize));
+    }
+
+    const assignments = (await Promise.all(batches.map(async (batch) => {
+      const { data, error } = await supabase
+        .from("treatment_visit_assistant_assignments")
+        .select("visit_id, assistant_staff_id, confirmed_by")
+        .in("visit_id", batch);
+      if (error) throw new Error(`Gagal memuat PIC tindakan kunjungan: ${error.message}`);
+      return data || [];
+    }))).flat();
+    return Object.fromEntries(assignments.map((row) => [row.visit_id, {
       assistantStaffId: row.assistant_staff_id,
       confirmedBy: row.confirmed_by
     }]));
