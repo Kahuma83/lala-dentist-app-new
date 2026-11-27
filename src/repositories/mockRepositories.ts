@@ -97,6 +97,7 @@ import {
   DentalDoctor,
   Staff,
   TreatmentPicStaffCandidate,
+  TreatmentPicCorrectionResult,
   StaffPosition,
   EmploymentStatus,
   DoctorBranchAssignment,
@@ -3962,6 +3963,116 @@ export class MockTreatmentRepository implements TreatmentRepository {
       .filter((item) => item.status !== TreatmentJobStatus.DIBATALKAN)
       .forEach((item) => { item.picAssistantId = assistantStaffId || undefined; });
     db.saveToStorage();
+  }
+
+  async correctVisitAssistantPic(
+    visitId: string,
+    assistantStaffId: string,
+    reason: string,
+    currentUserRole?: UserRole
+  ): Promise<TreatmentPicCorrectionResult> {
+    if (currentUserRole !== UserRole.SUPER_ADMIN) {
+      throw new Error("Hanya Super Admin yang dapat mengoreksi PIC tindakan.");
+    }
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 500) {
+      throw new Error("Alasan koreksi PIC wajib diisi 5 sampai 500 karakter.");
+    }
+    const visit = db.visits.find((item) => item.id === visitId);
+    if (!visit) throw new Error("Kunjungan tidak ditemukan.");
+    const assistant = db.staff.find((item) =>
+      item.id === assistantStaffId
+      && (item.position === StaffPosition.ASSISTANT || item.position === StaffPosition.BRANCH_ADMIN)
+      && item.active
+      && item.employmentStatus === EmploymentStatus.ACTIVE
+      && (
+        isBranchMatch(item.branchId, visit.branchId, db.branches)
+        || db.staffShiftAssignments.some((assignment) =>
+          assignment.staffId === item.id
+          && isBranchMatch(assignment.branchId, visit.branchId, db.branches)
+          && assignment.date === getOperationalDateString(visit.visitDateTime)
+          && assignment.active
+        )
+      )
+    );
+    if (!assistant) {
+      throw new Error("PIC pengganti harus Asisten atau Admin Cabang aktif yang bertugas di cabang pada tanggal kunjungan.");
+    }
+
+    const visitTreatments = db.treatmentJobs.filter((item) =>
+      item.visitId === visitId && item.status !== TreatmentJobStatus.DIBATALKAN
+    );
+    if (!visitTreatments.length) throw new Error("Tidak ada tindakan aktif pada kunjungan ini.");
+    if (!visitTreatments.some((item) =>
+      item.status === TreatmentJobStatus.SELESAI || item.status === TreatmentJobStatus.DISERAHKAN
+    )) {
+      throw new Error("Koreksi PIC hanya tersedia setelah tindakan selesai atau diserahkan.");
+    }
+
+    const picIds = [...new Set(visitTreatments
+      .map((item) => item.picAssistantId)
+      .filter((id): id is string => Boolean(id)))];
+    if (picIds.length > 1) {
+      throw new Error("PIC tindakan pada kunjungan ini tidak konsisten; periksa data sebelum mengoreksi.");
+    }
+    const visitAssignment = db.visitAssistantAssignments.find((item) => item.visitId === visitId);
+    const previousAssistantStaffId = visitAssignment?.assistantStaffId || picIds[0] || null;
+    if (visitAssignment?.assistantStaffId && picIds.some((id) => id !== visitAssignment.assistantStaffId)) {
+      throw new Error("PIC penugasan dan PIC tindakan tidak konsisten; periksa data sebelum mengoreksi.");
+    }
+    if (previousAssistantStaffId === assistantStaffId) {
+      return {
+        visitId,
+        previousAssistantStaffId,
+        assistantStaffId,
+        updatedTreatmentCount: 0,
+        removedAccrualCount: 0
+      };
+    }
+
+    const visitTreatmentIds = new Set(visitTreatments.map((item) => item.id));
+    const assistantStaffIds = new Set(db.staff
+      .filter((item) => item.position === StaffPosition.ASSISTANT || item.position === StaffPosition.BRANCH_ADMIN)
+      .map((item) => item.id));
+    const correctionAccruals = db.accruals.filter((accrual) =>
+      visitTreatmentIds.has(accrual.sourceId)
+      && assistantStaffIds.has(accrual.staffId)
+      && accrual.ruleIdSnapshot !== "STAFF_VISIT_REFERRAL_RP3000_V1"
+    );
+    const correctionAccrualIds = new Set(correctionAccruals.map((accrual) => accrual.id));
+    if (db.payrollItems.some((item) => item.sourceId && correctionAccrualIds.has(item.sourceId))) {
+      throw new Error("PIC tidak dapat dikoreksi karena insentif sudah masuk rincian payroll.");
+    }
+    if (db.journals.some((journal) =>
+      journal.sourceType === JournalSourceType.COMPENSATION
+      && journal.sourceId
+      && correctionAccrualIds.has(journal.sourceId)
+    )) {
+      throw new Error("PIC tidak dapat dikoreksi karena insentif sudah memiliki jurnal.");
+    }
+
+    db.accruals = db.accruals.filter((accrual) => !correctionAccrualIds.has(accrual.id));
+    if (visitAssignment) {
+      visitAssignment.assistantStaffId = assistantStaffId;
+      visitAssignment.confirmedAt = AppClock.nowISO();
+    } else {
+      db.visitAssistantAssignments.push({
+        visitId,
+        assistantStaffId,
+        confirmedBy: null,
+        confirmedAt: AppClock.nowISO()
+      });
+    }
+    visitTreatments.forEach((item) => { item.picAssistantId = assistantStaffId; });
+    db.saveToStorage();
+
+    return {
+      visitId,
+      previousAssistantStaffId,
+      assistantStaffId,
+      updatedTreatmentCount: visitTreatments.length,
+      removedAccrualCount: correctionAccruals.length
+    };
   }
 
   async listTreatmentsByBranch(

@@ -40,6 +40,7 @@ import {
   DoctorBranchAssignment,
   ScheduleStatus,
   DoctorSchedule,
+  TreatmentPicCorrectionResult,
   WorkShift,
   StaffShiftAssignment,
   StaffShiftRotationTemplate,
@@ -697,6 +698,12 @@ export interface TreatmentRepository {
     userBranchId?: string | null,
     currentUserId?: string | null
   ): Promise<void>;
+  correctVisitAssistantPic(
+    visitId: string,
+    assistantStaffId: string,
+    reason: string,
+    currentUserRole?: UserRole
+  ): Promise<TreatmentPicCorrectionResult>;
   listTreatmentsByBranch(
     branchId: string,
     currentUserRole?: UserRole,

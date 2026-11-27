@@ -262,7 +262,7 @@ Gunakan **Kontrol & Perawatan Lanjutan** untuk menghubungi pasien yang perlu dii
 2. Susun rencana dengan memilih satu atau beberapa tindakan. Tarif cabang terisi sebagai harga awal; dokter penanggung jawab dapat menyesuaikan harga setiap item sesuai kondisi atau luas tindakan.
 3. Jelaskan rencana dan estimasi biaya terbaru kepada pasien sebelum menyimpan. Catat persetujuan lisan hanya setelah pasien menyetujuinya; tanda tangan atau persetujuan tertulis tidak diwajibkan oleh alur aplikasi. Persetujuan dan waktu pencatatannya tersimpan pada rencana.
 4. Rencana belum berarti tindakan sudah dilakukan. Mulai tindakan hanya setelah pasien menyetujui rencana dan biaya. Tindakan dalam satu kunjungan tampil sebagai satu rencana; mulai dan selesaikan item yang memenuhi syarat bersama-sama. Status, durasi, dan pemakaian bahan tetap tercatat per item.
-5. PIC Asisten terisi otomatis mengikuti shift pada waktu booking. Saat Dokter memulai tindakan, pilihan default tersebut tersimpan otomatis tanpa konfirmasi tambahan. Jika perlu, Dokter dapat memilih **Ubah PIC** sebelum tindakan dimulai. Absensi membantu pemeriksaan, tetapi tidak menghalangi tindakan jika datanya belum tersedia. PIC berlaku untuk seluruh tindakan dalam kunjungan dan dikunci setelah tindakan dimulai.
+5. PIC Asisten terisi otomatis mengikuti shift pada waktu booking. Saat Dokter memulai tindakan, pilihan default tersebut tersimpan otomatis tanpa konfirmasi tambahan. Jika perlu, Dokter dapat memilih **Ubah PIC** sebelum tindakan dimulai. Absensi membantu pemeriksaan, tetapi tidak menghalangi tindakan jika datanya belum tersedia. PIC berlaku untuk seluruh tindakan dalam kunjungan dan dikunci setelah tindakan dimulai; koreksi setelah tindakan selesai hanya dapat dilakukan Super Admin sebelum insentif terkait masuk payroll atau memiliki jurnal.
 6. PIC hanya untuk atribusi insentif; tidak mengubah alur pasien, booking, pembayaran, atau kuitansi. Untuk tindakan biasa, Dokter memulai tindakan dan bertanggung jawab memeriksa hasilnya. Asisten dapat membantu pelaksanaan; untuk tindakan Dokter pengganti eksternal, ikuti penugasan dan arahan khusus yang tersedia.
 7. Sebelum menyelesaikan, periksa bahan resep dan pilihan bahan khusus yang tampil pada tindakan.
 8. Pilih **Selesaikan** setelah tindakan benar-benar selesai. Aplikasi mencatat pemakaian bahan yang tersedia dan memberi tahu bila masih ada kekurangan.
@@ -311,6 +311,7 @@ Super Admin memiliki menu lintas cabang. Sebelum menyimpan atau memproses transa
 - Dapat membantu **Data Pasien**, **Jadwal Pasien**, konfirmasi H-1, check-in, antrean, dan pemantauan tindakan.
 - Ikuti langkah yang sama dengan Admin Cabang. Jangan mengambil alih keputusan klinis atau menyelesaikan tindakan biasa sebagai pengganti Dokter.
 - Bila membantu pembayaran, terapkan pemeriksaan kasir: cocokkan invoice, jumlah uang diterima, metode, cabang, dan kwitansi.
+- Untuk memperbaiki PIC yang salah pada tindakan selesai, buka **Daftar Treatment → Detail → Ubah PIC**. Koreksi berlaku untuk semua tindakan aktif pada kunjungan, wajib disertai alasan, dan akan menghitung ulang insentif yang memenuhi syarat. Sistem menolak koreksi jika akrual sudah masuk rincian payroll (termasuk DRAFT/REVIEW) atau memiliki jurnal; selesaikan koreksi finansial lebih dahulu.
 
 ### Data utama, jadwal, dan pegawai
 

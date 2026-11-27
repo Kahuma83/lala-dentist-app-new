@@ -35,7 +35,8 @@ import {
   X,
   Sparkles,
   ChevronRight,
-  PackageMinus
+  PackageMinus,
+  Pencil
 } from "lucide-react";
 import { TreatmentPicker } from "../components/TreatmentPicker";
 import { OperationalHubTabs } from "../components/common/OperationalHubTabs";
@@ -122,6 +123,10 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     selectedAssistantId: string;
     candidates: VisitAssistantCandidate[];
   } | null>(null);
+  const [isPicCorrectionOpen, setIsPicCorrectionOpen] = useState(false);
+  const [picCorrectionAssistantId, setPicCorrectionAssistantId] = useState("");
+  const [picCorrectionReason, setPicCorrectionReason] = useState("");
+  const [isCorrectingPic, setIsCorrectingPic] = useState(false);
   const [isFinishVisitConfirmOpen, setIsFinishVisitConfirmOpen] = useState(false);
   const [planAwaitingCompletion, setPlanAwaitingCompletion] = useState<{
     visitId: string;
@@ -277,6 +282,74 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
     }
   };
 
+  const handleCorrectVisitAssistantPic = async (treatment: TreatmentJob) => {
+    if (currentUser?.role !== UserRole.SUPER_ADMIN || isCorrectingPic) return;
+    const reason = picCorrectionReason.trim();
+    if (reason.length < 5 || reason.length > 500) {
+      setError("Alasan koreksi PIC wajib diisi 5 sampai 500 karakter.");
+      return;
+    }
+    if (!picCorrectionAssistantId) {
+      setError("Pilih PIC pengganti sebelum menyimpan koreksi.");
+      return;
+    }
+
+    const completedTreatments = treatments.filter((item) =>
+      item.visitId === treatment.visitId
+      && (item.status === TreatmentJobStatus.SELESAI || item.status === TreatmentJobStatus.DISERAHKAN)
+    );
+    setIsCorrectingPic(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const result = await treatmentRepo.correctVisitAssistantPic(
+        treatment.visitId,
+        picCorrectionAssistantId,
+        reason,
+        currentUser.role
+      );
+      setVisitAssistantAssignments((current) => ({
+        ...current,
+        [treatment.visitId]: {
+          assistantStaffId: result.assistantStaffId,
+          confirmedBy: currentUser.id
+        }
+      }));
+      setTreatments((current) => current.map((item) =>
+        item.visitId === treatment.visitId && item.status !== TreatmentJobStatus.DIBATALKAN
+          ? { ...item, picAssistantId: result.assistantStaffId }
+          : item
+      ));
+      setSelectedTreatment((current) => current
+        ? { ...current, picAssistantId: result.assistantStaffId }
+        : null);
+
+      const accrualErrors: string[] = [];
+      for (const completedTreatment of completedTreatments) {
+        try {
+          await repos.compensation.calculateAndAccrueForTreatment(completedTreatment.id);
+        } catch (accrualError) {
+          accrualErrors.push(accrualError instanceof Error ? accrualError.message : String(accrualError));
+        }
+      }
+
+      setIsPicCorrectionOpen(false);
+      setPicCorrectionReason("");
+      await loadData();
+      const summary = `PIC berhasil dikoreksi untuk ${result.updatedTreatmentCount} tindakan; ${result.removedAccrualCount} akrual PIC lama dihapus untuk dihitung ulang.`;
+      if (accrualErrors.length > 0) {
+        setSuccessMsg(summary);
+        setError(`PIC sudah dikoreksi, tetapi perhitungan ulang insentif gagal: ${accrualErrors.join("; ")}. Sinkronkan kembali dari menu Kompensasi.`);
+      } else {
+        setSuccessMsg(`${summary} Insentif yang memenuhi syarat sudah dihitung ulang.`);
+      }
+    } catch (correctionError) {
+      setError(correctionError instanceof Error ? correctionError.message : "Gagal mengoreksi PIC tindakan.");
+    } finally {
+      setIsCorrectingPic(false);
+    }
+  };
+
   const loadActivities = async (treatmentId: string) => {
     try {
       if (!currentUser) return;
@@ -322,7 +395,7 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
         currentUser.role === UserRole.SUPER_ADMIN
           ? supabase.from("external_doctor_recipients").select("id,full_name").eq("active", true)
           : Promise.resolve({ data: [], error: null }),
-        currentUser.role === UserRole.DOCTOR
+        (currentUser.role === UserRole.DOCTOR || currentUser.role === UserRole.SUPER_ADMIN)
           ? repos.staff.getTreatmentPicStaffCandidates()
           : Promise.resolve<TreatmentPicStaffCandidate[]>([])
       ]);
@@ -385,6 +458,13 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
 
   useEffect(() => {
     if (selectedTreatment) {
+      setIsPicCorrectionOpen(false);
+      setPicCorrectionAssistantId(
+        selectedTreatment.picAssistantId
+        || visitAssistantAssignments[selectedTreatment.visitId]?.assistantStaffId
+        || ""
+      );
+      setPicCorrectionReason("");
       setCorrectedTreatmentNotes(selectedTreatment.notes || "");
       setRevisedServiceId(selectedTreatment.serviceId);
       setRevisedTreatmentPrice(selectedTreatment.priceSnapshot ?? 0);
@@ -2635,6 +2715,102 @@ export const TreatmentManagement: React.FC<TreatmentManagementProps> = ({
                     </button>
                   )}
                 </div>
+
+                {currentUser?.role === UserRole.SUPER_ADMIN
+                  && (selectedTreatment.status === TreatmentJobStatus.SELESAI
+                    || selectedTreatment.status === TreatmentJobStatus.DISERAHKAN) && (
+                  <section className="space-y-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-bold text-amber-900">Koreksi PIC & insentif</div>
+                        <div className="text-[10px] text-amber-800">
+                          PIC kunjungan saat ini: {treatmentPicStaff.find((candidate) =>
+                            candidate.id === (selectedTreatment.picAssistantId
+                              || visitAssistantAssignments[selectedTreatment.visitId]?.assistantStaffId)
+                          )?.fullName || staff.find((candidate) =>
+                            candidate.id === (selectedTreatment.picAssistantId
+                              || visitAssistantAssignments[selectedTreatment.visitId]?.assistantStaffId)
+                          )?.fullName || "Belum tercatat"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsPicCorrectionOpen((open) => !open)}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        {isPicCorrectionOpen ? "Tutup" : "Ubah PIC"}
+                      </button>
+                    </div>
+                    {isPicCorrectionOpen && (
+                      <div className="space-y-2 border-t border-amber-200 pt-2">
+                        <p className="text-[10px] leading-relaxed text-amber-900">
+                          Koreksi berlaku untuk semua tindakan aktif pada kunjungan ini. Sistem menolak perubahan jika insentif sudah masuk rincian payroll atau memiliki jurnal.
+                        </p>
+                        <label className="block text-[10px] font-semibold text-slate-700">
+                          PIC pengganti *
+                          <select
+                            value={picCorrectionAssistantId}
+                            onChange={(event) => setPicCorrectionAssistantId(event.target.value)}
+                            disabled={isCorrectingPic}
+                            className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-800 disabled:bg-slate-100"
+                          >
+                            <option value="">Pilih Asisten/Admin Cabang</option>
+                            {picCorrectionAssistantId
+                              && !treatmentPicStaff.some((candidate) => candidate.id === picCorrectionAssistantId)
+                              && (
+                                <option value={picCorrectionAssistantId}>
+                                  {staff.find((candidate) => candidate.id === picCorrectionAssistantId)?.fullName || "PIC saat ini"} (sudah tidak aktif)
+                                </option>
+                              )}
+                            {treatmentPicStaff.filter((candidate) =>
+                              (Boolean(candidate.branchId)
+                                && isBranchMatch(candidate.branchId, selectedTreatment.branchId, branches))
+                              || staffShiftAssignments.some((assignment) =>
+                                assignment.staffId === candidate.id
+                                && isBranchMatch(assignment.branchId, selectedTreatment.branchId, branches)
+                                && assignment.date === getOperationalDateString(
+                                  selectedTreatmentVisit?.visitDateTime || selectedTreatment.createdAt
+                                )
+                                && assignment.active
+                              )
+                            ).map((candidate) => (
+                              <option key={candidate.id} value={candidate.id}>
+                                {candidate.fullName} · {candidate.position === StaffPosition.BRANCH_ADMIN ? "Admin Cabang" : "Asisten"}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block text-[10px] font-semibold text-slate-700">
+                          Alasan koreksi *
+                          <textarea
+                            value={picCorrectionReason}
+                            onChange={(event) => setPicCorrectionReason(event.target.value)}
+                            maxLength={500}
+                            rows={2}
+                            disabled={isCorrectingPic}
+                            placeholder="Contoh: PIC salah input, berdasarkan konfirmasi kunjungan."
+                            className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-800 disabled:bg-slate-100"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => void handleCorrectVisitAssistantPic(selectedTreatment)}
+                          disabled={
+                            isCorrectingPic
+                            || !picCorrectionAssistantId
+                            || picCorrectionAssistantId === (selectedTreatment.picAssistantId
+                              || visitAssistantAssignments[selectedTreatment.visitId]?.assistantStaffId)
+                            || picCorrectionReason.trim().length < 5
+                          }
+                          className="rounded-lg bg-amber-700 px-3 py-2 text-[10px] font-bold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isCorrectingPic ? "Menyimpan koreksi..." : "Simpan Koreksi PIC"}
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                )}
 
                 {canCancelTreatment(selectedTreatment) && (
                   <div className="space-y-2 rounded-xl border border-rose-200 bg-rose-50/70 p-3">

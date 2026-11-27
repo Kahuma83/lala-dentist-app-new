@@ -639,6 +639,14 @@ export interface VisitAssistantAssignment {
   confirmedBy: string | null;
 }
 
+export interface TreatmentPicCorrectionResult {
+  visitId: string;
+  previousAssistantStaffId: string | null;
+  assistantStaffId: string;
+  updatedTreatmentCount: number;
+  removedAccrualCount: number;
+}
+
 export type PatientVisitAnalyticsRecord = Pick<
   PatientVisit,
   "patientId" | "branchId" | "visitDateTime" | "visitStatus"
